@@ -1,0 +1,6 @@
+#!/bin/sh
+# Regenerate and stage the repo maps on every commit.
+# Activate once per clone: git config core.hooksPath hooks
+set -e
+python tools/generate_map.py
+git add REPO_MAP.md TEST_MAP.md
