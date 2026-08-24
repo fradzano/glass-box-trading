@@ -116,8 +116,10 @@ Lifecycle gates (cold-read finding #1 — entry-only catalogs die at expiry):
     the journal's known structures; anything unclassified (assignment residue,
     partial fill of one leg) ⇒ close it at next opportunity + halt new entries,
     journaled with reason.
-11. **Deadline flatten** — everything closed by Wednesday Sep 3 market close;
-    Thursday holds no risk (and the judges see a closed book).
+11. **Deadline flatten** — everything closed by **Thursday Sep 3** market close;
+    Friday (submission day — Sep 4 2026 is a FRIDAY, calendar fixed per
+    SCENARIOS.md #38) holds no risk, and the judges see a closed book whose
+    post-deadline state cannot change under expiry mechanics.
 
 State & failure gates (findings #2/#4/#6/#11):
 
@@ -183,8 +185,9 @@ State & failure gates (findings #2/#4/#6/#11):
 | Weekend Aug 29–30 | core + gates + tests + dry-run (markets closed) |
 | Mon Aug 31 | **pre-arm live test on the DEV account at US open** (credit-structure acceptance, fill behavior — the O1 leftovers are market-hours-only); only then arm the competition account (finding #5) |
 | Tue Sep 1 | **declared buffer evening** — fixes from Monday's live reality; otherwise dashboard polish |
-| Wed Sep 2 evening | one-pager, Remotion video (render time budgeted), deck (PDF), cover image 16:9, short/long descriptions, tags; **flatten all positions by Wednesday close** (gate 11) |
-| Thu Sep 4 morning | submission, hours before the 17:00 CEST deadline — the morning is reserve for form surprises, not planned work |
+| Wed Sep 2 evening | second buffer / monitoring — the calendar gives us a fifth session we originally miscounted (Sep 4 is a Friday, see SCENARIOS.md #38) |
+| Thu Sep 3 evening | one-pager, Remotion video (render time budgeted), deck (PDF), cover image 16:9, short/long descriptions, tags; **flatten all positions by Thursday close** (gate 11) |
+| Fri Sep 4 morning | submission, hours before the 17:00 CEST deadline — the morning is reserve for form surprises, not planned work; the agent journals but holds no risk |
 
 ## 9. Open points
 
