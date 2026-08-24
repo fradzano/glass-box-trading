@@ -1,0 +1,12 @@
+# Secrets — never committed. Real keys live in .env (see .env.example).
+.env
+.env.*
+!.env.example
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local scratch
+.tmp/
