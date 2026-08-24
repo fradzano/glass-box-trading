@@ -149,8 +149,12 @@ as configured fallback if unattended plan-auth token refresh proves brittle
   and a liquidity-gate data source — `open_interest` came back `null` on the
   contracts endpoint for some contracts, so the gate may need quote-size floors
   instead of OI.
-- **O2** Agent SDK subscription auth under an unattended scheduled task (token
-  refresh over a week) — else API-key fallback.
+- **O2** Agent SDK subscription auth — **resolved 2026-08-24**: `claude setup-token`
+  (one interactive run) issues a **one-year OAuth token**; set it as
+  `CLAUDE_CODE_OAUTH_TOKEN` in the task environment. Documented for exactly the
+  unattended case. Caveats: `ANTHROPIC_API_KEY` must NOT be set in that environment
+  (it wins the credential precedence), and SDK usage draws from the subscription's
+  plan limits — budget the cycle cadence accordingly.
 - **O3** Pre-build legality: rule book bans plagiarism, not preparation; no explicit
   during-the-window build requirement found (checked 2026-08-24). Policy anyway:
   design + scaffold before kickoff, substantive build inside the window, timeline
@@ -158,3 +162,21 @@ as configured fallback if unattended plan-auth token refresh proves brittle
 - **O4** Social track (LinkedIn under real name) — owner decision, due at kickoff.
 - **O5** Exact budget percentages, gate thresholds, cycle cadence — frozen before
   go-live Aug 31, journaled as config.
+
+## 10. Tooling verified (2026-08-24, dev account)
+
+- **Alpaca MCP server** `alpaca-mcp-server` 2.3.0 via pip (Python 3.14; note: a
+  broken `fastmcp` install needed `pip install --force-reinstall fastmcp`).
+  Stdio handshake + tool call verified: **72 tools**, incl. `get_option_chain`,
+  `get_option_snapshot`, `place_option_order`. `ALPACA_TOOLSETS` filters toolsets —
+  this is how the analyst gets a **read-only** attachment (data/account toolsets,
+  no `trading`).
+- **Alpaca CLI** v0.0.13 (Go binary, checksum-verified) at
+  `C:\Users\felix\tools\alpaca-cli\alpaca.exe`. JSON on stdout, `--jq` filtering,
+  `order submit` supports `--order-class mleg` + `--legs` (≤4),
+  `--client-order-id` (idempotency gate) and `--dry-run`; `alpaca api` is a raw
+  passthrough for anything the typed commands miss. Auth via `ALPACA_API_KEY` /
+  `ALPACA_SECRET_KEY`; paper is the default (live requires an explicit opt-in we
+  will never set).
+- **REST** verified earlier (§9 O1): account, clock, contracts, `mleg` order
+  accept/cancel, `indicative` options feed.
