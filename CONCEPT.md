@@ -140,9 +140,15 @@ as configured fallback if unattended plan-auth token refresh proves brittle
 
 ## 9. Open points
 
-- **O1** Paper-API options reality check: multi-leg order support, options approval
-  level on paper accounts, chain/quote data quality. Biggest technical risk;
-  unverified until the dev-account exploration.
+- **O1** Paper-API options reality check — **largely resolved 2026-08-24** on the dev
+  account: `options_trading_level: 3` (spreads allowed) out of the box; a 2-leg
+  `mleg` limit order (SPY call debit spread) was accepted with both legs and cleanly
+  canceled; the free `indicative` options feed delivers fresh quotes (chain
+  snapshots + latest-quotes endpoints). Remaining before go-live: fill-simulation
+  behavior during market hours, credit-structure (`sell_to_open`-led) acceptance,
+  and a liquidity-gate data source — `open_interest` came back `null` on the
+  contracts endpoint for some contracts, so the gate may need quote-size floors
+  instead of OI.
 - **O2** Agent SDK subscription auth under an unattended scheduled task (token
   refresh over a week) — else API-key fallback.
 - **O3** Pre-build legality: rule book bans plagiarism, not preparation; no explicit
