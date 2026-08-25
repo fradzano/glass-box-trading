@@ -418,9 +418,9 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   `OUTCOME`, `RECONCILIATION`, `HUMAN_ACTION`, `GAP`, `SKIP`, `SUPPRESSED`,
   `HALT`, `UNHALT`, `KILL`, `DEADLINE_RECONCILIATION`, `TERMINAL`. Labels
   like `WORLD_UNREACHABLE`, `WORLD_PARTIAL`, `STALE_SNAPSHOT`,
-  `AUTH_FAILURE`, `REVALIDATION_VOID`, `SCHEMA_VETO`, `NOT_SUBMITTED` are
-  reason codes *inside* `CYCLE`/`OUTCOME`/`RECONCILIATION` entries, not
-  extra types. `OUTCOME` carries a status from the closed set {filled,
+  `AUTH_FAILURE`, `REVALIDATION_VOID`, `SCHEMA_VETO`, `NOT_SUBMITTED`,
+  `CONFIG_INVALID` are reason codes *inside* `CYCLE`/`OUTCOME`/
+  `RECONCILIATION` entries, not extra types. `OUTCOME` carries a status from the closed set {filled,
   partially_filled, rejected, canceled, expired, confirmation_unclear} —
   a rejection is an `OUTCOME` with status `rejected`, structurally
   incapable of being read as an execution. Every cycle emits exactly one
