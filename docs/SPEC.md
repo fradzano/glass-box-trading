@@ -25,7 +25,7 @@ parameter — no constant below may be hardcoded in core logic.
 | `SUBMISSION_DEADLINE` | 2026-09-04 17:00 CEST | decision B |
 | `MAX_LOSS_PER_POSITION_FRAC` | *O5* | fraction of sleeve budget |
 | `MAX_UNDERLYING_EXPOSURE` | *O5* | per-underlying cap, $ |
-| `MAX_REL_SPREAD` | *O5* | liquidity gate, per leg |
+| `MAX_REL_SPREAD` | *O5* | liquidity gate, per leg; fraction of mid |
 | `MIN_QUOTE_SIZE` | *O5* | liquidity gate, per leg |
 | `QUOTE_MAX_AGE` | *O5* | seconds |
 | `SNAPSHOT_STALENESS_BOUND` | *O5* | seconds; actions void beyond it |
@@ -34,11 +34,12 @@ parameter — no constant below may be hardcoded in core logic.
 | `CYCLE_INTERVAL` | *O5* | 15–30 min during US session |
 | `UNDERLYING_UNIVERSE` | *O5* | liquid ETF class (SPY/QQQ …) |
 | `STRUCTURE_WHITELIST` | *O5* | vertical debit/credit, iron condor, long option |
-| `LIMIT_TOLERANCE` | *O5* | limit-price tolerance around decision mid (§7) |
-| `CLOSE_ESCALATION_STEP` | *O5* | per-cycle limit re-price step for closes (§7) |
+| `LIMIT_TOLERANCE` | *O5* | limit-price tolerance around decision mid, $/share of option price; buys mid+, sells mid− (§7) |
+| `CLOSE_ESCALATION_STEP` | *O5* | per-cycle limit re-price step for closes, $/share of option price (§7) |
 | `RESIDUE_MAX_SESSIONS` | *O5* (default 1) | sessions until unresolved residue alarms |
 | `ANALYST_TIMEOUT` | *O5* | hard wall-time ceiling for the analyst call |
-| `LOCK_TAKEOVER_BOUND` | *O5* | must exceed worst-case cycle wall-time (see S-G12-02) |
+| `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it) |
+| `LOCK_TAKEOVER_BOUND` | *O5* | constraint: `> CYCLE_WALLTIME_BUDGET`, and `LOCK_TAKEOVER_BOUND + CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET ≤ DEAD_MAN_BOUND` (see S-G12-02) |
 | `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
 
 ## 1. Core contract
@@ -50,7 +51,10 @@ identical outputs. (A1, A3; house FCIS rule)
 **Snapshot** (assembled by the shell, one fetch per cycle): account id +
 profile role, cash, equity, positions, ALL open orders, halt flag, exchange
 calendar segment for today, quotes for candidate and position legs (each
-quote carrying its own timestamp), `snapshotAt`.
+quote carrying its own timestamp), the previous cycle's quotes for the same
+underlyings (a pure carry-over the shell passes in, exactly like the halt
+flag — S-G6-05's frozen-market signal is computed from this parameter,
+never from state held inside the core), and `snapshotAt`.
 
 - **S-CORE-01** Given identical (snapshot, candidates, config, now), when
   `decide` runs twice, then outputs are deeply equal. (FCIS)
@@ -83,9 +87,14 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   against the broker BEFORE any new order is placed. (A2, A5, A23)
 - **S-CYC-05** Pre-submit revalidation: between core approval and submission
   the executor refetches positions + open orders. Preconditions are a closed
-  list — exactly the snapshot facts that entered the approving gate
-  verdicts: the action's target positions/orders, sleeve exposure totals,
-  per-underlying exposure totals, and the halt flag. ANY delta in these
+  list — the broker-state facts that entered the approving gate verdicts
+  AND are derivable from the refetched positions + open orders: the
+  action's target positions/orders, sleeve exposure totals, per-underlying
+  exposure totals, and the halt flag. Quote-, calendar-, and chain-facts
+  are deliberately not re-fetched here; their currency is bounded by
+  S-CORE-02's staleness bound, which still applies at submit time — a
+  snapshot too old to act on voids the action regardless. ANY delta in the
+  listed facts
   (position appeared/disappeared, human traded elsewhere in the account, an
   order filled meanwhile) voids the action, journaled `REVALIDATION_VOID` —
   never submitted "because the core said so". A narrower reading (only the
@@ -102,16 +111,30 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   from–to, state then vs. now), and the cycle behaves as exactly one cycle —
   no catch-up trading, no doubled aggression. (A1, A20)
 - **S-CYC-09** Bootstrap (very first cycle ever): an empty or absent journal
-  is a defined state, not a gap — the cycle journals `BOOTSTRAP` (broker
-  snapshot as the opening baseline; no "state then" exists and none is
-  fabricated), then proceeds as a normal cycle. Any failure in this first
-  cycle follows the normal halt/alarm paths — the first unattended cycle
-  fails visibly and safely, it cannot silently burn the day. (#1, A4, A20)
+  is the bootstrap state ONLY if the broker account is also virgin — zero
+  positions and zero non-terminal orders. Then the cycle journals
+  `BOOTSTRAP` (broker snapshot as the opening baseline; no "state then"
+  exists and none is fabricated) and proceeds as a normal cycle. An empty
+  journal facing a NON-empty account (lost/corrupted journal, wrong working
+  directory, fresh clone without the journal branch) is NOT bootstrap: it is
+  a `GAP` with unknown prior state, and every broker item is non-MATCHED by
+  definition → G10 reconciliation + halt. A foreign book is never silently
+  adopted as an opening baseline. Any failure in this first cycle follows
+  the normal halt/alarm paths — the first unattended cycle fails visibly
+  and safely, it cannot silently burn the day. (#1, A4, A20)
 - **S-CYC-10** Failed resolution stays blocking: if phase 0 cannot resolve a
   `CONFIRMATION_UNCLEAR` item or other unexplained state (broker still
   unreachable, lookup ambiguous), the item remains open, new entries remain
   blocked, and each cycle journals the still-unresolved state. Only a
   successful classification unblocks — "we tried" does not. (A2, A3)
+- **S-CYC-11** Startup config validation, fail closed: before any broker
+  call, the shell validates the mandatory configuration — `EXPECTED_
+  ACCOUNT_ID` set and non-empty (an empty comparison never passes, see
+  S-J-06), and the bound constraint of S-G12-02 satisfied. Any violation →
+  the agent refuses to arm: no orders ever, `CONFIG_INVALID` journaled
+  locally, active fail-signal to the dead-man check (S-G14-03). Missing
+  configuration is indistinguishable from wrong configuration — both are
+  fail-closed. (A24, A18)
 
 ## 3. Entry gates
 
@@ -240,9 +263,12 @@ rest are still evaluated.
 - **S-G8-06** Sleeve–structure consistency: the sleeve tag must match the
   structure's economics — net-credit structures (credit spreads, iron
   condors) may only carry `income`; net-debit structures and long options
-  may only carry `convex`. A mismatch (e.g., a credit condor tagged
-  `convex`, which would be measured against the wrong budget basis) → veto
-  `SLEEVE_MISMATCH`. The tag is validated, never trusted. (A14, CONCEPT §2)
+  may only carry `convex`. The economics are computed from the legs' quoted
+  prices (sign of the net premium), never from the declared structure type;
+  an exactly-zero net premium is degenerate → veto. A mismatch (e.g., a
+  credit condor tagged `convex`, which would be measured against the wrong
+  budget basis) → veto `SLEEVE_MISMATCH`. The tag is validated, never
+  trusted. (A14, CONCEPT §2)
 
 ## 4. Lifecycle gates
 
@@ -255,9 +281,10 @@ rest are still evaluated.
   and *tracked to a terminal state*: an eviction close that does not fill
   (liquidity, rejection) re-enters every subsequent cycle via the
   close-escalation ladder (§7) until the position is actually closed;
-  "a close was generated once" never satisfies this case. If the position is
-  still open at the last cycle before its expiry session, halt + alarm while
-  close attempts continue. (A17)
+  "a close was generated once" never satisfies this case. If the position
+  is still open in a cycle after which no further cycle is scheduled before
+  that session's close, halt + active fail-signal on the dead-man check
+  (S-G14-03) while close attempts continue. (A17)
 - **S-G9-03** Eviction closes are management actions: they run under halt
   and on Friday, and they are never leg-wise on intact structures. (A11)
 
@@ -272,11 +299,13 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G10-02** Any non-MATCHED item → `RECONCILIATION` entry with the
   classification, halt new entries, and generate risk-reducing resolution
   actions. Resolution is driven, not hoped for: residue closes use the
-  close-escalation ladder (§7) every cycle; if a residue has not reached a
-  terminal state within `RESIDUE_MAX_SESSIONS`, the condition alarms through
-  the dead-man channel (it is a genuine "developer must look" state) while
-  attempts and halt continue. "No opportunity yet", repeated forever, is
-  non-conforming. (A2)
+  close-escalation ladder (§7) every cycle; if ANY unresolved non-MATCHED
+  item — `RESIDUE`, `CONFIRMATION_UNCLEAR`, `UNKNOWN_ORDER`, an unexplained
+  `HUMAN_ACTION` delta — has not reached a terminal state within
+  `RESIDUE_MAX_SESSIONS`, the condition raises an active fail-signal on the
+  dead-man check (S-G14-03; it is a genuine "developer must look" state)
+  while attempts and halt continue. "No opportunity yet", repeated forever,
+  is non-conforming. (A2)
 - **S-G10-03** Assignment overnight: morning cycle finds shares + orphan
   long leg → classified `RESIDUE`; resolution may act leg-wise because the
   structure is already broken and each step strictly reduces risk. (A11)
@@ -307,6 +336,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   full broker snapshot + reference to the submitted revision.
 - **S-G11-04** Fri US close: final snapshot, `TERMINAL` entry, controlled
   end of scheduler and dead-man expectation. Artifacts frozen thereafter.
+  If the S-G11-02 failure path is STILL not flat at Friday close, the
+  `TERMINAL` entry records the open remainder explicitly (structure, max
+  loss, expiry consequence) and raises the active fail-signal — the story
+  hands over to the owner in writing, never in silence.
 
 ## 5. State and failure gates
 
@@ -315,12 +348,23 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G12-01** Lock held by a live instance → the second instance makes no
   broker call, appends a single `SUPPRESSED` line, exits 0. (#23, #40)
 - **S-G12-02** Stale lock (holder provably dead, heartbeat older than
-  `LOCK_TAKEOVER_BOUND`) → takeover journaled. The bound is constrained,
-  not assumed: `LOCK_TAKEOVER_BOUND` must exceed the worst-case cycle
-  wall-time (all phase timeouts summed, `ANALYST_TIMEOUT` included), and the
-  holder writes a lock heartbeat at every phase boundary — a slow-but-alive
-  cycle (a 4-minute analyst call, #13) can therefore never look dead. Only
-  under these two constraints is "two live holders" excluded. (#23, A13)
+  `LOCK_TAKEOVER_BOUND`) → takeover journaled. The bound is constrained by
+  enumerable quantities, not prose: `CYCLE_WALLTIME_BUDGET` is the
+  shell-enforced ceiling on total cycle wall-time (every phase timeout lives
+  under it), `LOCK_TAKEOVER_BOUND > CYCLE_WALLTIME_BUDGET`, and
+  `LOCK_TAKEOVER_BOUND + CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET ≤
+  DEAD_MAN_BOUND` — so a legitimate takeover completes and journals before
+  the watchdog's staleness bound can fire on the gap the takeover itself
+  creates. The holder writes a lock heartbeat at every phase boundary — a
+  slow-but-alive cycle (a 4-minute analyst call, #13) can never look dead.
+  A configuration violating either inequality never arms (S-CYC-11). Only
+  under these constraints is "two live holders" excluded. (#23, A13, A18)
+- **S-G12-03** Halt flag set → all entry actions veto `HALT`; management
+  actions (eviction, residue closes, flatten, kill-switch) still run.
+- **S-G12-04** Un-halt is manual and journaled; no code path clears the
+  flag. (A19)
+- **S-G12-05** The halt flag is a persisted file, part of the snapshot, and
+  a core input — not ambient state read inside the core.
 - **S-G12-06** Credential fence (decision D): an auth failure (401/403) is
   journaled as `AUTH_FAILURE` — a distinguishable state, not generic
   `WORLD_UNREACHABLE` — and blocks all orders. The runbook fact is spec:
@@ -329,12 +373,6 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   dashboard, and the fence is drilled once on the dev account pre-arm
   (drill outcome journaled there). Re-arm after a fence only under halt,
   after full reconciliation. (#34, A19)
-- **S-G12-03** Halt flag set → all entry actions veto `HALT`; management
-  actions (eviction, residue closes, flatten, kill-switch) still run.
-- **S-G12-04** Un-halt is manual and journaled; no code path clears the
-  flag. (A19)
-- **S-G12-05** The halt flag is a persisted file, part of the snapshot, and
-  a core input — not ambient state read inside the core.
 
 ### G13 — drawdown kill-switch
 
@@ -357,12 +395,18 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G14-03** External detection (decision C): the agent pings
   healthchecks.io only AFTER a durable local journal append; the check's
   schedule follows `America/New_York` session slots; missed ping alerts
-  Felix within the 45–60 min SLA via mail + the named push channel.
+  Felix within the 45–60 min SLA via mail + the named push channel. The
+  same check also carries ACTIVE alarms: alarm-worthy conditions (residue
+  escalation S-G10-02, config invalid S-CYC-11, flatten violation S-G11-01,
+  ladder cap S-X-05) are signaled by an explicit fail-ping to the check's
+  fail endpoint — alerting immediately, not by waiting for a missed ping.
+  A cycle that journals such a condition sends the fail-ping INSTEAD of the
+  success ping.
 - **S-G14-04** Declared limit: watchdog and agent share the host; host death
   kills both — the backstop is construction (A23), and the SaaS blindness of
   a single dead-man service is part of the accepted A23 residual.
 
-## 6. Journal and publishing (A4–A10, A21, A24)
+## 6. Journal and publishing (A4–A10, A13, A21, A24)
 
 - **S-J-01** Format: JSONL, one entry per line, append-only; corrections are
   new entries referencing the corrected one. A torn last line (power cut) is
@@ -388,8 +432,9 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   distribution it buys ("paid from": income drift vs. convex tail), (b) a
   reference to at least one concrete snapshot datum it rests on (the quotes
   or chain facts used), and (c) candidate-specific free text naming
-  underlying and structure. Mechanically testable floor: two different
-  candidates must never produce byte-identical rationale text, and a
+  underlying and structure. Mechanically testable floor: no two INTENT
+  entries anywhere in the journal's lifetime may carry byte-identical
+  rationale text, and a
   rationale without a snapshot reference fails. Boilerplate ("gates
   passed") is non-conforming. (A5, #31)
 - **S-J-05** Secrets: journal schemas contain no free-form environment
@@ -402,19 +447,21 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   `PA349COOGKZ1` pre-arm), NOT derived from `ALPACA_PROFILE` or from the
   credentials. At startup and before every order, the account ID that the
   broker itself reports for the active credentials must equal
-  `EXPECTED_ACCOUNT_ID`; mismatch → refuse all orders, journal, halt.
+  `EXPECTED_ACCOUNT_ID`; mismatch → refuse all orders, journal, halt. An
+  unset or empty `EXPECTED_ACCOUNT_ID` is a config error, fail-closed per
+  S-CYC-11 — an empty-vs-empty comparison never counts as a match.
   Every order-related entry records the account ID. Live endpoints are not
   configured anywhere. (A24)
-- **S-J-08** Branch isolation is checked, not assumed: the journal writer
-  pushes exclusively to the configured journal branch and refuses any other
-  ref — a test configures a non-journal target and asserts refusal. Human
-  submission work never touches that branch (enforced by convention plus
-  the writer-side refusal; the collision of #44 is thereby structurally
-  one-sided). (A13, #44)
 - **S-J-07** Dashboard renders exclusively from the journal; it shows a
   last-updated stamp; a stale dashboard is visibly stale, and its worst
   momentary state (mid-build, half-pushed) is still dated and coherent.
   (A9, A10)
+- **S-J-08** Branch isolation is checked, not assumed: the journal writer
+  pushes exclusively to the configured journal branch and refuses any other
+  ref — a test configures a non-journal target and asserts refusal; the
+  refusal itself is journaled locally. Human submission work never touches
+  that branch (enforced by convention plus the writer-side refusal; the
+  collision of #44 is thereby structurally one-sided). (A13, #44)
 
 ## 7. Execution pricing (A15)
 
@@ -431,15 +478,22 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   G2 reservation is released (S-G2-07); the journal can never show it as
   executed. (#17, A5)
 - **S-X-04** Asynchronous rejection (accepted, later rejected): the status
-  change is picked up by the same cycle's post-submit poll or the next
-  cycle's phase 0, journaled as in S-X-03, reservation released. Until the
+  change is picked up by the executor's post-submit status check (part of
+  phase 4) or by the next cycle's phase 0, journaled as in S-X-03,
+  reservation released. Until the
   terminal status is seen, the order counts as fillable exposure (A23
   counting rule). (#17, A2)
 - **S-X-05** Close-escalation ladder (shared by G9/G10/G11 and the
   kill-switch): a risk-reducing close starts at mid, then re-prices by
   `CLOSE_ESCALATION_STEP` toward — and past — the opposing quote on every
   subsequent cycle, remaining a limit order at all times (a marketable
-  limit is still a limit; S-X-01 survives). Every re-price is journaled.
+  limit is still a limit; S-X-01 survives). The ladder is capped by the
+  structure's own defined-risk arithmetic: for a credit structure the close
+  debit never exceeds the width (wing) from which S-G1-02/03 computed
+  maxLoss; for a debit structure or long option the close credit never goes
+  below zero. Reaching the cap → the order rests AT the cap, halt + alarm,
+  attempts continue at the cap — so the realized exit cost can never exceed
+  the maxLoss the budgets were charged with. Every re-price is journaled.
   The ladder never crosses into opening exposure and never legs out of an
   intact structure (A11).
 
@@ -448,10 +502,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 ## Traceability
 
 Axiom → cases (spot map; the adversarial pass checks the inverse too):
-A1 (S-CYC-08, S-CORE-01), A2 (S-CYC-04, G10), A3 (S-CORE-02, S-CYC-02, G5),
-A4 (S-CYC-01/03, S-J-03), A5 (S-J-04, S-G10-04), A6 (S-J-01), A7 (S-CYC-06),
-A8 (S-J-05), A9 (S-CYC-07, S-J-07), A10 (S-J-07), A11 (G1, S-G9-03,
-S-G10-03), A12 (G8, S-CYC-01), A13 (G7, S-CYC-05, S-G12-01), A14 (G2),
-A15 (§7), A16 (G6), A17 (G9, G11), A18 (S-G14-03), A19 (S-G12-03/04,
-G13-03), A20 (S-CYC-08), A21 (S-J-02), A22 (G11), A23 (G2 counting,
-S-G14-04), A24 (S-J-06).
+A1 (S-CYC-08, S-CORE-01), A2 (S-CYC-04/10, G10), A3 (S-CORE-02, S-CYC-02,
+G5), A4 (S-CYC-01/03/09, S-J-03), A5 (S-J-04, S-G10-04, S-X-03), A6
+(S-J-01), A7 (S-CYC-06), A8 (S-J-05), A9 (S-CYC-07, S-J-07), A10 (S-J-07),
+A11 (G1, S-G9-03, S-G10-03, S-X-05), A12 (G8, S-CYC-01), A13 (G7,
+S-CYC-05, S-G12-01/02, S-J-08), A14 (G2, S-G8-06), A15 (§7), A16 (G6),
+A17 (G9, G11), A18 (S-G14-03, S-CYC-11), A19 (S-G12-03/04/06, G13-03),
+A20 (S-CYC-08/09), A21 (S-J-02), A22 (G11), A23 (G2 counting, S-G14-04),
+A24 (S-J-06, S-CYC-11).
