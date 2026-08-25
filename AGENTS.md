@@ -1,8 +1,19 @@
 # Glass Box Trading — agent instructions
 
 Yes, this file is committed on purpose. A glass-box project publishes its build
-rules along with its decisions. Design baseline: [`CONCEPT.md`](CONCEPT.md) —
-read it first; this file only adds working conventions.
+rules along with its decisions. [`CONCEPT.md`](CONCEPT.md) is the design
+baseline; this file adds working conventions.
+
+## Session bootstrap
+
+At the start of each session:
+
+1. Read [`REPO_MAP.md`](REPO_MAP.md) and [`TEST_MAP.md`](TEST_MAP.md) before
+   searching the tree.
+2. Read [`STATE.md`](STATE.md), then verify it against the current branch and
+   `git status`.
+3. Read [`DECISIONS.md`](DECISIONS.md) before changing established architecture.
+4. Read [`CONCEPT.md`](CONCEPT.md) before making product or strategy decisions.
 
 ## Invariants (do not relax)
 
