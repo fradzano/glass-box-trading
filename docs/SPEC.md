@@ -42,6 +42,24 @@ parameter — no constant below may be hardcoded in core logic.
 | `LOCK_TAKEOVER_BOUND` | *O5* | constraint: `> CYCLE_WALLTIME_BUDGET`, and `LOCK_TAKEOVER_BOUND + CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET ≤ DEAD_MAN_BOUND` (see S-G12-02) |
 | `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
 
+## 0.5 Build priority — the MVP cut (added 2026-08-25, spec-pass NUT-1)
+
+The schedule itself gates arming: CONCEPT §8 arms the competition account
+only after Monday's pre-arm live test. The 86 cases below therefore carry an
+explicit priority, so a solo build weekend never has to guess what may slip:
+
+- **Tier 1 — no order without it (build weekend, red-first):** S-CORE-01..03,
+  S-CYC-01/02/04/05/06, G1, G2, G3, G4, G6, G7, G8 (incl. S-G8-06), G12
+  (S-G12-01..05), G13, S-J-01..06, S-X-01/02/03.
+- **Tier 2 — before the first unattended session (Mon arming):** G5, G10,
+  G14, S-CYC-03/07/08/09/10/11, S-X-04/05, S-J-07/08.
+- **Tier 3 — before Thursday Sep 3 (first expiry/deadline pressure):** G9,
+  G11.
+
+Tiers schedule the work; they do not waive it — a tier missing at its own
+deadline blocks arming (tier 2) or requires a manual flatten decision by the
+owner (tier 3), journaled either way.
+
 ## 1. Core contract
 
 `decide(snapshot, candidates, config, now) → { verdicts, actions }` — pure:
@@ -72,8 +90,10 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
 
 - **S-CYC-01** Analyst error / timeout / 429, when the cycle runs, then
   phases 0–1 and 3–5 still run with `candidates = []` (management-only), a
-  `SKIP` reason is journaled, and the process exits cleanly — no crash-loop,
-  no retry storm. (A4, A12)
+  `SKIP` reason is journaled, and the process exits cleanly. Bounded, not
+  rhetorical: the analyst is invoked at most ONCE per cycle (no in-process
+  retry), and the process never relaunches itself — restarts come only from
+  the scheduler at the next interval. (A4, A12)
 - **S-CYC-02** Broker API half-answer (positions OK, orders endpoint fails —
   or vice versa), then the snapshot is marked incomplete, the core receives
   no candidates and emits no order actions, and the cycle journals
@@ -402,9 +422,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   fail endpoint — alerting immediately, not by waiting for a missed ping.
   A cycle that journals such a condition sends the fail-ping INSTEAD of the
   success ping.
-- **S-G14-04** Declared limit: watchdog and agent share the host; host death
-  kills both — the backstop is construction (A23), and the SaaS blindness of
-  a single dead-man service is part of the accepted A23 residual.
+- **S-G14-04** Declared limit — NOT a test case, no red-first obligation:
+  watchdog and agent share the host; host death kills both — the backstop is
+  construction (A23), and the SaaS blindness of a single dead-man service is
+  part of the accepted A23 residual. The testable surface of G14 is
+  S-G14-01..03; this entry exists so the limit is stated where its gate is,
+  not silently.
 
 ## 6. Journal and publishing (A4–A10, A13, A21, A24)
 
@@ -453,9 +476,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   Every order-related entry records the account ID. Live endpoints are not
   configured anywhere. (A24)
 - **S-J-07** Dashboard renders exclusively from the journal; it shows a
-  last-updated stamp; a stale dashboard is visibly stale, and its worst
-  momentary state (mid-build, half-pushed) is still dated and coherent.
-  (A9, A10)
+  last-updated stamp; a stale dashboard is visibly stale. "Coherent" is
+  operational, not aspirational: every displayed figure derives from the
+  entries of ONE committed journal revision, the page names that revision
+  next to its last-updated stamp, and builds are atomic (render aside, then
+  swap) — a viewer never sees a half-written page. Test: a build
+  interrupted mid-render leaves the previous page fully intact. (A9, A10)
 - **S-J-08** Branch isolation is checked, not assumed: the journal writer
   pushes exclusively to the configured journal branch and refuses any other
   ref — a test configures a non-journal target and asserts refusal; the
