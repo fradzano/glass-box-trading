@@ -5,7 +5,10 @@ axioms, owner-reviewed) per the build order Szenario → Axiom → Spec → Code
 This spec is *measured against* [`docs/SCENARIOS.md`](SCENARIOS.md) — the
 catalog is never edited to fit this file. Every case cites the axioms it
 concretizes. Case IDs are stable: tests reference them (`S-G2-06`), and the
-first implementation step is writing them red.
+first implementation step is writing them red. One entry is exempt by its
+own text: a case marked "Declared limit — NOT a test case" (currently only
+S-G14-04) documents an accepted residual and carries no red-first
+obligation.
 
 Status: draft for the capped adversarial pass (2–3 rounds, owner-agreed
 deviation from the full bis-0 end condition — DECISIONS.md 2026-08-24).
@@ -45,14 +48,20 @@ parameter — no constant below may be hardcoded in core logic.
 ## 0.5 Build priority — the MVP cut (added 2026-08-25, spec-pass NUT-1)
 
 The schedule itself gates arming: CONCEPT §8 arms the competition account
-only after Monday's pre-arm live test. The 86 cases below therefore carry an
-explicit priority, so a solo build weekend never has to guess what may slip:
+only after Monday's pre-arm live test. The 85 test cases below (plus one
+declared limit, S-G14-04, which has no deadline because it has no test)
+therefore carry an explicit priority, so a solo build weekend never has to
+guess what may slip:
 
 - **Tier 1 — no order without it (build weekend, red-first):** S-CORE-01..03,
-  S-CYC-01/02/04/05/06, G1, G2, G3, G4, G6, G7, G8 (incl. S-G8-06), G12
+  S-CYC-01/02/04/05/06/11, G1, G2, G3, G4, G6, G7, G8 (incl. S-G8-06), G12
   (S-G12-01..05), G13, S-J-01..06, S-X-01/02/03.
 - **Tier 2 — before the first unattended session (Mon arming):** G5, G10,
-  G14, S-CYC-03/07/08/09/10/11, S-X-04/05, S-J-07/08.
+  G14 (S-G14-01..03), S-G12-06 (fence drill is pre-arm by its own text),
+  S-CYC-03/07/08/09/
+  10, S-X-04/05, S-J-07/08. Note: the tier-1 kill-switch (S-G13-01) closes
+  via plain S-X-01 limits until the S-X-05 ladder lands in tier 2 — a known,
+  accepted weekend gap.
 - **Tier 3 — before Thursday Sep 3 (first expiry/deadline pressure):** G9,
   G11.
 
