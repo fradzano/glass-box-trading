@@ -5,7 +5,8 @@
 - `.node-version`
 - `.npmrc`
 - `.nvmrc`
-- `CLAUDE.md` — Glass Box Trading — agent instructions
+- `AGENTS.md` — Glass Box Trading — agent instructions
+- `CLAUDE.md`
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
