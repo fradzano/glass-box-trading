@@ -233,3 +233,13 @@ small, no ADR split).
   separate checks. Generated Python bytecode is never a verification exclusion:
   the launcher removes it, proves it absent, and disables bytecode writes in the
   child before checking immutable source/package bytes and spawning.
+- **2026-08-25 — Pre-kickoff code is allowed, visible, and not mislabelled.**
+  The published Alpaca event contract contains no all-code-during-event rule and
+  explicitly encourages a head start. We may therefore build the TypeScript
+  foundation, dev-account vertical slice, tests, deployment shell, and delivery
+  sources before kickoff. Preserve that history and create a
+  `pre-kickoff-baseline` tag rather than squashing or redating it. Competition
+  account creation and competition activity remain kickoff-gated. Substantial
+  AI/Alpaca integration, competition hardening, and golden-path evidence must
+  still land as honest event-window commits; any stricter kickoff instruction
+  supersedes this decision before further implementation.

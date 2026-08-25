@@ -37,6 +37,7 @@ external contract; they may not silently weaken it.
 - Rule Book: <https://lablab.ai/hackathon-rules>
 - Submission Guidelines: <https://lablab.ai/delivering-your-hackathon-solution>
 - Hackathon process guide: <https://lablab.ai/ai-articles/hackathon-guidelines>
+- General AI hackathon guide: <https://lablab.ai/guide/ai-hackathons>
 - Winning guide: <https://lablab.ai/guide/how-to-win-an-ai-hackathon>
 - Participation and prize terms: <https://lablab.ai/terms-of-use#16-participation-terms>
 
@@ -46,6 +47,7 @@ external contract; they may not silently weaken it.
 |---|---|---|
 | Window | Kickoff is **2026-08-28 17:00 CEST**. Submissions close **2026-09-04 17:00 CEST**. The event is online and seven days long. | The competition window touches the open US market on both Fridays: about five hours after kickoff on Aug 28 and 90 minutes before the deadline on Sep 4. It therefore touches six US trading sessions, not five. |
 | Main challenge | Build an autonomous AI trading agent designed to generate P&L and show how it finds opportunities, decides, manages positions, and performs during the competition. | A safe agent without visible trading performance is an incomplete entry. The account, journal, dashboard, and presentation must expose the performance story. |
+| Pre-kickoff work | The Alpaca event page encourages participants to study the available technology and get a head start before kickoff. It publishes no event-specific rule that all code must be written during the event. The general lablab.ai guide says pre-existing code, open-source libraries, starter templates, and prior non-AI scaffolding are generally allowed, while noting that many events expect the core AI functionality to be built during their event window and that event-specific rules control. | Pre-kickoff implementation is allowed under the currently published Alpaca contract. Keep its commit dates visible, do not present it as event-window work, and land substantial AI/Alpaca integration and golden-path work during the event. Recheck the actual form and kickoff announcements once. |
 | Required Alpaca use | The agent must use Alpaca's Trading API and use either the Alpaca MCP server or Alpaca CLI. | The submitted evidence must show real Alpaca integration and meaningful AI participation. Our design uses the MCP server for the analyst and REST/CLI for execution. |
 | Options | Every strategy must incorporate options trading. | Options support is an eligibility requirement, not an optional extension. |
 | Development account | Any paper account may be used for development and experiments. | The current dev account remains the only test sandbox. |
@@ -99,6 +101,8 @@ The public material does not state:
 - the exact P&L calculation or its judging weight;
 - whether all eligible accounts must place their first trade at the same time;
 - whether the competition account may be created before kickoff;
+- whether a kickoff announcement adds a stricter code-origin boundary than the
+  currently published event page;
 - the judging end date;
 - whether the submission form adds event-specific fields not visible on the
   event page.
