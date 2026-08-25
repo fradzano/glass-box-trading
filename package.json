@@ -16,9 +16,10 @@
     "architecture": "node tools/check-core-architecture.mjs --self-test",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "fixture": "npm run build && node dist/shell/render-fixture.js",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run architecture && npm run build && python tools/check_implementation_phases.py"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run architecture && npm run fixture && python tools/check_implementation_phases.py"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "24.13.3",
     "eslint": "10.9.1",
     "typescript": "6.0.3",

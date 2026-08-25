@@ -6,6 +6,7 @@
 # Node / TypeScript
 node_modules/
 dist/
+artifacts/
 *.tsbuildinfo
 
 # Local scratch

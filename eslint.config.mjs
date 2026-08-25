@@ -23,8 +23,17 @@ export default tseslint.config(
     },
   },
   {
+    files: ["tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off"
+    }
+  },
+  {
     files: ["**/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
     languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
       globals: {
         console: "readonly",
         process: "readonly"

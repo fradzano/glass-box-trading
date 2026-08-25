@@ -258,3 +258,16 @@ small, no ADR split).
   `598f43e`; begin P1 on `p1/pure-entry-core`.** `main` remains release-only,
   `concept` remains as the historical planning ref, and no remote or push is
   created by this branch cut.
+- **2026-08-26 — P1 represents money, option prices, strikes, ratios, quantities,
+  basis points, and timestamps as branded safe integers.** Risk comparisons use
+  integer cross-multiplication, so binary floating point never enters max-loss,
+  budget, concentration, liquidity, or whitelist decisions. Unfrozen O5 values
+  exist only in conspicuously named `TEST_ONLY_*` fixtures; the core has no
+  defaults for them.
+- **2026-08-26 — P1 makes the Functional Core / Imperative Shell boundary a
+  checked filesystem boundary.** `src/core/**` may import only within itself;
+  the architecture gate rejects platform/package imports, ambient time,
+  randomness, environment/global access, module-scope mutable state, and
+  relative escapes. Fixture I/O and HTML rendering live under `src/shell/**`.
+  The local pass stops at `ENTRY_ACTION_PLAN`; no order-capable port or adapter
+  exists in P1.

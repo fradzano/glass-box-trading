@@ -47,12 +47,12 @@ describe("G6 session and tradability", () => {
     const scoped = snapshot({
       quotesByContract: { ...snapshot().quotesByContract, "QQQ-C-600": quote() },
       knownContractIds: [...snapshot().knownContractIds, "QQQ-C-600"],
-      priorQuotesByUnderlying: { SPY: snapshot().priorQuotesByUnderlying.SPY! },
+      priorQuotesByUnderlying: { SPY: snapshot().priorQuotesByUnderlying["SPY"]! },
     });
     const result = decide(scoped, { kind: "candidates", candidates: [candidate(), qqqCandidate] }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
     expect(result.candidateVerdicts.map(verdict => verdict.gateVector[5]?.passed)).toEqual([true, false]);
 
-    const overAge = snapshot({ priorQuotesByUnderlying: { SPY: { observedAt: integerUnit(TEST_ONLY_NOW - 2 * TEST_ONLY_O5_CONFIG.cycleIntervalMs - 1, "EpochMilliseconds"), quotesByContract: snapshot().priorQuotesByUnderlying.SPY!.quotesByContract } } });
+    const overAge = snapshot({ priorQuotesByUnderlying: { SPY: { observedAt: integerUnit(TEST_ONLY_NOW - 2 * TEST_ONLY_O5_CONFIG.cycleIntervalMs - 1, "EpochMilliseconds"), quotesByContract: snapshot().priorQuotesByUnderlying["SPY"]!.quotesByContract } } });
     expect(sessionGate(overAge).reasons).toContainEqual(expect.stringContaining("history"));
   });
 });

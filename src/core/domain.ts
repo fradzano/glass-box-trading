@@ -5,8 +5,8 @@ export type IntegerUnit<Name extends string> = number & {
 };
 
 export type MoneyCents = IntegerUnit<"MoneyCents">;
-export type OptionPriceCents = IntegerUnit<"OptionPriceCentsPerShare">;
-export type StrikeCents = IntegerUnit<"StrikeCentsPerShare">;
+export type OptionPriceCents = IntegerUnit<"OptionPriceCents">;
+export type StrikeCents = IntegerUnit<"StrikeCents">;
 export type BasisPoints = IntegerUnit<"BasisPoints">;
 export type EpochMilliseconds = IntegerUnit<"EpochMilliseconds">;
 export type Quantity = IntegerUnit<"Quantity">;

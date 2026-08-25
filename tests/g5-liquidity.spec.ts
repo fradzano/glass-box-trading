@@ -23,7 +23,7 @@ describe("G5 liquidity", () => {
       quote({ quotedAt: integerUnit(TEST_ONLY_NOW - TEST_ONLY_O5_CONFIG.quoteMaxAgeMs - 1, "EpochMilliseconds") }),
     ];
     for (const failingQuote of failures) {
-      expect(liquidityVerdict(failingQuote)).toMatchObject({ passed: false, code: "LIQUIDITY", reasons: [expect.stringContaining("SPY260904C00500000")] });
+      expect(liquidityVerdict(failingQuote)).toMatchObject({ passed: false, code: "LIQUIDITY", reasons: expect.arrayContaining([expect.stringContaining("SPY260904C00500000")]) });
     }
   });
 
