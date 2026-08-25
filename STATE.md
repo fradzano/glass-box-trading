@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-24 (late evening)
+**Last updated:** 2026-08-25 (daytime)
 **Branch:** `concept` (no `main` yet — created at publish time, no GitHub remote yet)
 
 ## Done
@@ -27,18 +27,16 @@
 
 ## Now
 
-**Build order ladder in progress: Szenario ✅ → Axiom → Spec → Code.**
-Next working session (Tue Aug 25, owner has the day off):
+**Build order ladder in progress: Szenario ✅ → Axiom ✅ → Spec → Code.**
 
-1. Distill the 48 scenarios into behavioral axioms (owner reviews — some are
-   real owner calls, e.g. the accepted worst case for N hours of unattended
-   silence, scenario #42).
-2. Concretize axioms into the spec (cases per gate) — this becomes the
-   red-first test oracle.
-3. Capped adversarial pass on the spec: 2–3 rounds max (owner-agreed deviation
-   from the full bis-0 end condition; if not at 0 at the cap, declare and the
-   owner decides).
-4. Only then: TypeScript foundation (scaffold, journal types, pure core).
+- Axioms distilled (24, `docs/AXIOMS.md`), owner-reviewed 2026-08-25
+  (blind/gate pass; 1 A + several B findings fixed, incl. new A24 account
+  binding). Owner calls A–D decided — see DECISIONS.md 2026-08-25 entries.
+- Next: concretize axioms into the spec (cases per gate) — the red-first test
+  oracle; then the capped adversarial pass: 2–3 rounds max (owner-agreed
+  deviation from the full bis-0 end condition; if not at 0 at the cap,
+  declare and the owner decides).
+- Only then: TypeScript foundation (scaffold, journal types, pure core).
 
 ## Next (after the ladder)
 

@@ -33,3 +33,41 @@ small, no ADR split).
   in the same environment (precedence). (CONCEPT §9 O2)
 - **2026-08-24 — Journal lives on a dedicated `journal` branch** (Vercel prod
   branch); humans never commit there. (CONCEPT §5)
+- **2026-08-25 — Axiom distillation reviewed (owner-directed blind/gate pass,
+  explicitly NOT a terminated bis-0 run).** Findings fixed before the spec:
+  A finding — no axiom bound the executor to the permitted account (→ new
+  A24); B findings — A23 ignored fillable/confirmation-unclear entry orders,
+  A11's "never leg-wise" forbade risk-reducing recovery after assignment or
+  orphan fills, missing pre-submit revalidation under concurrent human action
+  (→ A13), missing working-order ownership across trading halts (→ A16),
+  missing concrete "why" per fill (→ A5). Distillation declared load-bearing
+  after these fixes. (docs/AXIOMS.md)
+- **2026-08-25 — Owner call A (A23): unattended worst case accepted as max
+  $12k income + $8k convex against the initial $100k paper capital.**
+  Counting rule: exactly once per exposure-lifecycle identity — filled
+  position plus fillable or confirmation-unclear entry remainder or INTENT;
+  partial fills split into filled portion and remaining reservation; exit
+  orders not counted additionally. $20k is the declared constructive paper
+  worst case, not a guarantee against broker/assignment/liquidation
+  mechanics.
+- **2026-08-25 — Owner call B (A22): Friday is journaling-only.** Thursday
+  close = zero positions and zero non-terminal orders, so Friday broker
+  mutations are technically excluded. 17:00 CEST: dedicated
+  `DEADLINE_RECONCILIATION` cycle with full broker snapshot and a reference
+  to the submitted revision. US close: final snapshot, durable terminal
+  state, controlled end of scheduler and dead-man expectation. Account and
+  published artifacts stay unchanged and available at least through judging.
+- **2026-08-25 — Owner call C (A18): silence SLA is 45–60 minutes ABSOLUTE**
+  (not "two missed cycles"). healthchecks.io check: pre-activated, finite,
+  cron/OnCalendar on `America/New_York` and the actual session slots; ping
+  only after a durable local journal append; mail plus one concretely named
+  push channel, both tested in practice; ping URL stays secret. SaaS
+  blindness is declared as an A23 residual — two delivery paths of one
+  service are not two detectors.
+- **2026-08-25 — Owner call D (A19): panic path is NOT key regeneration
+  alone** — it is a credential fence, not an atomic stop (accepted/working
+  orders survive; cancellation is a separate operation). Halt flag = calm
+  stop. Key rotation qualifies as broker-side panic fence only after a
+  dev-account drill proving a single order-capable credential, and is always
+  followed by a working-order check/cancellation in the broker dashboard.
+  Re-arm exclusively under halt after full reconciliation.
