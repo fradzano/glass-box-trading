@@ -243,3 +243,14 @@ small, no ADR split).
   AI/Alpaca integration, competition hardening, and golden-path evidence must
   still land as honest event-window commits; any stricter kickoff instruction
   supersedes this decision before further implementation.
+- **2026-08-25 — Implementation advances through proof-gated phases.**
+  `docs/IMPLEMENTATION-PLAN.md` is the canonical phase launcher. It schedules
+  the 90 runtime cases once across P1–P7 and then separates kickoff, competition
+  operation, and submission into P8–P10. The plan never redefines behavior:
+  scenarios, axioms, runtime SPEC, and submission SPEC remain authoritative.
+  `STATE.md` names exactly one active phase; session notes point there instead
+  of carrying a second checklist. A green suite is necessary but cannot advance
+  a phase without its architecture, evidence, verification, documentation, and
+  clean-commit gates. `config/implementation-phases.json` owns the case-to-phase
+  allocation, and `tools/check_implementation_phases.py` rejects omissions,
+  overlaps, stale patterns, or count drift against `docs/SPEC.md`.

@@ -6,8 +6,10 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-25 (winning-path review)
+**Last updated:** 2026-08-25 (implementation phase plan)
 **Branch:** `concept` (no `main` yet — created at publish time, no GitHub remote yet)
+**Current implementation phase:** P1 — pure entry-decision core
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p1--pure-entry-decision-core))
 
 ## Done
 
@@ -33,6 +35,12 @@
   criterion evidence paths, public golden demo, dashboard performance payload,
   video, deck, one-pager, cover, form copy, account evidence, preflight, and
   anonymous acceptance of post-submit dashboard revisions.
+- **Pre-kickoff implementation boundary decided:** published Alpaca rules permit
+  a head start. Pre-event commits remain visible and are tagged as the baseline
+  at kickoff; competition account creation and activity remain kickoff-gated.
+- **Implementation is partitioned into proof-gated phases P1–P10:**
+  `docs/IMPLEMENTATION-PLAN.md` assigns all 90 runtime test cases exactly once
+  across P1–P7, then owns the release, operation, and submission stage gates.
 
 ## Now
 
@@ -72,14 +80,19 @@ reverse read ✅ → Code next.**
   spec, decisions, submission acceptance, and `docs/EVIDENCE-DEBT.md`, then
   counter-verified. This was an adversarial winning-path review, not a formal
   bis-0 termination; executable implementation paths remain evidence debt.
-- Next: TypeScript foundation — scaffold, journal types, pure core, red-first
-  tests per SPEC §0.5 tiers, evidence-debt paths first-class, and the public
-  golden path as an equal delivery axis.
+- **P1 is next:** build the TypeScript/Node foundation and complete pure
+  entry-decision core for S-CORE-01..03 and G1–G8 (37 cases), including the
+  architecture boundary and a local glass-box fixture. No broker-capable
+  adapter exists in this phase. Acceptance and failure conditions live only in
+  the linked P1 plan section.
 
-## Next (after the ladder)
+## Next (after P1)
 
-- Aug 26–27: foundation + gates + tests and S-ARM-01's runtime/policy-bound
-  market-hours certificate on the DEV account.
+- Continue P2–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
+  its shared and phase-specific gates pass. A waiver counts only where the
+  owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
+- Aug 26–27 target: reach the P7 market-hours dev certificate if every earlier
+  phase passes; schedule pressure delays arming rather than collapsing phases.
 - Fri Aug 28 kickoff 17:00 CEST: inspect the real submission form, create the
   competition account (owner), put its keys in `.env` (`ALPACA_COMP_*`),
   publish GitHub + Vercel, and arm in the partial session only if pre-arm gates

@@ -6,14 +6,17 @@
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
+- `config/implementation-phases.json`
 - `DECISIONS.md` — DECISIONS
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
 - `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
+- `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `STATE.md` — STATE — live cursor
+- `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
