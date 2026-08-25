@@ -16,9 +16,10 @@ Owner ruling on executability (spec-pass D16): this spec COUNTS AS
 EXECUTABLE — its configuration equations and closed journal sets form an
 executable surface. Consequently, findings that spec-pass closed only
 argumentatively are a named **evidence debt**: the red-first tests MUST
-execute each such finding's trigger path (authoritative list: spec-pass run
-ledger, `~/verify-runs/fradzano/glass-box-trading/spec-pass/LEDGER.md`);
-green tests without those paths do not discharge the debt.
+execute each such finding's trigger path. Authoritative, tracked register:
+[`docs/EVIDENCE-DEBT.md`](EVIDENCE-DEBT.md) (the machine-local run store
+holds the full finding texts but is not clone-portable — KGV-13). Green
+tests without those paths do not discharge the debt.
 
 ## 0. Configuration symbols
 
@@ -38,9 +39,10 @@ parameter — no constant below may be hardcoded in core logic.
 | `MAX_REL_SPREAD` | *O5* | liquidity gate, per leg; fraction of mid |
 | `MIN_QUOTE_SIZE` | *O5* | liquidity gate, per leg |
 | `QUOTE_MAX_AGE` | *O5* | seconds |
-| `SNAPSHOT_STALENESS_BOUND` | *O5* | seconds; actions void beyond it |
+| `SNAPSHOT_STALENESS_BOUND` | *O5* | seconds; actions void beyond it; coupling (validated at S-CYC-11): `≥ CYCLE_WALLTIME_BUDGET` and `≤ CYCLE_INTERVAL` |
 | `KILL_EQUITY_THRESHOLD` | *O5* | must price in planned convex decay |
-| `DEAD_MAN_BOUND` | 60 min effective | upper side of the 45–60 min SLA (decision C; frozen by owner ruling GV-2, 2026-08-25) |
+| `DEAD_MAN_BOUND` | 50 min detection | detection threshold; plus `ALERT_DELIVERY_BUDGET` the total stays AT the 60-min SLA edge (owner ruling GV-2: upper side of the 45–60 SLA; detection at 60 itself would push every delivery beyond the absolute SLA — KGV-17) |
+| `ALERT_DELIVERY_BUDGET` | 10 min | grace + delivery of the external check; `DEAD_MAN_BOUND + ALERT_DELIVERY_BUDGET ≤ 60 min` |
 | `CYCLE_INTERVAL` | 15 min | frozen by owner ruling GV-2, 2026-08-25; 30 min is EXCLUDED (incompatible with the coupling below) |
 | `UNDERLYING_UNIVERSE` | *O5* | liquid ETF class (SPY/QQQ …) |
 | `STRUCTURE_WHITELIST` | *O5* | vertical debit/credit, iron condor, long option |
@@ -87,17 +89,22 @@ identical outputs. (A1, A3; house FCIS rule)
 **Snapshot** (assembled by the shell, one fetch per cycle): account id +
 profile role, cash, equity, positions, ALL open orders, halt flag, exchange
 calendar segment for today, quotes for candidate and position legs (each
-quote carrying its own timestamp), the previous cycle's quote observations
-(owner ruling GV-8, 2026-08-25: reconstructed by the shell from the
-previous `CYCLE` journal entry — every `CYCLE` entry records the quote
-samples it observed, see S-J-03 — never from process memory; this
-satisfies A1's no-in-memory-state rule and makes the carry-over survive
-any restart), and `snapshotAt`. S-G6-05's frozen-market signal is computed
-from this parameter, never from state held inside the core. Missing or
-incomplete history (bootstrap, gap, torn entry) blocks ENTRIES only, never
-risk-reducing management, until a current plus an immediately-prior
-complete sample exist — before that, only reversible scaffold behavior is
-permitted.
+quote carrying its own timestamp), the previous quote observations
+(owner ruling GV-8, 2026-08-25: reconstructed by the shell from the most
+recent snapshot-bearing journal entry — every entry written from a taken
+snapshot records its quote samples, see S-J-03 — never from process
+memory; this satisfies A1's no-in-memory-state rule and makes the
+carry-over survive any restart), and `snapshotAt`. S-G6-05's
+frozen-market signal is computed from this parameter, never from state
+held inside the core. A prior sample qualifies only if it is at most
+`2 × CYCLE_INTERVAL` old — an overnight-stale sample would compare
+yesterday against now and silently disarm the frozen-market signal
+(KGV-12). Missing, incomplete, or over-age history blocks entries **per
+underlying** (the S-G6-05 scope governs; an underlying with valid history
+trades normally), never risk-reducing management; concretely, until a
+current plus a qualifying immediately-prior sample exist for an
+underlying, the cycle may fetch, journal, and manage risk there, but
+places no entry orders on it.
 
 - **S-CORE-01** Given identical (snapshot, candidates, config, now), when
   `decide` runs twice, then outputs are deeply equal. (FCIS)
@@ -140,7 +147,12 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   halt flag. ANY violated claim (position appeared/disappeared, human
   traded elsewhere in the account, an order filled meanwhile, equity
   crossed the kill threshold, epoch stale) voids the action, journaled
-  `REVALIDATION_VOID` — never submitted "because the core said so".
+  `REVALIDATION_VOID` **with the claimset and the violated claim as
+  journal fields** (A5: discrepancies explain themselves) — never
+  submitted "because the core said so". A kill-predicate breach seen here
+  is the freshest possible evidence of a kill state: it does not merely
+  void the action, it triggers the full S-G13-01 path (flatten + halt +
+  `KILL`) in the SAME cycle, not the next one.
   Quote-, calendar-, and chain-facts are not re-fetched here; their
   currency is bounded by S-CORE-02's staleness bound, which still applies
   at submit time. A narrower reading (only the target position) is
@@ -176,7 +188,10 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
 - **S-CYC-11** Startup config validation, fail closed: before any broker
   call, the shell validates the mandatory configuration — `EXPECTED_
   ACCOUNT_ID` set and non-empty (an empty comparison never passes, see
-  S-J-06), and the bound constraint of S-G12-02 satisfied. Any violation →
+  S-J-06), the bound constraints of S-G12-02 satisfied, the
+  `SNAPSHOT_STALENESS_BOUND` coupling of §0 satisfied, and — if
+  `STRUCTURE_WHITELIST` contains any short-capable structure — the S-X-06
+  capability flag present. Any violation →
   the agent refuses to arm: no orders ever, `CONFIG_INVALID` journaled
   locally, active fail-signal to the dead-man check (S-G14-03). Missing
   configuration is indistinguishable from wrong configuration — both are
@@ -399,13 +414,14 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 ### G12 — single instance and halt (A13, A19)
 
 - **S-G12-01** Lock held by a live instance → the second instance makes no
-  broker call, appends a single `SUPPRESSED` line, exits 0. `SUPPRESSED` is
-  **staleness-neutral**: it does not count as a journal append for the
-  watchdog's staleness clock (S-G14-02) and never triggers a success ping
-  (S-G14-03) — a dead or hanging holder can never be kept looking alive by
-  its own suppressed successors. Journal appends from any instance reach
-  the JSONL only serialized (single writer path / file lock), never
-  interleaved. (#23, #40; owner ruling GV-2, 2026-08-25)
+  broker call, appends a single `SUPPRESSED` line **as a witness append**
+  (the authority-free gateway class defined in S-G12-07), exits 0.
+  `SUPPRESSED` is **staleness-neutral**: it does not count as a journal
+  append for the watchdog's staleness clock (S-G14-02) and never triggers
+  a success ping (S-G14-03) — a dead or hanging holder can never be kept
+  looking alive by its own suppressed successors. Journal appends from any
+  instance reach the JSONL only serialized (single writer path / file
+  lock), never interleaved. (#23, #40; owner ruling GV-2, 2026-08-25)
 - **S-G12-02** Time alone NEVER grants writer authority (owner ruling GV-2,
   2026-08-25). A heartbeat older than `LOCK_TAKEOVER_BOUND` is only the
   *trigger* to attempt a takeover; the takeover itself proceeds exclusively
@@ -435,20 +451,32 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   dashboard, and the fence is drilled once on the dev account pre-arm
   (drill outcome journaled there). Re-arm after a fence only under halt,
   after full reconciliation. (#34, A19)
-- **S-G12-07** Writer fencing (owner ruling GV-2, 2026-08-25): writer
-  authority exists ONLY through (a) a held OS-level lock that the previous
-  holder has verifiably released, or (b) a monotone **control epoch**
-  validated at the SINGLE mutation gateway through which every broker
-  mutation and every journal append passes. Before any takeover — and
-  before the watchdog mutates anything (S-G14-02) — the old writer is
-  irrevocably fenced: the epoch is incremented and persisted, so a hung
-  holder that later wakes finds its epoch stale and every one of its
-  mutations is rejected at the gateway (it journals its own demise via the
-  serialized path and exits). Order of operations is fixed: fence →
-  reconcile (phase 0 against broker truth) → act. Tests: (1) a paused
-  writer resuming after a takeover gets every mutation rejected; (2) no
-  code path mutates broker or journal except through the gateway; (3) the
-  watchdog's flatten runs under its own incremented epoch. (#23, #9, A13)
+- **S-G12-07** Writer fencing (owner ruling GV-2, 2026-08-25; gateway
+  categories per KGV class fix): writer authority exists ONLY through
+  (a) a held OS-level lock that the previous holder has verifiably
+  released, or (b) a monotone **control epoch** validated at the SINGLE
+  mutation gateway through which every broker mutation and every journal
+  append passes. The gateway knows exactly two request classes:
+  **authoritative mutations** (orders, cancels, and all journal entries
+  that assert agency — `INTENT`, `OUTCOME`, `CYCLE`, `RECONCILIATION`, …)
+  require a currently valid authority; **witness appends** (`SUPPRESSED`,
+  and a fenced writer's own `FENCED_OUT` demise notice) carry NO
+  authority, may mutate nothing at the broker, are staleness-neutral
+  (S-G14-02), never trigger a success ping, and reach the JSONL only
+  through the same serialized append path. Epoch acquisition is a single
+  **atomic compare-and-increment** on the persisted epoch store: of two
+  concurrent takers exactly one wins; the loser observes the changed
+  epoch and demotes itself to a witness. The epoch store persists next to
+  the journal and follows the S-CYC-09 rule: an absent/reset epoch store
+  facing a non-virgin account is never re-seeded silently — it is the GAP
+  path, halt included. Order of operations is fixed: fence (atomic epoch
+  increment) → reconcile (phase 0 against broker truth) → act. Tests:
+  (1) a paused writer resuming after a takeover gets every authoritative
+  mutation rejected and can still append exactly one `FENCED_OUT` witness
+  line; (2) no code path mutates broker or journal except through the
+  gateway; (3) two concurrent takeover attempts yield exactly one winner;
+  (4) the watchdog's flatten runs under its own atomically acquired
+  epoch. (#23, #9, A13)
 
 ### G13 — drawdown kill-switch
 
@@ -475,13 +503,16 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G14-03** External detection (decision C): the agent pings
   healthchecks.io only AFTER a durable local journal append; the check's
   schedule follows `America/New_York` session slots; missed ping alerts
-  Felix within the 45–60 min SLA via mail + the named push channel. The
-  same check also carries ACTIVE alarms: alarm-worthy conditions (residue
-  escalation S-G10-02, config invalid S-CYC-11, flatten violation S-G11-01,
-  ladder cap S-X-05) are signaled by an explicit fail-ping to the check's
-  fail endpoint — alerting immediately, not by waiting for a missed ping.
-  A cycle that journals such a condition sends the fail-ping INSTEAD of the
-  success ping.
+  Felix within the 45–60 min SLA via mail + the named push channel
+  (`DEAD_MAN_BOUND` + `ALERT_DELIVERY_BUDGET` stay ≤ the 60-min edge). The
+  same check also carries ACTIVE alarms — and the set of alarm-worthy
+  conditions has ONE source, not a second list here: every case whose own
+  text prescribes an "active fail-signal" or "fail-ping" (currently
+  S-G9-02, S-G10-02, S-CYC-11, S-G11-01, S-G11-04, S-X-05, S-X-06; the
+  case texts govern, this parenthesis is illustrative) signals via an
+  explicit fail-ping to the check's fail endpoint — alerting immediately,
+  not by waiting for a missed ping. A cycle that journals such a condition
+  sends the fail-ping INSTEAD of the success ping.
 - **S-G14-04** Declared limit — NOT a test case, no red-first obligation:
   watchdog and agent share the host; host death kills both — the backstop is
   construction (A23), and the SaaS blindness of a single dead-man service is
@@ -506,12 +537,17 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   `RECONCILIATION` entries, not extra types. `OUTCOME` carries a status from the closed set {filled,
   partially_filled, rejected, canceled, expired, confirmation_unclear} —
   a rejection is an `OUTCOME` with status `rejected`, structurally
-  incapable of being read as an execution. Every cycle emits exactly one
-  `CYCLE` entry — including "did nothing, because X" with the full verdict
-  vector — and each `CYCLE` entry records the quote samples observed this
-  cycle (per watched underlying: bid, ask, sizes, quote timestamps), so
-  the next cycle's frozen-market history (§1, S-G6-05) is reconstructed
-  from the journal, not from memory. (A4, A5, A1)
+  incapable of being read as an execution. Every scheduled invocation
+  emits exactly one PRIMARY entry: `CYCLE` for a full cycle, else its
+  substitute (`BOOTSTRAP`, `GAP`, `SKIP`, `SUPPRESSED`) — "exactly one
+  CYCLE per cycle" never demands a second entry beside a substitute
+  (KGV-11). Every primary entry written from a TAKEN snapshot (`CYCLE`,
+  `BOOTSTRAP`, `GAP`, and `SKIP` when the snapshot phase ran) records the
+  quote samples observed (per watched underlying: bid, ask, sizes, quote
+  timestamps), so the next cycle's frozen-market history (§1, S-G6-05) is
+  reconstructed from the journal, not from memory; snapshot-less entries
+  (`SUPPRESSED`, connectivity-failure cycles) simply leave a hole that
+  the per-underlying age rule of §1 handles. (A4, A5, A1)
 - **S-J-04** Every `INTENT` carries: sleeve, structure + legs, computed max
   loss, client order ID, the gate verdict vector, and a rationale with a
   content requirement, not just non-emptiness: (a) the expected
@@ -582,8 +618,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   which S-G1-02/03 computed maxLoss; for a debit structure or long option
   the close credit never goes below zero. Reaching the cap → the order
   rests AT the cap, halt + alarm, attempts continue at the cap — so the
-  realized exit cost can never exceed the maxLoss the budgets were charged
-  with. Non-intact subjects (orphan legs, share residue) do not use this
+  realized NET loss (close debit minus the credit received at entry, or
+  premium paid minus close credit) can never exceed the maxLoss the
+  budgets were charged with (KGV-16: the cap sits at width, maxLoss at
+  width − credit; the guarantee is about the net). Non-intact subjects (orphan legs, share residue) do not use this
   cap — they follow the discriminated recovery policy of S-X-06. Every
   re-price is journaled. The ladder never crosses into opening exposure
   and never legs out of an intact structure (A11).
@@ -597,10 +635,16 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   maxLoss; every such close is journaled explicitly as an **assignment
   exception to A23's constructive worst case** (referencing A23's own
   "not a guarantee against assignment mechanics" clause). This policy is
-  an ARMING PRECONDITION for short-capable structures: without S-X-06
-  implemented and tested, no structure containing a short leg may be
-  armed. Orphan LONG legs and long residue remain capped (credit floor
-  zero) and need no exception. (#18, A11, A23)
+  an ARMING PRECONDITION for short-capable structures, and the
+  precondition is CHECKED, not prose: S-CYC-11 refuses to arm when
+  `STRUCTURE_WHITELIST` contains any short-capable structure while the
+  S-X-06 capability flag is absent from config. Orphan LONG legs and long
+  residue remain capped (credit floor zero); a long residue that is
+  unsellable (bid 0, worthless) may reach its terminal state by a
+  **declared expiry-hold**: a journaled deliberate decision "hold to
+  expiry, zero additional risk" ends the escalation, lifts the fail-ping,
+  and satisfies A17's deliberate-decision clause — riskless paper never
+  jams the alarm channel. (#18, A11, A17, A23)
 
 ---
 
@@ -612,6 +656,6 @@ G5), A4 (S-CYC-01/03/09, S-J-03), A5 (S-J-04, S-G10-04, S-X-03), A6
 (S-J-01), A7 (S-CYC-06), A8 (S-J-05), A9 (S-CYC-07, S-J-07), A10 (S-J-07),
 A11 (G1, S-G9-03, S-G10-03, S-X-05/06), A12 (G8, S-CYC-01), A13 (G7,
 S-CYC-05, S-G12-01/02/07, S-J-08), A14 (G2, S-G8-06), A15 (§7), A16 (G6),
-A17 (G9, G11), A18 (S-G14-03, S-CYC-11), A19 (S-G12-03/04/06, G13-03),
-A20 (S-CYC-08/09), A21 (S-J-02), A22 (G11), A23 (G2 counting, S-G14-04),
-A24 (S-J-06, S-CYC-11).
+A17 (G9, G11, S-X-06), A18 (S-G14-02/03, S-CYC-11), A19 (S-G12-03/04/06,
+G13-03), A20 (S-CYC-08/09), A21 (S-J-02), A22 (G11), A23 (G2 counting,
+S-G14-04, S-X-06), A24 (S-J-06, S-CYC-11).

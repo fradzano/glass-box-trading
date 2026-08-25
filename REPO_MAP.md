@@ -7,6 +7,7 @@
 - `DECISIONS.md` — DECISIONS
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
 - `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
+- `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
