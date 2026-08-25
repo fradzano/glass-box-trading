@@ -6,9 +6,10 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-25 (implementation phase plan)
-**Branch:** `concept` (no `main` yet — created at publish time, no GitHub remote yet)
+**Last updated:** 2026-08-25 (P1 branch cut)
+**Branch:** `p1/pure-entry-core` (branched from local `main` at `598f43e`; no GitHub remote yet)
 **Last accepted phase artifact:** P0 at `0486dd3`
+**P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P1 — pure entry-decision core
 ([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p1--pure-entry-decision-core))
 
@@ -42,6 +43,9 @@
 - **Implementation is partitioned into proof-gated phases P1–P10:**
   `docs/IMPLEMENTATION-PLAN.md` assigns all 90 runtime test cases exactly once
   across P1–P7, then owns the release, operation, and submission stage gates.
+- **P0 release branch established:** local `main` points at `598f43e`; P1 work
+  starts on `p1/pure-entry-core`. `concept` remains as the historical planning
+  ref; no remote exists.
 
 ## Now
 
@@ -108,6 +112,6 @@ reverse read ✅ → Code next.**
 - Build the analyst MCP in its dedicated environment from the pinned official
   commit and frozen dependency lock; S-CYC-11 must verify it before dev arming.
 - O4: social track = NO for now; revisit only on visible results.
-- GitHub remote does not exist yet; `main` is created at publish (owner gate).
+- GitHub remote does not exist yet; publishing `main` remains a P8 owner gate.
 - Repo maps: regenerate via pre-commit hook (`git config core.hooksPath hooks`,
   activated locally; note for fresh clones).

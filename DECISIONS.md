@@ -254,3 +254,7 @@ small, no ADR split).
   clean-commit gates. `config/implementation-phases.json` owns the case-to-phase
   allocation, and `tools/check_implementation_phases.py` rejects omissions,
   overlaps, stale patterns, or count drift against `docs/SPEC.md`.
+- **2026-08-25 — Establish local `main` as the P0 release baseline at
+  `598f43e`; begin P1 on `p1/pure-entry-core`.** `main` remains release-only,
+  `concept` remains as the historical planning ref, and no remote or push is
+  created by this branch cut.
