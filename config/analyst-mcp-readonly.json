@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "server": {
+    "package": "alpaca-mcp-server",
+    "version": "2.3.0",
+    "runtimeLock": "config/analyst-runtime-lock.json"
+  },
+  "analystProfile": "dev",
+  "inventoryPolicy": "exact",
+  "alpacaToolsets": [
+    "assets",
+    "stock-data",
+    "options-data"
+  ],
+  "allowedTools": [
+    "fetch_alpaca_doc",
+    "get_all_assets",
+    "get_alpaca_endpoint_docs",
+    "get_asset",
+    "get_calendar",
+    "get_clock",
+    "get_corporate_action_announcement",
+    "get_corporate_action_announcements",
+    "get_crypto_bars",
+    "get_crypto_quotes",
+    "get_crypto_trades",
+    "get_market_movers",
+    "get_most_active_stocks",
+    "get_option_bars",
+    "get_option_chain",
+    "get_option_contract",
+    "get_option_contracts",
+    "get_option_exchange_codes",
+    "get_option_latest_quote",
+    "get_option_latest_trade",
+    "get_option_snapshot",
+    "get_option_trades",
+    "get_stock_bars",
+    "get_stock_latest_bar",
+    "get_stock_latest_quote",
+    "get_stock_latest_trade",
+    "get_stock_quotes",
+    "get_stock_snapshot",
+    "get_stock_trades",
+    "list_alpaca_api_endpoints",
+    "search_alpaca_api_specs",
+    "search_alpaca_docs"
+  ]
+}

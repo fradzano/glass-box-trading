@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-25 (daytime)
+**Last updated:** 2026-08-25 (winning-path review)
 **Branch:** `concept` (no `main` yet — created at publish time, no GitHub remote yet)
 
 ## Done
@@ -20,18 +20,28 @@
   `ALPACA_TOOLSETS`), CLI v0.0.13 (`~/tools/alpaca-cli/`, mleg + client-order-id
   + dry-run). CONCEPT §10.
 - CONCEPT baseline → single-round cold read (6A/6B/3C, all folded in,
-  `docs/cold-read-2026-08-24.md`) → scenario catalog derived cold
-  (`docs/SCENARIOS.md`, 48 scenarios).
-- **Calendar fixed:** Sep 4 2026 is a FRIDAY. Five trading sessions, flatten
-  Thu Sep 3 close, deliverables Thu evening, submission Fri morning.
+  `docs/cold-read-2026-08-24.md`) → initial 48-scenario catalog derived cold,
+  since extended to 71 (`docs/SCENARIOS.md`).
+- **External contract frozen:** `docs/HACKATHON-FACTS.md` records the rendered
+  event page, source authority rules, account rules, judging criteria, deliverables,
+  and the one-time kickoff form/P&L clarification.
+- **Calendar corrected again from the official kickoff:** the event touches six
+  US market dates (partial Fridays Aug 28 and Sep 4; full Mon–Thu). Canonical
+  arming is the later of kickoff and a successful dev live test. Thursday Sep
+  3 close remains the last risk moment; Friday is reconciliation-only.
+- **Submission boundary specified:** `docs/SUBMISSION-SPEC.md` owns the four
+  criterion evidence paths, public golden demo, dashboard performance payload,
+  video, deck, one-pager, cover, form copy, account evidence, preflight, and
+  anonymous acceptance of post-submit dashboard revisions.
 
 ## Now
 
-**Build order ladder: Szenario ✅ → Axiom ✅ → Spec ✅ (capped pass done) → Code.**
+**Build order ladder: Szenario ✅ → Axiom ✅ → Spec ✅ → winning/submission
+reverse read ✅ → Code next.**
 
-- Axioms distilled (24, `docs/AXIOMS.md`), owner-reviewed 2026-08-25; owner
+- Axioms distilled (28, `docs/AXIOMS.md`), owner-reviewed 2026-08-25; owner
   calls A–D decided (DECISIONS.md).
-- Spec written (`docs/SPEC.md`, 85 test cases + 1 declared limit, with a
+- Spec written (`docs/SPEC.md`, 90 test cases + 1 declared limit, with a
   build-priority MVP cut in §0.5) and run through the capped adversarial
   pass `spec-pass` (2 rounds of the 2–3 cap; NOT a bis-0 termination).
   R1: 17 findings (2 A, 14 B, 1 C), all A and most B RESOLVED via gate
@@ -51,22 +61,38 @@
   S-G12-07, and every remaining B is a pfadpflichtige row in
   **`docs/EVIDENCE-DEBT.md`** (the tracked register the red-first tests
   must discharge).
-- Next: TypeScript foundation — scaffold, journal types, pure core,
-  red-first tests per SPEC §0.5 tiers, evidence-debt paths first-class.
+- The winning-path reverse read is complete. Its delivery pass closed the
+  evidence-cutoff, staged-publication, canonical one-page artifact, and
+  post-close render seams. Its runtime passes closed competition provenance,
+  emergency-close audit semantics, expiry-hold consistency, bootstrap
+  diagnostics, whitelist bounds, MCP capability enforcement, certificate
+  identity separation, watchdog residue dispatch, stale-writer authority,
+  route-independent close idempotency, and MCP supply-chain pinning. Every
+  confirmed A/B finding from these waves is folded into scenarios, axioms,
+  spec, decisions, submission acceptance, and `docs/EVIDENCE-DEBT.md`, then
+  counter-verified. This was an adversarial winning-path review, not a formal
+  bis-0 termination; executable implementation paths remain evidence debt.
+- Next: TypeScript foundation — scaffold, journal types, pure core, red-first
+  tests per SPEC §0.5 tiers, evidence-debt paths first-class, and the public
+  golden path as an equal delivery axis.
 
 ## Next (after the ladder)
 
-- Foundation + gates + tests (was planned for the build weekend; pulled forward
-  by owner decision 2026-08-24 — see DECISIONS.md).
-- Market-hours live test of credit structures on the DEV account (O1 leftover),
-  possible from Tue 15:30 CEST.
-- Fri Aug 28 kickoff: competition account (owner), its keys into `.env`
-  (`ALPACA_COMP_*`), GitHub publish + Vercel wiring.
+- Aug 26–27: foundation + gates + tests and S-ARM-01's runtime/policy-bound
+  market-hours certificate on the DEV account.
+- Fri Aug 28 kickoff 17:00 CEST: inspect the real submission form, create the
+  competition account (owner), put its keys in `.env` (`ALPACA_COMP_*`),
+  publish GitHub + Vercel, and arm in the partial session only if pre-arm gates
+  are green.
 
 ## Open threads
 
-- O5 (CONCEPT §9): budget percentages, gate thresholds, cycle cadence — freeze
-  before go-live Mon Aug 31.
+- O5 (CONCEPT §9): remaining gate thresholds — freeze before the actual first
+  arm; cycle cadence is already fixed at 15 minutes.
+- Kickoff delta check: actual submission form fields and the organiser's P&L
+  window/formula answer; append once to `docs/HACKATHON-FACTS.md`.
+- Build the analyst MCP in its dedicated environment from the pinned official
+  commit and frozen dependency lock; S-CYC-11 must verify it before dev arming.
 - O4: social track = NO for now; revisit only on visible results.
 - GitHub remote does not exist yet; `main` is created at publish (owner gate).
 - Repo maps: regenerate via pre-commit hook (`git config core.hooksPath hooks`,

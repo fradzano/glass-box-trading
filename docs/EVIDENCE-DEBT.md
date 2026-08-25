@@ -37,7 +37,7 @@ citing the test ID next to it in the same commit that adds the test.
 | GV-5 | S-CYC-11, S-J-06 | unset/empty EXPECTED_ACCOUNT_ID → never arms; empty-vs-empty never matches |
 | UNF-2 | S-J-07 | build interrupted mid-render → previous page fully intact; page names its journal revision |
 | NUT-1/R-NUT-1a | §0.5 | every case ID appears in exactly one tier (partition test over the spec text) |
-| UNF-1 | preamble/§0.5 | count check: 87 test cases + 1 declared limit; S-G14-04 carries no test |
+| UNF-1 | preamble/§0.5 | count check: 90 test cases + 1 declared limit; S-G14-04 carries no test |
 | GV-6b | S-G8-06 | mis-declared structure type with contradicting leg premium signature → economics from legs win |
 
 ## From the owner-ruling seams (R3 cold verification, fixed in text 2026-08-25)
@@ -50,13 +50,42 @@ citing the test ID next to it in the same commit that adds the test.
 | KGV-1-REG | S-J-03, S-G12-07 | FENCED_OUT passes schema validation as a closed-set type and as a primary substitute; witness-class membership has exactly one source |
 | KGV-5 | S-CYC-05 | equity crosses kill threshold between snapshot and submit → KILL flatten+halt SAME cycle |
 | KGV-6 | S-CYC-05 | REVALIDATION_VOID entry carries claimset + violated claim |
-| KGV-7 | S-X-06 | worthless orphan long (bid 0) → declared expiry-hold ends escalation and fail-ping |
+| KGV-7 | S-X-06 | worthless orphan long reaches expiry-hold only with fresh long-only/OTM/non-exercise/zero-liability proof and remains visibly not-flat |
 | KGV-8 | S-CYC-11 | short-capable whitelist without S-X-06 capability flag → never arms |
 | KGV-9/12 | §1, S-G6-05 | history missing/over-age for ONE underlying → entries blocked only there; over-age prior sample never satisfies signal (b) |
 | KGV-11 | S-J-03 | SKIP-with-snapshot carries quote samples; SUPPRESSED leaves a hole the age rule handles |
 | KGV-14 | S-G14-03 | every case prescribing a fail-ping actually pings (incl. S-X-06, S-G9-02, S-G11-04) |
 | KGV-15 | S-CYC-11 | SNAPSHOT_STALENESS_BOUND outside its coupling → never arms |
 | KGV-17 | §0, watchdog | DEAD_MAN_BOUND + ALERT_DELIVERY_BUDGET ≤ 60 min asserted in config validation |
+
+## From the winning-path reverse read (R5, fixed in text 2026-08-25)
+
+| ID | SPEC case(s) | Trigger path to execute |
+|---|---|---|
+| WIN-1 | S-CYC-06, S-J-09 | journal-only failure with open exposure → deterministic risk-reducing emergency close, explicit audit-gap reconciliation, no invented INTENT; authority-store failure → no mutation |
+| WIN-2 | S-CYC-09, SUB-08 | old/reset flat $100k account with reused history → competition BOOTSTRAP and submission both fail; later manual activity sets irreversible provenance latch |
+| WIN-3 | S-G9-02, S-G11-01/04, S-X-06 | bid-zero long residue exercises the narrow expiry-hold exception only with complete proof and is never rendered flat |
+| WIN-4 | S-CYC-11, S-G14-03 | unopenable STATE_DIR → zero broker calls, redacted OS diagnostic, failure-only ping, no success ping, later journal import |
+| WIN-5 | S-G8-03, S-CYC-11 | expiry/strike/qty equality passes; one session/basis-point/contract beyond fails; missing or contradictory bounds never arm |
+| WIN-6 | S-CYC-11, S-G12-07 | actual MCP inventory includes any capability outside positive manifest or child sees competition/executor env → never arms |
+| WIN-7 | S-ARM-01, S-CYC-11 | incomplete, manual, wrong-account, digest-mismatched, or asynchronously rejected credit evidence → never arms; only positive credit acceptance plus full broker-backed certificate passes |
+| WIN-8 | S-G14-02, S-G10-03, S-X-06 | watchdog takeover with intact spread + orphan short + assigned short stock → one fence, correct mleg/residue dispatch, no duplicate, halt, journal, fail-ping |
+
+## From the second winning-path blind pass (R6, fixed in text 2026-08-25)
+
+| ID | SPEC case(s) | Trigger path to execute |
+|---|---|---|
+| WIN-9 | S-CYC-11, S-J-06 | live/redirect/lookalike trading origin with matching account ID, or unknown profile → fail before mutation; valid paper origin + wrong ID still fails; valid market-data origin remains usable |
+| WIN-10 | S-CYC-11 | identical 32-tool inventory from wrong/missing/ambiguous MCP distribution or different checked/launched interpreter → fail before spawn; manifest or launch-artifact drift invalidates pre-arm certificate |
+| WIN-11 | S-G1-01..04, G2–G4, S-X-01/02 | target/mid premium passes but least-favourable submitted limit exceeds sleeve/open-risk budget → veto; re-price recomputes atomically; partial/price-improved fills release only reconciled excess; impossible worse-than-limit broker record halts visibly |
+| WIN-12 | S-G13-01 | resting entry during kill: cancel-before-close, full/partial fill race becomes reconciled exposure and is flattened; lost ack never reports flat; existing protective close is neither canceled nor duplicated |
+| WIN-13 | S-CYC-12, submission gate | no candidate/all safe non-fills through Sep 1 → visible competitiveness alarm; qualification attempt remains one-lot, capped, and inside every normal gate; no fill by Sep 2 → internal failure/owner waiver, not invented external ineligibility |
+| WIN-14 | SUB-03, SUB-09 | canonical one-pager reproducibly renders exactly one page and passes the actual form's MIME/size/upload-or-link validation; rejected type causes one recorded target change, not drifting variants |
+| WIN-15 | SUB-03/04/05/09 | pre-close draft cannot pass final acceptance; one post-close reconciled dataset drives every mutable number and the immutable route before canonical render/preflight |
+| WIN-16 | S-G12-07 | old writer still holding/reacquiring OS lock after epoch takeover → every authoritative request rejected at final gateway, exactly one witness allowed; unreadable epoch never authorizes mutation |
+| WIN-17 | S-ARM-01, S-CYC-11 | dev→competition identity-only switch preserves runtime/policy proof; policy/origin/lock/code change or unknown field invalidates; secrets never enter public digest material |
+| WIN-18 | S-CYC-06, S-G7-01/02 | existing full/partial/unclear ordinary close during journal failure is adopted or residualized under one lifecycle; cancel/fill race and emergency retry never create a parallel child or reverse exposure |
+| WIN-19 | S-CYC-11 | same package metadata/tool inventory with patched files or valid-header malicious `.pyc`, different interpreter, unpinned dependencies, or self-learned expected hash → bytecode is removed/blocked and the launch fails before spawn; pinned-source rebuild with bytecode absent/disabled plus exact inventory passes |
 
 C-class backlog (no debt, tracked for hygiene): KGV-16 wording (fixed),
 KGV-18 traceability (fixed), push channel naming (NUT-3), dashboard deploy

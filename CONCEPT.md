@@ -4,14 +4,20 @@ Entry for the **Alpaca AI Trading Agents Hackathon** (lablab.ai, Aug 28 – Sep 
 Team: Glass Box Trading (solo, fradzano). This document is the agreed design baseline;
 decisions taken here were made 2026-08-24, before any build.
 
+External event facts, source authority, ambiguities, and the one-time kickoff
+recheck live in [`docs/HACKATHON-FACTS.md`](docs/HACKATHON-FACTS.md). The
+judge-facing delivery contract lives in
+[`docs/SUBMISSION-SPEC.md`](docs/SUBMISSION-SPEC.md).
+
 ## 1. Framing — what this project claims and what it refuses to claim
 
-Five US trading sessions of P&L are statistical noise. Any ranking by one-week paper
-P&L rewards the most convex lottery ticket in the field, not skill — and the write-up
-will say so openly. This project therefore competes primarily on the four skill axes
-of the judging criteria (technology implementation, creativity/originality,
-presentation/execution, plus the optional social track) and treats the P&L axis as a
-**declared** variance allocation, not a pretended edge.
+One week of paper P&L is statistical noise, but **P&L Performance is an explicit
+event criterion** and must be supported by the submitted account. The project
+therefore competes for a positive absolute result inside pre-declared max-loss
+budgets while refusing to market the outcome as proven alpha. Its other three
+event criteria are Technology Implementation, Creativity & Originality, and
+Presentation & Execution. Social engagement is a separate optional prize, not a
+fourth skill axis or a substitute for the main entry.
 
 The core idea, and the name: a **glass-box agent**. Every decision cycle — candidates
 seen, every risk gate checked, trade or no trade, and why — is written to an
@@ -50,12 +56,12 @@ Functional Core / Imperative Shell (house rule; the hackathon deadline does not
 suspend it — the agent has money-shaped invariants, so the core is pure and tested).
 
 ```
-scheduler (Windows Scheduled Task, cycle every 15–30 min during US session)
+scheduler (Windows Scheduled Task, cycle every 15 min during US session)
   └─ orchestrator (shell) — single-instance lock; overlapping start exits cleanly
        ├─ 0. reconcile: read Alpaca positions/orders, diff against journal;
        │      any unexplained state → journal it + halt new entries
        ├─ 1. snapshot: account, positions, OPEN ORDERS, halt flag, clock
-       ├─ 2. analyst: Claude session (Agent SDK) + Alpaca MCP server (READ-ONLY tools)
+       ├─ 2. analyst: Claude session + dev-profile MCP from a positive READ-ONLY manifest
        │      → candidates as schema-validated JSON; free-text reasoning attached;
        │      analyst error/rate-limit ⇒ skip cycle + journal entry, never crash-loop
        ├─ 3. decision core (PURE, no I/O, no clock, no LLM):
@@ -63,9 +69,9 @@ scheduler (Windows Scheduled Task, cycle every 15–30 min during US session)
        │      actions are void if the snapshot is older than a staleness bound
        ├─ 4. executor (shell): per approved action, journal an INTENT entry first,
        │      THEN submit (REST/CLI, idempotent client order IDs), then journal
-       │      the outcome — a crash mid-cycle leaves an intent, never a silent fill
+       │      the outcome; sole exception is SPEC S-CYC-06 emergency risk reduction
        └─ 5. journal: append JSONL entries → git push (dedicated branch, see §5)
-                └─ Vercel redeploys the public dashboard from the journal
+                └─ Vercel builds candidate → probe → promote stable dashboard
 ```
 
 State model (cold-read findings #2/#3): **Alpaca is the source of truth for
@@ -76,8 +82,12 @@ submit, not at fill.
 
 Role boundaries, enforced structurally:
 
-- **Alpaca MCP server** is a dumb tool adapter (market data, chains, account state for
-  the analyst). It holds no rules and is attached to the analyst read-only.
+- **Alpaca MCP server** is a dumb tool adapter (market data, chains, dev-account
+  state for the analyst). A versioned positive capability manifest generates its
+  toolsets; startup validates both its exact package/version from the actual
+  launch interpreter and its offered inventory. The child gets dev
+  data credentials only, no competition credentials or executor shell/CLI
+  environment; an unexpected tool blocks arming.
 - **Analyst (LLM)** proposes candidates only. Output is validated against a strict
   schema; order-relevant fields may only take values from a whitelist (underlying
   universe, structure types, expiry/strike ranges, size ceilings). An analyst output
@@ -109,30 +119,34 @@ Entry gates:
 
 Lifecycle gates (cold-read finding #1 — entry-only catalogs die at expiry):
 
-9. **Expiry eviction** — no position is held into its expiry day; forced close no
-   later than the prior session. Weekly options make this a daily concern, not an
-   edge case.
+9. **Expiry eviction** — no risk-bearing position is held into expiry; forced
+   close starts no later than the prior session. Sole exception is SPEC S-X-06's
+   visibly not-flat, long-only/non-exercising/zero-liability declared hold.
 10. **Assignment reconciliation** — step 0 classifies every Alpaca position against
     the journal's known structures; anything unclassified (assignment residue,
     partial fill of one leg) ⇒ close it at next opportunity + halt new entries,
     journaled with reason.
-11. **Deadline flatten** — everything closed by **Thursday Sep 3** market close;
-    Friday (submission day — Sep 4 2026 is a FRIDAY, calendar fixed per
-    SCENARIOS.md #38) holds no risk, and the judges see a closed book whose
-    post-deadline state cannot change under expiry mechanics.
+11. **Deadline flatten** — every risk-bearing position and non-terminal order is
+    closed by **Thursday Sep 3** market close; Friday holds no risk. A narrow
+    S-X-06 declared hold remains broker-visible and is never called flat.
 
 State & failure gates (findings #2/#4/#6/#11):
 
-12. **Single-instance lock + halt flag** — the halt flag is a persisted file, part
-    of the snapshot, and a core input; a halted account accepts no new entries
-    until a manual, journaled un-halt by the owner.
-13. **Drawdown kill-switch** — equity below threshold ⇒ flatten + halt, journaled.
-    The threshold must price in the convex sleeve's PLANNED total decay (−8 % of
-    budget is a normal outcome, not an emergency).
+12. **Single-instance epoch + serializing lock + halt flag** — every authoritative
+    gateway request must carry the current persisted epoch; the OS lock only
+    serializes local access and can never revive a fenced writer. The halt flag
+    is persisted, part of the snapshot, and a core input; a halted account
+    accepts no new entries until a manual, journaled un-halt by the owner.
+13. **Drawdown kill-switch** — equity below threshold ⇒ sticky halt; cancel and
+    reconcile every risk-increasing resting entry (including fill races); reload
+    broker truth; then flatten the resulting book and journal it. Flat is claimed
+    only with zero risk-bearing positions and zero risk-increasing non-terminal
+    orders. The threshold must price in the convex sleeve's PLANNED total decay
+    (−8 % of budget is a normal outcome, not an emergency).
 14. **Dead-man watchdog** — separate process, market-hours-aware (an overnight
-    heartbeat gap is normal, not an alarm); on genuine staleness during trading
-    hours it closes positions as WHOLE structures (mleg), never leg-wise — a
-    safety mechanism must not create a transient naked short. Declared limit:
+    heartbeat gap is normal, not an alarm). After fencing and reconciliation it
+    closes matched intact structures whole (mleg), while already-broken residue
+    dispatches through S-X-06; it never legs out an intact structure. Declared limit:
     watchdog and agent share the host, so host death kills both; the true
     backstop for an unattended host is that every position's max loss is capped
     by construction (gate 1).
@@ -144,11 +158,15 @@ State & failure gates (findings #2/#4/#6/#11):
   directly where SDK coverage is thin.
 - **Journal**: append-only JSONL in-repo — the decision record (account state
   lives at Alpaca, see §3). The agent pushes to a **dedicated `journal` branch**,
-  which is Vercel's production branch; humans never commit there, so per-cycle
-  pushes cannot race feature work (finding #7). Push failure ⇒ journal locally,
-  retry next cycle — trading never blocks on git.
+  which is the dashboard deployment source; humans never commit there, so
+  per-cycle pushes cannot race feature work (finding #7). A push builds an
+  immutable candidate deployment. Only a successful anonymous candidate probe
+  may move the stable judge-facing alias. Push or probe failure ⇒ retain the
+  previous accepted alias, journal locally, retry next cycle — trading never
+  blocks on git.
 - **Dashboard**: static site generated from the journal, hosted on **Vercel**
-  (rule-book-approved platform); redeploy on push after every cycle.
+  (rule-book-approved platform); candidate deployment per journal revision,
+  externally probed before atomic promotion to the submitted URL.
 - **MCP server**: the official Python `alpaca-mcp-server` runs as an external
   process — the TypeScript claim covers our own code, not this dependency.
 - **Video**: Remotion — the presentation itself is code in the repo, extending the
@@ -160,34 +178,47 @@ State & failure gates (findings #2/#4/#6/#11):
 - **Dev**: `PA349COOGKZ1` (felix.radzanowski+alpaca-dev@…) — exploration and testing,
   freely disposable. Keys in local `.env` only (gitignored; see `.env.example`).
 - **Competition**: created fresh on Aug 28 per rules ($100k start, ID goes into the
-  submission). Agent runs exclusively on its keys from kickoff; the dev account stays
-  the sandbox so no experiment ever touches the scored account.
+  submission). Once armed, the agent runs exclusively on its keys; the dev account
+  stays the sandbox so no experiment ever touches the scored account. Canonical
+  arming rule: `first_arm = max(kickoff, successful_dev_live_test_at)`. The target is
+  to finish the market-hours dev tests before kickoff so the first eligible Friday
+  partial session remains available, but a failed test delays arming rather than
+  weakening a gate. Before any competition order, bootstrap records creation at
+  or after kickoff, exact $100k opening cash/equity, and fully paginated empty
+  order/fill/activity history. Later manual activity irreversibly fails the
+  competition provenance and submission gate.
+- Both roles bind their explicit profile and independent expected account ID to
+  the exact canonical `https://paper-api.alpaca.markets` trading origin at
+  startup and before every mutation. Redirects, aliases, and a matching ID from
+  the live origin fail closed; market-data origins are validated separately.
 - The pre-existing Alpaca account serving another project is **out of bounds
   entirely** — not for dev, not for anything. This repo shares no data or code paths
   with any other trading repo in this workspace.
 
 ## 7. Judging map — where each deliverable earns points
 
-| Criterion | Our answer |
-|---|---|
-| P&L | barbell: income drift + convex tail, honestly declared |
-| Technology | Agent SDK + Alpaca MCP + REST/CLI + Vercel, clean FCIS cut |
-| Creativity | declared-variance framing; glass-box journal incl. vetoes |
-| Presentation | live dashboard = demo URL; Remotion video; one-pager mirrors §3/§4 |
-| Social (conditional) | O4 currently NO — row inactive unless the owner reopens it on visible results |
+| Criterion | Our answer | Judge-visible proof |
+|---|---|---|
+| P&L Performance | barbell: income drift + convex tail, honestly declared | submitted account ID; broker-reconciled equity/P&L timeline and sleeve attribution |
+| Technology Implementation | Agent SDK + Alpaca MCP + REST/CLI + Vercel, clean FCIS cut | one end-to-end decision/fill plus public core, tests, and failure-path evidence |
+| Creativity & Originality | declared-variance framing; glass-box journal including vetoes and no-trades | public gate vector and rationale for both accepted and rejected candidates |
+| Presentation & Execution | one stable decision-to-outcome golden path | public dashboard, sub-five-minute Remotion video, PDF deck, and required one-pager |
+| Social (separate optional prize) | O4 currently NO | no work unless the owner reopens it on visible results |
 
 ## 8. Schedule (budget: 3 build evenings + 1 close-out evening)
 
 | When | What |
 |---|---|
-| Pre-kickoff week | exploration only: MCP/CLI, paper options quirks (O1), repo scaffold, Remotion template, design docs. No substantive build. |
-| Fri Aug 28 (kickoff) | competition account, wiring, journal skeleton, **host hardening** (power plan, run-when-logged-off, auto-update deferral — finding #9) |
-| Weekend Aug 29–30 | core + gates + tests + dry-run (markets closed) |
-| Mon Aug 31 | **pre-arm live test on the DEV account at US open** (credit-structure acceptance, fill behavior — the O1 leftovers are market-hours-only); only then arm the competition account (finding #5) |
-| Tue Sep 1 | **declared buffer evening** — fixes from Monday's live reality; otherwise dashboard polish |
-| Wed Sep 2 evening | second buffer / monitoring — the calendar gives us a fifth session we originally miscounted (Sep 4 is a Friday, see SCENARIOS.md #38) |
-| Thu Sep 3 evening | one-pager, Remotion video (render time budgeted), deck (PDF), cover image 16:9, short/long descriptions, tags; **flatten all positions by Thursday close** (gate 11) |
-| Fri Sep 4 morning | submission, hours before the 17:00 CEST deadline — the morning is reserve for form surprises, not planned work; the agent journals but holds no risk |
+| Tue Aug 25 | freeze the sourced event contract and complete the winning-path reverse review before scaffolding |
+| Wed–Thu Aug 26–27 | TypeScript vertical slice; complete market-hours credit/fill/liquidity tests on the DEV account; prepare submission source skeletons |
+| Fri Aug 28 before 17:00 | candidate build deployable; pre-arm gates and host hardening complete or arming is delayed |
+| Fri Aug 28 from 17:00 (kickoff) | inspect the actual form; create and bind the fresh competition account; publish GitHub + Vercel; arm in the partial session only if the dev test and gates passed |
+| Sat Aug 29 17:00 | public end-to-end golden path works; continue core/gate/tests and dry-run hardening over the weekend |
+| Mon Aug 31 | competition run continues; Monday is fallback first-arm only if the pre-kickoff live test failed or the build was not safe |
+| Tue Sep 1 / US close | **declared buffer evening** — fixes from live reality or first presentation draft; qualifying options activity exists by close or S-CYC-12 exposes `COMPETITIVENESS_AT_RISK` (our winning gate, not a published minimum-trade rule) |
+| Wed Sep 2 | feature freeze except safety/criterion blockers; the strictly capped, normal-gates-only qualification window ends at US close; cover, form copy, video and deck drafts ready |
+| Thu Sep 3 20:00 / post-close | freeze narration/layout first; after market close flatten/reconcile, freeze one presentation-cutoff dataset and immutable route, then render the canonical one-page write-up, video, deck and cutoff-identical preflight by 23:45 |
+| Fri Sep 4 by 12:00 | submit with five hours of contingency; the agent journals but holds no risk; deadline reconciliation at 17:00 |
 
 ## 9. Open points
 
@@ -199,35 +230,47 @@ State & failure gates (findings #2/#4/#6/#11):
   behavior during market hours, credit-structure (`sell_to_open`-led) acceptance,
   and a liquidity-gate data source — `open_interest` came back `null` on the
   contracts endpoint for some contracts, so the gate may need quote-size floors
-  instead of OI.
+  instead of OI. These observations close only through the revision/config-bound
+  S-ARM-01 dev-live-test certificate; a hand-entered timestamp is not evidence.
 - **O2** Agent SDK subscription auth — **resolved 2026-08-24**: `claude setup-token`
   (one interactive run) issues a **one-year OAuth token**; set it as
   `CLAUDE_CODE_OAUTH_TOKEN` in the task environment. Documented for exactly the
   unattended case. Caveats: `ANTHROPIC_API_KEY` must NOT be set in that environment
   (it wins the credential precedence), and SDK usage draws from the subscription's
   plan limits — budget the cycle cadence accordingly.
-- **O3** Pre-build legality: rule book bans plagiarism, not preparation; no explicit
-  during-the-window build requirement found (checked 2026-08-24). Policy anyway:
-  design + scaffold before kickoff, substantive build inside the window, timeline
-  transparent in the repo.
-- **O4** Social track (LinkedIn under real name) — owner decision, due at kickoff.
-- **O5** Exact budget percentages, gate thresholds, cycle cadence — frozen before
-  go-live Aug 31, journaled as config.
+- **O3** Pre-build legality: **resolved 2026-08-24**. The rule book bans
+  plagiarism, not preparation. The build is pulled forward; the public history
+  remains transparent and includes meaningful work during the event window.
+- **O4** Social track (LinkedIn under real name): **NO for now**. It is a separate
+  optional prize; revisit only on visible results.
+- **O5** Remaining budget, whitelist, and gate thresholds — frozen before the
+  actual first arm and journaled as config. Cycle cadence is already 15 minutes.
 
 ## 10. Tooling verified (2026-08-24, dev account)
 
 - **Alpaca MCP server** `alpaca-mcp-server` 2.3.0 via pip (Python 3.14; note: a
   broken `fastmcp` install needed `pip install --force-reinstall fastmcp`).
   Stdio handshake + tool call verified: **72 tools**, incl. `get_option_chain`,
-  `get_option_snapshot`, `place_option_order`. `ALPACA_TOOLSETS` filters toolsets —
-  this is how the analyst gets a **read-only** attachment (data/account toolsets,
-  no `trading`).
+  `get_option_snapshot`, `place_option_order`. `ALPACA_TOOLSETS` filters toolsets;
+  the analyst's versioned positive manifest selects data/account toolsets, forbids
+  `trading`, and rejects the observed inventory if anything extra appears.
+  Rechecked 2026-08-25 against the installed server: the tracked
+  `config/analyst-mcp-readonly.json` selects `assets,stock-data,options-data`
+  and names the exact 32-tool inventory (including the server's read-only docs
+  and stock/crypto override tools). The global 2.3.0 install is observation, not
+  trust: PyPI still listed 2.2.1 while official GitHub `main` declared 2.3.0.
+  `config/analyst-runtime-lock.json` therefore pins official commit
+  `872abbf28dab6cdde7d341fc13ac139b8002d1d9`, its dependency lock, and the
+  CPython 3.14.1 launcher/runtime hashes. Pre-arm rebuilds a dedicated environment
+  from that commit, removes and rejects all surviving Python bytecode, disables
+  bytecode writes, and verifies immutable files before the separate exact tool
+  inventory check.
 - **Alpaca CLI** v0.0.13 (Go binary, checksum-verified) at
   `C:\Users\felix\tools\alpaca-cli\alpaca.exe`. JSON on stdout, `--jq` filtering,
   `order submit` supports `--order-class mleg` + `--legs` (≤4),
   `--client-order-id` (idempotency gate) and `--dry-run`; `alpaca api` is a raw
   passthrough for anything the typed commands miss. Auth via `ALPACA_API_KEY` /
-  `ALPACA_SECRET_KEY`; paper is the default (live requires an explicit opt-in we
-  will never set).
+  `ALPACA_SECRET_KEY`; the executor supplies the role-bound canonical paper
+  origin explicitly and never relies on the CLI default.
 - **REST** verified earlier (§9 O1): account, clock, contracts, `mleg` order
   accept/cancel, `indicative` options feed.

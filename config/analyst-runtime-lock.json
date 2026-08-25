@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/alpacahq/alpaca-mcp-server.git",
+    "commit": "872abbf28dab6cdde7d341fc13ac139b8002d1d9",
+    "package": "alpaca-mcp-server",
+    "version": "2.3.0",
+    "dependencyLockAtCommit": "uv.lock"
+  },
+  "interpreter": {
+    "implementation": "CPython",
+    "version": "3.14.1",
+    "launcherSha256": "2300a8f8244993355fb2e15c6b5b35f9566cd3a79f99ebb56986d73a70cb29ad",
+    "runtimeSha256": "3179d8b7d28ccc7547e59c3080bf2f715442b692c33798e928fd311f2c97f57b"
+  },
+  "installPolicy": {
+    "dedicatedEnvironment": true,
+    "buildFromPinnedCommit": true,
+    "frozenDependencyLock": true,
+    "learnHashesFromInstalledEnvironment": false,
+    "verifyImmutableSourceAndPackageFilesBeforeSpawn": true,
+    "removeBeforeSpawn": [
+      "**/__pycache__/**",
+      "**/*.pyc"
+    ],
+    "requireRemovedFilesAbsentBeforeSpawn": true,
+    "disableBytecodeWritesInChild": true
+  }
+}

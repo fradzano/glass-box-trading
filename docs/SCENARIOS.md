@@ -6,18 +6,25 @@ Szenario → Axiom → Spec → Code. This file is the measure the spec is check
 against; it must not be edited to fit the spec. Corrections go in dated notes.
 
 Note on #38: the deriving agent flagged a date inconsistency in the brief it
-was given — correctly. Resolution: Sep 4 2026 is a FRIDAY. The trading window
-is Mon Aug 31 – Fri Sep 4 (five sessions), submission deadline Fri Sep 4
-17:00 CEST (90 minutes after US open). The brief's "Thu Sep 4" was our error;
-CONCEPT.md has been corrected accordingly. Two forward scenarios (#6, #7) and
-the lifecycle scenarios (#40, #44, #45) are restated below with the corrected
-calendar; the walks are otherwise the deriving agent's text, unedited.
+was given — correctly. Resolution: Sep 4 2026 is a FRIDAY and the submission
+deadline is 17:00 CEST (90 minutes after US open).
+
+**Correction, 2026-08-25 — official event window:** the rendered event page
+later established kickoff at Fri Aug 28 17:00 CEST. The event therefore
+touches six US market dates: partial sessions on both Fridays plus four full
+Mon–Thu sessions. The earlier “Mon Aug 31 – Fri Sep 4 (five sessions)” premise,
+scenario #1's fixed Monday arming, and #41's implication that all Friday build
+time occurs while markets are closed are superseded. The competition account
+may arm after kickoff only when the pre-arm gates have passed; a failed gate
+delays arming rather than weakening it. The original cold walks remain below
+as evidence of the earlier brief; scenarios #49–#52 add the missing external
+contract rather than rewriting the cold derivation to fit the later spec.
 
 ---
 
 ## A. FORWARD — normal life
 
-**1. First arming (go-live Monday morning)**
+**1. HISTORICAL — superseded first-arming walk (formerly Monday morning; use #49)**
 Actors: developer, scheduled task, broker API. Trigger: first market open with the agent armed, Mon 15:30 CEST. The developer is at his day job when the task fires for the first time against a live (paper) market. The account holds $100k cash and zero positions; the LLM sees an empty portfolio and proposes its first candidates; deterministic code executes the first-ever real orders. Nothing about this path has ever run outside of tests — first contact with real fill behavior, real option chains, real journal-append under production timing. The developer cannot watch; he learns what happened only that evening.
 What must hold: the very first unattended cycle either works or fails *visibly and safely* — a broken first cycle must not silently burn the whole trading day before anyone notices.
 
@@ -183,7 +190,7 @@ What must hold: demonstrating the system is itself a normal, journaled interacti
 
 ## D. LIFECYCLE / CALENDAR
 
-**41. Build weekend (Fri Aug 28 – Sun Aug 30)**
+**41. HISTORICAL — superseded closed-weekend walk (use #49 and the dated correction above)**
 Actors: developer building; markets closed. Trigger: the entire build happens when the system's world (US market hours, real option chains, live fills) does not exist. Everything is tested against closed-market responses, empty chains, and paper quirks unseen. Saturday's "it works" is a claim about a world that differs from Monday's. The scheduled task also exists all weekend — if armed early, it fires into closed markets for two days.
 What must hold: closed-market firing is a defined, harmless, journaled behavior — and the gap between weekend-tested and Monday-real is consciously known, not assumed away.
 
@@ -214,6 +221,231 @@ What must hold: the agent's notion of open sessions matches the exchange's actua
 **48. After the hackathon: the public artifact lives on**
 Actors: future strangers, the developer's future self. Trigger: months later, the dashboard/repo still rank in search; the account ID is still public; keys referenced in the repo's history are still live unless rotated. A "temporary hackathon" journal is a permanent public record.
 What must hold: nothing published during the week becomes a liability when it outlives the week — public-forever is the assumption at write time, not a cleanup task after.
+
+**49. Kickoff opens while the US market is already trading**
+Actors: developer, lablab clock, Alpaca account, agent. Trigger: Fri Aug 28
+17:00 CEST. The event starts five hours before the US close. A reused account
+is ineligible, while creating, configuring, and validating the fresh $100k
+competition account consumes the same partial session that could establish
+the first scored activity. Rushing to recover those hours can put unvalidated
+code onto the judged account; waiting until Monday gives up valid competition
+time and contradicts a claim that the agent ran from kickoff.
+What must hold: the competition account is fresh, dedicated, and bound to its
+literal account ID; arming time and any delay are explicit. Pre-arm gates are
+never waived for P&L opportunity, and the published timeline reports the
+actual first eligible cycle rather than an invented five-session run.
+
+**50. A judge gives the entry thirty seconds before deciding whether to continue**
+Actors: judge, submission page, public dashboard. Trigger: the judge opens the
+entry among many competitors and follows the application URL without reading
+the repository. If the first viewport does not state the paper result, current
+exposure, and control model, the strongest implementation remains invisible.
+If the demo path depends on a fresh live trade, market state or judging time
+can make the entry appear broken.
+What must hold: an unauthenticated stranger understands the claim from the
+first viewport and can follow one immutable decision through proposal, veto or
+approval, Alpaca outcome, and P&L contribution without causing a new order.
+
+**51. The real submission form appears at kickoff**
+Actors: developer, lablab submission form. Trigger: the event-specific form
+becomes available and contains fields, limits, or upload behavior that generic
+guides did not expose. Discovering the delta on submission morning leaves no
+time to create a missing file or replace an inaccessible URL. A nominally
+complete entry can also fail because the video is too long, the deck is not a
+PDF, or a private/incognito browser cannot reach the repository or demo.
+What must hold: the form is inspected once at kickoff and diffed against a
+tracked deliverable register; added, changed, stricter, or contradictory
+requirements are resolved, and every field, file constraint, account ID, and
+public URL passes a clean-browser preflight before the internal cutoff.
+
+**52. The judge evaluates P&L from the submitted account ID**
+Actors: judge, Alpaca paper account, dashboard, journal. Trigger: judging uses
+the required account ID to inspect trading activity and P&L. The dashboard may
+show a persuasive total while omitting starting equity, drawdown, unrealized
+positions, manual activity, or the mapping from broker fills to agent
+decisions. A correct trading core cannot repair an unverifiable presentation.
+What must hold: the account starts at $100k and has no development or manual
+activity; broker snapshots support every displayed performance number; every
+order and fill maps to a journaled intent/outcome and its sleeve contribution.
+Every surface labels its evidence cutoff and uses the same account identity,
+provenance, and reconciliation rules; immutable uploads may use the Sep 3
+presentation cutoff while the public journal/dashboard later appends the Sep 4
+deadline cutoff.
+
+**53. The journal disk fails while risk is already open**
+Actors: executor, broker, local state store. Trigger: an intact or broken
+position needs a risk-reducing close, but the trading journal cannot durably
+append. Blocking every mutation preserves audit order while leaving risk open;
+closing with an ordinary unrecorded order falsifies the intent-before-order
+claim. What must hold: the sole exception is a mechanically risk-reducing
+emergency close tied to an existing exposure identity and deterministic client
+order ID. It never opens risk or invents a prior rationale; the first successful
+append records the broker outcome and the audit gap explicitly.
+
+**54. An old reset paper account looks virgin**
+Actors: owner, competition account, bootstrap gate. Trigger: a reused paper
+account is currently flat and shows $100k after reset. Literal ID matching and a
+flat snapshot pass even though earlier orders or the creation timestamp make the
+account ineligible. What must hold: competition bootstrap verifies and records
+account creation, exact opening cash/equity, empty positions/orders, and complete
+paginated trading history before any order. Missing or incomplete provenance
+blocks arming; later manual activity breaks provenance irreversibly.
+
+**55. A worthless long option cannot be sold before flatten**
+Actors: broker, expiry gate, dashboard. Trigger: a long-only orphan has fresh bid
+zero and repeated zero-floor close attempts cannot fill. Calling the account flat
+would lie; retrying forever makes a riskless residue monopolise the alarm path.
+What must hold: only a freshly proven long-only, out-of-the-money,
+non-exercising, zero-additional-liability residue may become a declared expiry
+hold. It remains visible as a broker position until expiry and is never rendered
+as flat.
+
+**56. STATE_DIR is invalid before the journal can open**
+Actors: startup validator, OS diagnostics, external dead-man. Trigger: the shared
+journal/halt/epoch directory is missing, relative, or unwritable. The agent must
+not call the broker, but cannot write the required failure into that same store.
+What must hold: a pre-armed, independent diagnostic sink records a redacted
+bootstrap error and a failure-only external ping fires without a success-append
+precondition. The sink never becomes a second state authority; after repair the
+error is folded into the trading journal.
+
+**57. Two implementations choose different whitelist bounds**
+Actors: analyst candidate, core, configuration. Trigger: expiry, strike, or
+quantity is described only as “allowed,” so two conforming-looking builds accept
+opposite candidates. What must hold: session-based expiry bounds, a spot-relative
+strike bound, and an integer quantity ceiling are named configuration values,
+validated before arming, and tested at equality and immediately outside each
+boundary. Budget and exposure gates remain additional constraints.
+
+**58. The analyst MCP exposes a trading tool**
+Actors: analyst process, MCP server, executor. Trigger: an unset or widened
+toolset exposes `place_option_order` or a future mutation tool to the LLM. Schema
+validation cannot intercept a direct tool call. What must hold: one positive,
+versioned capability manifest generates the MCP toolset and validates the actual
+offered inventory at startup. The analyst child receives only dev data-account
+credentials and no executor CLI/shell environment; any extra capability blocks
+arming.
+
+**59. A smoke test is called a successful dev live test**
+Actors: owner, dev account, arming gate. Trigger: accept/cancel worked once, but
+credit acceptance, a real fill/outcome path, or the liquidity inputs were never
+observed. A hand-entered timestamp still unlocks the competition account. What
+must hold: `successful_dev_live_test_at` is derived only from a machine-readable
+certificate tied to the runtime and role-neutral policy digests, with broker evidence for
+all named market-hours checks and a flat terminal dev account. Any code/config
+change invalidates the certificate.
+
+**60. The watchdog inherits a mixed intact-and-residue book**
+Actors: stalled agent, watchdog, broker. Trigger: after fencing, reconciliation
+finds an intact spread, an orphan short option, and assigned short stock. A
+whole-structure-only flatten skips or throws on the residues. What must hold:
+the watchdog dispatches matched intact structures to mleg close policy and every
+residue through reconciliation recovery, including uncapped marketable-limit
+S-X-06 for unbounded shorts, under one epoch and halt with immediate fail-ping.
+
+**61. A live trading origin reports the expected account ID**
+Actors: startup validator, mutation gateway, Alpaca. Trigger: the selected role
+and expected account ID are internally consistent, but its configurable trading
+base URL points to the live API, a redirect, or a lookalike host. ID binding
+alone passes. What must hold: startup and every mutation bind the explicit role
+to the exact canonical paper-trading origin plus the independently configured
+account ID. Any other order-capable origin fails before broker mutation; market
+data uses its own narrow allowlist.
+
+**62. A different MCP package exposes the same 32 tools**
+Actors: startup validator, MCP launch environment, analyst. Trigger: the
+installed server version drifts while its offered tool names remain identical,
+or validation inspects one Python environment and launches another. What must
+hold: package name/version are read from the exact launch interpreter and match
+the manifest before spawn; launch-artifact identity and manifest hash bind the
+pre-arm certificate; exact offered inventory is still checked afterward.
+
+**63. The executable entry limit is worse than the quoted candidate premium**
+Actors: pure core, reservation ledger, broker. Trigger: a debit order may fill
+up to a higher buy limit, or a credit order down to a lower sell limit, than the
+candidate's mid/target premium. Reserving against the target understates loss.
+What must hold: defined-risk arithmetic and every sleeve/open-risk reservation
+use the least favourable fill allowed by the final tick-rounded submitted
+limit. Any re-price recomputes and re-approves atomically; improvement releases
+budget only after reconciliation.
+
+**64. A resting entry fills after the drawdown kill fires**
+Actors: executor, broker, kill manager. Trigger: equity crosses the threshold
+while an older risk-increasing entry remains non-terminal. Flattening current
+positions without cancel reconciliation lets that order fill into a halted
+account. What must hold: halt and kill intent become durable, every entry is
+canceled and cancel/fill races reconciled, the broker book is reloaded, and the
+resulting fills are flattened. Flat requires no risk-bearing position and no
+risk-increasing non-terminal order; existing protective exits are not blindly
+canceled or duplicated.
+
+**65. The safe agent reaches September with no qualifying fill**
+Actors: analyst, core, broker, submission owner. Trigger: every cycle is healthy,
+but candidates are correctly vetoed or bounded limits never fill. The account is
+safe and provenance-clean, yet the promised P&L evidence path has no ordinary
+competition options activity. What must hold: a Sep 1 US-close checkpoint
+exposes the competitiveness risk. Through Sep 2 only, the analyst may prioritize
+one-lot, liquid, minimal-risk candidates under a stricter loss cap, but the
+ordinary schema, all deterministic gates, revalidation, and limit pricing remain
+unchanged and may still decide no trade. If no ordinary broker fill exists at
+window end, internal winning acceptance fails visibly; external eligibility is
+left to the organiser/form clarification, not invented locally.
+
+**66. The one-page write-up becomes a two-page Markdown export**
+Actors: submission owner, renderer, actual form. Trigger: the Markdown source
+contains every required topic, but font or layout changes produce two pages, or
+the form rejects Markdown/PDF. What must hold: one canonical form-ready artifact
+is chosen at kickoff, renders reproducibly as exactly one page, and passes the
+actual form's MIME/size/upload-or-link validation. Preflight names that exact
+artifact; parallel variants cannot drift.
+
+**67. Final presentation assets are due before their own evidence exists**
+Actors: broker reconciliation, dashboard publisher, video/deck renderers.
+Trigger: video and deck are marked final at 20:00 CEST although Sep 3 US trading
+does not close until roughly 22:00 and the promised presentation cutoff is
+post-close. What must hold: content/layout freeze before close, then one
+reconciled cutoff dataset and immutable dashboard route feed every mutable
+number. Canonical assets render and pass a cutoff-identical preflight afterward,
+with submission contingency still intact.
+
+**68. A fenced writer still holds its old OS lock**
+Actors: paused executor, watchdog, mutation gateway. Trigger: the watchdog
+increments the control epoch and takes over while the paused executor retains
+or later reacquires an OS lock. Treating that lock as alternate authority lets
+the stale process mutate after fencing. What must hold: every authoritative
+gateway request validates the carried epoch against the persisted current value
+at final dispatch. The lock only serializes; stale or unreadable epoch rejects
+entries, cancels/closes, management actions, and authoritative appends while the
+single witness append remains allowed.
+
+**69. The valid dev certificate dies when the role changes**
+Actors: dev live-test certificate, competition bootstrap, config validator.
+Trigger: a raw config hash contains the dev profile/account/credentials, which
+must change at competition arm. Either the certificate always mismatches or an
+implementation silently ignores an open-ended set of fields. What must hold:
+versioned canonical runtime and role-neutral policy digests exclude only the
+closed profile/account/credential identity set. The paper origin stays policy;
+competition identity/provenance validate separately; unknown fields fail.
+
+**70. An emergency close duplicates an ordinary resting close**
+Actors: ordinary executor, journal failure route, broker. Trigger: a full-size
+ordinary close remains non-terminal when append fails; the emergency path sees
+the current exposure and sends another individually risk-reducing close. Both
+fill and reverse the position. What must hold: all close routes share one
+exposure lifecycle, adopt a sufficient existing child, subtract fillable close
+quantity, and wait for terminal cancel before replacement. At most one child is
+non-terminal/unclear; final dispatch rechecks fills and remaining quantity.
+
+**71. A patched MCP install keeps the expected name, version, and tools**
+Actors: dependency installer, MCP launcher, analyst boundary. Trigger: modified
+package bytes — including a valid-header executable `.pyc` beside unchanged
+source — advertise 2.3.0 and the same 32 names, then S-ARM records a digest of
+those already-modified bytes. What must hold: expected source, dependency,
+interpreter, and immutable-file identities come from a tracked lock anchored to
+an official immutable upstream commit, never from the installed environment.
+Before the dedicated environment is verified and spawned, all Python bytecode
+is removed, its absence is checked, and bytecode writes are disabled; exact
+tool inventory is checked separately.
 
 ---
 
