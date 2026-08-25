@@ -71,3 +71,33 @@ small, no ADR split).
   dev-account drill proving a single order-capable credential, and is always
   followed by a working-order check/cancellation in the broker dashboard.
   Re-arm exclusively under halt after full reconciliation.
+- **2026-08-25 — spec-pass accepted as capped Vorlage (2 rounds), NOT a
+  bis-0 termination; no third finder round.** Remaining bookkeeping
+  discrepancies of the final audit (N1/N2) stay on record and preclude a
+  clean termination claim. After the mechanism rulings below: one narrow
+  cold counter-verification of the changed seams, then TypeScript.
+- **2026-08-25 — D16 ruled "executable: yes"** (VERIFY doubt-default):
+  config equations and closed journal sets are an executable surface.
+  Argumentative-only closures of spec-pass become a named EVIDENCE DEBT —
+  their trigger paths must be executed in the red-first tests.
+- **2026-08-25 — GV-2 ruled: writer authority by fencing, never by time.**
+  Authority = released OS lock or monotone control epoch checked at a
+  single mutation gateway; fence the old writer irrevocably before any
+  takeover or watchdog mutation, then reconcile, then act. `SUPPRESSED` is
+  staleness-neutral, no success ping, serialized journal access only. O5:
+  `CYCLE_INTERVAL` = 15 min, `DEAD_MAN_BOUND` on the 60-min SLA side;
+  30-min cycles excluded. Corrected inequality (with the doubled
+  mid-cycle-death term) kept as scheduling constraint only. (SPEC
+  S-G12-01/02/07, S-G14-02)
+- **2026-08-25 — GV-3/6/8 ruled, to close before domain interfaces:**
+  typed revalidation claimset per approved action (re-check account,
+  positions, non-terminal orders, control epoch, kill-equity predicate at
+  submit); discriminated recovery policy — intact structures keep the
+  width cap, unbounded orphan shorts/short stock close under halt +
+  fail-ping as requoted marketable limits, journaled as an assignment
+  exception to A23, and this policy is an arming precondition for
+  short-capable structures; quote history reconstructed from fully
+  journaled observations — missing history blocks entries, not
+  risk-reducing management, until current + immediately-prior complete
+  samples exist (before that only reversible scaffold). (SPEC S-CYC-05,
+  S-X-05/06, §1, S-G6-05, S-J-03)
