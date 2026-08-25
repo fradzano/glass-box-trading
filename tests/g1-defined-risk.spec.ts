@@ -19,6 +19,14 @@ describe("G1 defined risk", () => {
   it("S-G1-01 accepts a vertical debit and derives max loss from the submitted debit", () => {
     const value = candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: integerUnit(2, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } });
     expect(gateOne(value).reservedMaxLossCents).toBe(25_000);
+
+    const [lowerLong, higherShort] = verticalLegs();
+    const reversedPayoff = candidate({
+      declaredStructureType: "vertical_debit",
+      legs: [{ ...lowerLong, side: "sell" }, { ...higherShort, side: "buy" }],
+      entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") },
+    });
+    expect(gateOne(reversedPayoff).gateVector[0]).toMatchObject({ passed: false, code: "DEFINED_RISK" });
   });
 
   it("S-G1-02 accepts a vertical credit and derives width minus submitted credit", () => {

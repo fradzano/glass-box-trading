@@ -33,8 +33,11 @@ function asMoneyCents(value: number): MoneyCents {
   return integerUnit(value, "MoneyCents");
 }
 
-function multiplyMoney(priceCents: number, quantity: number): MoneyCents {
-  return asMoneyCents(priceCents * 100 * quantity);
+function multiplyMoney(priceCents: number, quantity: number): MoneyCents | null {
+  const product = BigInt(priceCents) * 100n * BigInt(quantity);
+  return product >= 0n && product <= 9_007_199_254_740_991n
+    ? asMoneyCents(Number(product))
+    : null;
 }
 
 function sameContractShape(legs: readonly OptionLeg[]): boolean {
@@ -59,7 +62,10 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     if (candidate.legs.length !== 1 || candidate.legs[0]?.side !== "buy" || candidate.entryLimit.kind !== "debit") {
       return { maxLossCents: null, reasons: ["long option must contain one buy leg and a debit limit"] };
     }
-    return { maxLossCents: multiplyMoney(priceCents, quantity), reasons: [] };
+    const maxLossCents = multiplyMoney(priceCents, quantity);
+    return maxLossCents === null
+      ? { maxLossCents: null, reasons: ["long-option maximum loss exceeds the exact integer range"] }
+      : { maxLossCents, reasons: [] };
   }
 
   if (candidate.declaredStructureType === "vertical_debit" || candidate.declaredStructureType === "vertical_credit") {
@@ -70,13 +76,24 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     }
     const widthCents = Math.abs(first.strikeCents - second.strikeCents);
     if (widthCents === 0) return { maxLossCents: null, reasons: ["vertical width must be positive"] };
-    if (candidate.declaredStructureType === "vertical_debit" && candidate.entryLimit.kind === "debit") {
-      return { maxLossCents: multiplyMoney(priceCents, quantity), reasons: [] };
+    const longLeg = first.side === "buy" ? first : second;
+    const shortLeg = first.side === "sell" ? first : second;
+    const isLongPayoff = first.right === "call"
+      ? longLeg.strikeCents < shortLeg.strikeCents
+      : longLeg.strikeCents > shortLeg.strikeCents;
+    if (candidate.declaredStructureType === "vertical_debit" && candidate.entryLimit.kind === "debit" && isLongPayoff) {
+      const maxLossCents = multiplyMoney(priceCents, quantity);
+      return maxLossCents === null
+        ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
+        : { maxLossCents, reasons: [] };
     }
-    if (candidate.declaredStructureType === "vertical_credit" && candidate.entryLimit.kind === "credit" && priceCents < widthCents) {
-      return { maxLossCents: multiplyMoney(widthCents - priceCents, quantity), reasons: [] };
+    if (candidate.declaredStructureType === "vertical_credit" && candidate.entryLimit.kind === "credit" && !isLongPayoff && priceCents < widthCents) {
+      const maxLossCents = multiplyMoney(widthCents - priceCents, quantity);
+      return maxLossCents === null
+        ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
+        : { maxLossCents, reasons: [] };
     }
-    return { maxLossCents: null, reasons: ["vertical limit kind or credit is incompatible with finite max loss"] };
+    return { maxLossCents: null, reasons: ["vertical leg direction, limit kind, or credit is incompatible with its declared payoff"] };
   }
 
   if (candidate.declaredStructureType === "iron_condor") {
@@ -92,32 +109,35 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     const callWidth = calls[1].strikeCents - calls[0].strikeCents;
     const widestWing = Math.max(putWidth, callWidth);
     if (widestWing <= 0 || priceCents >= widestWing) return { maxLossCents: null, reasons: ["iron condor credit does not leave finite positive max loss"] };
-    return { maxLossCents: multiplyMoney(widestWing - priceCents, quantity), reasons: [] };
+    const maxLossCents = multiplyMoney(widestWing - priceCents, quantity);
+    return maxLossCents === null
+      ? { maxLossCents: null, reasons: ["iron-condor maximum loss exceeds the exact integer range"] }
+      : { maxLossCents, reasons: [] };
   }
 
   return { maxLossCents: null, reasons: ["maximum loss is not computable from the leg pattern"] };
 }
 
-function countedRisk(component: ExposureRiskComponent): number {
-  if (component.kind === "exit") return 0;
-  if (component.kind === "filled") return component.maxLossCents;
+function countedRisk(component: ExposureRiskComponent): bigint {
+  if (component.kind === "exit") return 0n;
+  if (component.kind === "filled") return BigInt(component.maxLossCents);
   return component.state === "intent" || component.state === "fillable" || component.state === "confirmation_unclear"
-    ? component.maxLossCents
-    : 0;
+    ? BigInt(component.maxLossCents)
+    : 0n;
 }
 
-function riskBySleeve(snapshot: DecisionSnapshot, sleeve: Sleeve): number {
+function riskBySleeve(snapshot: DecisionSnapshot, sleeve: Sleeve): bigint {
   return snapshot.exposureLifecycles
     .filter(lifecycle => lifecycle.sleeve === sleeve)
     .flatMap(lifecycle => lifecycle.risk)
-    .reduce((total, component) => total + countedRisk(component), 0);
+    .reduce((total, component) => total + countedRisk(component), 0n);
 }
 
-function riskByUnderlying(snapshot: DecisionSnapshot, underlying: string): number {
+function riskByUnderlying(snapshot: DecisionSnapshot, underlying: string): bigint {
   return snapshot.exposureLifecycles
     .filter(lifecycle => lifecycle.underlying === underlying)
     .flatMap(lifecycle => lifecycle.risk)
-    .reduce((total, component) => total + countedRisk(component), 0);
+    .reduce((total, component) => total + countedRisk(component), 0n);
 }
 
 function verdict(gate: GateVerdict["gate"], code: GateVerdict["code"], reasons: readonly string[]): GateVerdict {
@@ -134,12 +154,12 @@ function evaluateLiquidity(candidate: EntryCandidate, snapshot: DecisionSnapshot
     }
     if (optionQuote.bidCents <= 0) reasons.push(`${optionLeg.contractId}: bid is not positive`);
     if (optionQuote.askCents < optionQuote.bidCents) reasons.push(`${optionLeg.contractId}: crossed market`);
-    const spread = optionQuote.askCents - optionQuote.bidCents;
-    const midTwice = optionQuote.askCents + optionQuote.bidCents;
-    if (BigInt(spread) * 20_000n > BigInt(midTwice) * BigInt(config.maxRelativeSpreadBps)) reasons.push(`${optionLeg.contractId}: relative spread exceeds limit`);
+    const spread = BigInt(optionQuote.askCents) - BigInt(optionQuote.bidCents);
+    const midTwice = BigInt(optionQuote.askCents) + BigInt(optionQuote.bidCents);
+    if (spread * 20_000n > midTwice * BigInt(config.maxRelativeSpreadBps)) reasons.push(`${optionLeg.contractId}: relative spread exceeds limit`);
     if (optionQuote.bidSize < config.minQuoteSize || optionQuote.askSize < config.minQuoteSize) reasons.push(`${optionLeg.contractId}: quote size below minimum`);
-    const age = now - optionQuote.quotedAt;
-    if (age < 0 || age > config.quoteMaxAgeMs) reasons.push(`${optionLeg.contractId}: quote is stale`);
+    const age = BigInt(now) - BigInt(optionQuote.quotedAt);
+    if (age < 0n || age > BigInt(config.quoteMaxAgeMs)) reasons.push(`${optionLeg.contractId}: quote is stale`);
   }
   return verdict("G5", "LIQUIDITY", reasons);
 }
@@ -162,15 +182,15 @@ function evaluateSession(candidate: EntryCandidate, snapshot: DecisionSnapshot, 
     return verdict("G6", "SESSION", reasons);
   }
   const currentQuotes = candidate.legs.map(optionLeg => snapshot.quotesByContract[optionLeg.contractId]);
-  if (currentQuotes.some(optionQuote => optionQuote === undefined || now - optionQuote.quotedAt > config.quoteMaxAgeMs || now < optionQuote.quotedAt)) {
+  if (currentQuotes.some(optionQuote => optionQuote === undefined || BigInt(now) - BigInt(optionQuote.quotedAt) > BigInt(config.quoteMaxAgeMs) || now < optionQuote.quotedAt)) {
     reasons.push(`${underlying}: stale quote signal`);
   }
   const prior = snapshot.priorQuotesByUnderlying[underlying];
-  const historyAge = prior === undefined ? null : now - prior.observedAt;
+  const historyAge = prior === undefined ? null : BigInt(now) - BigInt(prior.observedAt);
   const historyComplete = prior !== undefined
     && historyAge !== null
-    && historyAge >= 0
-    && historyAge <= 2 * config.cycleIntervalMs
+    && historyAge >= 0n
+    && historyAge <= 2n * BigInt(config.cycleIntervalMs)
     && currentQuotes.every(optionQuote => optionQuote !== undefined)
     && candidate.legs.every(optionLeg => prior.quotesByContract[optionLeg.contractId] !== undefined);
   if (!historyComplete) {
@@ -190,14 +210,14 @@ function evaluateSession(candidate: EntryCandidate, snapshot: DecisionSnapshot, 
 }
 
 function netPremiumSign(candidate: EntryCandidate, snapshot: DecisionSnapshot): number | null {
-  let signedMidTwice = 0;
+  let signedMidTwice = 0n;
   for (const optionLeg of candidate.legs) {
     const optionQuote = snapshot.quotesByContract[optionLeg.contractId];
     if (optionQuote === undefined) return null;
-    const midTwice = (optionQuote.bidCents + optionQuote.askCents) * optionLeg.ratio;
+    const midTwice = (BigInt(optionQuote.bidCents) + BigInt(optionQuote.askCents)) * BigInt(optionLeg.ratio);
     signedMidTwice += optionLeg.side === "buy" ? midTwice : -midTwice;
   }
-  return Math.sign(signedMidTwice);
+  return signedMidTwice < 0n ? -1 : signedMidTwice > 0n ? 1 : 0;
 }
 
 function evaluateWhitelist(candidate: EntryCandidate, snapshot: DecisionSnapshot, config: DecisionConfig): GateVerdict {
@@ -212,7 +232,9 @@ function evaluateWhitelist(candidate: EntryCandidate, snapshot: DecisionSnapshot
   if (candidate.quantity > config.maxCandidateQuantity) whitelistReasons.push("quantity exceeds MAX_CANDIDATE_QTY");
   for (const optionLeg of candidate.legs) {
     const spotCents = snapshot.spotCentsByUnderlying[optionLeg.underlying];
-    if (spotCents === undefined || spotCents <= 0 || BigInt(Math.abs(optionLeg.strikeCents - spotCents)) * 10_000n > BigInt(spotCents) * BigInt(config.maxStrikeDistanceBps)) {
+    const distance = spotCents === undefined ? null : BigInt(optionLeg.strikeCents) - BigInt(spotCents);
+    const absoluteDistance = distance === null ? null : distance < 0n ? -distance : distance;
+    if (spotCents === undefined || spotCents <= 0 || absoluteDistance === null || absoluteDistance * 10_000n > BigInt(spotCents) * BigInt(config.maxStrikeDistanceBps)) {
       whitelistReasons.push(`${optionLeg.contractId}: strike distance exceeds inclusive bound or spot is missing`);
     }
   }
@@ -230,23 +252,25 @@ function evaluateCandidate(
   candidate: EntryCandidate,
   config: DecisionConfig,
   now: number,
-  acceptedRiskBySleeve: Readonly<Record<Sleeve, number>>,
-  acceptedRiskByUnderlying: Readonly<Record<string, number>>,
+  acceptedRiskBySleeve: Readonly<Record<Sleeve, bigint>>,
+  acceptedRiskByUnderlying: Readonly<Record<string, bigint>>,
+  plannedEntryOrderIds: ReadonlySet<string>,
 ): CandidateEvaluation {
   const risk = definedRisk(candidate);
+  const clientOrderId = entryClientOrderId(snapshot, candidate);
   const underlying = candidate.legs[0]?.underlying ?? "";
   const sleeveBudget = candidate.sleeve === "income" ? config.incomeBudgetCents : config.convexBudgetCents;
   const currentSleeveRisk = riskBySleeve(snapshot, candidate.sleeve) + acceptedRiskBySleeve[candidate.sleeve];
-  const currentUnderlyingRisk = riskByUnderlying(snapshot, underlying) + (acceptedRiskByUnderlying[underlying] ?? 0);
+  const currentUnderlyingRisk = riskByUnderlying(snapshot, underlying) + (acceptedRiskByUnderlying[underlying] ?? 0n);
   const riskUnavailable = risk.maxLossCents === null;
   const gateVector: GateVerdict[] = [
     verdict("G1", "DEFINED_RISK", risk.reasons),
-    verdict("G2", "BUDGET", riskUnavailable || currentSleeveRisk + risk.maxLossCents > sleeveBudget ? [riskUnavailable ? "reservedMaxLoss unavailable" : "sleeve budget exceeded"] : []),
+    verdict("G2", "BUDGET", riskUnavailable || currentSleeveRisk + BigInt(risk.maxLossCents) > BigInt(sleeveBudget) ? [riskUnavailable ? "reservedMaxLoss unavailable" : "sleeve budget exceeded"] : []),
     verdict("G3", "POSITION_SIZE", riskUnavailable || BigInt(risk.maxLossCents) * 10_000n > BigInt(sleeveBudget) * BigInt(config.maxLossPerPositionBps) ? [riskUnavailable ? "reservedMaxLoss unavailable" : "position cap exceeded"] : []),
-    verdict("G4", "CONCENTRATION", riskUnavailable || currentUnderlyingRisk + risk.maxLossCents > config.maxUnderlyingExposureCents ? [riskUnavailable ? "reservedMaxLoss unavailable" : "underlying concentration exceeded"] : []),
+    verdict("G4", "CONCENTRATION", riskUnavailable || currentUnderlyingRisk + BigInt(risk.maxLossCents) > BigInt(config.maxUnderlyingExposureCents) ? [riskUnavailable ? "reservedMaxLoss unavailable" : "underlying concentration exceeded"] : []),
     evaluateLiquidity(candidate, snapshot, config, now),
     evaluateSession(candidate, snapshot, config, now),
-    verdict("G7", "IDEMPOTENCY", snapshot.submittedOrderIds.includes(entryClientOrderId(snapshot, candidate)) ? ["entry client order ID already submitted"] : []),
+    verdict("G7", "IDEMPOTENCY", plannedEntryOrderIds.has(clientOrderId) ? ["entry client order ID already submitted or planned"] : []),
     evaluateWhitelist(candidate, snapshot, config),
   ];
   const passed = gateVector.every(gateVerdict => gateVerdict.passed);
@@ -254,8 +278,8 @@ function evaluateCandidate(
     ? {
         kind: "ENTRY_ACTION_PLAN" as const,
         candidateId: candidate.candidateId,
-        exposureLifecycleId: `exposure:${entryClientOrderId(snapshot, candidate)}`,
-        clientOrderId: entryClientOrderId(snapshot, candidate),
+        exposureLifecycleId: `exposure:${clientOrderId}`,
+        clientOrderId,
         sleeve: candidate.sleeve,
         underlying,
         submittedLimit: candidate.entryLimit,
@@ -280,19 +304,21 @@ export function decide(snapshot: DecisionSnapshot, batch: AnalystBatch, config: 
   if (batch.kind === "structural_failure") {
     return { batchVerdicts: [{ code: "SCHEMA_VETO", reason: batch.issue }], candidateVerdicts: [], actions: [] };
   }
-  const stale = now - snapshot.snapshotAt > config.snapshotStalenessBoundMs;
+  const stale = BigInt(now) - BigInt(snapshot.snapshotAt) > BigInt(config.snapshotStalenessBoundMs);
   const batchVerdicts = stale ? [{ code: "STALE_SNAPSHOT" as const, reason: "snapshot exceeds SNAPSHOT_STALENESS_BOUND" }] : [];
   const candidateVerdicts: CandidateVerdict[] = [];
   const actions: EntryActionPlan[] = [];
-  const acceptedRiskBySleeve: Record<Sleeve, number> = { income: 0, convex: 0 };
-  const acceptedRiskByUnderlying: Record<string, number> = {};
+  const acceptedRiskBySleeve: Record<Sleeve, bigint> = { income: 0n, convex: 0n };
+  const acceptedRiskByUnderlying: Record<string, bigint> = {};
+  const plannedEntryOrderIds = new Set(snapshot.submittedOrderIds);
   for (const candidate of batch.candidates) {
-    const evaluation = evaluateCandidate(snapshot, candidate, config, now, acceptedRiskBySleeve, acceptedRiskByUnderlying);
+    const evaluation = evaluateCandidate(snapshot, candidate, config, now, acceptedRiskBySleeve, acceptedRiskByUnderlying, plannedEntryOrderIds);
     candidateVerdicts.push(evaluation.verdict);
     if (!stale && evaluation.action !== null) {
       actions.push(evaluation.action);
-      acceptedRiskBySleeve[candidate.sleeve] += evaluation.action.reservedMaxLossCents;
-      acceptedRiskByUnderlying[evaluation.action.underlying] = (acceptedRiskByUnderlying[evaluation.action.underlying] ?? 0) + evaluation.action.reservedMaxLossCents;
+      acceptedRiskBySleeve[candidate.sleeve] += BigInt(evaluation.action.reservedMaxLossCents);
+      acceptedRiskByUnderlying[evaluation.action.underlying] = (acceptedRiskByUnderlying[evaluation.action.underlying] ?? 0n) + BigInt(evaluation.action.reservedMaxLossCents);
+      plannedEntryOrderIds.add(evaluation.action.clientOrderId);
     }
   }
   return { batchVerdicts, candidateVerdicts, actions };
@@ -310,6 +336,21 @@ function hasExactKeys(record: Readonly<Record<string, unknown>>, keys: readonly 
 
 function isSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function isWellFormedString(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function parseLeg(value: unknown): OptionLeg | null {
@@ -336,7 +377,7 @@ function parseCandidate(value: unknown): EntryCandidate | null {
   const rationale = value["rationale"];
   const entryLimit = value["entryLimit"];
   const legsValue = value["legs"];
-  if (typeof candidateId !== "string" || typeof structureIdentity !== "string" || typeof declaredStructureType !== "string" || (sleeve !== "income" && sleeve !== "convex") || !isSafeInteger(quantity) || quantity <= 0 || !isSafeInteger(remainingTradingSessions) || remainingTradingSessions < 0 || typeof rationale !== "string" || !isRecord(entryLimit) || !hasExactKeys(entryLimit, ["kind", "priceCents"]) || !Array.isArray(legsValue)) return null;
+  if (typeof candidateId !== "string" || !isWellFormedString(structureIdentity) || typeof declaredStructureType !== "string" || (sleeve !== "income" && sleeve !== "convex") || !isSafeInteger(quantity) || quantity <= 0 || !isSafeInteger(remainingTradingSessions) || remainingTradingSessions < 0 || typeof rationale !== "string" || !isRecord(entryLimit) || !hasExactKeys(entryLimit, ["kind", "priceCents"]) || !Array.isArray(legsValue)) return null;
   const entryLimitKind = entryLimit["kind"];
   const entryLimitPriceCents = entryLimit["priceCents"];
   if ((entryLimitKind !== "debit" && entryLimitKind !== "credit") || !isSafeInteger(entryLimitPriceCents) || entryLimitPriceCents < 0) return null;
@@ -374,7 +415,11 @@ export function reconcilePartialFillRisk(
   averageFillPriceCents: OptionPriceCents,
   remainingQuantity: Quantity,
 ): { readonly components: readonly ExposureRiskComponent[]; readonly totalMaxLossCents: MoneyCents } {
-  if (filledQuantity + remainingQuantity > candidate.quantity) throw new RangeError("filled plus remaining quantity exceeds approved quantity");
+  if (BigInt(filledQuantity) + BigInt(remainingQuantity) > BigInt(candidate.quantity)) throw new RangeError("filled plus remaining quantity exceeds approved quantity");
+  const fillIsWorseThanLimit = candidate.entryLimit.kind === "debit"
+    ? averageFillPriceCents > candidate.entryLimit.priceCents
+    : averageFillPriceCents < candidate.entryLimit.priceCents;
+  if (fillIsWorseThanLimit) throw new RangeError("broker fill price is worse than the approved entry limit");
   const filledRisk = definedRisk(candidate, filledQuantity, averageFillPriceCents).maxLossCents;
   const remainingRisk = definedRisk(candidate, remainingQuantity, candidate.entryLimit.priceCents).maxLossCents;
   if (filledRisk === null || remainingRisk === null) throw new RangeError("partial fill risk is unavailable for undefined-risk structure");

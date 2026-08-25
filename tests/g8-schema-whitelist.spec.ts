@@ -19,6 +19,9 @@ describe("G8 schema and whitelist", () => {
     const semantic = run([invalid, valid]);
     expect(semantic.candidateVerdicts).toHaveLength(2);
     expect(semantic.actions.map(action => action.candidateId)).toEqual(["valid"]);
+
+    const loneSurrogate = { ...candidate(), structureIdentity: "\uD800" };
+    expect(parseAnalystOutput(JSON.stringify({ candidates: [loneSurrogate] }))).toMatchObject({ kind: "structural_failure" });
   });
 
   it("S-G8-02 treats refusal prose and non-candidate text as structural failure", () => {
@@ -41,6 +44,18 @@ describe("G8 schema and whitelist", () => {
     const decisionSnapshot = marketFor(outside[3]!, snapshot({ knownContractIds: [...snapshot().knownContractIds, ...outside.flatMap(value => value.legs.map(optionLeg => optionLeg.contractId))] }));
     const result = run(outside, decisionSnapshot);
     for (const verdict of result.candidateVerdicts) expect(verdict.gateVector[7]).toMatchObject({ passed: false, code: "WHITELIST" });
+
+    const hugeRaw = JSON.stringify({
+      candidates: [
+        { ...candidate(), candidateId: "huge", structureIdentity: "huge", quantity: Number.MAX_SAFE_INTEGER },
+        { ...candidate(), candidateId: "after-huge", structureIdentity: "after-huge" },
+      ],
+    });
+    const hugeResult = decide(snapshot(), parseAnalystOutput(hugeRaw), TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
+    expect(hugeResult.candidateVerdicts).toHaveLength(2);
+    expect(hugeResult.candidateVerdicts[0]?.gateVector).toHaveLength(8);
+    expect(hugeResult.candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: false, code: "WHITELIST" });
+    expect(hugeResult.actions.map(action => action.candidateId)).toEqual(["after-huge"]);
   });
 
   it("S-G8-04 vetoes rather than repairing out-of-range values", () => {

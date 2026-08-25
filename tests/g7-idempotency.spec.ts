@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { decide } from "../src/core/decision.js";
 import { classifyDuplicateSubmission, closeAttemptId, closeLifecycleId, entryClientOrderId, planCloseLifecycle } from "../src/core/order-identity.js";
 import { integerUnit } from "../src/core/domain.js";
 import type { CloseLifecycleSnapshot, CloseRoute } from "../src/core/domain.js";
-import { candidate, snapshot } from "./fixtures.js";
+import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, snapshot } from "./fixtures.js";
 
 describe("G7 idempotency", () => {
   it("S-G7-01 derives stable entry IDs and one route-independent close lifecycle", () => {
@@ -29,5 +30,15 @@ describe("G7 idempotency", () => {
     expect(planCloseLifecycle({ ...active, attempts: [...active.attempts, { ...active.attempts[0]!, attemptId: "other", state: "accepted" }] })).toMatchObject({ kind: "VETO" });
     expect(planCloseLifecycle({ ...active, exposureLifecycleId: "short-stock-residue", route: "watchdog", attempts: [] })).toMatchObject({ kind: "SUBMIT", closeLifecycleId: "close:short-stock-residue", quantity: 10 });
     expect(classifyDuplicateSubmission("entry:existing")).toEqual({ kind: "ADOPT", clientOrderId: "entry:existing" });
+
+    const duplicateBatch = decide(snapshot(), {
+      kind: "candidates",
+      candidates: [
+        candidate({ candidateId: "first", structureIdentity: "same-structure" }),
+        candidate({ candidateId: "second", structureIdentity: "same-structure" }),
+      ],
+    }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
+    expect(duplicateBatch.actions).toHaveLength(1);
+    expect(duplicateBatch.candidateVerdicts[1]?.gateVector[6]).toMatchObject({ passed: false, code: "IDEMPOTENCY" });
   });
 });

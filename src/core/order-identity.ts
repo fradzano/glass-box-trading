@@ -17,7 +17,11 @@ function isActiveCloseState(state: CloseAttemptSnapshot["state"]): boolean {
 }
 
 export function entryClientOrderId(snapshot: DecisionSnapshot, candidate: EntryCandidate): string {
-  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${encodeURIComponent(candidate.structureIdentity)}`;
+  let encodedStructureIdentity = "";
+  for (let index = 0; index < candidate.structureIdentity.length; index += 1) {
+    encodedStructureIdentity += candidate.structureIdentity.charCodeAt(index).toString(16).padStart(4, "0");
+  }
+  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${encodedStructureIdentity}`;
 }
 
 export function closeLifecycleId(exposureLifecycleId: string, route: CloseRoute): string {

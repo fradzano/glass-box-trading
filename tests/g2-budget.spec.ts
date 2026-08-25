@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decide, reconcilePartialFillRisk } from "../src/core/decision.js";
 import { integerUnit } from "../src/core/domain.js";
 import type { DecisionConfig, EntryCandidate, EntryReservationState } from "../src/core/domain.js";
-import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, exposure, snapshot } from "./fixtures.js";
+import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, exposure, leg, snapshot } from "./fixtures.js";
 
 function run(candidateValues: readonly EntryCandidate[], decisionSnapshot = snapshot(), config: DecisionConfig = TEST_ONLY_O5_CONFIG) {
   return decide(decisionSnapshot, { kind: "candidates", candidates: candidateValues }, config, TEST_ONLY_NOW);
@@ -47,6 +47,28 @@ describe("G2 sleeve budgets", () => {
       { kind: "entry", state: "fillable", maxLossCents: 60_000 },
     ]);
     expect(reconciled.totalMaxLossCents).toBe(92_000);
+    expect(() => reconcilePartialFillRisk(
+      tenLot,
+      integerUnit(4, "Quantity"),
+      integerUnit(120, "OptionPriceCents"),
+      integerUnit(6, "Quantity"),
+    )).toThrow("broker fill price is worse than the approved entry limit");
+    const creditTenLot = candidate({
+      declaredStructureType: "vertical_credit",
+      sleeve: "income",
+      quantity: integerUnit(10, "Quantity"),
+      entryLimit: { kind: "credit", priceCents: integerUnit(100, "OptionPriceCents") },
+      legs: [
+        leg({ contractId: "short-call", side: "sell", strikeCents: integerUnit(50_000, "StrikeCents") }),
+        leg({ contractId: "long-call", side: "buy", strikeCents: integerUnit(50_500, "StrikeCents") }),
+      ],
+    });
+    expect(() => reconcilePartialFillRisk(
+      creditTenLot,
+      integerUnit(4, "Quantity"),
+      integerUnit(80, "OptionPriceCents"),
+      integerUnit(6, "Quantity"),
+    )).toThrow("broker fill price is worse than the approved entry limit");
   });
 
   it("S-G2-07 releases entry reservation on every terminal path and never reserves exits", () => {
