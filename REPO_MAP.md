@@ -8,6 +8,7 @@
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
 - `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
+- `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `STATE.md` — STATE — live cursor
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
