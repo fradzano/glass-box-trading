@@ -5,6 +5,7 @@
 - `CLAUDE.md` — Glass Box Trading — agent instructions
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `DECISIONS.md` — DECISIONS
+- `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
 - `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
