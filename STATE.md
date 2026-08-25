@@ -39,15 +39,20 @@
   injected and CAUGHT (calendar mutant found by a blind checker). Final
   audit + re-audit ran; the run ends as a **Vorlage with open
   discrepancy** (D16 executable-declaration dispute, N1/N2 bookkeeping).
-- **Authoritative open-finds list (owner decision pending):** run ledger,
-  `~/verify-runs/fradzano/glass-box-trading/spec-pass/LEDGER.md`, section
-  "Deckel-Halt" + "Ergaenzung Residuenliste". Headline items: GV-2
-  (lock/dead-man bound formula — couples into the O5 freeze: a 30-min
-  cycle interval is provably incompatible with the 45-min silence SLA),
-  GV-3, GV-6 (ladder cap for orphan legs), GV-8/NUT-2 (quote carry-over
-  lifecycle vs A1), plus text-fixed-but-unverified R-NUT-1a/UNF-1/GV-6b.
-- Next: owner reviews the Vorlage; then TypeScript foundation (scaffold,
-  journal types, pure core, red-first tests per SPEC tiers).
+- **Owner rulings 2026-08-25 (all recorded in DECISIONS.md):** Vorlage
+  accepted as capped; D16 "executable: yes" → evidence debt; GV-2 solved
+  by writer FENCING (epoch at a single mutation gateway, witness-append
+  class, `STATE_DIR` binding; O5: 15-min cycle, dead-man 50+10 min);
+  GV-3/6/8 solved by typed revalidation claimset, discriminated recovery
+  policy (S-X-06, assignment exception to A23), journal-backed quote
+  history. All folded into SPEC through commit `9a23853`; the
+  owner-ordered cold seam verification (R3) confirmed the fencing class
+  fix (KGV-1/2/3 RESOLVED), KGV-4 rests as a declared limit inside
+  S-G12-07, and every remaining B is a pfadpflichtige row in
+  **`docs/EVIDENCE-DEBT.md`** (the tracked register the red-first tests
+  must discharge).
+- Next: TypeScript foundation — scaffold, journal types, pure core,
+  red-first tests per SPEC §0.5 tiers, evidence-debt paths first-class.
 
 ## Next (after the ladder)
 
