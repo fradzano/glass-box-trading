@@ -53,6 +53,7 @@ parameter — no constant below may be hardcoded in core logic.
 | `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it) |
 | `LOCK_TAKEOVER_BOUND` | *O5* | scheduling constraint ONLY (writer authority comes from fencing, S-G12-07): `> CYCLE_WALLTIME_BUDGET`, and `LOCK_TAKEOVER_BOUND + 2 × (CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET) ≤ DEAD_MAN_BOUND` (corrected per spec-pass GV-2; see S-G12-02) |
 | `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
+| `STATE_DIR` | set at install | absolute path literal; home of journal, halt flag, epoch store — every instance resolves the same one (S-G12-07, S-CYC-11) |
 
 ## 0.5 Build priority — the MVP cut (added 2026-08-25, spec-pass NUT-1)
 
@@ -189,9 +190,10 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   call, the shell validates the mandatory configuration — `EXPECTED_
   ACCOUNT_ID` set and non-empty (an empty comparison never passes, see
   S-J-06), the bound constraints of S-G12-02 satisfied, the
-  `SNAPSHOT_STALENESS_BOUND` coupling of §0 satisfied, and — if
-  `STRUCTURE_WHITELIST` contains any short-capable structure — the S-X-06
-  capability flag present. Any violation →
+  `SNAPSHOT_STALENESS_BOUND` coupling of §0 satisfied, `STATE_DIR` an
+  absolute, resolvable path, and — if `STRUCTURE_WHITELIST` contains any
+  short-capable structure — the S-X-06 capability flag present. Any
+  violation →
   the agent refuses to arm: no orders ever, `CONFIG_INVALID` journaled
   locally, active fail-signal to the dead-man check (S-G14-03). Missing
   configuration is indistinguishable from wrong configuration — both are
@@ -466,10 +468,18 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   through the same serialized append path. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
-  epoch and demotes itself to a witness. The epoch store persists next to
-  the journal and follows the S-CYC-09 rule: an absent/reset epoch store
-  facing a non-virgin account is never re-seeded silently — it is the GAP
-  path, halt included. Order of operations is fixed: fence (atomic epoch
+  epoch and demotes itself to a witness. The epoch store lives at the
+  configured absolute `STATE_DIR` (§0; validated at S-CYC-11 — a relative
+  or unresolvable path never arms), so every instance on the host —
+  agent, watchdog, manual run — validates against the SAME store by
+  construction, and it follows the S-CYC-09 rule: an absent/reset epoch
+  store facing a non-virgin account is never re-seeded silently — it is
+  the GAP path, halt included; a re-seed in the virgin BOOTSTRAP state is
+  itself journaled. Declared limit (KGV-4 residual, accepted): two hosts
+  or two deliberately different `STATE_DIR`s cannot fence each other —
+  this is a single-host, single-state-dir design; the backstop is
+  construction (A23) plus the account-bound order check (S-J-06). Order
+  of operations is fixed: fence (atomic epoch
   increment) → reconcile (phase 0 against broker truth) → act. Tests:
   (1) a paused writer resuming after a takeover gets every authoritative
   mutation rejected and can still append exactly one `FENCED_OUT` witness
@@ -499,7 +509,8 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   positions as whole structures and sets halt; its actions run under its
   own incremented epoch and are journaled via the serialized path. A
   fenced old writer that wakes later cannot mutate anything (S-G12-07).
-  `SUPPRESSED` lines do not reset this staleness clock (S-G12-01).
+  Witness appends (the S-G12-07 class — `SUPPRESSED`, `FENCED_OUT`) never
+  reset this staleness clock.
 - **S-G14-03** External detection (decision C): the agent pings
   healthchecks.io only AFTER a durable local journal append; the check's
   schedule follows `America/New_York` session slots; missed ping alerts
@@ -530,7 +541,8 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   broker times. All CEST talk lives in rendering only. (A21)
 - **S-J-03** Entry types (closed set): `CYCLE`, `BOOTSTRAP`, `INTENT`,
   `OUTCOME`, `RECONCILIATION`, `HUMAN_ACTION`, `GAP`, `SKIP`, `SUPPRESSED`,
-  `HALT`, `UNHALT`, `KILL`, `DEADLINE_RECONCILIATION`, `TERMINAL`. Labels
+  `FENCED_OUT`, `HALT`, `UNHALT`, `KILL`, `DEADLINE_RECONCILIATION`,
+  `TERMINAL`. Labels
   like `WORLD_UNREACHABLE`, `WORLD_PARTIAL`, `STALE_SNAPSHOT`,
   `AUTH_FAILURE`, `REVALIDATION_VOID`, `SCHEMA_VETO`, `NOT_SUBMITTED`,
   `CONFIG_INVALID` are reason codes *inside* `CYCLE`/`OUTCOME`/
@@ -539,9 +551,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   a rejection is an `OUTCOME` with status `rejected`, structurally
   incapable of being read as an execution. Every scheduled invocation
   emits exactly one PRIMARY entry: `CYCLE` for a full cycle, else its
-  substitute (`BOOTSTRAP`, `GAP`, `SKIP`, `SUPPRESSED`) — "exactly one
-  CYCLE per cycle" never demands a second entry beside a substitute
-  (KGV-11). Every primary entry written from a TAKEN snapshot (`CYCLE`,
+  substitute (`BOOTSTRAP`, `GAP`, `SKIP`, `SUPPRESSED`, `FENCED_OUT`) —
+  "exactly one CYCLE per cycle" never demands a second entry beside a
+  substitute (KGV-11). Which entries are witness appends (authority-free,
+  staleness-neutral, no success ping) is defined ONCE, in S-G12-07 —
+  currently `SUPPRESSED` and `FENCED_OUT`; no second list exists. Every primary entry written from a TAKEN snapshot (`CYCLE`,
   `BOOTSTRAP`, `GAP`, and `SKIP` when the snapshot phase ran) records the
   quote samples observed (per watched underlying: bid, ask, sizes, quote
   timestamps), so the next cycle's frozen-market history (§1, S-G6-05) is

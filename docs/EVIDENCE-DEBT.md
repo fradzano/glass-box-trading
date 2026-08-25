@@ -46,7 +46,8 @@ citing the test ID next to it in the same commit that adds the test.
 |---|---|---|
 | KGV-1/2 | S-G12-07, S-G12-01 | fenced writer: every authoritative mutation rejected, exactly one FENCED_OUT witness line lands |
 | KGV-3 | S-G12-07 | two concurrent takeover attempts → exactly one winner (atomic compare-and-increment) |
-| KGV-4 | S-G12-07 | absent/reset epoch store + non-virgin account → GAP path, no silent re-seed |
+| KGV-4 | S-G12-07 | absent/reset epoch store + non-virgin account → GAP path, no silent re-seed; virgin re-seed is journaled; STATE_DIR misconfig never arms (residual: two deliberate STATE_DIRs = declared limit) |
+| KGV-1-REG | S-J-03, S-G12-07 | FENCED_OUT passes schema validation as a closed-set type and as a primary substitute; witness-class membership has exactly one source |
 | KGV-5 | S-CYC-05 | equity crosses kill threshold between snapshot and submit → KILL flatten+halt SAME cycle |
 | KGV-6 | S-CYC-05 | REVALIDATION_VOID entry carries claimset + violated claim |
 | KGV-7 | S-X-06 | worthless orphan long (bid 0) → declared expiry-hold ends escalation and fail-ping |
