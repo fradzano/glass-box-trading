@@ -8,6 +8,7 @@
 
 **Last updated:** 2026-08-25 (implementation phase plan)
 **Branch:** `concept` (no `main` yet — created at publish time, no GitHub remote yet)
+**Last accepted phase artifact:** P0 at `0486dd3`
 **Current implementation phase:** P1 — pure entry-decision core
 ([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p1--pure-entry-decision-core))
 
