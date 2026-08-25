@@ -95,11 +95,15 @@ this file.
   (#15 #18 #19)
 
 - **A12 — The LLM has no path to an order.** Only schema-valid,
-  whitelist-constrained candidates enter the core; output failing validation is
-  vetoed wholesale and journaled, never repaired. LLM unavailability, garbage,
-  or truncation degrades the agent to position-managing (or inert-but-
-  journaling) mode — never to a crash-loop, never to charitable execution.
-  (#13 #14)
+  whitelist-constrained candidates enter the core. Validation failure has two
+  levels (sharpened 2026-08-25, spec-pass finding DOM-2, previously ambiguous
+  "wholesale"): a *structural* failure (unparseable, schema-violating,
+  truncated output) discards the entire analyst output — nothing in it is
+  trustworthy; a *semantic* whitelist violation vetoes that candidate while
+  well-formed siblings are still evaluated. Both are journaled, nothing is
+  ever repaired silently. LLM unavailability, garbage, or truncation degrades
+  the agent to position-managing (or inert-but-journaling) mode — never to a
+  crash-loop, never to charitable execution. (#13 #14)
 
 - **A13 — Single-writer, idempotent execution.** At most one decision-making
   instance acts on the account at a time (lock); a suppressed or skipped

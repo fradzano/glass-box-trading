@@ -34,6 +34,12 @@ parameter — no constant below may be hardcoded in core logic.
 | `CYCLE_INTERVAL` | *O5* | 15–30 min during US session |
 | `UNDERLYING_UNIVERSE` | *O5* | liquid ETF class (SPY/QQQ …) |
 | `STRUCTURE_WHITELIST` | *O5* | vertical debit/credit, iron condor, long option |
+| `LIMIT_TOLERANCE` | *O5* | limit-price tolerance around decision mid (§7) |
+| `CLOSE_ESCALATION_STEP` | *O5* | per-cycle limit re-price step for closes (§7) |
+| `RESIDUE_MAX_SESSIONS` | *O5* (default 1) | sessions until unresolved residue alarms |
+| `ANALYST_TIMEOUT` | *O5* | hard wall-time ceiling for the analyst call |
+| `LOCK_TAKEOVER_BOUND` | *O5* | must exceed worst-case cycle wall-time (see S-G12-02) |
+| `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
 
 ## 1. Core contract
 
@@ -76,10 +82,14 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   is retained, and the next cycle's phase 0 resolves it by client order ID
   against the broker BEFORE any new order is placed. (A2, A5, A23)
 - **S-CYC-05** Pre-submit revalidation: between core approval and submission
-  the executor refetches positions + open orders; if the delta touches the
-  action's preconditions (position appeared/disappeared, human traded, an
-  order filled meanwhile), the action is voided and journaled `REVALIDATION_
-  VOID` — never submitted "because the core said so". (A13)
+  the executor refetches positions + open orders. Preconditions are a closed
+  list — exactly the snapshot facts that entered the approving gate
+  verdicts: the action's target positions/orders, sleeve exposure totals,
+  per-underlying exposure totals, and the halt flag. ANY delta in these
+  (position appeared/disappeared, human traded elsewhere in the account, an
+  order filled meanwhile) voids the action, journaled `REVALIDATION_VOID` —
+  never submitted "because the core said so". A narrower reading (only the
+  target position) is non-conforming. (A13, #8)
 - **S-CYC-06** Local journal append fails (disk full, lock), then no entry
   order is submitted this cycle; risk-reducing closes remain permitted with
   best-effort logging; the condition itself is surfaced on the next
@@ -91,6 +101,17 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   phase 0 re-derives everything from the broker, journals the gap (`GAP`,
   from–to, state then vs. now), and the cycle behaves as exactly one cycle —
   no catch-up trading, no doubled aggression. (A1, A20)
+- **S-CYC-09** Bootstrap (very first cycle ever): an empty or absent journal
+  is a defined state, not a gap — the cycle journals `BOOTSTRAP` (broker
+  snapshot as the opening baseline; no "state then" exists and none is
+  fabricated), then proceeds as a normal cycle. Any failure in this first
+  cycle follows the normal halt/alarm paths — the first unattended cycle
+  fails visibly and safely, it cannot silently burn the day. (#1, A4, A20)
+- **S-CYC-10** Failed resolution stays blocking: if phase 0 cannot resolve a
+  `CONFIRMATION_UNCLEAR` item or other unexplained state (broker still
+  unreachable, lookup ambiguous), the item remains open, new entries remain
+  blocked, and each cycle journals the still-unresolved state. Only a
+  successful classification unblocks — "we tried" does not. (A2, A3)
 
 ## 3. Entry gates
 
@@ -131,8 +152,12 @@ remaining reservation; exit orders reserve nothing.
 - **S-G2-06** Partial fill 4/10: filled 4 count as position max loss,
   resting 6 as reservation; total equals the 10-lot reservation, counted
   once.
-- **S-G2-07** Exit (closing) orders reserve no budget and release the
-  identity's reservation only on terminal state (filled/canceled).
+- **S-G2-07** Exit (closing) orders reserve no budget; an entry identity's
+  reservation is released only when its order reaches a terminal state —
+  filled (reservation becomes position max loss), rejected, canceled, or
+  expired (reservation freed). A rejection that failed to release its
+  reservation would block the sleeve permanently; a test asserts release on
+  every terminal path. (#17)
 - **S-G2-08** Sleeves are disjoint: an income candidate can never draw
   convex budget, and vice versa; sleeve tag comes from the validated
   candidate and is journaled. (A5)
@@ -149,6 +174,11 @@ remaining reservation; exit orders reserve nothing.
   above → veto `CONCENTRATION`.
 
 ### G5 — liquidity (A3)
+
+Scope: G5 gates *entries* only. Risk-reducing closes (eviction, residue
+resolution, flatten, kill-switch) are never blocked by G5 — they use the
+close-escalation ladder (§7) instead. A close that G5 could veto would make
+the safety path fail exactly when liquidity is worst.
 
 Per leg, all of: `bid > 0`, market not crossed, `(ask − bid) / mid ≤
 MAX_REL_SPREAD`, quote size ≥ `MIN_QUOTE_SIZE`, quote age ≤ `QUOTE_MAX_AGE`.
@@ -170,10 +200,13 @@ MAX_REL_SPREAD`, quote size ≥ `MIN_QUOTE_SIZE`, quote age ≤ `QUOTE_MAX_AGE`.
   (half-days included), never from hardcoded 09:30/16:00.
 - **S-G6-04** Mon Aug 31 2026 is a normal session; Labor Day is Sep 7 —
   asserted via calendar fixture, not code. (#47)
-- **S-G6-05** Underlying with frozen/stale quotes while the clock says open
-  (halt heuristic) → veto for that underlying; every working order on it is
-  either canceled or journaled as deliberately held. Nothing rides a reopen
-  unowned.
+- **S-G6-05** Untradable-underlying heuristic — two distinct signals, either
+  suffices: (a) quote timestamps older than `QUOTE_MAX_AGE` (stale feed), or
+  (b) price AND size frozen across ≥2 successive snapshots while timestamps
+  keep advancing (halted market with a live feed — reusing only the G5 age
+  check does not detect this). Either signal → veto for that underlying;
+  every working order on it is either canceled or journaled as deliberately
+  held. Nothing rides a reopen unowned. (#30, A16)
 
 ### G7 — idempotency (A13)
 
@@ -186,11 +219,11 @@ MAX_REL_SPREAD`, quote size ≥ `MIN_QUOTE_SIZE`, quote age ≤ `QUOTE_MAX_AGE`.
 
 ### G8 — schema and whitelist (A12)
 
-Spec decision **D-SPEC-1** (reversible): *structural* failure (invalid JSON,
-schema mismatch) drops the entire analyst output; a *semantic* whitelist
-violation (well-formed candidate, out-of-policy value) vetoes that candidate
-and the rest are still evaluated. Rationale: after a structural failure
-nothing in the payload is trustworthy; a policy violation is contained.
+Two-level rule per A12 (sharpened there 2026-08-25 — the axiom, not this
+spec, is the source): *structural* failure (invalid JSON, schema mismatch)
+drops the entire analyst output; a *semantic* whitelist violation
+(well-formed candidate, out-of-policy value) vetoes that candidate and the
+rest are still evaluated.
 
 - **S-G8-01** Invalid JSON / schema mismatch / truncated output → whole
   output dropped, `SCHEMA_VETO` journaled, cycle continues management-only.
@@ -204,6 +237,12 @@ nothing in the payload is trustworthy; a policy violation is contained.
   clamped; a misspelled symbol is vetoed, not corrected.
 - **S-G8-05** Candidate referencing a contract absent from the fetched chain
   (nonexistent/expired/typo) → veto `UNKNOWN_CONTRACT`. (#14)
+- **S-G8-06** Sleeve–structure consistency: the sleeve tag must match the
+  structure's economics — net-credit structures (credit spreads, iron
+  condors) may only carry `income`; net-debit structures and long options
+  may only carry `convex`. A mismatch (e.g., a credit condor tagged
+  `convex`, which would be measured against the wrong budget basis) → veto
+  `SLEEVE_MISMATCH`. The tag is validated, never trusted. (A14, CONCEPT §2)
 
 ## 4. Lifecycle gates
 
@@ -212,7 +251,13 @@ nothing in the payload is trustworthy; a policy violation is contained.
 - **S-G9-01** Entry candidate whose expiry day ≤ the next trading session →
   veto `EXPIRY` (it would meet eviction immediately).
 - **S-G9-02** Open position whose expiry day is the next trading session →
-  whole-structure close action generated this session, regardless of P&L.
+  whole-structure close action generated this session, regardless of P&L —
+  and *tracked to a terminal state*: an eviction close that does not fill
+  (liquidity, rejection) re-enters every subsequent cycle via the
+  close-escalation ladder (§7) until the position is actually closed;
+  "a close was generated once" never satisfies this case. If the position is
+  still open at the last cycle before its expiry session, halt + alarm while
+  close attempts continue. (A17)
 - **S-G9-03** Eviction closes are management actions: they run under halt
   and on Friday, and they are never leg-wise on intact structures. (A11)
 
@@ -226,7 +271,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G10-01** All MATCHED → proceed normally.
 - **S-G10-02** Any non-MATCHED item → `RECONCILIATION` entry with the
   classification, halt new entries, and generate risk-reducing resolution
-  actions (close residue at next opportunity).
+  actions. Resolution is driven, not hoped for: residue closes use the
+  close-escalation ladder (§7) every cycle; if a residue has not reached a
+  terminal state within `RESIDUE_MAX_SESSIONS`, the condition alarms through
+  the dead-man channel (it is a genuine "developer must look" state) while
+  attempts and halt continue. "No opportunity yet", repeated forever, is
+  non-conforming. (A2)
 - **S-G10-03** Assignment overnight: morning cycle finds shares + orphan
   long leg → classified `RESIDUE`; resolution may act leg-wise because the
   structure is already broken and each step strictly reduces risk. (A11)
@@ -238,13 +288,21 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 
 ### G11 — deadline flatten and Friday regime (A17, A22)
 
-- **S-G11-01** On `FLATTEN_DATE`, every cycle generates whole-structure
-  closes for all open positions and cancels all non-terminal orders; by
-  Thursday close the assertion is zero positions AND zero non-terminal
-  orders; a violation halts and alarms.
+- **S-G11-01** On `FLATTEN_DATE`, all entry actions veto `DEADLINE` (no
+  position is opened on the day everything must die), every cycle generates
+  whole-structure closes for all open positions and cancels all non-terminal
+  orders. Closes run the close-escalation ladder (§7) from the first
+  `FLATTEN_DATE` cycle onward, so an illiquid leg is walked across the
+  spread with hours of margin, not hoped into a fill; by Thursday close the
+  assertion is zero positions AND zero non-terminal orders; a violation
+  halts and alarms.
 - **S-G11-02** Friday Sep 4: all entry actions veto `DEADLINE`; the agent is
-  journaling-only; broker mutations are limited to the (empty) management
-  set.
+  journaling-only; broker mutations are limited to the management set —
+  which is empty when Thursday succeeded. Failure path (deviation from the
+  normal decision-B regime, journaled as such): if the Thursday assertion
+  failed, Friday cycles still execute risk-reducing closes via the ladder
+  until flat — a stuck position is never abandoned to expiry mechanics just
+  because the calendar said "journaling-only". (A17, #19)
 - **S-G11-03** Fri 17:00 CEST: dedicated `DEADLINE_RECONCILIATION` entry —
   full broker snapshot + reference to the submitted revision.
 - **S-G11-04** Fri US close: final snapshot, `TERMINAL` entry, controlled
@@ -257,8 +315,20 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G12-01** Lock held by a live instance → the second instance makes no
   broker call, appends a single `SUPPRESSED` line, exits 0. (#23, #40)
 - **S-G12-02** Stale lock (holder provably dead, heartbeat older than
-  bound) → takeover journaled; two live holders are impossible by
-  construction of the lock protocol.
+  `LOCK_TAKEOVER_BOUND`) → takeover journaled. The bound is constrained,
+  not assumed: `LOCK_TAKEOVER_BOUND` must exceed the worst-case cycle
+  wall-time (all phase timeouts summed, `ANALYST_TIMEOUT` included), and the
+  holder writes a lock heartbeat at every phase boundary — a slow-but-alive
+  cycle (a 4-minute analyst call, #13) can therefore never look dead. Only
+  under these two constraints is "two live holders" excluded. (#23, A13)
+- **S-G12-06** Credential fence (decision D): an auth failure (401/403) is
+  journaled as `AUTH_FAILURE` — a distinguishable state, not generic
+  `WORLD_UNREACHABLE` — and blocks all orders. The runbook fact is spec:
+  a key rotation does NOT cancel working orders; the documented fence
+  procedure therefore ends with a working-order check/cancel in the broker
+  dashboard, and the fence is drilled once on the dev account pre-arm
+  (drill outcome journaled there). Re-arm after a fence only under halt,
+  after full reconciliation. (#34, A19)
 - **S-G12-03** Halt flag set → all entry actions veto `HALT`; management
   actions (eviction, residue closes, flatten, kill-switch) still run.
 - **S-G12-04** Un-halt is manual and journaled; no code path clears the
@@ -300,23 +370,47 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-J-02** Timestamps: UTC ISO-8601 in every entry; broker timestamps
   recorded verbatim alongside; a third party can map journal times 1:1 onto
   broker times. All CEST talk lives in rendering only. (A21)
-- **S-J-03** Entry types (closed set): `CYCLE`, `INTENT`, `OUTCOME`,
-  `RECONCILIATION`, `HUMAN_ACTION`, `GAP`, `SKIP`, `SUPPRESSED`, `HALT`,
-  `UNHALT`, `KILL`, `DEADLINE_RECONCILIATION`, `TERMINAL`. Every cycle emits
-  exactly one `CYCLE` entry — including "did nothing, because X" with the
-  full verdict vector. (A4)
+- **S-J-03** Entry types (closed set): `CYCLE`, `BOOTSTRAP`, `INTENT`,
+  `OUTCOME`, `RECONCILIATION`, `HUMAN_ACTION`, `GAP`, `SKIP`, `SUPPRESSED`,
+  `HALT`, `UNHALT`, `KILL`, `DEADLINE_RECONCILIATION`, `TERMINAL`. Labels
+  like `WORLD_UNREACHABLE`, `WORLD_PARTIAL`, `STALE_SNAPSHOT`,
+  `AUTH_FAILURE`, `REVALIDATION_VOID`, `SCHEMA_VETO`, `NOT_SUBMITTED` are
+  reason codes *inside* `CYCLE`/`OUTCOME`/`RECONCILIATION` entries, not
+  extra types. `OUTCOME` carries a status from the closed set {filled,
+  partially_filled, rejected, canceled, expired, confirmation_unclear} —
+  a rejection is an `OUTCOME` with status `rejected`, structurally
+  incapable of being read as an execution. Every cycle emits exactly one
+  `CYCLE` entry — including "did nothing, because X" with the full verdict
+  vector. (A4, A5)
 - **S-J-04** Every `INTENT` carries: sleeve, structure + legs, computed max
-  loss, client order ID, the concrete rationale (the why), and the gate
-  verdict vector. Every broker fill maps to a stated reason. (A5)
+  loss, client order ID, the gate verdict vector, and a rationale with a
+  content requirement, not just non-emptiness: (a) the expected
+  distribution it buys ("paid from": income drift vs. convex tail), (b) a
+  reference to at least one concrete snapshot datum it rests on (the quotes
+  or chain facts used), and (c) candidate-specific free text naming
+  underlying and structure. Mechanically testable floor: two different
+  candidates must never produce byte-identical rationale text, and a
+  rationale without a snapshot reference fails. Boilerplate ("gates
+  passed") is non-conforming. (A5, #31)
 - **S-J-05** Secrets: journal schemas contain no free-form environment
   dumps; before any write, known secret values (keys, tokens, ping URL) are
   redacted from error strings. A test injects a fake key into an error path
   and asserts it never reaches the journal file. (A8)
-- **S-J-06** Account binding: every order-related entry records the account
-  ID; the executor asserts at startup and per order that the configured
-  `ALPACA_PROFILE` matches the expected role (competition from arming, dev
-  in pre-arm) and refuses all orders on mismatch, journaled. Live endpoints
-  are not configured anywhere. (A24)
+- **S-J-06** Account binding — two independent sources, or the check is
+  tautological: `EXPECTED_ACCOUNT_ID` is a separately configured literal
+  (the known account ID for the role: competition ID from arming, dev
+  `PA349COOGKZ1` pre-arm), NOT derived from `ALPACA_PROFILE` or from the
+  credentials. At startup and before every order, the account ID that the
+  broker itself reports for the active credentials must equal
+  `EXPECTED_ACCOUNT_ID`; mismatch → refuse all orders, journal, halt.
+  Every order-related entry records the account ID. Live endpoints are not
+  configured anywhere. (A24)
+- **S-J-08** Branch isolation is checked, not assumed: the journal writer
+  pushes exclusively to the configured journal branch and refuses any other
+  ref — a test configures a non-journal target and asserts refusal. Human
+  submission work never touches that branch (enforced by convention plus
+  the writer-side refusal; the collision of #44 is thereby structurally
+  one-sided). (A13, #44)
 - **S-J-07** Dashboard renders exclusively from the journal; it shows a
   last-updated stamp; a stale dashboard is visibly stale, and its worst
   momentary state (mid-build, half-pushed) is still dated and coherent.
@@ -325,12 +419,29 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 ## 7. Execution pricing (A15)
 
 - **S-X-01** Every order is a limit order; the limit derives from the
-  decision's own quotes (mid ± configured tolerance). Market orders do not
+  decision's own quotes (mid ± `LIMIT_TOLERANCE`). Market orders do not
   exist in the codebase.
 - **S-X-02** A fill at the limit is by construction within the decision's
   assumptions; any broker-reported deviation (price improvement is fine,
   anything worse is impossible for limits, partial fills are handled by
   S-G2-06) is journaled with the fill data verbatim.
+- **S-X-03** Synchronous broker rejection (buying power, approval level,
+  unsupported order type, unmarketable price, halted underlying) →
+  `OUTCOME` with status `rejected` and the broker's reason verbatim; the
+  G2 reservation is released (S-G2-07); the journal can never show it as
+  executed. (#17, A5)
+- **S-X-04** Asynchronous rejection (accepted, later rejected): the status
+  change is picked up by the same cycle's post-submit poll or the next
+  cycle's phase 0, journaled as in S-X-03, reservation released. Until the
+  terminal status is seen, the order counts as fillable exposure (A23
+  counting rule). (#17, A2)
+- **S-X-05** Close-escalation ladder (shared by G9/G10/G11 and the
+  kill-switch): a risk-reducing close starts at mid, then re-prices by
+  `CLOSE_ESCALATION_STEP` toward — and past — the opposing quote on every
+  subsequent cycle, remaining a limit order at all times (a marketable
+  limit is still a limit; S-X-01 survives). Every re-price is journaled.
+  The ladder never crosses into opening exposure and never legs out of an
+  intact structure (A11).
 
 ---
 
