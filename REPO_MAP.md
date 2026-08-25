@@ -2,6 +2,9 @@
 
 - `.env.example` — Copy to .env and fill in. .env is gitignored — keys never enter the repo.
 - `.gitignore` — Secrets — never committed. Real keys live in .env (see .env.example).
+- `.node-version`
+- `.npmrc`
+- `.nvmrc`
 - `CLAUDE.md` — Glass Box Trading — agent instructions
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
@@ -16,7 +19,26 @@
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec
+- `eslint.config.mjs`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
+- `package-lock.json`
+- `package.json`
+- `src/core/decision.ts`
+- `src/core/domain.ts`
+- `src/core/order-identity.ts`
 - `STATE.md` — STATE — live cursor
+- `tests/core-contract.spec.ts`
+- `tests/fixtures.ts`
+- `tests/g1-defined-risk.spec.ts`
+- `tests/g2-budget.spec.ts`
+- `tests/g3-g4-risk-caps.spec.ts`
+- `tests/g5-liquidity.spec.ts`
+- `tests/g6-session-tradability.spec.ts`
+- `tests/g7-idempotency.spec.ts`
+- `tests/g8-schema-whitelist.spec.ts`
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
+- `tools/clean.mjs`
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
+- `tsconfig.build.json`
+- `tsconfig.json`
+- `vitest.config.ts`
