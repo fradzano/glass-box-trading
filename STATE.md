@@ -27,16 +27,27 @@
 
 ## Now
 
-**Build order ladder in progress: Szenario ✅ → Axiom ✅ → Spec → Code.**
+**Build order ladder: Szenario ✅ → Axiom ✅ → Spec ✅ (capped pass done) → Code.**
 
-- Axioms distilled (24, `docs/AXIOMS.md`), owner-reviewed 2026-08-25
-  (blind/gate pass; 1 A + several B findings fixed, incl. new A24 account
-  binding). Owner calls A–D decided — see DECISIONS.md 2026-08-25 entries.
-- Next: concretize axioms into the spec (cases per gate) — the red-first test
-  oracle; then the capped adversarial pass: 2–3 rounds max (owner-agreed
-  deviation from the full bis-0 end condition; if not at 0 at the cap,
-  declare and the owner decides).
-- Only then: TypeScript foundation (scaffold, journal types, pure core).
+- Axioms distilled (24, `docs/AXIOMS.md`), owner-reviewed 2026-08-25; owner
+  calls A–D decided (DECISIONS.md).
+- Spec written (`docs/SPEC.md`, 85 test cases + 1 declared limit, with a
+  build-priority MVP cut in §0.5) and run through the capped adversarial
+  pass `spec-pass` (2 rounds of the 2–3 cap; NOT a bis-0 termination).
+  R1: 17 findings (2 A, 14 B, 1 C), all A and most B RESOLVED via gate
+  counter-verification; R2: regressions + fresh lenses, mutation probe
+  injected and CAUGHT (calendar mutant found by a blind checker). Final
+  audit + re-audit ran; the run ends as a **Vorlage with open
+  discrepancy** (D16 executable-declaration dispute, N1/N2 bookkeeping).
+- **Authoritative open-finds list (owner decision pending):** run ledger,
+  `~/verify-runs/fradzano/glass-box-trading/spec-pass/LEDGER.md`, section
+  "Deckel-Halt" + "Ergaenzung Residuenliste". Headline items: GV-2
+  (lock/dead-man bound formula — couples into the O5 freeze: a 30-min
+  cycle interval is provably incompatible with the 45-min silence SLA),
+  GV-3, GV-6 (ladder cap for orphan legs), GV-8/NUT-2 (quote carry-over
+  lifecycle vs A1), plus text-fixed-but-unverified R-NUT-1a/UNF-1/GV-6b.
+- Next: owner reviews the Vorlage; then TypeScript foundation (scaffold,
+  journal types, pure core, red-first tests per SPEC tiers).
 
 ## Next (after the ladder)
 

@@ -58,8 +58,8 @@ guess what may slip:
   (S-G12-01..05), G13, S-J-01..06, S-X-01/02/03.
 - **Tier 2 — before the first unattended session (Mon arming):** G5, G10,
   G14 (S-G14-01..03), S-G12-06 (fence drill is pre-arm by its own text),
-  S-CYC-03/07/08/09/
-  10, S-X-04/05, S-J-07/08. Note: the tier-1 kill-switch (S-G13-01) closes
+  S-CYC-03, S-CYC-07..10, S-X-04/05, S-J-07/08.
+  Note: the tier-1 kill-switch (S-G13-01) closes
   via plain S-X-01 limits until the S-X-05 ladder lands in tier 2 — a known,
   accepted weekend gap.
 - **Tier 3 — before Thursday Sep 3 (first expiry/deadline pressure):** G9,
