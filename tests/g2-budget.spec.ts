@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decide, reconcilePartialFillRisk } from "../src/core/decision.js";
 import { integerUnit } from "../src/core/domain.js";
-import type { DecisionConfig, EntryCandidate, EntryReservationState } from "../src/core/domain.js";
+import type { DecisionConfig, EntryCandidate, EntryReservationState, MoneyCents } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, exposure, leg, snapshot } from "./fixtures.js";
 
 function run(candidateValues: readonly EntryCandidate[], decisionSnapshot = snapshot(), config: DecisionConfig = TEST_ONLY_O5_CONFIG) {
@@ -10,6 +10,11 @@ function run(candidateValues: readonly EntryCandidate[], decisionSnapshot = snap
 
 describe("G2 sleeve budgets", () => {
   it("S-G2-01 passes exact equality with the remaining income budget", () => {
+    expect(() => integerUnit(-1, "MoneyCents")).toThrow("MoneyCents must be non-negative");
+    const malformedSnapshot = snapshot({
+      exposureLifecycles: [exposure({ sleeve: "convex", risk: [{ kind: "filled", state: "filled", maxLossCents: -1 as MoneyCents }] })],
+    });
+    expect(run([candidate()], malformedSnapshot).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false, code: "BUDGET" });
     const value = candidate({ sleeve: "income", declaredStructureType: "long_option", entryLimit: { kind: "debit", priceCents: integerUnit(12_000, "OptionPriceCents") } });
     const config = { ...TEST_ONLY_O5_CONFIG, incomeBudgetCents: integerUnit(1_200_000, "MoneyCents"), structureWhitelist: [...TEST_ONLY_O5_CONFIG.structureWhitelist, "long_option"] };
     expect(run([value], snapshot(), config).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: true });
@@ -23,8 +28,8 @@ describe("G2 sleeve budgets", () => {
 
   it("S-G2-03 reserves an approved candidate before evaluating the next", () => {
     const config = { ...TEST_ONLY_O5_CONFIG, convexBudgetCents: integerUnit(15_000, "MoneyCents") };
-    const first = candidate({ candidateId: "first", structureIdentity: "first", entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
-    const second = candidate({ candidateId: "second", structureIdentity: "second", entryLimit: { kind: "debit", priceCents: integerUnit(60, "OptionPriceCents") } });
+    const first = candidate({ candidateId: "first", entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
+    const second = candidate({ candidateId: "second", entryLimit: { kind: "debit", priceCents: integerUnit(60, "OptionPriceCents") } });
     const verdicts = run([first, second], snapshot(), config).candidateVerdicts;
     expect(verdicts.map(verdict => verdict.gateVector[1]?.passed)).toEqual([true, false]);
   });

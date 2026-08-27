@@ -14,14 +14,22 @@ describe("G8 schema and whitelist", () => {
       const result = decide(snapshot(), parseAnalystOutput(raw), TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
       expect(result).toMatchObject({ actions: [], candidateVerdicts: [], batchVerdicts: [expect.objectContaining({ code: "SCHEMA_VETO" })] });
     }
-    const invalid = candidate({ candidateId: "outside", structureIdentity: "outside", legs: [leg({ underlying: "IWM" })] });
-    const valid = candidate({ candidateId: "valid", structureIdentity: "valid" });
+    const invalid = candidate({ candidateId: "outside", legs: [leg({ underlying: "IWM" })] });
+    const valid = candidate({ candidateId: "valid" });
     const semantic = run([invalid, valid]);
     expect(semantic.candidateVerdicts).toHaveLength(2);
     expect(semantic.actions.map(action => action.candidateId)).toEqual(["valid"]);
 
-    const loneSurrogate = { ...candidate(), structureIdentity: "\uD800" };
+    const loneSurrogate = { ...candidate(), candidateId: "\uD800" };
     expect(parseAnalystOutput(JSON.stringify({ candidates: [loneSurrogate] }))).toMatchObject({ kind: "structural_failure" });
+
+    const duplicateIds = [candidate(), candidate({ legs: [leg({ contractId: "ANOTHER-CONTRACT" })] })];
+    expect(parseAnalystOutput(JSON.stringify({ candidates: duplicateIds }))).toMatchObject({ kind: "structural_failure" });
+    expect(decide(snapshot(), { kind: "candidates", candidates: duplicateIds }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW)).toMatchObject({
+      actions: [],
+      candidateVerdicts: [],
+      batchVerdicts: [expect.objectContaining({ code: "SCHEMA_VETO" })],
+    });
   });
 
   it("S-G8-02 treats refusal prose and non-candidate text as structural failure", () => {
@@ -35,20 +43,20 @@ describe("G8 schema and whitelist", () => {
     expect(run([equality], equalitySnapshot).candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: true });
 
     const outside: EntryCandidate[] = [
-      candidate({ candidateId: "underlying", structureIdentity: "underlying", legs: [leg({ underlying: "IWM" })] }),
-      candidate({ candidateId: "structure", structureIdentity: "structure", declaredStructureType: "calendar" }),
-      candidate({ candidateId: "expiry", structureIdentity: "expiry", remainingTradingSessions: integerUnit(TEST_ONLY_O5_CONFIG.expiryMaxSessions + 1, "Quantity") }),
-      candidate({ candidateId: "strike", structureIdentity: "strike", legs: [leg({ strikeCents: integerUnit(60_001, "StrikeCents") })] }),
-      candidate({ candidateId: "qty", structureIdentity: "qty", quantity: integerUnit(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1, "Quantity") }),
+      candidate({ candidateId: "underlying", legs: [leg({ contractId: "OUT-UNDERLYING", underlying: "IWM" })] }),
+      candidate({ candidateId: "structure", declaredStructureType: "calendar", legs: [leg({ contractId: "OUT-STRUCTURE" })] }),
+      candidate({ candidateId: "expiry", remainingTradingSessions: integerUnit(TEST_ONLY_O5_CONFIG.expiryMaxSessions + 1, "Quantity"), legs: [leg({ contractId: "OUT-EXPIRY" })] }),
+      candidate({ candidateId: "strike", legs: [leg({ contractId: "OUT-STRIKE", strikeCents: integerUnit(60_001, "StrikeCents") })] }),
+      candidate({ candidateId: "qty", quantity: integerUnit(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1, "Quantity"), legs: [leg({ contractId: "OUT-QTY" })] }),
     ];
-    const decisionSnapshot = marketFor(outside[3]!, snapshot({ knownContractIds: [...snapshot().knownContractIds, ...outside.flatMap(value => value.legs.map(optionLeg => optionLeg.contractId))] }));
+    const decisionSnapshot = outside.reduce((current, value) => marketFor(value, current), snapshot());
     const result = run(outside, decisionSnapshot);
     for (const verdict of result.candidateVerdicts) expect(verdict.gateVector[7]).toMatchObject({ passed: false, code: "WHITELIST" });
 
     const hugeRaw = JSON.stringify({
       candidates: [
-        { ...candidate(), candidateId: "huge", structureIdentity: "huge", quantity: Number.MAX_SAFE_INTEGER },
-        { ...candidate(), candidateId: "after-huge", structureIdentity: "after-huge" },
+        { ...candidate(), candidateId: "huge", quantity: Number.MAX_SAFE_INTEGER },
+        { ...candidate(), candidateId: "after-huge" },
       ],
     });
     const hugeResult = decide(snapshot(), parseAnalystOutput(hugeRaw), TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
@@ -68,6 +76,27 @@ describe("G8 schema and whitelist", () => {
   it("S-G8-05 vetoes contracts absent from the fetched chain", () => {
     const unknown = candidate({ legs: [leg({ contractId: "SPY-TYPO" })] });
     expect(run([unknown]).candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: false, code: "UNKNOWN_CONTRACT" });
+
+    const forged = candidate({
+      declaredStructureType: "vertical_credit",
+      sleeve: "income",
+      entryLimit: { kind: "credit", priceCents: integerUnit(100, "OptionPriceCents") },
+      legs: [
+        leg({ contractId: "CHAIN-C1", side: "sell", strikeCents: integerUnit(50_000, "StrikeCents") }),
+        leg({ contractId: "CHAIN-C2", side: "buy", strikeCents: integerUnit(50_500, "StrikeCents") }),
+      ],
+    });
+    const forgedMarket = marketFor(forged);
+    const authoritativeSnapshot = {
+      ...forgedMarket,
+      contractsById: {
+        "CHAIN-C1": { contractId: "CHAIN-C1", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(40_000, "StrikeCents"), right: "put" as const },
+        "CHAIN-C2": { contractId: "CHAIN-C2", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_000, "StrikeCents"), right: "put" as const },
+      },
+    } as DecisionSnapshot;
+    const mismatch = run([forged], authoritativeSnapshot);
+    expect(mismatch.actions).toEqual([]);
+    expect(mismatch.candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: false, code: "UNKNOWN_CONTRACT" });
   });
 
   it("S-G8-06 derives sleeve economics from leg quotes despite a contradictory declared type", () => {

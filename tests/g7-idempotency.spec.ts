@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
 import { classifyDuplicateSubmission, closeAttemptId, closeLifecycleId, entryClientOrderId, planCloseLifecycle } from "../src/core/order-identity.js";
 import { integerUnit } from "../src/core/domain.js";
-import type { CloseLifecycleSnapshot, CloseRoute } from "../src/core/domain.js";
+import type { CloseLifecycleSnapshot, CloseRoute, Quantity } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, snapshot } from "./fixtures.js";
 
 describe("G7 idempotency", () => {
@@ -11,6 +11,8 @@ describe("G7 idempotency", () => {
     const value = candidate();
     expect(entryClientOrderId(decisionSnapshot, value)).toBe(entryClientOrderId(decisionSnapshot, value));
     expect(entryClientOrderId({ ...decisionSnapshot, cycleIndex: integerUnit(decisionSnapshot.cycleIndex + 1, "Quantity") }, value)).not.toBe(entryClientOrderId(decisionSnapshot, value));
+    expect(entryClientOrderId(decisionSnapshot, { ...value, candidateId: "analyst-rephrased", rationale: "Same legs, different prose." })).toBe(entryClientOrderId(decisionSnapshot, value));
+    expect(() => integerUnit(-1, "Quantity")).toThrow("Quantity must be non-negative");
     const routes: readonly CloseRoute[] = ["ordinary", "emergency", "expiry", "kill", "watchdog"];
     expect(new Set(routes.map(route => closeLifecycleId("exposure-17", route)))).toEqual(new Set(["close:exposure-17"]));
     expect(closeAttemptId("close:exposure-17", integerUnit(2, "Quantity"))).toBe("close:exposure-17:g2");
@@ -28,14 +30,20 @@ describe("G7 idempotency", () => {
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(6, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "canceled" }] })).toMatchObject({ kind: "SUBMIT", attemptId: "close:spread-1:g1", quantity: 6 });
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(0, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "filled" }] })).toMatchObject({ kind: "COMPLETE" });
     expect(planCloseLifecycle({ ...active, attempts: [...active.attempts, { ...active.attempts[0]!, attemptId: "other", state: "accepted" }] })).toMatchObject({ kind: "VETO" });
+    expect(planCloseLifecycle({ ...active, currentExposureQuantity: -1 as Quantity, attempts: [] })).toMatchObject({ kind: "VETO" });
+    expect(planCloseLifecycle({
+      ...active,
+      currentExposureQuantity: integerUnit(1, "Quantity"),
+      attempts: [{ ...active.attempts[0]!, generation: Number.MAX_SAFE_INTEGER as Quantity, state: "canceled" }],
+    })).toMatchObject({ kind: "VETO" });
     expect(planCloseLifecycle({ ...active, exposureLifecycleId: "short-stock-residue", route: "watchdog", attempts: [] })).toMatchObject({ kind: "SUBMIT", closeLifecycleId: "close:short-stock-residue", quantity: 10 });
     expect(classifyDuplicateSubmission("entry:existing")).toEqual({ kind: "ADOPT", clientOrderId: "entry:existing" });
 
     const duplicateBatch = decide(snapshot(), {
       kind: "candidates",
       candidates: [
-        candidate({ candidateId: "first", structureIdentity: "same-structure" }),
-        candidate({ candidateId: "second", structureIdentity: "same-structure" }),
+        candidate({ candidateId: "first" }),
+        candidate({ candidateId: "second" }),
       ],
     }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
     expect(duplicateBatch.actions).toHaveLength(1);

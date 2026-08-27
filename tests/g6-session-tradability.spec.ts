@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
 import { integerUnit } from "../src/core/domain.js";
 import type { DecisionSnapshot, EntryCandidate } from "../src/core/domain.js";
-import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, leg, quote, snapshot } from "./fixtures.js";
+import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, contract, leg, quote, snapshot } from "./fixtures.js";
 
 function sessionGate(decisionSnapshot: DecisionSnapshot, candidateValue = candidate()) {
   return decide(decisionSnapshot, { kind: "candidates", candidates: [candidateValue] }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW).candidateVerdicts[0]!.gateVector[5]!;
@@ -43,10 +43,10 @@ describe("G6 session and tradability", () => {
     });
     expect(sessionGate(frozen)).toMatchObject({ passed: false, reasons: [expect.stringContaining("frozen")] });
 
-    const qqqCandidate: EntryCandidate = candidate({ candidateId: "qqq", structureIdentity: "qqq", legs: [leg({ contractId: "QQQ-C-600", underlying: "QQQ", strikeCents: integerUnit(60_000, "StrikeCents") })] });
+    const qqqCandidate: EntryCandidate = candidate({ candidateId: "qqq", legs: [leg({ contractId: "QQQ-C-600", underlying: "QQQ", strikeCents: integerUnit(60_000, "StrikeCents") })] });
     const scoped = snapshot({
       quotesByContract: { ...snapshot().quotesByContract, "QQQ-C-600": quote() },
-      knownContractIds: [...snapshot().knownContractIds, "QQQ-C-600"],
+      contractsById: { ...snapshot().contractsById, "QQQ-C-600": contract({ contractId: "QQQ-C-600", underlying: "QQQ", strikeCents: integerUnit(60_000, "StrikeCents") }) },
       priorQuotesByUnderlying: { SPY: snapshot().priorQuotesByUnderlying["SPY"]! },
     });
     const result = decide(scoped, { kind: "candidates", candidates: [candidate(), qqqCandidate] }, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);

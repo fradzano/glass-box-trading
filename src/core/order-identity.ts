@@ -17,11 +17,23 @@ function isActiveCloseState(state: CloseAttemptSnapshot["state"]): boolean {
 }
 
 export function entryClientOrderId(snapshot: DecisionSnapshot, candidate: EntryCandidate): string {
-  let encodedStructureIdentity = "";
-  for (let index = 0; index < candidate.structureIdentity.length; index += 1) {
-    encodedStructureIdentity += candidate.structureIdentity.charCodeAt(index).toString(16).padStart(4, "0");
+  const structureIdentity = candidate.legs
+    .map(optionLeg => [
+      encodeIdentityPart(optionLeg.contractId),
+      optionLeg.side,
+      String(optionLeg.ratio),
+    ].join("."))
+    .sort()
+    .join("|");
+  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${structureIdentity}`;
+}
+
+function encodeIdentityPart(value: string): string {
+  let encoded = "";
+  for (let index = 0; index < value.length; index += 1) {
+    encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
   }
-  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${encodedStructureIdentity}`;
+  return encoded;
 }
 
 export function closeLifecycleId(exposureLifecycleId: string, route: CloseRoute): string {
@@ -35,6 +47,18 @@ export function closeAttemptId(lifecycleId: string, generation: Quantity): strin
 
 export function planCloseLifecycle(snapshot: CloseLifecycleSnapshot): CloseLifecyclePlan {
   const lifecycleId = closeLifecycleId(snapshot.exposureLifecycleId, snapshot.route);
+  const invalidQuantity = !Number.isSafeInteger(snapshot.currentExposureQuantity)
+    || snapshot.currentExposureQuantity < 0
+    || snapshot.attempts.some(attempt => !Number.isSafeInteger(attempt.generation)
+      || attempt.generation < 0
+      || !Number.isSafeInteger(attempt.requestedQuantity)
+      || attempt.requestedQuantity < 0
+      || !Number.isSafeInteger(attempt.filledQuantity)
+      || attempt.filledQuantity < 0
+      || attempt.filledQuantity > attempt.requestedQuantity);
+  if (invalidQuantity) {
+    return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle contains an invalid quantity" };
+  }
   const activeAttempts = snapshot.attempts.filter(attempt => isActiveCloseState(attempt.state));
 
   if (activeAttempts.length > 1) {
@@ -59,6 +83,9 @@ export function planCloseLifecycle(snapshot: CloseLifecycleSnapshot): CloseLifec
     (highest, attempt) => Math.max(highest, attempt.generation),
     -1,
   );
+  if (highestGeneration >= Number.MAX_SAFE_INTEGER) {
+    return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close attempt generation is exhausted" };
+  }
   const generation = integerUnit(highestGeneration + 1, "Quantity");
   return {
     kind: "SUBMIT",

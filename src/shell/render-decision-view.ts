@@ -24,14 +24,21 @@ function vetoSummary(gates: readonly GateVerdict[]): string {
 }
 
 export function renderDecisionView(result: DecisionResult): string {
-  const actions = new Map(result.actions.map(action => [action.candidateId, action]));
-  const candidates = result.candidateVerdicts.map(verdict => {
-    const action = actions.get(verdict.candidateId);
+  const remainingActionsByCandidate = new Map<string, DecisionResult["actions"][number][]>();
+  for (const action of result.actions) {
+    const queuedActions = remainingActionsByCandidate.get(action.candidateId) ?? [];
+    queuedActions.push(action);
+    remainingActionsByCandidate.set(action.candidateId, queuedActions);
+  }
+
+  const candidates = result.candidateVerdicts.map((verdict, index) => {
+    const action = remainingActionsByCandidate.get(verdict.candidateId)?.shift();
+    const titleId = `candidate-${String(index)}-title`;
     const conclusion = action === undefined
       ? `No action plan. ${vetoSummary(verdict.gateVector)}`
       : `Action plan ${action.clientOrderId}; reserve ${formatMoney(action.reservedMaxLossCents)} at the submitted ${action.submittedLimit.kind} limit.`;
-    return `<article class="decision decision--${verdict.decision.toLowerCase()}" aria-labelledby="${escapeHtml(verdict.candidateId)}-title">
-      <header><p class="eyebrow">Candidate verdict</p><div class="decision__title"><h2 id="${escapeHtml(verdict.candidateId)}-title">${escapeHtml(verdict.candidateId)}</h2><span class="stamp">${verdict.decision}</span></div></header>
+    return `<article class="decision decision--${verdict.decision.toLowerCase()}" aria-labelledby="${titleId}">
+      <header><p class="eyebrow">Candidate verdict</p><div class="decision__title"><h2 id="${titleId}">${escapeHtml(verdict.candidateId)}</h2><span class="stamp">${verdict.decision}</span></div></header>
       <p class="rationale">${escapeHtml(verdict.candidateRationale)}</p>
       <dl><div><dt>Reserved max loss</dt><dd>${formatMoney(verdict.reservedMaxLossCents)}</dd></div><div><dt>Action</dt><dd>${escapeHtml(conclusion)}</dd></div></dl>
       <ol class="gate-rail" aria-label="Complete G1 through G8 verdict vector">${verdict.gateVector.map(gateCell).join("")}</ol>

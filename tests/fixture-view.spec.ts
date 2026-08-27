@@ -15,4 +15,21 @@ describe("P1 recorded glass-box fixture", () => {
     expect(html).toContain("long option must contain one buy leg and a debit limit");
     expect(html).toContain("A pass is an action plan only");
   });
+
+  it("consumes duplicate shell-boundary actions once each instead of reusing the first match", () => {
+    const result = decide(P1_RECORDED_SNAPSHOT, P1_RECORDED_CANDIDATES, TEST_ONLY_P1_O5_CONFIG, TEST_ONLY_P1_NOW);
+    const verdict = result.candidateVerdicts[0]!;
+    const action = result.actions[0]!;
+    const html = renderDecisionView({
+      batchVerdicts: [],
+      candidateVerdicts: [verdict, { ...verdict, candidateRationale: "Forged duplicate shell-boundary verdict." }],
+      actions: [
+        { ...action, clientOrderId: "entry:first" },
+        { ...action, clientOrderId: "entry:second" }
+      ]
+    });
+
+    expect(html.split("entry:first")).toHaveLength(2);
+    expect(html.split("entry:second")).toHaveLength(2);
+  });
 });

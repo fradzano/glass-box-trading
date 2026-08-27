@@ -15,6 +15,9 @@ export function integerUnit<Name extends string>(value: number, name: Name): Int
   if (!Number.isSafeInteger(value)) {
     throw new RangeError(`${name} must be a safe integer`);
   }
+  if (value < 0) {
+    throw new RangeError(`${name} must be non-negative`);
+  }
   return value as IntegerUnit<Name>;
 }
 
@@ -35,7 +38,6 @@ export interface OptionLeg {
 
 export interface EntryCandidate {
   readonly candidateId: string;
-  readonly structureIdentity: string;
   readonly declaredStructureType: string;
   readonly sleeve: Sleeve;
   readonly quantity: Quantity;
@@ -46,6 +48,14 @@ export interface EntryCandidate {
     readonly priceCents: OptionPriceCents;
   };
   readonly legs: readonly OptionLeg[];
+}
+
+export interface OptionContract {
+  readonly contractId: string;
+  readonly underlying: string;
+  readonly expiry: string;
+  readonly strikeCents: StrikeCents;
+  readonly right: OptionRight;
 }
 
 export interface OptionQuote {
@@ -98,7 +108,7 @@ export interface DecisionSnapshot {
   readonly quotesByContract: Readonly<Record<string, OptionQuote>>;
   readonly priorQuotesByUnderlying: Readonly<Record<string, PriorQuoteSample>>;
   readonly spotCentsByUnderlying: Readonly<Record<string, StrikeCents>>;
-  readonly knownContractIds: readonly string[];
+  readonly contractsById: Readonly<Record<string, OptionContract>>;
   readonly submittedOrderIds: readonly string[];
   readonly tradingDay: string;
   readonly cycleIndex: Quantity;

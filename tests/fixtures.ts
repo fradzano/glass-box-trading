@@ -1,4 +1,4 @@
-import type { DecisionConfig, DecisionSnapshot, EntryCandidate, ExposureLifecycle, OptionLeg, OptionQuote } from "../src/core/domain.js";
+import type { DecisionConfig, DecisionSnapshot, EntryCandidate, ExposureLifecycle, OptionContract, OptionLeg, OptionQuote } from "../src/core/domain.js";
 import { integerUnit } from "../src/core/domain.js";
 
 export const TEST_ONLY_NOW = integerUnit(1_788_197_400_000, "EpochMilliseconds");
@@ -48,7 +48,6 @@ export function leg(overrides: Partial<OptionLeg> = {}): OptionLeg {
 export function candidate(overrides: Partial<EntryCandidate> = {}): EntryCandidate {
   return {
     candidateId: "candidate-long-spy",
-    structureIdentity: "SPY:2026-09-04:long-call-500",
     declaredStructureType: "long_option",
     sleeve: "convex",
     quantity: integerUnit(1, "Quantity"),
@@ -56,6 +55,17 @@ export function candidate(overrides: Partial<EntryCandidate> = {}): EntryCandida
     rationale: "Test-only scheduled-event convexity fixture.",
     entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") },
     legs: [leg()],
+    ...overrides,
+  };
+}
+
+export function contract(overrides: Partial<OptionContract> = {}): OptionContract {
+  return {
+    contractId: "SPY260904C00500000",
+    underlying: "SPY",
+    expiry: "2026-09-04",
+    strikeCents: integerUnit(50_000, "StrikeCents"),
+    right: "call",
     ...overrides,
   };
 }
@@ -87,7 +97,7 @@ export function snapshot(overrides: Partial<DecisionSnapshot> = {}): DecisionSna
       },
     },
     spotCentsByUnderlying: { SPY: integerUnit(50_000, "StrikeCents"), QQQ: integerUnit(60_000, "StrikeCents") },
-    knownContractIds: ["SPY260904C00500000"],
+    contractsById: { SPY260904C00500000: contract() },
     submittedOrderIds: [],
     tradingDay: "2026-08-31",
     cycleIndex: integerUnit(7, "Quantity"),
@@ -99,6 +109,7 @@ export function snapshot(overrides: Partial<DecisionSnapshot> = {}): DecisionSna
 export function marketFor(candidateValue: EntryCandidate, base = snapshot()): DecisionSnapshot {
   const current: Record<string, OptionQuote> = { ...base.quotesByContract };
   const prior: Record<string, OptionQuote> = {};
+  const contracts: Record<string, OptionContract> = { ...base.contractsById };
   for (const optionLeg of candidateValue.legs) {
     current[optionLeg.contractId] = quote();
     prior[optionLeg.contractId] = quote({
@@ -106,11 +117,18 @@ export function marketFor(candidateValue: EntryCandidate, base = snapshot()): De
       askCents: integerUnit(101, "OptionPriceCents"),
       quotedAt: integerUnit(TEST_ONLY_NOW - 900_000, "EpochMilliseconds"),
     });
+    contracts[optionLeg.contractId] = contract({
+      contractId: optionLeg.contractId,
+      underlying: optionLeg.underlying,
+      expiry: optionLeg.expiry,
+      strikeCents: optionLeg.strikeCents,
+      right: optionLeg.right,
+    });
   }
   return {
     ...base,
     quotesByContract: current,
-    knownContractIds: [...new Set([...base.knownContractIds, ...candidateValue.legs.map(optionLeg => optionLeg.contractId)])],
+    contractsById: contracts,
     priorQuotesByUnderlying: {
       ...base.priorQuotesByUnderlying,
       [candidateValue.legs[0]?.underlying ?? "SPY"]: {

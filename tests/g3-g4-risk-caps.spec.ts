@@ -7,7 +7,7 @@ describe("G3 and G4 exact risk caps", () => {
   it("S-G3-01 passes equality and vetoes one cent above the position cap", () => {
     const config = { ...TEST_ONLY_O5_CONFIG, convexBudgetCents: integerUnit(100_000, "MoneyCents"), maxLossPerPositionBps: integerUnit(1_000, "BasisPoints") };
     const equality = candidate({ entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
-    const above = candidate({ candidateId: "above", structureIdentity: "above", entryLimit: { kind: "debit", priceCents: integerUnit(101, "OptionPriceCents") } });
+    const above = candidate({ candidateId: "above", entryLimit: { kind: "debit", priceCents: integerUnit(101, "OptionPriceCents") } });
     expect(decide(snapshot(), { kind: "candidates", candidates: [equality] }, config, TEST_ONLY_NOW).candidateVerdicts[0]?.gateVector[2]).toMatchObject({ passed: true });
     expect(decide(snapshot(), { kind: "candidates", candidates: [above] }, config, TEST_ONLY_NOW).candidateVerdicts[0]?.gateVector[2]).toMatchObject({ passed: false, code: "POSITION_SIZE" });
   });

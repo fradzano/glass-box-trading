@@ -71,7 +71,10 @@ export const P1_RECORDED_SNAPSHOT: DecisionSnapshot = {
     },
   },
   spotCentsByUnderlying: { SPY: integerUnit(50_000, "StrikeCents") },
-  knownContractIds: ["SPY-PASS", "SPY-VETO"],
+  contractsById: {
+    "SPY-PASS": { contractId: "SPY-PASS", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_000, "StrikeCents"), right: "call" },
+    "SPY-VETO": { contractId: "SPY-VETO", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_500, "StrikeCents"), right: "call" },
+  },
   submittedOrderIds: [],
   tradingDay: "2026-08-31",
   cycleIndex: integerUnit(7, "Quantity"),
@@ -83,7 +86,6 @@ export const P1_RECORDED_CANDIDATES: AnalystBatch = {
   candidates: [
     {
       candidateId: "convex-pass",
-      structureIdentity: "SPY:2026-09-04:long-call-500",
       declaredStructureType: "long_option",
       sleeve: "convex",
       quantity: integerUnit(1, "Quantity"),
@@ -94,7 +96,6 @@ export const P1_RECORDED_CANDIDATES: AnalystBatch = {
     },
     {
       candidateId: "naked-short-veto",
-      structureIdentity: "SPY:2026-09-04:naked-short-call-505",
       declaredStructureType: "long_option",
       sleeve: "income",
       quantity: integerUnit(1, "Quantity"),

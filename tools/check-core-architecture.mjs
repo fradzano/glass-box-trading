@@ -80,6 +80,10 @@ export function inspectCoreSource(source, fileName = "inline.ts") {
     if (ts.isCallExpression(node) && node.expression.getText(sourceFile) === "Date" && node.arguments.length === 0) {
       violations.push(`${fileName}: zero-argument Date call reads ambient time`);
     }
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const target = node.arguments[0]?.getText(sourceFile) ?? "unknown";
+      violations.push(`${fileName}: dynamic import is forbidden in the core (${target})`);
+    }
     if (ts.isMetaProperty(node)) violations.push(`${fileName}: import.meta is forbidden in the core`);
     if (ts.isClassDeclaration(node) && node.parent === sourceFile) violations.push(`${fileName}: module-scope class may carry mutable static state`);
     ts.forEachChild(node, visit);
@@ -108,6 +112,7 @@ function runSelfTest() {
     ["export function roll() { return Math.random(); }", "forbidden ambient"],
     ["export function today() { return Date(); }", "zero-argument Date"],
     ["export class Cache {}", "module-scope class"],
+    ["export async function leak() { return import('node:fs/promises'); }", "dynamic import"],
   ];
   for (const [source, expected] of cases) {
     const found = inspectCoreSource(source, "self-test.ts");
