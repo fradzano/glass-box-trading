@@ -30,6 +30,10 @@ describe("G8 schema and whitelist", () => {
       candidateVerdicts: [],
       batchVerdicts: [expect.objectContaining({ code: "SCHEMA_VETO" })],
     });
+
+    const negativeStrikeRaw = JSON.stringify({ candidates: [{ ...candidate(), legs: [{ ...leg(), strikeCents: -1 }] }] });
+    expect(() => parseAnalystOutput(negativeStrikeRaw)).not.toThrow();
+    expect(parseAnalystOutput(negativeStrikeRaw)).toMatchObject({ kind: "structural_failure" });
   });
 
   it("S-G8-02 treats refusal prose and non-candidate text as structural failure", () => {
@@ -97,6 +101,24 @@ describe("G8 schema and whitelist", () => {
     const mismatch = run([forged], authoritativeSnapshot);
     expect(mismatch.actions).toEqual([]);
     expect(mismatch.candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: false, code: "UNKNOWN_CONTRACT" });
+
+    for (const prototypeKey of ["__proto__", "constructor", "toString"]) {
+      const valid = candidate({ candidateId: `valid-after-${prototypeKey}` });
+      const prototypeCandidates = [
+        { ...candidate({ candidateId: `contract-${prototypeKey}` }), legs: [{ ...leg(), contractId: prototypeKey }] },
+        { ...candidate({ candidateId: `underlying-${prototypeKey}` }), legs: [{ ...leg(), contractId: `MISSING-${prototypeKey}`, underlying: prototypeKey }] },
+      ];
+      for (const prototypeCandidate of prototypeCandidates) {
+        const parsed = parseAnalystOutput(JSON.stringify({ candidates: [prototypeCandidate, valid] }));
+        expect(() => decide(snapshot(), parsed, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW)).not.toThrow();
+        const prototypeResult = decide(snapshot(), parsed, TEST_ONLY_O5_CONFIG, TEST_ONLY_NOW);
+        expect(prototypeResult.candidateVerdicts).toHaveLength(2);
+        expect(prototypeResult.candidateVerdicts[0]?.gateVector).toHaveLength(8);
+        expect(prototypeResult.candidateVerdicts[0]?.decision).toBe("VETO");
+        expect(prototypeResult.candidateVerdicts[1]?.gateVector).toHaveLength(8);
+        expect(prototypeResult.actions.map(action => action.candidateId)).toEqual([valid.candidateId]);
+      }
+    }
   });
 
   it("S-G8-06 derives sleeve economics from leg quotes despite a contradictory declared type", () => {

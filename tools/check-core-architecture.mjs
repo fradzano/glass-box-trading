@@ -113,6 +113,10 @@ function runSelfTest() {
     ["export function today() { return Date(); }", "zero-argument Date"],
     ["export class Cache {}", "module-scope class"],
     ["export async function leak() { return import('node:fs/promises'); }", "dynamic import"],
+    ["export { readFile } from 'node:fs';", "platform re-export"],
+    ["export function now() { return Date['now'](); }", "forbidden ambient"],
+    ["export function key() { return eval('process.env.KEY'); }", "forbidden code generation"],
+    ["export function key() { return Function.bind(undefined)('return process.env.KEY')(); }", "forbidden code generation"],
   ];
   for (const [source, expected] of cases) {
     const found = inspectCoreSource(source, "self-test.ts");

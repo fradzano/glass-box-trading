@@ -35,6 +35,14 @@ describe("G1 defined risk", () => {
     const base = marketFor(value);
     const decisionSnapshot = snapshot({ ...base, quotesByContract: { ...base.quotesByContract, [value.legs[0]!.contractId]: quote({ bidCents: integerUnit(250, "OptionPriceCents"), askCents: integerUnit(252, "OptionPriceCents") }) } });
     expect(gateOne(value, decisionSnapshot).reservedMaxLossCents).toBe(70_000);
+
+    const equality = candidate({
+      declaredStructureType: "vertical_credit",
+      sleeve: "income",
+      legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }],
+      entryLimit: { kind: "credit", priceCents: integerUnit(500, "OptionPriceCents") },
+    });
+    expect(gateOne(equality)).toMatchObject({ reservedMaxLossCents: 0, gateVector: [expect.objectContaining({ passed: true, code: "PASS" })] });
   });
 
   it("S-G1-03 accepts an iron condor and uses the wider wing", () => {
@@ -48,6 +56,14 @@ describe("G1 defined risk", () => {
     const base = marketFor(value);
     const decisionSnapshot = snapshot({ ...base, quotesByContract: { ...base.quotesByContract, "P-495": quote({ bidCents: integerUnit(220, "OptionPriceCents"), askCents: integerUnit(222, "OptionPriceCents") }), "C-505": quote({ bidCents: integerUnit(220, "OptionPriceCents"), askCents: integerUnit(222, "OptionPriceCents") }) } });
     expect(gateOne(value, decisionSnapshot).reservedMaxLossCents).toBe(50_000);
+
+    const equality = candidate({
+      declaredStructureType: "iron_condor",
+      sleeve: "income",
+      legs,
+      entryLimit: { kind: "credit", priceCents: integerUnit(700, "OptionPriceCents") },
+    });
+    expect(gateOne(equality)).toMatchObject({ reservedMaxLossCents: 0, gateVector: [expect.objectContaining({ passed: true, code: "PASS" })] });
   });
 
   it("S-G1-04 accepts a long option and uses the submitted buy limit", () => {

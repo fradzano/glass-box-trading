@@ -22,10 +22,10 @@ describe("G7 idempotency", () => {
     const active: CloseLifecycleSnapshot = {
       exposureLifecycleId: "spread-1",
       route: "ordinary",
-      currentExposureQuantity: integerUnit(10, "Quantity"),
+      currentExposureQuantity: integerUnit(6, "Quantity"),
       attempts: [{ attemptId: "close:spread-1:g0", generation: integerUnit(0, "Quantity"), requestedQuantity: integerUnit(10, "Quantity"), filledQuantity: integerUnit(4, "Quantity"), state: "partially_filled" }],
     };
-    expect(planCloseLifecycle(active)).toMatchObject({ kind: "ADOPT", attemptId: "close:spread-1:g0", remainingExposureQuantity: 10 });
+    expect(planCloseLifecycle(active)).toMatchObject({ kind: "ADOPT", attemptId: "close:spread-1:g0", remainingExposureQuantity: 6 });
     expect(planCloseLifecycle({ ...active, route: "emergency", attempts: [{ ...active.attempts[0]!, state: "confirmation_unclear" }] })).toMatchObject({ kind: "ADOPT", attemptId: "close:spread-1:g0" });
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(6, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "canceled" }] })).toMatchObject({ kind: "SUBMIT", attemptId: "close:spread-1:g1", quantity: 6 });
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(0, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "filled" }] })).toMatchObject({ kind: "COMPLETE" });
@@ -36,8 +36,18 @@ describe("G7 idempotency", () => {
       currentExposureQuantity: integerUnit(1, "Quantity"),
       attempts: [{ ...active.attempts[0]!, generation: Number.MAX_SAFE_INTEGER as Quantity, state: "canceled" }],
     })).toMatchObject({ kind: "VETO" });
-    expect(planCloseLifecycle({ ...active, exposureLifecycleId: "short-stock-residue", route: "watchdog", attempts: [] })).toMatchObject({ kind: "SUBMIT", closeLifecycleId: "close:short-stock-residue", quantity: 10 });
+    expect(planCloseLifecycle({ ...active, exposureLifecycleId: "short-stock-residue", route: "watchdog", attempts: [] })).toMatchObject({ kind: "SUBMIT", closeLifecycleId: "close:short-stock-residue", quantity: 6 });
     expect(classifyDuplicateSubmission("entry:existing")).toEqual({ kind: "ADOPT", clientOrderId: "entry:existing" });
+
+    const forgedAttempts: CloseLifecycleSnapshot[] = [
+      { ...active, attempts: [{ ...active.attempts[0]!, attemptId: "close:foreign:g0" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, attemptId: "close:spread-1:g9" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, attemptId: "close:foreign:g41", generation: integerUnit(41, "Quantity"), state: "canceled" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, state: "pending_replace" as CloseLifecycleSnapshot["attempts"][number]["state"] }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, requestedQuantity: integerUnit(0, "Quantity"), filledQuantity: integerUnit(0, "Quantity") }] },
+      { ...active, currentExposureQuantity: integerUnit(0, "Quantity") },
+    ];
+    for (const forged of forgedAttempts) expect(planCloseLifecycle(forged)).toMatchObject({ kind: "VETO" });
 
     const duplicateBatch = decide(snapshot(), {
       kind: "candidates",
