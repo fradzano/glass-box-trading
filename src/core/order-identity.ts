@@ -9,11 +9,30 @@ import type {
   Quantity,
 } from "./domain.js";
 
+function isKnownCloseState(state: unknown): state is CloseAttemptSnapshot["state"] {
+  return state === "new"
+    || state === "accepted"
+    || state === "partially_filled"
+    || state === "confirmation_unclear"
+    || state === "filled"
+    || state === "rejected"
+    || state === "canceled"
+    || state === "expired";
+}
+
 function isActiveCloseState(state: CloseAttemptSnapshot["state"]): boolean {
   return state === "new"
     || state === "accepted"
     || state === "partially_filled"
     || state === "confirmation_unclear";
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 export function entryClientOrderId(snapshot: DecisionSnapshot, candidate: EntryCandidate): string {
@@ -47,19 +66,57 @@ export function closeAttemptId(lifecycleId: string, generation: Quantity): strin
 
 export function planCloseLifecycle(snapshot: CloseLifecycleSnapshot): CloseLifecyclePlan {
   const lifecycleId = closeLifecycleId(snapshot.exposureLifecycleId, snapshot.route);
-  const invalidQuantity = !Number.isSafeInteger(snapshot.currentExposureQuantity)
-    || snapshot.currentExposureQuantity < 0
-    || snapshot.attempts.some(attempt => !Number.isSafeInteger(attempt.generation)
-      || attempt.generation < 0
-      || !Number.isSafeInteger(attempt.requestedQuantity)
-      || attempt.requestedQuantity < 0
-      || !Number.isSafeInteger(attempt.filledQuantity)
-      || attempt.filledQuantity < 0
-      || attempt.filledQuantity > attempt.requestedQuantity);
-  if (invalidQuantity) {
-    return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle contains an invalid quantity" };
+  const attemptsValue: unknown = snapshot.attempts;
+  if (!Number.isSafeInteger(snapshot.currentExposureQuantity) || snapshot.currentExposureQuantity < 0 || !Array.isArray(attemptsValue)) {
+    return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
   }
-  const activeAttempts = snapshot.attempts.filter(attempt => isActiveCloseState(attempt.state));
+
+  const seenGenerations = new Set<number>();
+  const validatedAttempts: CloseAttemptSnapshot[] = [];
+  for (const attemptValue of attemptsValue) {
+    if (!isRecord(attemptValue)) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    const attemptId = attemptValue["attemptId"];
+    const generation = attemptValue["generation"];
+    const requestedQuantity = attemptValue["requestedQuantity"];
+    const filledQuantity = attemptValue["filledQuantity"];
+    const state = attemptValue["state"];
+    if (typeof attemptId !== "string"
+      || !isNonnegativeSafeInteger(generation)
+      || seenGenerations.has(generation)
+      || attemptId !== closeAttemptId(lifecycleId, integerUnit(generation, "Quantity"))
+      || !isNonnegativeSafeInteger(requestedQuantity)
+      || requestedQuantity === 0
+      || !isNonnegativeSafeInteger(filledQuantity)
+      || filledQuantity > requestedQuantity
+      || !isKnownCloseState(state)) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    const attempt: CloseAttemptSnapshot = {
+      attemptId,
+      generation: integerUnit(generation, "Quantity"),
+      requestedQuantity: integerUnit(requestedQuantity, "Quantity"),
+      filledQuantity: integerUnit(filledQuantity, "Quantity"),
+      state,
+    };
+    seenGenerations.add(attempt.generation);
+    if ((attempt.state === "new" || attempt.state === "accepted") && attempt.filledQuantity !== 0) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    if (attempt.state === "partially_filled" && (attempt.filledQuantity === 0 || attempt.filledQuantity === attempt.requestedQuantity)) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    if (attempt.state === "filled" && attempt.filledQuantity !== attempt.requestedQuantity) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    const remainingAttemptQuantity = attempt.requestedQuantity - attempt.filledQuantity;
+    if (isActiveCloseState(attempt.state) && (remainingAttemptQuantity <= 0 || remainingAttemptQuantity > snapshot.currentExposureQuantity)) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    validatedAttempts.push(attempt);
+  }
+  const activeAttempts = validatedAttempts.filter(attempt => isActiveCloseState(attempt.state));
 
   if (activeAttempts.length > 1) {
     return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "multiple non-terminal or confirmation-unclear close children" };
@@ -79,7 +136,7 @@ export function planCloseLifecycle(snapshot: CloseLifecycleSnapshot): CloseLifec
     return { kind: "COMPLETE", closeLifecycleId: lifecycleId };
   }
 
-  const highestGeneration = snapshot.attempts.reduce(
+  const highestGeneration = validatedAttempts.reduce(
     (highest, attempt) => Math.max(highest, attempt.generation),
     -1,
   );

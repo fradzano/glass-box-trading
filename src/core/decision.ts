@@ -87,7 +87,7 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
         ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
         : { maxLossCents, reasons: [] };
     }
-    if (candidate.declaredStructureType === "vertical_credit" && candidate.entryLimit.kind === "credit" && !isLongPayoff && priceCents < widthCents) {
+    if (candidate.declaredStructureType === "vertical_credit" && candidate.entryLimit.kind === "credit" && !isLongPayoff && priceCents <= widthCents) {
       const maxLossCents = multiplyMoney(widthCents - priceCents, quantity);
       return maxLossCents === null
         ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
@@ -108,7 +108,7 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     const putWidth = puts[1].strikeCents - puts[0].strikeCents;
     const callWidth = calls[1].strikeCents - calls[0].strikeCents;
     const widestWing = Math.max(putWidth, callWidth);
-    if (widestWing <= 0 || priceCents >= widestWing) return { maxLossCents: null, reasons: ["iron condor credit does not leave finite positive max loss"] };
+    if (widestWing <= 0 || priceCents > widestWing) return { maxLossCents: null, reasons: ["iron condor credit exceeds the widest wing"] };
     const maxLossCents = multiplyMoney(widestWing - priceCents, quantity);
     return maxLossCents === null
       ? { maxLossCents: null, reasons: ["iron-condor maximum loss exceeds the exact integer range"] }
@@ -146,10 +146,25 @@ function verdict(gate: GateVerdict["gate"], code: GateVerdict["code"], reasons: 
   return { gate, passed: reasons.length === 0, code: reasons.length === 0 ? "PASS" : code, reasons };
 }
 
+function ownRecordValue<Value>(record: Readonly<Record<string, Value>>, key: string): Value | undefined {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+function isRuntimeOptionQuote(value: unknown): value is OptionQuote {
+  if (!isRecord(value)) return false;
+  return [value["bidCents"], value["askCents"], value["bidSize"], value["askSize"], value["quotedAt"]]
+    .every(field => isSafeInteger(field) && field >= 0);
+}
+
+function quoteFor(snapshot: DecisionSnapshot, contractId: string): OptionQuote | undefined {
+  const value = ownRecordValue(snapshot.quotesByContract, contractId);
+  return isRuntimeOptionQuote(value) ? value : undefined;
+}
+
 function evaluateLiquidity(candidate: EntryCandidate, snapshot: DecisionSnapshot, config: DecisionConfig, now: number): GateVerdict {
   const reasons: string[] = [];
   for (const optionLeg of candidate.legs) {
-    const optionQuote = snapshot.quotesByContract[optionLeg.contractId];
+    const optionQuote = quoteFor(snapshot, optionLeg.contractId);
     if (optionQuote === undefined) {
       reasons.push(`${optionLeg.contractId}: missing quote`);
       continue;
@@ -183,26 +198,27 @@ function evaluateSession(candidate: EntryCandidate, snapshot: DecisionSnapshot, 
     reasons.push("candidate has no underlying");
     return verdict("G6", "SESSION", reasons);
   }
-  const currentQuotes = candidate.legs.map(optionLeg => snapshot.quotesByContract[optionLeg.contractId]);
+  const currentQuotes = candidate.legs.map(optionLeg => quoteFor(snapshot, optionLeg.contractId));
   if (currentQuotes.some(optionQuote => optionQuote === undefined || BigInt(now) - BigInt(optionQuote.quotedAt) > BigInt(config.quoteMaxAgeMs) || now < optionQuote.quotedAt)) {
     reasons.push(`${underlying}: stale quote signal`);
   }
-  const prior = snapshot.priorQuotesByUnderlying[underlying];
-  const historyAge = prior === undefined ? null : BigInt(now) - BigInt(prior.observedAt);
+  const prior = ownRecordValue(snapshot.priorQuotesByUnderlying, underlying);
+  const priorObservedAtIsValid = prior !== undefined && Number.isSafeInteger(prior.observedAt) && prior.observedAt >= 0;
+  const historyAge = priorObservedAtIsValid ? BigInt(now) - BigInt(prior.observedAt) : null;
   const historyComplete = prior !== undefined
     && historyAge !== null
     && historyAge >= 0n
     && historyAge <= 2n * BigInt(config.cycleIntervalMs)
     && currentQuotes.every(optionQuote => optionQuote !== undefined)
-    && candidate.legs.every(optionLeg => prior.quotesByContract[optionLeg.contractId] !== undefined);
+    && candidate.legs.every(optionLeg => isRuntimeOptionQuote(ownRecordValue(prior.quotesByContract, optionLeg.contractId)));
   if (!historyComplete) {
     reasons.push(`${underlying}: missing or over-age complete quote history`);
   } else {
     const frozen = candidate.legs.every(optionLeg => {
-      const currentQuote = snapshot.quotesByContract[optionLeg.contractId];
-      const priorQuote = prior.quotesByContract[optionLeg.contractId];
+      const currentQuote = quoteFor(snapshot, optionLeg.contractId);
+      const priorQuote = ownRecordValue(prior.quotesByContract, optionLeg.contractId);
       return currentQuote !== undefined
-        && priorQuote !== undefined
+        && isRuntimeOptionQuote(priorQuote)
         && currentQuote.quotedAt > priorQuote.quotedAt
         && quotesEqualExceptTimestamp(currentQuote, priorQuote);
     });
@@ -214,7 +230,7 @@ function evaluateSession(candidate: EntryCandidate, snapshot: DecisionSnapshot, 
 function netPremiumSign(candidate: EntryCandidate, snapshot: DecisionSnapshot): number | null {
   let signedMidTwice = 0n;
   for (const optionLeg of candidate.legs) {
-    const optionQuote = snapshot.quotesByContract[optionLeg.contractId];
+    const optionQuote = quoteFor(snapshot, optionLeg.contractId);
     if (optionQuote === undefined) return null;
     const midTwice = (BigInt(optionQuote.bidCents) + BigInt(optionQuote.askCents)) * BigInt(optionLeg.ratio);
     signedMidTwice += optionLeg.side === "buy" ? midTwice : -midTwice;
@@ -225,7 +241,7 @@ function netPremiumSign(candidate: EntryCandidate, snapshot: DecisionSnapshot): 
 function evaluateWhitelist(candidate: EntryCandidate, snapshot: DecisionSnapshot, config: DecisionConfig): GateVerdict {
   const whitelistReasons: string[] = [];
   const unknownContracts = candidate.legs.filter(optionLeg => {
-    const contract = snapshot.contractsById[optionLeg.contractId];
+    const contract = ownRecordValue(snapshot.contractsById, optionLeg.contractId);
     return contract === undefined
       || contract.contractId !== optionLeg.contractId
       || contract.underlying !== optionLeg.underlying
@@ -241,7 +257,8 @@ function evaluateWhitelist(candidate: EntryCandidate, snapshot: DecisionSnapshot
   if (candidate.remainingTradingSessions < config.expiryMinSessions || candidate.remainingTradingSessions > config.expiryMaxSessions) whitelistReasons.push("remainingTradingSessions outside inclusive bounds");
   if (candidate.quantity > config.maxCandidateQuantity) whitelistReasons.push("quantity exceeds MAX_CANDIDATE_QTY");
   for (const optionLeg of candidate.legs) {
-    const spotCents = snapshot.spotCentsByUnderlying[optionLeg.underlying];
+    const spotValue = ownRecordValue(snapshot.spotCentsByUnderlying, optionLeg.underlying);
+    const spotCents = typeof spotValue === "number" && Number.isSafeInteger(spotValue) && spotValue >= 0 ? spotValue : undefined;
     const distance = spotCents === undefined ? null : BigInt(optionLeg.strikeCents) - BigInt(spotCents);
     const absoluteDistance = distance === null ? null : distance < 0n ? -distance : distance;
     if (spotCents === undefined || spotCents <= 0 || absoluteDistance === null || absoluteDistance * 10_000n > BigInt(spotCents) * BigInt(config.maxStrikeDistanceBps)) {
@@ -263,7 +280,7 @@ function evaluateCandidate(
   config: DecisionConfig,
   now: number,
   acceptedRiskBySleeve: Readonly<Record<Sleeve, bigint>>,
-  acceptedRiskByUnderlying: Readonly<Record<string, bigint>>,
+  acceptedRiskByUnderlying: ReadonlyMap<string, bigint>,
   plannedEntryOrderIds: ReadonlySet<string>,
 ): CandidateEvaluation {
   const risk = definedRisk(candidate);
@@ -273,7 +290,7 @@ function evaluateCandidate(
   const snapshotSleeveRisk = riskBySleeve(snapshot, candidate.sleeve);
   const snapshotUnderlyingRisk = riskByUnderlying(snapshot, underlying);
   const currentSleeveRisk = snapshotSleeveRisk === null ? null : snapshotSleeveRisk + acceptedRiskBySleeve[candidate.sleeve];
-  const currentUnderlyingRisk = snapshotUnderlyingRisk === null ? null : snapshotUnderlyingRisk + (acceptedRiskByUnderlying[underlying] ?? 0n);
+  const currentUnderlyingRisk = snapshotUnderlyingRisk === null ? null : snapshotUnderlyingRisk + (acceptedRiskByUnderlying.get(underlying) ?? 0n);
   const riskUnavailable = risk.maxLossCents === null;
   const gateVector: GateVerdict[] = [
     verdict("G1", "DEFINED_RISK", risk.reasons),
@@ -324,7 +341,7 @@ export function decide(snapshot: DecisionSnapshot, batch: AnalystBatch, config: 
   const candidateVerdicts: CandidateVerdict[] = [];
   const actions: EntryActionPlan[] = [];
   const acceptedRiskBySleeve: Record<Sleeve, bigint> = { income: 0n, convex: 0n };
-  const acceptedRiskByUnderlying: Record<string, bigint> = {};
+  const acceptedRiskByUnderlying = new Map<string, bigint>();
   const plannedEntryOrderIds = new Set(snapshot.submittedOrderIds);
   for (const candidate of batch.candidates) {
     const evaluation = evaluateCandidate(snapshot, candidate, config, now, acceptedRiskBySleeve, acceptedRiskByUnderlying, plannedEntryOrderIds);
@@ -332,7 +349,7 @@ export function decide(snapshot: DecisionSnapshot, batch: AnalystBatch, config: 
     if (!stale && evaluation.action !== null) {
       actions.push(evaluation.action);
       acceptedRiskBySleeve[candidate.sleeve] += BigInt(evaluation.action.reservedMaxLossCents);
-      acceptedRiskByUnderlying[evaluation.action.underlying] = (acceptedRiskByUnderlying[evaluation.action.underlying] ?? 0n) + BigInt(evaluation.action.reservedMaxLossCents);
+      acceptedRiskByUnderlying.set(evaluation.action.underlying, (acceptedRiskByUnderlying.get(evaluation.action.underlying) ?? 0n) + BigInt(evaluation.action.reservedMaxLossCents));
       plannedEntryOrderIds.add(evaluation.action.clientOrderId);
     }
   }
@@ -377,7 +394,7 @@ function parseLeg(value: unknown): OptionLeg | null {
   const right = value["right"];
   const side = value["side"];
   const ratio = value["ratio"];
-  if (typeof contractId !== "string" || typeof underlying !== "string" || typeof expiry !== "string" || !isSafeInteger(strikeCents) || (right !== "call" && right !== "put") || (side !== "buy" && side !== "sell") || !isSafeInteger(ratio) || ratio <= 0) return null;
+  if (typeof contractId !== "string" || typeof underlying !== "string" || typeof expiry !== "string" || !isSafeInteger(strikeCents) || strikeCents < 0 || (right !== "call" && right !== "put") || (side !== "buy" && side !== "sell") || !isSafeInteger(ratio) || ratio <= 0) return null;
   return { contractId, underlying, expiry, strikeCents: integerUnit(strikeCents, "StrikeCents"), right, side, ratio: integerUnit(ratio, "Quantity") };
 }
 
@@ -416,12 +433,16 @@ export function parseAnalystOutput(raw: string): AnalystBatch {
   } catch {
     return { kind: "structural_failure", issue: "invalid or truncated JSON" };
   }
-  if (!isRecord(parsed) || !hasExactKeys(parsed, ["candidates"]) || !Array.isArray(parsed["candidates"])) return { kind: "structural_failure", issue: "analyst envelope schema mismatch" };
-  const candidates = parsed["candidates"].map(parseCandidate);
-  if (candidates.some(candidateValue => candidateValue === null)) return { kind: "structural_failure", issue: "candidate schema mismatch or non-candidate text" };
-  const candidateValues = candidates as readonly EntryCandidate[];
-  if (new Set(candidateValues.map(candidate => candidate.candidateId)).size !== candidateValues.length) return { kind: "structural_failure", issue: "candidate IDs must be unique within one analyst batch" };
-  return { kind: "candidates", candidates: candidateValues };
+  try {
+    if (!isRecord(parsed) || !hasExactKeys(parsed, ["candidates"]) || !Array.isArray(parsed["candidates"])) return { kind: "structural_failure", issue: "analyst envelope schema mismatch" };
+    const candidates = parsed["candidates"].map(parseCandidate);
+    if (candidates.some(candidateValue => candidateValue === null)) return { kind: "structural_failure", issue: "candidate schema mismatch or non-candidate text" };
+    const candidateValues = candidates as readonly EntryCandidate[];
+    if (new Set(candidateValues.map(candidate => candidate.candidateId)).size !== candidateValues.length) return { kind: "structural_failure", issue: "candidate IDs must be unique within one analyst batch" };
+    return { kind: "candidates", candidates: candidateValues };
+  } catch {
+    return { kind: "structural_failure", issue: "candidate schema validation failed" };
+  }
 }
 
 export function reconcilePartialFillRisk(

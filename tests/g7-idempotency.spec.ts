@@ -28,7 +28,7 @@ describe("G7 idempotency", () => {
     expect(planCloseLifecycle(active)).toMatchObject({ kind: "ADOPT", attemptId: "close:spread-1:g0", remainingExposureQuantity: 6 });
     expect(planCloseLifecycle({ ...active, route: "emergency", attempts: [{ ...active.attempts[0]!, state: "confirmation_unclear" }] })).toMatchObject({ kind: "ADOPT", attemptId: "close:spread-1:g0" });
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(6, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "canceled" }] })).toMatchObject({ kind: "SUBMIT", attemptId: "close:spread-1:g1", quantity: 6 });
-    expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(0, "Quantity"), attempts: [{ ...active.attempts[0]!, state: "filled" }] })).toMatchObject({ kind: "COMPLETE" });
+    expect(planCloseLifecycle({ ...active, currentExposureQuantity: integerUnit(0, "Quantity"), attempts: [{ ...active.attempts[0]!, filledQuantity: integerUnit(10, "Quantity"), state: "filled" }] })).toMatchObject({ kind: "COMPLETE" });
     expect(planCloseLifecycle({ ...active, attempts: [...active.attempts, { ...active.attempts[0]!, attemptId: "other", state: "accepted" }] })).toMatchObject({ kind: "VETO" });
     expect(planCloseLifecycle({ ...active, currentExposureQuantity: -1 as Quantity, attempts: [] })).toMatchObject({ kind: "VETO" });
     expect(planCloseLifecycle({

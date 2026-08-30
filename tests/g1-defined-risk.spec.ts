@@ -42,7 +42,9 @@ describe("G1 defined risk", () => {
       legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }],
       entryLimit: { kind: "credit", priceCents: integerUnit(500, "OptionPriceCents") },
     });
-    expect(gateOne(equality)).toMatchObject({ reservedMaxLossCents: 0, gateVector: [expect.objectContaining({ passed: true, code: "PASS" })] });
+    const equalityVerdict = gateOne(equality);
+    expect(equalityVerdict.reservedMaxLossCents).toBe(0);
+    expect(equalityVerdict.gateVector[0]).toMatchObject({ passed: true, code: "PASS" });
   });
 
   it("S-G1-03 accepts an iron condor and uses the wider wing", () => {
@@ -63,7 +65,9 @@ describe("G1 defined risk", () => {
       legs,
       entryLimit: { kind: "credit", priceCents: integerUnit(700, "OptionPriceCents") },
     });
-    expect(gateOne(equality)).toMatchObject({ reservedMaxLossCents: 0, gateVector: [expect.objectContaining({ passed: true, code: "PASS" })] });
+    const equalityVerdict = gateOne(equality);
+    expect(equalityVerdict.reservedMaxLossCents).toBe(0);
+    expect(equalityVerdict.gateVector[0]).toMatchObject({ passed: true, code: "PASS" });
   });
 
   it("S-G1-04 accepts a long option and uses the submitted buy limit", () => {
