@@ -485,7 +485,11 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const canceled: string[] = [];
     const cancelRaces: Record<string, CancelReconciliation> = {};
     const raceItems: Record<string, unknown>[] = [];
-    for (const clientOrderId of plan.cancel) {
+    // G1-F1 (P3 gate): a cancel is a broker mutation that would leave no durable record while the journal is down, and
+    // it is not the S-CYC-06 exception (a close of existing exposure through the S-G7 lifecycle). Without a durable HALT
+    // the resting entry stays untouched — it remains counted as fillable exposure — and is canceled by the next cycle
+    // that can journal the kill. Only the emergency close may follow below.
+    for (const clientOrderId of journalAvailable ? plan.cancel : []) {
       const dispatched = await mutate({ kind: "cancel_order", clientOrderId, binding });
       const after = await fetched(() => deps.broker.orderByClientId(clientOrderId));
       const reconciliation = reconcileCancel(after.ok ? after.value : null);

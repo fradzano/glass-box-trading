@@ -538,6 +538,35 @@ describe("S-G13-01 a kill found mid-cycle blocks every later plan of that cycle"
   });
 });
 
+describe("S-CYC-06 / G1-F1 with the journal unavailable, kill management sends no cancel", () => {
+  it("S-CYC-06 journal read-only + kill + a resting risk-increasing entry: the only mutation is the emergency close; the cancel waits for a writable journal", async () => {
+    const run = await harness();
+    const first = await run.cycle();
+    expect(first.actions[0]).toMatchObject({ status: "filled" });
+    const exposureLifecycleId = String(entriesOf(run.paths).find(entry => entry.type === "INTENT")!["exposureLifecycleId"]);
+    run.fake.setSubmitBehaviour(() => ({ kind: "accept" }));
+    const second = await run.cycle();
+    const restingEntryId = second.actions[0]!.clientOrderId;
+    expect(second.actions[0]).toMatchObject({ status: null, detail: "working" });
+    run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
+    const before = run.fake.mutations.length;
+    lockJournal(run.paths);
+    run.fake.setEquity(9_000_000);
+    const report = await run.cycle();
+    const attemptId = closeAttemptId(closeLifecycleId(exposureLifecycleId, "emergency"), integerUnit(0, "Quantity"));
+    expect(report.kill).toMatchObject({ haltDurable: false, canceled: [], cancelRaces: {}, emergency: [attemptId], flat: false });
+    const newMutations = run.fake.mutations.slice(before);
+    expect(newMutations.map(mutation => `${mutation.kind}:${mutation.clientOrderId === attemptId ? "emergency-close" : mutation.clientOrderId}`)).toEqual(["submit_order:emergency-close"]);
+    // The resting entry is untouched at the broker and still counts as fillable exposure.
+    expect(await run.fake.read.orderByClientId(restingEntryId)).toMatchObject({ status: "accepted" });
+    unlockJournal(run.paths);
+    // With the journal back, the kill fires again and now cancels under a durable HALT.
+    const recovered = await run.cycle();
+    expect(recovered.kill).toMatchObject({ haltDurable: true, canceled: [restingEntryId], flat: true });
+    expect(types(run.paths).slice(-4)).toEqual(["OUTCOME", "RECONCILIATION", "KILL", "CYCLE"]);
+  });
+});
+
 describe("RES-P1-01d at the runner boundary", () => {
   it("RES-P1-01d the runner accepts only raw analyst text; a forged unit in that text is a SCHEMA_VETO and never a plan", async () => {
     const run = await harness({ analyst: () => Promise.resolve(JSON.stringify({ candidates: [{ ...creditVertical(), quantity: 0 }] })) });
