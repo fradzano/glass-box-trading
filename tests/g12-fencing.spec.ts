@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, inject, it } from "vitest";
-import { authorizeMutation, compareAndIncrement, planEpochAcquisition, shouldAttemptTakeover, validateSchedulingBounds } from "../src/core/authority.js";
+import { authorizeMutation, compareAndIncrement, planEpochAcquisition, resetPairPresent, shouldAttemptTakeover, validateSchedulingBounds } from "../src/core/authority.js";
 import type { EpochStoreState } from "../src/core/authority.js";
 import { journalStaleness, parseJournalText } from "../src/core/journal.js";
 import type { JournalEntry } from "../src/core/journal.js";
@@ -304,11 +304,52 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     chmodSync(blockedPaths.journal, 0o444);
     const blocked = gatewayFor(blockedPaths, "agent", () => TEST_ONLY_AT_MS);
     expect(await blocked.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining("EPERM") });
-    expect(readEpochStore(blockedPaths)).toEqual({ kind: "absent" });
-    expect(existsSync(blockedPaths.holder)).toBe(false);
+    // The pending store is durable but authorizes nothing; the crashed twin cannot use it, the next acquirer completes it.
+    expect(readEpochStore(blockedPaths)).toMatchObject({ kind: "present", epoch: 1, holderId: "agent", resetPending: true });
+    expect(await blocked.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "RESET_PENDING" });
     chmodSync(blockedPaths.journal, 0o644);
-    expect(await gatewayFor(blockedPaths, "agent-retry", () => TEST_ONLY_AT_MS + 1_000).acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
-    expect(entriesOf(blockedPaths).map(entry => entry.type)).toEqual(["GAP", "HALT"]);
+    expect(await gatewayFor(blockedPaths, "agent-retry", () => TEST_ONLY_AT_MS + BOUND_MS + 1_000).acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 2 });
+    expect(entriesOf(blockedPaths).map(entry => [entry.type, entry.epoch])).toEqual([["GAP", 2], ["HALT", 2]]);
+    expect(readEpochStore(blockedPaths)).toMatchObject({ kind: "present", epoch: 2, resetPending: false });
+    // G5-F1: the reset is a persisted pending acquisition. The pair is appended only under a pending epoch that exists in
+    // the store; a failed store write leaves nothing behind; an interrupted reset is completed, never duplicated.
+    const dirPaths = freshPaths();
+    const temporaryStorePath = `${dirPaths.epoch}.${String(process.pid)}.tmp`;
+    mkdirSync(temporaryStorePath);
+    const storeFails = gatewayFor(dirPaths, "agent", () => TEST_ONLY_AT_MS);
+    expect(await storeFails.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "REFUSED" });
+    expect(entriesOf(dirPaths)).toEqual([]);
+    expect(existsSync(dirPaths.halt)).toBe(false);
+    expect(existsSync(dirPaths.holder)).toBe(false);
+    rmSync(temporaryStorePath, { recursive: true, force: true });
+    expect(await gatewayFor(dirPaths, "agent-retry", () => TEST_ONLY_AT_MS + 1_000).acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
+    expect(entriesOf(dirPaths).map(entry => entry.type)).toEqual(["GAP", "HALT"]);
+    expect(readEpochStore(dirPaths)).toMatchObject({ kind: "present", epoch: 1, resetPending: false });
+    // Interrupted after the pending store was written, before the pair: the next acquirer completes exactly one pair.
+    const pendingPaths = freshPaths();
+    writeFileSync(pendingPaths.epoch, JSON.stringify({ epoch: 1, holderId: "crashed", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: true }), "utf8");
+    writeFileSync(pendingPaths.holder, JSON.stringify({ holderId: "crashed", heartbeatAt: 0 }), "utf8");
+    const crashedTwin = gatewayFor(pendingPaths, "crashed", () => TEST_ONLY_AT_MS);
+    expect(await crashedTwin.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "RESET_PENDING" });
+    const completer = gatewayFor(pendingPaths, "completer", () => TEST_ONLY_AT_MS + 1_000);
+    expect(await completer.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "GAP_HALT", epoch: 2 });
+    expect(entriesOf(pendingPaths).map(entry => [entry.type, entry.epoch])).toEqual([["GAP", 2], ["HALT", 2]]);
+    expect(readEpochStore(pendingPaths)).toMatchObject({ kind: "present", epoch: 2, holderId: "completer", resetPending: false });
+    expect(readHaltState(pendingPaths)).toMatchObject({ halted: true, reason: "EPOCH_STORE_RESET" });
+    expect(await completer.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 3 });
+    // Interrupted after the pair, before promotion: promote without a second pair.
+    const promotePaths = freshPaths();
+    const firstTry = gatewayFor(promotePaths, "first", () => TEST_ONLY_AT_MS);
+    expect(await firstTry.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
+    writeFileSync(promotePaths.epoch, JSON.stringify({ epoch: 1, holderId: "first", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: true }), "utf8");
+    writeFileSync(promotePaths.holder, JSON.stringify({ holderId: "first", heartbeatAt: 0 }), "utf8");
+    expect(await gatewayFor(promotePaths, "second", () => TEST_ONLY_AT_MS + 1_000).acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "GAP_HALT", epoch: 2 });
+    expect(entriesOf(promotePaths).map(entry => entry.type)).toEqual(["GAP", "HALT"]);
+    expect(readEpochStore(promotePaths)).toMatchObject({ kind: "present", epoch: 2, resetPending: false });
+    // While a reset is pending in the store, nothing authoritative passes — not even for the pending holder itself.
+    const guardPaths = freshPaths();
+    writeFileSync(guardPaths.epoch, JSON.stringify({ epoch: 1, holderId: "agent", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: true }), "utf8");
+    expect(authorizeMutation({ class: "authoritative", epoch: 1, action: { kind: "broker_mutation" } }, readEpochStore(guardPaths))).toEqual({ authorized: false, reason: "RESET_PENDING" });
     // Unknown account state is treated as non-virgin.
     const unknownPaths = freshPaths();
     expect(await gatewayFor(unknownPaths, "agent", () => TEST_ONLY_AT_MS).acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "GAP_HALT" });
@@ -351,22 +392,28 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
 
   it("S-G12-07 the pure authority core decides acquisition, compare-and-increment, and authorization without any clock", () => {
     const absent: EpochStoreState = { kind: "absent" };
-    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false };
+    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false };
     const unreadable: EpochStoreState = { kind: "unreadable", detail: "x" };
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: true })).toEqual({ kind: "SEED_BOOTSTRAP", epoch: 1 });
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: false })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "non_virgin", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "unknown", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
-    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false });
-    expect(planEpochAcquisition({ ...present, seedPending: true }, { account: "non_virgin", journalEmpty: false })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: true });
+    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: false });
+    expect(planEpochAcquisition({ ...present, seedPending: true }, { account: "non_virgin", journalEmpty: false })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: true, resetPending: false });
+    expect(planEpochAcquisition({ ...present, resetPending: true }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: true });
+    expect(resetPairPresent([cycleEntry(1), { ...cycleEntry(2), type: "GAP", reasonCodes: [], snapshot: null, detail: "x" } as unknown as JournalEntry, { ...cycleEntry(3), type: "HALT", reason: "EPOCH_STORE_RESET", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(true);
+    expect(resetPairPresent([cycleEntry(1), { ...cycleEntry(2), type: "HALT", reason: "EPOCH_STORE_RESET", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(false);
+    expect(resetPairPresent([{ ...cycleEntry(1), type: "GAP", reasonCodes: [], snapshot: null, detail: "x" } as unknown as JournalEntry, { ...cycleEntry(2), type: "HALT", reason: "MANUAL", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(false);
+    expect(resetPairPresent([])).toBe(false);
     expect(planEpochAcquisition(unreadable, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_UNREADABLE" });
-    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
+    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
     expect(compareAndIncrement(present, 3)).toEqual({ kind: "COMMIT", next: 4 });
     expect(compareAndIncrement({ ...present, epoch: 4 }, 3)).toEqual({ kind: "CHANGED", observed: 4 });
     expect(compareAndIncrement(absent, 3)).toEqual({ kind: "CHANGED", observed: null });
     expect(compareAndIncrement(unreadable, 3)).toEqual({ kind: "REFUSE", reason: "EPOCH_UNREADABLE" });
 
     const append = { kind: "journal_append", entryType: "CYCLE" } as const;
+    expect(authorizeMutation({ class: "authoritative", epoch: 3, action: append }, { ...present, resetPending: true })).toEqual({ authorized: false, reason: "RESET_PENDING" });
     expect(authorizeMutation({ class: "authoritative", epoch: 3, action: append }, present)).toEqual({ authorized: true });
     expect(authorizeMutation({ class: "authoritative", epoch: 2, action: append }, present)).toEqual({ authorized: false, reason: "STALE_EPOCH" });
     expect(authorizeMutation({ class: "authoritative", epoch: 4, action: append }, present)).toEqual({ authorized: false, reason: "STALE_EPOCH" });

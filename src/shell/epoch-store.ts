@@ -49,13 +49,15 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
   const holderId = record["holderId"];
   const acquiredAt = record["acquiredAt"];
   const seedPending = record["seedPending"];
-  if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string" || (seedPending !== undefined && typeof seedPending !== "boolean")) {
+  const resetPending = record["resetPending"];
+  if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string"
+    || (seedPending !== undefined && typeof seedPending !== "boolean") || (resetPending !== undefined && typeof resetPending !== "boolean")) {
     return { kind: "unreadable", detail: "epoch store record is malformed" };
   }
-  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true };
+  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true };
 }
 
-export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean }): void {
+export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean }): void {
   writeJsonAtomically(paths.epoch, record);
 }
 
@@ -99,7 +101,10 @@ export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T
     try {
       descriptor = openSync(paths.mutex, "wx");
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      // EEXIST is the normal contention signal; on Windows a concurrent creator can also surface EPERM/EBUSY/EACCES
+      // for the same file. All of them mean "held right now" and are retried until the timeout.
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw error;
       try {
         const age = Date.now() - statSync(paths.mutex).mtimeMs;
         if (age > MUTEX_STALE_MS) unlinkSync(paths.mutex);

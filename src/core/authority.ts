@@ -6,7 +6,7 @@
 // time never appear in `authorizeMutation`.
 
 import { isWitnessEntryType } from "./journal.js";
-import type { AccountBinding } from "./journal.js";
+import type { AccountBinding, JournalEntry } from "./journal.js";
 
 export type EpochStoreState =
   | { readonly kind: "absent" }
@@ -19,6 +19,11 @@ export type EpochStoreState =
     readonly acquiredAt: string;
     /** True from a virgin seed until the BOOTSTRAP entry lands; persisted so a restart cannot forget it (G1-F2). */
     readonly seedPending: boolean;
+    /**
+     * True while a reset acquisition is pending: the store exists, but the GAP/HALT pair has not been promoted yet.
+     * A pending epoch authorizes nothing; acquisition completes the pair (once) and promotes it (G5-F1).
+     */
+    readonly resetPending: boolean;
   };
 
 export type AccountVirginity = "virgin" | "non_virgin" | "unknown";
@@ -31,7 +36,7 @@ export interface AcquisitionEvidence {
 export type AcquisitionPlan =
   | { readonly kind: "SEED_BOOTSTRAP"; readonly epoch: 1 }
   | { readonly kind: "SEED_GAP"; readonly epoch: 1; readonly haltReason: "EPOCH_STORE_RESET" }
-  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number; /** inherited from the store: the seed is still unjournaled (G2-F1) */ readonly seedPending: boolean }
+  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number; /** inherited from the store: the seed is still unjournaled (G2-F1) */ readonly seedPending: boolean; /** inherited from the store: a reset pair still has to be completed and promoted (G5-F1) */ readonly resetPending: boolean }
   | { readonly kind: "REFUSE"; readonly reason: "EPOCH_UNREADABLE" | "EPOCH_EXHAUSTED" };
 
 /**
@@ -50,7 +55,7 @@ export function planEpochAcquisition(store: EpochStoreState, evidence: Acquisiti
         : { kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" };
     case "present":
       if (store.epoch >= Number.MAX_SAFE_INTEGER) return { kind: "REFUSE", reason: "EPOCH_EXHAUSTED" };
-      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1, seedPending: store.seedPending };
+      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1, seedPending: store.seedPending, resetPending: store.resetPending };
   }
 }
 
@@ -86,6 +91,7 @@ export type AuthorizationFailure =
   | "EPOCH_ABSENT"
   | "EPOCH_UNREADABLE"
   | "STALE_EPOCH"
+  | "RESET_PENDING"
   | "AUTHORITATIVE_TYPE_REQUIRED"
   | "WITNESS_TYPE_REQUIRED"
   | "WITNESS_CANNOT_MUTATE_BROKER";
@@ -111,8 +117,17 @@ export function authorizeMutation(request: AuthorityRequest, store: EpochStoreSt
     case "absent":
       return { authorized: false, reason: "EPOCH_ABSENT" };
     case "present":
-      return store.epoch === request.epoch ? { authorized: true } : { authorized: false, reason: "STALE_EPOCH" };
+      if (store.epoch !== request.epoch) return { authorized: false, reason: "STALE_EPOCH" };
+      if (store.resetPending) return { authorized: false, reason: "RESET_PENDING" };
+      return { authorized: true };
   }
+}
+
+/** The reset pair is durable when the journal ends in a GAP followed by a HALT with reason EPOCH_STORE_RESET (G5-F1). */
+export function resetPairPresent(entries: readonly JournalEntry[]): boolean {
+  const halt = entries.at(-1);
+  const gap = entries.at(-2);
+  return halt !== undefined && gap !== undefined && gap.type === "GAP" && halt.type === "HALT" && halt["reason"] === "EPOCH_STORE_RESET";
 }
 
 /** A stale heartbeat is only the trigger to attempt a takeover; it grants nothing (S-G12-02). */

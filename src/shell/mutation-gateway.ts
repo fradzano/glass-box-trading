@@ -4,7 +4,7 @@
 // pure core (`authorizeMutation`, `planAppend`, `haltStateAfter`), and apply
 // the result. Holding or reacquiring the mutex grants nothing; the epoch does,
 // and only for the gateway instance that acquired it in this process.
-import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, shouldAttemptTakeover } from "../core/authority.js";
+import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, resetPairPresent, shouldAttemptTakeover } from "../core/authority.js";
 import type { AccountVirginity, EpochStoreState } from "../core/authority.js";
 import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
@@ -196,7 +196,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     }
     const appended = appendUnderLock(entries, draft);
     if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
-    if (store.seedPending) writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: false });
+    if (store.seedPending) writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: false, resetPending: false });
     return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
   }
 
@@ -218,34 +218,49 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       case "REFUSE":
         return { kind: "REFUSED", reason: plan.reason };
       case "SEED_BOOTSTRAP":
-        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: true });
+        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: true, resetPending: false });
         writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
         ownEpoch = plan.epoch;
         return { kind: "WON", epoch: plan.epoch, seeded: "bootstrap" };
-      case "SEED_GAP": {
-        // G3-F3: the GAP line, the HALT line, and the halt flag become durable first. Only then does the store come
-        // into existence. An interruption anywhere before that leaves an absent store facing a non-empty journal,
-        // which is the GAP path again on the next attempt — never a silently seeded store.
-        const gap = appendUnderLock(entries, { at: utcIso(now), epoch: plan.epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
-        if (!gap.ok) return { kind: "REFUSED", reason: gap.reason };
-        const halt = appendUnderLock([...entries, gap.entry], { at: utcIso(now), epoch: plan.epoch, type: "HALT", reason: plan.haltReason, detail: "epoch store re-seeded on the GAP path; reconcile before un-halt", sticky: false });
-        if (!halt.ok) return { kind: "REFUSED", reason: halt.reason };
-        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
+      case "SEED_GAP":
+        // G5-F1: the reset is a persisted *pending* acquisition. The store is written first with resetPending: true —
+        // an epoch that authorizes nothing — then the GAP/HALT pair and the flag are completed under it, then it is
+        // promoted. A failed store write leaves nothing behind; an interruption after it leaves a pending store that
+        // the next acquirer completes exactly once (`resetPairPresent`) and promotes.
+        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false, resetPending: true });
         writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
-        ownEpoch = plan.epoch;
-        return { kind: "GAP_HALT", epoch: plan.epoch };
-      }
+        return completeReset(entries, plan.epoch, now);
       case "INCREMENT": {
         const decision = compareAndIncrement(fresh, plan.expected);
         if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
         if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
         // G2-F1: a seed that has not been journaled yet is inherited by the new acquirer, never cleared by acquisition.
-        writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending });
+        // G5-F1: likewise a pending reset is inherited and completed by the new acquirer under its own epoch.
+        writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending, resetPending: plan.resetPending });
         writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+        if (plan.resetPending) return completeReset(entries, decision.next, now);
         ownEpoch = decision.next;
         return { kind: "WON", epoch: decision.next, seeded: plan.seedPending ? "bootstrap" : null };
       }
     }
+  }
+
+  /** Completes a pending reset under `epoch`: appends the GAP/HALT pair unless it is already durable, then promotes the store. */
+  function completeReset(entries: readonly JournalEntry[], epoch: number, now: number): AcquisitionResult {
+    let current = entries;
+    if (!resetPairPresent(current)) {
+      const gap = appendUnderLock(current, { at: utcIso(now), epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
+      if (!gap.ok) return { kind: "REFUSED", reason: gap.reason };
+      current = [...current, gap.entry];
+      const halt = appendUnderLock(current, { at: utcIso(now), epoch, type: "HALT", reason: "EPOCH_STORE_RESET", detail: "epoch store re-seeded on the GAP path; reconcile before un-halt", sticky: false });
+      if (!halt.ok) return { kind: "REFUSED", reason: halt.reason };
+    } else {
+      // The pair is durable from an interrupted attempt; make the flag durable too before promoting.
+      writeHaltState(paths, haltStateFrom(current));
+    }
+    writeEpochStore(paths, { epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false, resetPending: false });
+    ownEpoch = epoch;
+    return { kind: "GAP_HALT", epoch };
   }
 
   return {
