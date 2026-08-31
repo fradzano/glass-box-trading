@@ -304,6 +304,10 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       return withMutex(paths, () => {
         const store = readEpochStore(paths);
         if (store.kind !== "present") return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
+        // G6-F1: the human path is not exempt from the store's obligations. Under a pending reset the pair must stay
+        // terminal for recovery; under an unjournaled seed nothing authoritative but the BOOTSTRAP may land.
+        if (store.resetPending) return { ok: false, reason: "RESET_PENDING", lockHeld: true };
+        if (store.seedPending) return { ok: false, reason: "SEED_NOT_JOURNALED", lockHeld: true };
         const loaded = loadJournal();
         if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
         const entries = loaded.file.parsed.entries;

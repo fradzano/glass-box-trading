@@ -87,6 +87,19 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "PROVENANCE_BROKEN", sticky: true })) } })).toMatchObject({ ok: true });
     expect(await manualUnhalt({ paths: paths.value, operator: "felix", reason: "try", clock: () => TEST_ONLY_AT_MS + 4_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false, reason: "HALT_IS_STICKY" });
     expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "PROVENANCE_BROKEN", sticky: true });
+    // G6-F1: the manual path is subject to the same authority rule — a pending reset or an unjournaled seed refuses it,
+    // so the reset pair stays terminal for recovery and no second pair can follow.
+    const pending = resolveStateDir(temporaryStateDir());
+    if (!pending.ok) throw new Error(pending.reason);
+    const resetter = createMutationGateway({ paths: pending.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "resetter", lockTakeoverBoundMs: 60_000 });
+    expect(await resetter.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
+    writeFileSync(pending.value.epoch, JSON.stringify({ epoch: 1, holderId: "resetter", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: true }), "utf8");
+    expect(await manualUnhalt({ paths: pending.value, operator: "felix", reason: "probe", clock: () => TEST_ONLY_AT_MS + 5_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false, reason: "RESET_PENDING" });
+    expect(parseJournalText(readFileSync(pending.value.journal, "utf8")).entries.map(entry => entry.type)).toEqual(["GAP", "HALT"]);
+    const seedPaths = resolveStateDir(temporaryStateDir());
+    if (!seedPaths.ok) throw new Error(seedPaths.reason);
+    writeFileSync(seedPaths.value.epoch, JSON.stringify({ epoch: 1, holderId: "seeder", acquiredAt: TEST_ONLY_AT, seedPending: true, resetPending: false }), "utf8");
+    expect(await manualUnhalt({ paths: seedPaths.value, operator: "felix", reason: "probe", clock: () => TEST_ONLY_AT_MS + 5_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
   });
 
   it("S-G12-04 no shell module besides the manual tool and the gateway's refusal mentions UNHALT", () => {
