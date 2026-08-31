@@ -695,3 +695,22 @@ small, no ADR split).
   known exceptions to "every append passes `dispatch`". Fix verification
   launched as Codex job `task-mthe6upm-hpouop`; verdict recorded in the store's
   `LEDGER.md` and `STATE.md` → Now.
+- **2026-08-31 — P3 closing state: green, gate-confirmed on its riskiest
+  mechanism, awaiting the owner's word for the merges.** Final code commit
+  `5afb5d1` on `p3/broker-execution` (`npm run verify` exit 0: 116 tests,
+  static and sandbox gates, partition check). The reduced depth delivered:
+  13/14 mutation probe (M13 declared), one evidence-debt finding closed
+  (S-X-02 breach halt), and two blind gate calls on the executor path — one
+  `REJECTED` with a single class-A finding (G1-F1: a cancel sent while the
+  journal was unavailable), closed red-first as the gate prescribed, and
+  one `CONFIRMED` across seven executed variants including recovery order
+  and the unreadable epoch store. Confirmed by executed evidence: durable
+  INTENT plus passed re-check before any entry order, kill management under
+  the fence, the journal-unavailable rule with its single exception,
+  phase-0 resolution before any new order, the closed-outcome mapping.
+  Not gate-verified: pricing arithmetic, snapshot adapter, fold, and fake
+  broker beyond the repository gates and the probe. This is the declared
+  reduced depth, not a bis-0 termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p3-broker-execution/LEDGER.md`.
+  Merges into local `main` only on Felix's word (P2 first, then P3); P4
+  starts from the accepted P3 on its own branch.

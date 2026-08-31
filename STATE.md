@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P3 green on `p3/broker-execution` at `5afb5d1`; first gate call REJECTED → G1-F1 closed; fix-verification call in progress; P2 and P3 both await Felix's merge word)
+**Last updated:** 2026-08-31 night (P3 closed on its branch: green at `5afb5d1`, executor path gate-CONFIRMED after two calls; P2 and P3 both await Felix's merge word)
 **Branch:** `p3/broker-execution` at `5afb5d1` (implementation `3961d64`, breach halt `c66c3be`, gate closure `5afb5d1`; branched from `p2/journal-authority` at `f1ff38c` — P2 was not merged when P3 started; a `--no-ff` merge of P2 followed by P3 is conflict-free by construction); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on `p2/journal-authority` (`f1ff38c`) and not yet merged**; P3 is **implemented on `p3/broker-execution` and not yet merged**. Both await Felix's word; merge order is P2 then P3.
 **P0 release baseline:** local `main` at `598f43e`
@@ -152,9 +152,16 @@ One phase per session; every session ends with the handoff protocol in
   `task-mthde869-81r6p8`, `prompts/G1-executor-path.md`, `--write`) returned
   **REJECTED** on one executed variant, G1-F1 (a `cancel_order` sent while
   the journal was unavailable), closed red-first at `5afb5d1` (cancel loop
-  only under a durable `HALT`; 116 tests); four of five claims held. Fix
-  verification launched as Codex job `task-mthe6upm-hpouop`
-  (`prompts/G2-fixverify-journal-down-kill.md`); its verdict is not yet in.
+  only under a durable `HALT`; 116 tests); four of five claims held. The fix
+  verification (Codex job `task-mthe6upm-hpouop`,
+  `prompts/G2-fixverify-journal-down-kill.md`) returned **CONFIRMED** at
+  `5afb5d1` across seven executed variants (journal writable/unavailable,
+  no-structure case, fill during outage, adopted close, recovery order
+  `AUDIT_GAP` → durable `HALT` → cancel → `KILL`, unreadable epoch store →
+  zero mutations). **P3 closing state:** the executor path is
+  gate-confirmed by executed evidence; pricing arithmetic, snapshot
+  adapter, fold, and fake broker rest on the repository gates and the
+  13/14 probe (declared reduced depth, DECISIONS.md 2026-08-31).
   Declared reduced depth (DECISIONS.md 2026-08-31): red-first is weaker than
   P2's here (core and tests written together), the probe carries the
   tests-bite evidence, no bis-0 criterion is claimed. **Not merged; P2 is
