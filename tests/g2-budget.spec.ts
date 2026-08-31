@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decide, reconcilePartialFillRisk } from "../src/core/decision.js";
 import { integerUnit } from "../src/core/domain.js";
-import type { DecisionConfig, EntryCandidate, EntryReservationState, MoneyCents } from "../src/core/domain.js";
+import type { DecisionConfig, EntryCandidate, EntryReservationState, ExposureRiskComponent, MoneyCents } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, exposure, leg, snapshot } from "./fixtures.js";
 
 function run(candidateValues: readonly EntryCandidate[], decisionSnapshot = snapshot(), config: DecisionConfig = TEST_ONLY_O5_CONFIG) {
@@ -89,5 +89,13 @@ describe("G2 sleeve budgets", () => {
     expect(run([candidate()], incomeFull).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: true });
     const incomeCandidate = candidate({ sleeve: "income" });
     expect(run([incomeCandidate], incomeFull).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false });
+  });
+
+  it("S-G2-07 counts every entry component that is not released, even when its state lies outside the open set", () => {
+    const forged = { kind: "entry", state: "filled", maxLossCents: integerUnit(800_000, "MoneyCents") } as unknown as ExposureRiskComponent;
+    const consumed = snapshot({ exposureLifecycles: [exposure({ sleeve: "convex", risk: [forged] })] });
+    const result = run([candidate()], consumed);
+    expect(result.candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false, code: "BUDGET" });
+    expect(result.actions).toEqual([]);
   });
 });

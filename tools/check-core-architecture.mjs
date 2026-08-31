@@ -147,6 +147,10 @@ function runSelfTest() {
     ["export function now() { return Date['now'](); }", "forbidden ambient"],
     ["export function key() { return eval('process.env.KEY'); }", "forbidden code generation"],
     ["export function key() { return Function.bind(undefined)('return process.env.KEY')(); }", "forbidden code generation"],
+    ["export function key() { return global.process.env.KEY; }", "forbidden"],
+    ["export function now() { return global.Date.now(); }", "forbidden"],
+    ["export function make() { return (function () {}).constructor('return process')(); }", "forbidden"],
+    ["export function fs() { return global.require('node:fs'); }", "forbidden"],
   ];
   for (const [source, expected] of cases) {
     const found = inspectCoreSource(source, "self-test.ts");

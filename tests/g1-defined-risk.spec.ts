@@ -95,4 +95,49 @@ describe("G1 defined risk", () => {
     const value = candidate({ declaredStructureType: "vertical_debit", legs: [same, { ...same, side: "sell" }] });
     expect(gateOne(value).gateVector[0]).toMatchObject({ passed: false, code: "DEFINED_RISK" });
   });
+
+  it("S-G1-03 vetoes an iron condor whose wings overlap instead of reserving one wing", () => {
+    const legs: OptionLeg[] = [
+      leg({ contractId: "P-90", right: "put", strikeCents: integerUnit(9_000, "StrikeCents"), side: "buy" }),
+      leg({ contractId: "P-100", right: "put", strikeCents: integerUnit(10_000, "StrikeCents"), side: "sell" }),
+      leg({ contractId: "C-50", strikeCents: integerUnit(5_000, "StrikeCents"), side: "sell" }),
+      leg({ contractId: "C-60", strikeCents: integerUnit(6_000, "StrikeCents"), side: "buy" }),
+    ];
+    const value = candidate({ declaredStructureType: "iron_condor", sleeve: "income", legs, entryLimit: { kind: "credit", priceCents: integerUnit(0, "OptionPriceCents") } });
+    const overlapping = gateOne(value);
+    expect(overlapping.gateVector[0]).toMatchObject({ passed: false, code: "DEFINED_RISK" });
+    expect(overlapping.reservedMaxLossCents).toBeNull();
+  });
+
+  it("S-G1-01..03 reserve exactly the independent expiry-payoff maximum loss", () => {
+    const expiryMaxLossCents = (value: EntryCandidate): number => {
+      const strikes = value.legs.map(optionLeg => optionLeg.strikeCents);
+      const points = [0, ...strikes, Math.max(...strikes) + 1_000_000];
+      const premium = value.entryLimit.kind === "debit" ? -value.entryLimit.priceCents : value.entryLimit.priceCents;
+      const pnlAt = (spot: number) => value.legs.reduce((total, optionLeg) => {
+        const intrinsic = optionLeg.right === "call" ? Math.max(spot - optionLeg.strikeCents, 0) : Math.max(optionLeg.strikeCents - spot, 0);
+        return total + (optionLeg.side === "buy" ? intrinsic : -intrinsic) * optionLeg.ratio;
+      }, premium);
+      return Math.max(0, -Math.min(...points.map(pnlAt))) * 100 * value.quantity;
+    };
+    const [longLeg, shortLeg] = verticalLegs();
+    const structures = [
+      candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: integerUnit(2, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } }),
+      candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }], quantity: integerUnit(3, "Quantity"), entryLimit: { kind: "credit", priceCents: integerUnit(150, "OptionPriceCents") } }),
+      candidate({
+        declaredStructureType: "iron_condor",
+        sleeve: "income",
+        legs: [
+          leg({ contractId: "P-490", right: "put", strikeCents: integerUnit(49_000, "StrikeCents"), side: "buy" }),
+          leg({ contractId: "P-495", right: "put", strikeCents: integerUnit(49_500, "StrikeCents"), side: "sell" }),
+          leg({ contractId: "C-505", strikeCents: integerUnit(50_500, "StrikeCents"), side: "sell" }),
+          leg({ contractId: "C-512", strikeCents: integerUnit(51_200, "StrikeCents"), side: "buy" }),
+        ],
+        entryLimit: { kind: "credit", priceCents: integerUnit(200, "OptionPriceCents") },
+      }),
+    ];
+    for (const value of structures) {
+      expect(gateOne(value).reservedMaxLossCents).toBe(expiryMaxLossCents(value));
+    }
+  });
 });

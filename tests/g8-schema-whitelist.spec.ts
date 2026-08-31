@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decide, parseAnalystOutput } from "../src/core/decision.js";
-import { integerUnit } from "../src/core/domain.js";
+import { integerUnit, lotCount } from "../src/core/domain.js";
 import type { DecisionConfig, DecisionSnapshot, EntryCandidate } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, leg, marketFor, quote, snapshot } from "./fixtures.js";
 
@@ -135,5 +135,12 @@ describe("G8 schema and whitelist", () => {
     const debitMarket = marketFor(debitTaggedIncome);
     const debitSnapshot = snapshot({ ...debitMarket, quotesByContract: creditSnapshot.quotesByContract });
     expect(run([debitTaggedIncome], debitSnapshot).candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: false, code: "SLEEVE_MISMATCH" });
+  });
+
+  it("S-G8-03 cannot construct a zero-lot or negative candidate quantity", () => {
+    expect(() => lotCount(0)).toThrow(RangeError);
+    expect(() => lotCount(-1)).toThrow(RangeError);
+    expect(() => lotCount(1.5)).toThrow(RangeError);
+    expect(lotCount(1)).toBe(1);
   });
 });
