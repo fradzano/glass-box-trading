@@ -345,3 +345,22 @@ small, no ADR split).
   before execution, and the enumerated ambient capabilities cannot be reached
   on executed paths whatever the source spelled. Intent and boundary
   placement remain with the Core/shell lens and human review.
+- **2026-08-31 — Owner ruling: residual `RES-P1-01` accepted.** Felix
+  Radzanowski accepted the blind ruling above (the typed core boundary is
+  trusted; shape validation belongs to the shell). Consequence: the core keeps
+  throwing on type-invalid runtime values, every adapter carries the obligation
+  rows `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`, and a P2/P3 adapter that
+  reaches `decide` without shape validation fails its phase gate. A veto would
+  have reopened P1 with a core-side validation gateway; that path is closed.
+- **2026-08-31 — Owner ruling: the two-gate enforcement with its stated limits
+  is the accepted fulfilment of shared completion gate 2 (`R4-F5` declared).**
+  After four blind counter-verifications each produced a fresh typed
+  laundering path, Felix Radzanowski chose declaration over a fifth patch or a
+  hardened-realm dependency (SES/`lockdown`). What is accepted: the static
+  provenance allow-list rejects accidental and negligent impurity before
+  execution; the runtime sandbox denies the enumerated ambient capabilities on
+  every executed path whatever the source spelled; a deliberate core author can
+  still write source that passes the static gate, and an ambient reach on a
+  path the sandbox does not execute is not observed. The P1 run records this
+  as residual `RES-P1-02` with the owner as decider. SES/`lockdown` as a pinned
+  dependency stays a backlog candidate for P2, not a P1 obligation.
