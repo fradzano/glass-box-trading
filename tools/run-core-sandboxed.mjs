@@ -99,23 +99,28 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
   await entry.evaluate();
   // Harden: everything reachable from the loaded graph's exports is restricted
   // to shapes that `Object.freeze` actually makes immutable — ordinary
-  // functions, ordinary arrays, and plain records (prototype `Object.prototype`,
-  // `null`, or a core-owned plain record) — and is then deep-frozen along its
-  // data properties and its custom prototype chain. Anything else is rejected
-  // at load: accessor properties (a frozen getter can still close over mutable
-  // state), proxies, and every object with mutable internal slots that freeze
-  // does not reach (Map, Set, typed arrays, ArrayBuffer, iterators, generator
-  // objects, boxed primitives, Date, RegExp …). A failing freeze is an error,
-  // never swallowed. Realm intrinsics are already frozen by the taming and are
-  // skipped, not traversed.
+  // functions, ordinary arrays, and plain records whose prototype is the
+  // realm's `Object.prototype` or `null` — decided by prototype identity, never
+  // by a tag — and is then deep-frozen along its data properties. Anything else
+  // is rejected at load: accessor properties (a frozen getter can still close
+  // over mutable state), proxies, custom prototypes, and every object with
+  // mutable internal slots that freeze does not reach (Map, Set, typed arrays,
+  // ArrayBuffer, iterators, generator objects, boxed primitives, Date, RegExp …).
+  // A failing freeze is an error, never swallowed. Realm intrinsics are already
+  // frozen by the taming and are skipped, not traversed.
   const intrinsics = intrinsicsOf(context);
   const seen = new Set();
+  // Shape is decided by realm prototype identity, never by a tag: `Symbol.toStringTag`
+  // is author-controlled, a prototype link is not. Custom prototypes are rejected.
+  // `Function` is the denial stub inside the realm, so %Function.prototype% is
+  // taken from a function literal, not from the (replaced) global.
+  const [realmObjectPrototype, realmArrayPrototype, realmFunctionPrototype] = vm.runInContext("[Object.prototype, Array.prototype, Object.getPrototypeOf(function () {})]", context);
   const shapeOf = (value) => {
     if (types.isProxy(value)) return "proxy";
-    if (Array.isArray(value)) return "array";
-    const tag = Object.prototype.toString.call(value);
-    if (typeof value === "function") return tag === "[object Function]" ? "function" : `exotic function ${tag}`;
-    return tag === "[object Object]" ? "record" : `exotic ${tag}`;
+    const prototype = Object.getPrototypeOf(value);
+    if (typeof value === "function") return prototype === realmFunctionPrototype ? "function" : "exotic function";
+    if (Array.isArray(value)) return prototype === realmArrayPrototype ? "array" : "exotic array";
+    return prototype === realmObjectPrototype || prototype === null ? "record" : "exotic object or custom-prototype record";
   };
   const harden = (value) => {
     if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value) || intrinsics.has(value)) return;
@@ -128,7 +133,6 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
       if (!("value" in descriptor)) throw new Error(`export hardening denied accessor property '${String(key)}' on a core-owned value`);
       harden(descriptor.value);
     }
-    harden(Object.getPrototypeOf(value));
     Object.freeze(value);
     if (!Object.isFrozen(value)) throw new Error(`export hardening could not freeze a core-owned value ('${shape}')`);
   };
@@ -219,6 +223,8 @@ async function calibrate() {
     ["hidden state in an exported typed array", "export const box = new Uint8Array(1); export function poison() { box[0] += 1; return box[0]; }"],
     ["hidden state in an exported generator object", "function* gen() { let n = 0; while (true) { yield ++n; } } export const box = gen(); export function next() { return box.next().value; }"],
     ["hidden state behind an exported proxy", "let hidden = 0; export const box = new Proxy({}, { get() { return ++hidden; } }); export function read() { return box.count; }"],
+    ["hidden state in a toStringTag-spoofed exported Map", "export const box = new Map(); Object.defineProperty(box, Symbol.toStringTag, { value: 'Object' }); export function poison() { box.set('k', (box.get('k') ?? 0) + 1); return box.get('k'); }"],
+    ["hidden state in a toStringTag-spoofed exported iterator", "export const box = [1, 2, 3][Symbol.iterator](); Object.defineProperty(box, Symbol.toStringTag, { value: 'Object' }); export function next() { return box.next().value; }"],
   ];
   for (const [name, source] of mutants) {
     const context = createTamedRealm();

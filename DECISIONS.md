@@ -397,3 +397,18 @@ small, no ADR split).
   coverage`; the ledger records why the seventh is the last: any further finding inside the declared limit is
   not attacked again, and any further finding inside the *claimed* coverage is
   a new owner decision, not a patch.
+- **2026-08-31 — Owner ruling: P1 is accepted and merged with its adversarial
+  run paused, not terminated.** Felix Radzanowski decided under the competition
+  calendar (P2–P6 due before Tuesday's US open, P7 live certificate in that
+  session) to accept P1 after R5 and merge `p1/pure-entry-core` into local
+  `main`. What is accepted: 37 allocated SPEC cases green (45 tests), the
+  static and runtime purity gates with their limits stated exactly, residual
+  `RES-P1-01` (both countersignatures), and `R4-F5`/`RES-P1-02` with the
+  owner's countersignature only — the blind residual gate refused five times,
+  each time on a bounded omission inside the claimed coverage; the last one
+  (shape classification spoofable through `Symbol.toStringTag`) was closed by
+  the gate's prescribed prototype-identity check with two spoof calibration
+  mutants, but that state is **not counter-verified by a gate**. The loop
+  stands at R5 of 8 with criteria 1 and 5 met and 2, 3, 4, 6 open; a later
+  session may resume it from the store, it must not be reported as a bis-0
+  termination. P2 begins on its own branch from this merge.
