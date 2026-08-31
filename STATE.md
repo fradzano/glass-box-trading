@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 early morning (P6 built on `p6/public-evidence`; verification in progress — see the P6 paragraph under "Next")
+**Last updated:** 2026-09-01 ~02:00 CEST (P6 built and verified on `p6/public-evidence`; merge awaits the owner word — see the P6 paragraph under "Next")
 **Branch:** `p6/public-evidence` from the P5 merge `4e20de8` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P5 — merge commit `4e20de8` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (216 tests).
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P6 — public evidence pipeline
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p6--public-evidence-pipeline)) — implemented, `npm run verify` exit 0 (250 tests); mutation probe and blind gate pending, then the owner's merge word
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p6--public-evidence-pipeline)) — implemented at `10a8e66`, `npm run verify` exit 0 (250 tests), mutation probe 17/17, blind gate CONFIRMED at `802b335`; **next action is Felix's:** merge `p6/public-evidence` into local `main` (`--no-ff`), or not; P7 then branches from the merge
 
 ## Done
 
@@ -308,7 +308,29 @@ One phase per session; every session ends with the handoff protocol in
   UNF-2, WIN-1, WIN-13 ✅; WIN-2 ◐ (the Sep 4 final snapshot is P10).
   Deferred, tracked: real git port and Vercel deploy port (P8), the
   analyst prompt carrying the qualification brief (P7), the presentation
-  cutoff freeze and artifact renders (P10).
+  cutoff freeze and artifact renders (P10). Verification record: store
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p6-public-evidence`
+  (`LEDGER.md`): mutation probe **17/17 caught** (run in a detached
+  worktree so the gate's checkout stayed untouched; one CRLF anchor
+  mismatch rerun and caught). **Blind gate on the publication acceptance
+  and projection reconciliation:** first call Codex job
+  `task-mthvvug0-w9rmn2` (`prompts/G1-publication-projection.md`,
+  `--write`, ~12 min, no filter abort) returned **CONFIRMED** at `802b335`
+  (implementation `10a8e66`; the two later commits are the LF pin and CSS)
+  across every executed claim: candidate acceptance and all six rejection
+  classes, stable-origin rollback to the prior accepted deployment,
+  push-failure retry and the refused ref, atomic build and immutable
+  routes, projection reconciliation with the cutoff boundary and the
+  emergency-close link, and the S-CYC-12 window under the runner at the
+  exact cap. No bounded change required; no observations. **P6 closing
+  state:** publication acceptance, push retry/refusal, atomic build,
+  projection reconciliation, and the qualification window are
+  gate-confirmed by executed evidence; the renderer's prose/anchor chain,
+  freshness thresholds, sleeve details, and milestone rules rest on the
+  repository gates and the 17/17 probe (declared reduced depth,
+  DECISIONS.md 2026-08-31). **Next action is Felix's:** merge
+  `p6/public-evidence` into local `main` (`--no-ff`), or not. P7 then
+  branches from the merge.
 - Deferred out of P5, tracked: real scheduler wiring of the lifecycle
   dependency record (`finalCycleOfSession`, `nextTradingDay`,
   provenance/exercise-protection ports — P7's dev certificate wires

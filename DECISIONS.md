@@ -997,3 +997,33 @@ small, no ADR split).
   traverse the golden path" acceptance is met in P6 by the anchor-chain
   test over the recorded golden journal (`tests/j7-j9-golden-path.spec.ts`)
   plus `npm run dashboard`; no browser automation runs in the suite.
+- **2026-09-01 — P6 closing state: green, gate-confirmed on its riskiest
+  mechanism at the first call, awaiting the owner's word for the merge.**
+  Final code commits `10a8e66` (implementation), `fbd0d13` (LF pin for the
+  recorded golden journal), `802b335` (dashboard CSS) on
+  `p6/public-evidence`; `npm run verify` exit 0 at `10a8e66` (250 tests,
+  static and sandbox gates, golden render, partition check), the CSS commit
+  re-checked by lint and the golden-path suite. The reduced depth delivered:
+  a **17/17** mutation probe (projection, qualification, publication core;
+  every mutant compiled before its run; one anchor mismatch caused by the
+  CRLF worktree checkout, rerun and caught, no equivalent mutant declared)
+  and one blind gate call **CONFIRMED** (Codex job `task-mthvvug0-w9rmn2`,
+  no filter abort, every claim on executed evidence: only a matching
+  anonymous probe moves the alias and every rejection class leaves a
+  reasoned receipt; a stable-origin mismatch restores the previous
+  accepted deployment and alarms; push failure never blocks journaling and
+  is retried exactly once per revision; a non-journal ref is refused and
+  journaled; an interrupted build leaves the previous page byte-identical
+  and pinned routes are never overwritten; the projection reconciles to
+  the cent with a hard cutoff boundary and the emergency close linked only
+  to its reconciliation; the S-CYC-12 window vetoes hold at the exact cap
+  and add nothing outside the window). Confirmed by executed evidence:
+  publication acceptance, push retry/refusal, atomic build and immutable
+  routes, projection reconciliation and cutoff, the qualification window
+  under the runner. Not gate-verified beyond the repository gates and the
+  17/17 probe: the renderer's prose and anchor chain (golden-path test
+  only), freshness thresholds, sleeve attribution details, milestone rules.
+  Declared reduced depth, not a bis-0 termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p6-public-evidence/LEDGER.md`.
+  Merge into local `main` only on Felix's word; P7 (dev live certificate)
+  starts from the accepted P6 on its own branch.
