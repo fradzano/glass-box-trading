@@ -1157,8 +1157,9 @@ export function entryResolutionDraft(context: DraftContext, clientOrderId: strin
     : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }] };
 }
 
-export function haltDraft(context: DraftContext, reason: "KILL", detail: string): JournalDraft {
-  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: true };
+/** A kill halt is sticky (S-G13-03); a price-breach halt is not — it blocks new entries pending reconciliation and a manual un-halt (S-X-02). */
+export function haltDraft(context: DraftContext, reason: "KILL" | "BROKER_PRICE_BREACH", detail: string): JournalDraft {
+  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: reason === "KILL" };
 }
 
 export function killDraft(context: DraftContext, equityCents: number, thresholdCents: number): JournalDraft {

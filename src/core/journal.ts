@@ -55,10 +55,10 @@ export function outcomeStatuses(): readonly OutcomeStatus[] {
   return ["filled", "partially_filled", "rejected", "canceled", "expired", "confirmation_unclear"];
 }
 
-export type HaltReason = "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN" | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID";
+export type HaltReason = "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN" | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID" | "BROKER_PRICE_BREACH";
 
 export function haltReasons(): readonly HaltReason[] {
-  return ["MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN", "RESIDUE_UNRESOLVED", "CONFIG_INVALID"];
+  return ["MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN", "RESIDUE_UNRESOLVED", "CONFIG_INVALID", "BROKER_PRICE_BREACH"];
 }
 
 export type SuppressionReason = "LOCK_HELD" | "EPOCH_UNREADABLE" | "EPOCH_CHANGED";

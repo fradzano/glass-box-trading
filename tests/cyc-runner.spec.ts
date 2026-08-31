@@ -37,6 +37,17 @@ afterEach(() => {
 const BINDING = { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } as const;
 const NOW = TEST_ONLY_AT_MS + 60_000;
 const CANDIDATE_JSON = JSON.stringify({ candidates: [creditVertical()] });
+const FAR_CALL = "SPY260904C00510000";
+/** A second, distinct structure (505/510 credit vertical) so one cycle can approve two plans. */
+const SECOND_CANDIDATE = creditVertical({
+  candidateId: "candidate-second-vertical",
+  rationale: "SPY vertical_credit call spread 505/510 sells a second slice of income drift.",
+  legs: [
+    { ...creditVertical().legs[1]!, side: "sell" },
+    { ...creditVertical().legs[1]!, contractId: FAR_CALL, strikeCents: integerUnit(51_000, "StrikeCents"), side: "buy" },
+  ],
+});
+const TWO_CANDIDATES_JSON = JSON.stringify({ candidates: [creditVertical(), SECOND_CANDIDATE] });
 
 function freshPaths(): StatePaths {
   const directory = mkdtempSync(path.join(tmpdir(), "gbt-p3-"));
@@ -59,10 +70,12 @@ function marketNow(clock: () => number): () => Promise<MarketObservation> {
     quotesByContract: {
       [SHORT_CALL]: { bidCents: 300, askCents: 302, bidSize: 20, askSize: 20, quotedAtMs: clock(), brokerQuotedAt: "2026-08-31T13:30:59.871234567Z" },
       [LONG_CALL]: { bidCents: 100, askCents: 102, bidSize: 20, askSize: 20, quotedAtMs: clock(), brokerQuotedAt: "2026-08-31T13:30:59.871234567Z" },
+      [FAR_CALL]: { bidCents: 50, askCents: 52, bidSize: 20, askSize: 20, quotedAtMs: clock(), brokerQuotedAt: "2026-08-31T13:30:59.871234567Z" },
     },
     contractsById: {
       [SHORT_CALL]: { contractId: SHORT_CALL, underlying: "SPY", expiry: "2026-09-04", strikeCents: 50_000, right: "call" },
       [LONG_CALL]: { contractId: LONG_CALL, underlying: "SPY", expiry: "2026-09-04", strikeCents: 50_500, right: "call" },
+      [FAR_CALL]: { contractId: FAR_CALL, underlying: "SPY", expiry: "2026-09-04", strikeCents: 51_000, right: "call" },
     },
     spotCentsByUnderlying: { SPY: 50_000, QQQ: 60_000 },
   });
@@ -91,7 +104,7 @@ async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; 
   const acquired = await gateway.acquireAuthority({ account: "virgin" });
   if (acquired.kind !== "WON") throw new Error(`fixture acquisition failed: ${JSON.stringify(acquired)}`);
   const priorSample = { bidCents: 99, askCents: 101, bidSize: 20, askSize: 20, quotedAt: TEST_ONLY_AT, brokerQuotedAt: "2026-08-31T13:29:59.871234567Z" };
-  const bootstrap = { at: TEST_ONLY_AT, epoch: 1, type: "BOOTSTRAP", snapshot: journalSnapshot({ quoteSamples: { SPY: { [SHORT_CALL]: priorSample, [LONG_CALL]: priorSample } } }), epochSeeded: true };
+  const bootstrap = { at: TEST_ONLY_AT, epoch: 1, type: "BOOTSTRAP", snapshot: journalSnapshot({ quoteSamples: { SPY: { [SHORT_CALL]: priorSample, [LONG_CALL]: priorSample, [FAR_CALL]: { ...priorSample, bidCents: 49, askCents: 51 } } } }), epochSeeded: true };
   for (const draft of [bootstrap, ...(options.seedEntries ?? [])]) {
     const result = await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draft } });
     if (!result.ok) throw new Error(`fixture seed append failed: ${result.reason} for ${JSON.stringify(draft)}`);
@@ -481,6 +494,47 @@ describe("S-CYC-06 journal failure blocks every new risk; the sole exception is 
     expect(fenced.fake.mutations.filter(mutation => mutation.clientOrderId.startsWith("close:"))).toHaveLength(0);
     expect(readEpochStore(fenced.paths)).toMatchObject({ kind: "unreadable" });
     unlockJournal(fenced.paths);
+  });
+});
+
+describe("S-X-02 a broker record worse than the submitted limit halts new entries", () => {
+  it("S-X-02 a fill below the submitted credit limit is journaled BROKER_PRICE_BREACH, reserves the actual exposure, and lands a non-sticky HALT that blocks the next cycle until a human reconciles", async () => {
+    const run = await harness({ broker: { onSubmit: () => ({ kind: "fill", avgFillPriceCents: 150 }) } });
+    const report = await run.cycle();
+    expect(report.actions[0]).toMatchObject({ result: "SUBMITTED", status: "filled" });
+    expect(report.entriesBlocked).toEqual(["BROKER_PRICE_BREACH"]);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME", "HALT"]);
+    const [, , , outcome, halt] = entriesOf(run.paths);
+    expect(outcome).toMatchObject({ status: "filled", avgFillPriceCents: 150, reasonCodes: ["BROKER_PRICE_BREACH"] });
+    expect(halt).toMatchObject({ reason: "BROKER_PRICE_BREACH", sticky: false });
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "BROKER_PRICE_BREACH", sticky: false });
+    run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
+    const next = await run.cycle();
+    expect(next.actions).toEqual([]);
+    const cycleTwo = entriesOf(run.paths).at(-1)!;
+    expect(cycleTwo).toMatchObject({ type: "CYCLE", batchVerdicts: [{ code: "HALT" }] });
+    // Halted cycles are management-only: the analyst is not even asked (S-CYC-01 semantics under S-G12-03).
+    expect(run.analystCalls.count).toBe(1);
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    // Not sticky: after reconciliation a human may clear it (S-G12-04), unlike a kill halt.
+    expect(await run.gateway.dispatchManualUnhalt({ operator: "felix", reason: "breach reconciled against the broker ledger" })).toMatchObject({ ok: true });
+  });
+});
+
+describe("S-G13-01 a kill found mid-cycle blocks every later plan of that cycle", () => {
+  it("S-G13-01 with two approved plans, the first one's re-check trips the kill; the second is NOT_SENT — no second INTENT, no second void, nothing at the port", async () => {
+    const run = await harness();
+    const report = await run.cycle({
+      analyst: () => {
+        run.fake.setEquity(TEST_ONLY_EXECUTION_CONFIG.killEquityThresholdCents - 1);
+        return Promise.resolve(TWO_CANDIDATES_JSON);
+      },
+    });
+    expect(report.actions).toHaveLength(2);
+    expect(report.actions[0]).toMatchObject({ result: "VOIDED", detail: "EQUITY_ABOVE_KILL_THRESHOLD" });
+    expect(report.actions[1]).toMatchObject({ result: "NOT_SENT", detail: expect.stringContaining("KILL") });
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "RECONCILIATION", "HALT", "KILL"]);
+    expect(run.fake.mutations).toHaveLength(0);
   });
 });
 

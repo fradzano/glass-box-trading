@@ -219,6 +219,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order) : derived.draft;
     if (!await append(draft)) break;
     resolved.push({ clientOrderId: record.clientOrderId, result: derived === null ? (order === null ? "NOT_AT_BROKER" : "MATCHED_WORKING") : `OUTCOME:${derived.status}` });
+    if (derived?.fill === "BROKER_PRICE_BREACH") await haltForPriceBreach(record.clientOrderId);
   }
   // An emergency close the journal never saw (S-CYC-06): the next attempt ID of every filled lifecycle is probed at the broker.
   if (journalFailure() === null) {
@@ -370,11 +371,21 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     }
     if (derived !== null) await append(derived.draft);
     actions.push({ clientOrderId: plan.clientOrderId, result: "SUBMITTED", status: derived?.status ?? null, detail: derived === null ? "working" : null });
+    if (derived?.fill === "BROKER_PRICE_BREACH") {
+      await haltForPriceBreach(plan.clientOrderId);
+      entriesBlocked.push("BROKER_PRICE_BREACH");
+    }
   }
 
   return { primary: "CYCLE", reasonCodes: [], journalFailure: journalFailure(), entriesBlocked, resolved, auditGaps, analystSkip, snapshotRejected: null, actions, kill };
 
   // ---- helpers bound to this cycle ----
+
+  /** S-X-02: a broker record worse than the submitted limit is impossible for a limit order; new entries stop until a human reconciles. */
+  async function haltForPriceBreach(clientOrderId: string): Promise<void> {
+    if (readHaltState(deps.paths).halted) return;
+    await append(haltDraft(context(), "BROKER_PRICE_BREACH", `${clientOrderId}: broker fill worse than the submitted limit; actual exposure reserved; reconcile before un-halt`));
+  }
 
   function assembleFold(journal: readonly JournalEntry[]): { readonly lifecycles: readonly EntryLifecycleRecord[]; readonly closes: readonly CloseAttemptRecord[] } | null {
     const assembly = assembleDecisionSnapshot({
