@@ -368,7 +368,10 @@ export function decide(snapshot: DecisionSnapshot, batch: AnalystBatch, config: 
     return { batchVerdicts: [{ code: "SCHEMA_VETO", reason: "candidate IDs must be unique within one analyst batch" }], candidateVerdicts: [], actions: [] };
   }
   const stale = BigInt(now) - BigInt(snapshot.snapshotAt) > BigInt(config.snapshotStalenessBoundMs);
-  const batchVerdicts = stale ? [{ code: "STALE_SNAPSHOT" as const, reason: "snapshot exceeds SNAPSHOT_STALENESS_BOUND" }] : [];
+  const batchVerdicts: DecisionResult["batchVerdicts"][number][] = stale ? [{ code: "STALE_SNAPSHOT", reason: "snapshot exceeds SNAPSHOT_STALENESS_BOUND" }] : [];
+  // S-G12-03: the persisted halt flag is a snapshot input; it vetoes every entry action while the full vector is still recorded.
+  if (snapshot.halt) batchVerdicts.push({ code: "HALT", reason: "halt flag is set; entry actions are vetoed, management continues" });
+  const blocked = stale || snapshot.halt;
   const candidateVerdicts: CandidateVerdict[] = [];
   const actions: EntryActionPlan[] = [];
   const acceptedRiskBySleeve: Record<Sleeve, bigint> = { income: 0n, convex: 0n };
@@ -377,7 +380,7 @@ export function decide(snapshot: DecisionSnapshot, batch: AnalystBatch, config: 
   for (const candidate of batch.candidates) {
     const evaluation = evaluateCandidate(snapshot, candidate, config, now, acceptedRiskBySleeve, acceptedRiskByUnderlying, plannedEntryOrderIds);
     candidateVerdicts.push(evaluation.verdict);
-    if (!stale && evaluation.action !== null) {
+    if (!blocked && evaluation.action !== null) {
       actions.push(evaluation.action);
       acceptedRiskBySleeve[candidate.sleeve] += BigInt(evaluation.action.reservedMaxLossCents);
       acceptedRiskByUnderlying.set(evaluation.action.underlying, (acceptedRiskByUnderlying.get(evaluation.action.underlying) ?? 0n) + BigInt(evaluation.action.reservedMaxLossCents));

@@ -1,0 +1,290 @@
+// The single final mutation gateway (S-G12-07): every broker mutation and
+// every journal append passes here. The shell part is thin — take the local
+// mutex, read the epoch store and the journal tail, hand the facts to the
+// pure core (`authorizeMutation`, `planAppend`, `haltStateAfter`), and apply
+// the result. Holding or reacquiring the mutex grants nothing; the epoch does.
+import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, shouldAttemptTakeover } from "../core/authority.js";
+import type { AccountVirginity } from "../core/authority.js";
+import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
+import type { AccountBinding, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
+import { readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
+import { readHaltState, writeHaltState } from "./halt-state.js";
+import { appendJournalLine, quarantineTornTail, readJournalFile } from "./journal-store.js";
+import type { JournalFile } from "./journal-store.js";
+import type { StatePaths } from "./state-dir.js";
+
+export interface BrokerMutation {
+  readonly kind: "submit_order" | "cancel_order" | "close_position";
+  readonly clientOrderId: string;
+  readonly binding: AccountBinding;
+  readonly payload?: unknown;
+}
+
+export type BrokerMutationResult = { readonly ok: true; readonly brokerOrderId: string } | { readonly ok: false; readonly reason: string };
+
+export interface BrokerMutationPort {
+  mutate(mutation: BrokerMutation): Promise<BrokerMutationResult>;
+}
+
+/** P2 ships no broker implementation: the only port refuses every mutation. */
+export const NO_BROKER_PORT: BrokerMutationPort = {
+  mutate: () => Promise.resolve({ ok: false, reason: "BROKER_PORT_NOT_IMPLEMENTED" }),
+};
+
+export type GatewayAction =
+  | { readonly kind: "journal_append"; readonly entry: JournalDraft }
+  | { readonly kind: "broker_mutation"; readonly mutation: BrokerMutation };
+
+export type MutationRequest =
+  | { readonly class: "authoritative"; readonly epoch: number | null; readonly action: GatewayAction }
+  | { readonly class: "witness"; readonly action: GatewayAction };
+
+export type DispatchResult =
+  | { readonly ok: true; readonly seq: number; readonly stalenessNeutral: boolean }
+  | { readonly ok: true; readonly broker: BrokerMutationResult }
+  | { readonly ok: false; readonly reason: string; readonly lockHeld: boolean };
+
+export type AcquisitionResult =
+  | { readonly kind: "WON"; readonly epoch: number; readonly seeded: "bootstrap" | null }
+  | { readonly kind: "GAP_HALT"; readonly epoch: number }
+  | { readonly kind: "SUPPRESSED"; readonly holderId: string; readonly reason: "LOCK_HELD" }
+  | { readonly kind: "LOST"; readonly observedEpoch: number | null }
+  | { readonly kind: "REFUSED"; readonly reason: string };
+
+export interface GatewayOptions {
+  readonly paths: StatePaths;
+  readonly secrets: readonly string[];
+  /** Epoch milliseconds; the gateway formats UTC ISO timestamps from it. */
+  readonly clock: () => number;
+  readonly brokerPort: BrokerMutationPort;
+  readonly instanceId: string;
+  readonly lockTakeoverBoundMs: number;
+  /** The validated {profile, canonical origin, expected account ID} triplet; without it no broker mutation is possible. */
+  readonly binding?: AccountBinding;
+}
+
+export interface OpenedJournal {
+  readonly entries: readonly JournalEntry[];
+  readonly quarantined: readonly string[];
+  readonly halt: HaltState;
+}
+
+export interface MutationGateway {
+  openJournal(): Promise<OpenedJournal>;
+  acquireAuthority(evidence: { readonly account: AccountVirginity }): Promise<AcquisitionResult>;
+  heartbeat(): Promise<boolean>;
+  dispatch(request: MutationRequest): Promise<DispatchResult>;
+  /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04. */
+  dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string }): Promise<DispatchResult>;
+}
+
+function utcIso(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function createMutationGateway(options: GatewayOptions): MutationGateway {
+  for (const secret of options.secrets) if (secret.length === 0) throw new RangeError("empty secret cannot be redacted");
+  if (options.instanceId.length === 0) throw new RangeError("instanceId must be non-empty");
+  const { paths, secrets, clock, instanceId } = options;
+  let ownEpoch: number | null = null;
+  let seedPending = false;
+
+  const redact = (text: string): string => redactSecrets(text, secrets);
+
+  function loadJournal(): { readonly file: JournalFile; readonly quarantined: string | null } | { readonly corrupt: string } {
+    let file = readJournalFile(paths);
+    const quarantined = quarantineTornTail(paths, file, clock());
+    if (quarantined !== null) file = readJournalFile(paths);
+    const firstCorrupt = file.parsed.corrupt[0];
+    if (firstCorrupt !== undefined) return { corrupt: `journal corrupt at line ${String(firstCorrupt.line)}: ${firstCorrupt.reason}` };
+    return { file, quarantined };
+  }
+
+  function appendUnderLock(entries: readonly JournalEntry[], draft: JournalDraft): { readonly ok: true; readonly entry: JournalEntry } | { readonly ok: false; readonly reason: string } {
+    const lastSeq = entries.at(-1)?.seq ?? 0;
+    const planned = planAppend({ lastSeq, priorIntentRationales: intentRationaleTexts(entries) }, draft, secrets);
+    if (!planned.ok) return { ok: false, reason: redact(planned.reason) };
+    appendJournalLine(paths, planned.line);
+    const before = haltStateFrom(entries);
+    const after = haltStateAfter(before, planned.entry);
+    if (planned.entry.type === "HALT" || planned.entry.type === "UNHALT") writeHaltState(paths, after);
+    return { ok: true, entry: planned.entry };
+  }
+
+  function haltForBindingMismatch(entries: readonly JournalEntry[], epoch: number, detail: string): void {
+    const current = readHaltState(paths);
+    if (current.halted && current.reason === "ACCOUNT_BINDING_MISMATCH") return;
+    appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
+  }
+
+  function holderConflict(): string | null {
+    const holder = readHolder(paths);
+    if (holder === null || holder.holderId === instanceId) return null;
+    if (shouldAttemptTakeover(clock() - holder.heartbeatAt, options.lockTakeoverBoundMs)) return null;
+    return "NOT_THE_WRITER";
+  }
+
+  async function dispatchUnderLock(request: MutationRequest): Promise<DispatchResult> {
+    const store = readEpochStore(paths);
+    const entryType = request.action.kind === "journal_append" ? String((request.action.entry as { readonly type?: unknown }).type) : "";
+    const authorization = authorizeMutation(
+      request.class === "authoritative"
+        ? { class: "authoritative", epoch: request.epoch, action: request.action.kind === "journal_append" ? { kind: "journal_append", entryType } : { kind: "broker_mutation" } }
+        : { class: "witness", action: request.action.kind === "journal_append" ? { kind: "journal_append", entryType } : { kind: "broker_mutation" } },
+      store,
+    );
+    if (!authorization.authorized) return { ok: false, reason: authorization.reason, lockHeld: true };
+
+    const loaded = loadJournal();
+    if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
+    const entries = loaded.file.parsed.entries;
+
+    if (request.class === "witness") {
+      if (request.action.kind !== "journal_append") return { ok: false, reason: "WITNESS_CANNOT_MUTATE_BROKER", lockHeld: true };
+      const draft = request.action.entry;
+      const witnessInstance = (draft as { readonly instanceId?: unknown }).instanceId;
+      if (entries.some(entry => entry.type === entryType && entry["instanceId"] === witnessInstance)) return { ok: false, reason: "WITNESS_ALREADY_RECORDED", lockHeld: true };
+      const appended = appendUnderLock(entries, draft);
+      return appended.ok ? { ok: true, seq: appended.entry.seq, stalenessNeutral: true } : { ok: false, reason: appended.reason, lockHeld: true };
+    }
+
+    const conflict = holderConflict();
+    if (conflict !== null) return { ok: false, reason: conflict, lockHeld: true };
+    const epoch = request.epoch as number;
+    if (seedPending) {
+      const isSeedEntry = request.action.kind === "journal_append" && entryType === "BOOTSTRAP" && (request.action.entry as { readonly epochSeeded?: unknown }).epochSeeded === true;
+      if (!isSeedEntry) return { ok: false, reason: "SEED_NOT_JOURNALED", lockHeld: true };
+    }
+
+    if (request.action.kind === "broker_mutation") {
+      if (options.binding === undefined) return { ok: false, reason: "NO_ACCOUNT_BINDING", lockHeld: true };
+      if (!bindingsEqual(options.binding, request.action.mutation.binding)) {
+        haltForBindingMismatch(entries, epoch, `broker mutation ${request.action.mutation.kind} carried a foreign binding`);
+        return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
+      }
+      try {
+        const broker = await options.brokerPort.mutate(request.action.mutation);
+        return broker.ok ? { ok: true, broker } : { ok: false, reason: redact(broker.reason), lockHeld: true };
+      } catch (error) {
+        return { ok: false, reason: redact(messageOf(error)), lockHeld: true };
+      }
+    }
+
+    const draft = request.action.entry;
+    if (entryType === "UNHALT") return { ok: false, reason: "UNHALT_REQUIRES_MANUAL_PATH", lockHeld: true };
+    if (isWitnessEntryType(entryType)) return { ok: false, reason: "AUTHORITATIVE_TYPE_REQUIRED", lockHeld: true };
+    if (options.binding !== undefined && (entryType === "INTENT" || entryType === "OUTCOME")) {
+      const entryBinding = (draft as { readonly binding?: unknown }).binding;
+      const bindingRecord = typeof entryBinding === "object" && entryBinding !== null ? entryBinding as Partial<AccountBinding> : {};
+      if (typeof bindingRecord.profile !== "string" || typeof bindingRecord.tradingOrigin !== "string" || typeof bindingRecord.accountId !== "string"
+        || !bindingsEqual(options.binding, { profile: bindingRecord.profile, tradingOrigin: bindingRecord.tradingOrigin, accountId: bindingRecord.accountId })) {
+        haltForBindingMismatch(entries, epoch, `${entryType} carried a foreign binding`);
+        return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
+      }
+    }
+    const appended = appendUnderLock(entries, draft);
+    if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
+    if (seedPending) seedPending = false;
+    return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
+  }
+
+  return {
+    async openJournal() {
+      return withMutex(paths, () => {
+        const loaded = loadJournal();
+        if ("corrupt" in loaded) throw new Error(loaded.corrupt);
+        return { entries: loaded.file.parsed.entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: readHaltState(paths) };
+      });
+    },
+
+    async acquireAuthority(evidence) {
+      // Observed outside the mutex: the epoch this taker expects to increment. Of two concurrent takers exactly one
+      // still sees it inside the mutex; the other observes the change and demotes itself to a witness.
+      const observed = readEpochStore(paths);
+      return withMutex(paths, () => {
+        const fresh = readEpochStore(paths);
+        if (fresh.kind === "present" && !(observed.kind === "present" && observed.epoch === fresh.epoch)) {
+          return { kind: "LOST", observedEpoch: fresh.epoch };
+        }
+        const conflict = holderConflict();
+        if (conflict !== null) {
+          const holder = readHolder(paths);
+          return { kind: "SUPPRESSED", holderId: holder?.holderId ?? "", reason: "LOCK_HELD" };
+        }
+        const loaded = loadJournal();
+        if ("corrupt" in loaded) return { kind: "REFUSED", reason: "JOURNAL_CORRUPT" };
+        const entries = loaded.file.parsed.entries;
+        const plan = planEpochAcquisition(fresh, { account: evidence.account, journalEmpty: entries.length === 0 });
+        const now = clock();
+        switch (plan.kind) {
+          case "REFUSE":
+            return { kind: "REFUSED", reason: plan.reason };
+          case "SEED_BOOTSTRAP":
+            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+            ownEpoch = plan.epoch;
+            seedPending = true;
+            return { kind: "WON", epoch: plan.epoch, seeded: "bootstrap" };
+          case "SEED_GAP": {
+            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+            ownEpoch = plan.epoch;
+            const gap = appendUnderLock(entries, { at: utcIso(now), epoch: plan.epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
+            if (!gap.ok) return { kind: "REFUSED", reason: gap.reason };
+            const halt = appendUnderLock([...entries, gap.entry], { at: utcIso(now), epoch: plan.epoch, type: "HALT", reason: plan.haltReason, detail: "epoch store re-seeded on the GAP path; reconcile before un-halt", sticky: false });
+            if (!halt.ok) return { kind: "REFUSED", reason: halt.reason };
+            return { kind: "GAP_HALT", epoch: plan.epoch };
+          }
+          case "INCREMENT": {
+            const decision = compareAndIncrement(fresh, plan.expected);
+            if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
+            if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
+            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+            ownEpoch = decision.next;
+            seedPending = false;
+            return { kind: "WON", epoch: decision.next, seeded: null };
+          }
+        }
+      });
+    },
+
+    async heartbeat() {
+      return withMutex(paths, () => {
+        const store = readEpochStore(paths);
+        if (store.kind !== "present" || ownEpoch === null || store.epoch !== ownEpoch) return false;
+        writeHolder(paths, { holderId: instanceId, heartbeatAt: clock() });
+        return true;
+      });
+    },
+
+    async dispatch(request) {
+      try {
+        return await withMutex(paths, () => dispatchUnderLock(request));
+      } catch (error) {
+        return { ok: false, reason: redact(messageOf(error)), lockHeld: false };
+      }
+    },
+
+    async dispatchManualUnhalt(action) {
+      if (action.operator.trim().length === 0) return { ok: false, reason: "OPERATOR_REQUIRED", lockHeld: false };
+      return withMutex(paths, () => {
+        const store = readEpochStore(paths);
+        if (store.kind !== "present") return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
+        const loaded = loadJournal();
+        if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
+        const entries = loaded.file.parsed.entries;
+        const current = haltStateFrom(entries);
+        if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
+        if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };
+        const appended = appendUnderLock(entries, { at: utcIso(clock()), epoch: store.epoch, type: "UNHALT", operator: action.operator, reason: action.reason, actor: "human" });
+        if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
+        return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
+      });
+    },
+  };
+}

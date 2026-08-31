@@ -200,6 +200,36 @@ async function exerciseCore() {
   });
   if (plan.kind !== "SUBMIT") throw new Error(`sandboxed close planner returned ${plan.kind} for a fresh lifecycle`);
   paths.push(`planCloseLifecycle(fresh) → SUBMIT ${plan.attemptId}`);
+
+  // P2 journal and authority core: schema validation, line codec with torn tail, redaction, halt fold, fencing decisions, binding.
+  const journal = await loadModuleGraph(context, path.join(DIST, "core", "journal.js"));
+  const authority = await loadModuleGraph(context, path.join(DIST, "core", "authority.js"));
+  const snapshotRecord = { accountId: "TEST_ONLY_SANDBOX", snapshotAt: "2026-08-31T13:30:00.000Z", cashCents: 1, equityCents: 1, positions: [], openOrders: [], quoteSamples: { SPY: { C1: { bidCents: 1, askCents: 2, bidSize: 1, askSize: 1, quotedAt: "2026-08-31T13:30:00.000Z", brokerQuotedAt: "raw" } } } };
+  const cycleDraft = { at: "2026-08-31T13:30:00.000Z", epoch: 1, type: "CYCLE", cycleIndex: 0, tradingDay: "2026-08-31", reasonCodes: ["WORLD_PARTIAL"], snapshot: snapshotRecord, batchVerdicts: [{ code: "SCHEMA_VETO", reason: "key TEST_ONLY_SANDBOX_SECRET leaked" }], candidateVerdicts: [] };
+  const planned = journal.planAppend({ lastSeq: 0, priorIntentRationales: [] }, cycleDraft, ["TEST_ONLY_SANDBOX_SECRET"]);
+  if (!planned.ok || planned.entry.seq !== 1 || planned.line.includes("TEST_ONLY_SANDBOX_SECRET") || !planned.line.includes("[REDACTED]")) throw new Error("sandboxed planAppend did not assign seq 1 with the secret redacted");
+  const parsed = journal.parseJournalText(planned.line + planned.line.slice(0, 20));
+  if (parsed.entries.length !== 1 || parsed.torn === null || parsed.corrupt.length !== 0) throw new Error("sandboxed parseJournalText did not detect the torn tail");
+  const rejected = journal.validateJournalEntry({ ...planned.entry, type: "NOT_A_TYPE" });
+  const witnessWithEpoch = journal.validateJournalEntry({ seq: 2, at: "2026-08-31T13:30:00.000Z", epoch: 1, type: "SUPPRESSED", instanceId: "x", holderId: "y", reason: "LOCK_HELD" });
+  if (rejected.ok || witnessWithEpoch.ok || journal.requestClassOf("FENCED_OUT") !== "witness" || journal.isUtcIsoTimestamp("2026-08-31T15:30:00+02:00")) throw new Error("sandboxed journal validation accepted an out-of-set value");
+  const halted = journal.haltStateFrom([planned.entry, { seq: 2, at: "2026-08-31T13:31:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "", sticky: false }]);
+  const unhalted = journal.haltStateAfter(halted, { seq: 3, at: "2026-08-31T13:32:00.000Z", epoch: 1, type: "UNHALT", operator: "o", reason: "r", actor: "human" });
+  if (!halted.halted || unhalted.halted) throw new Error("sandboxed halt fold is wrong");
+  paths.push("planAppend(CYCLE, secret) → seq 1 redacted; parseJournalText(torn) → 1 entry + torn; validateJournalEntry(out-of-set) → rejected; haltStateFrom/After → HALT then human UNHALT");
+
+  const present = { kind: "present", epoch: 3, holderId: "a", acquiredAt: "2026-08-31T13:30:00.000Z" };
+  const staleEpoch = authority.authorizeMutation({ class: "authoritative", epoch: 2, action: { kind: "broker_mutation" } }, present);
+  const fresh = authority.authorizeMutation({ class: "authoritative", epoch: 3, action: { kind: "journal_append", entryType: "CYCLE" } }, present);
+  const witnessBroker = authority.authorizeMutation({ class: "witness", action: { kind: "broker_mutation" } }, present);
+  const increment = authority.compareAndIncrement(present, 3);
+  const changed = authority.compareAndIncrement(present, 2);
+  const seed = authority.planEpochAcquisition({ kind: "absent" }, { account: "non_virgin", journalEmpty: true });
+  if (staleEpoch.authorized || !fresh.authorized || witnessBroker.authorized || increment.kind !== "COMMIT" || increment.next !== 4 || changed.kind !== "CHANGED" || seed.kind !== "SEED_GAP") throw new Error("sandboxed authority decisions are wrong");
+  const bound = authority.bindAccount({ canonicalTradingOrigin: "https://paper-api.alpaca.markets", expectedAccountId: "PA_TEST_ONLY" }, { profile: "dev", requestedOrigin: "https://paper-api.alpaca.markets", observedOrigin: "https://paper-api.alpaca.markets", brokerReportedAccountId: "PA_TEST_ONLY" });
+  const live = authority.bindAccount({ canonicalTradingOrigin: "https://paper-api.alpaca.markets", expectedAccountId: "PA_TEST_ONLY" }, { profile: "dev", requestedOrigin: "https://api.alpaca.markets", observedOrigin: "https://api.alpaca.markets", brokerReportedAccountId: "PA_TEST_ONLY" });
+  if (!bound.ok || live.ok || !authority.validateSchedulingBounds({ lockTakeoverBoundMs: 300_000, cycleWalltimeBudgetMs: 240_000, cycleIntervalMs: 900_000, deadManBoundMs: 3_000_000 }).ok) throw new Error("sandboxed binding decisions are wrong");
+  paths.push("authorizeMutation(stale/fresh/witness-broker), compareAndIncrement(commit/changed), planEpochAcquisition(absent+non-virgin) → SEED_GAP, bindAccount(paper ok / live rejected)");
   return paths;
 }
 
