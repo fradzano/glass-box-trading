@@ -191,6 +191,25 @@ export function inspectCoreDirectory(coreRoot) {
       }
     }
 
+    // A property or element may only be written on a variable that was declared
+    // inside the enclosing function. Writing through a parameter, a module-level
+    // binding, a standard-library object (`Math.max = ...`), a function object,
+    // or a property chain is mutation of state the core does not own.
+    function inspectMutationTarget(target, node) {
+      if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return;
+      const operand = target.expression;
+      if (ts.isIdentifier(operand)) {
+        const symbol = checker.getSymbolAtLocation(operand);
+        const declaration = symbol?.valueDeclaration;
+        if (declaration !== undefined && ts.isVariableDeclaration(declaration) && isInside(root, declaration.getSourceFile().fileName)) {
+          for (let current = declaration.parent; current !== undefined && !ts.isSourceFile(current); current = current.parent) {
+            if (ts.isFunctionLike(current)) return;
+          }
+        }
+      }
+      report(fileName, `write to state the core does not own '${node.getText(sourceFile)}'`);
+    }
+
     function visit(node) {
       if (ts.isFunctionLike(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) report(fileName, "async code is forbidden in the core");
       if (ts.isAwaitExpression(node)) report(fileName, "await is forbidden in the core");
@@ -210,14 +229,8 @@ export function inspectCoreDirectory(coreRoot) {
         const spelledName = ts.isIdentifier(nameNode) || ts.isStringLiteralLike(nameNode) ? nameNode.text : null;
         if (spelledName !== null && FORBIDDEN_MEMBER_NAMES.has(spelledName)) report(fileName, `forbidden reflective or impure member name '${spelledName}' in ${ts.SyntaxKind[node.kind]}`);
       }
-      if (ts.isBinaryExpression(node) && ASSIGNMENT_OPERATORS.has(node.operatorToken.kind)) {
-        const target = node.left;
-        if ((ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) && isAnyOrCallable(checker.getTypeAtLocation(target.expression))) report(fileName, `mutation of a function object is hidden global state '${node.getText(sourceFile)}'`);
-      }
-      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
-        const target = node.operand;
-        if ((ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) && isAnyOrCallable(checker.getTypeAtLocation(target.expression))) report(fileName, `mutation of a function object is hidden global state '${node.getText(sourceFile)}'`);
-      }
+      if (ts.isBinaryExpression(node) && ASSIGNMENT_OPERATORS.has(node.operatorToken.kind)) inspectMutationTarget(node.left, node);
+      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) inspectMutationTarget(node.operand, node);
       if (ts.isDeleteExpression(node)) report(fileName, `delete is forbidden in the core '${node.getText(sourceFile)}'`);
       if (ts.isElementAccessExpression(node) && !isPartOfType(node)) {
         const argument = node.argumentExpression;
@@ -336,7 +349,13 @@ function runSelfTest() {
     ["export function make() { const { constructor } = function () {}; return constructor; }", "forbidden reflective or impure member name 'constructor'"],
     ["export function fresh() { return Symbol('x'); }", "not on the core allow-list"],
     ["export function bump() { (bump as unknown as { count: number }).count = 1; return 1; }", "hides a callable value"],
-    ["function tick() { return 1; } export function bump() { tick.count = (tick.count ?? 0) + 1; return tick.count; }", "core must type-check"],
+    ["function tick() { return 1; } export function bump() { tick.count = (tick.count ?? 0) + 1; return tick.count; }", "write to state the core does not own"],
+    ["export function poison() { Math.max = () => 0; return 1; }", "write to state the core does not own"],
+    ["export function poison() { JSON.parse = () => null; return 1; }", "write to state the core does not own"],
+    ["export function poison() { Math['max'] = () => 0; return 1; }", "write to state the core does not own"],
+    ["export function poison() { Number.isSafeInteger = () => true; return 1; }", "write to state the core does not own"],
+    ["export function poison(input: { count: number }) { input.count += 1; return input; }", "write to state the core does not own"],
+    ["export const registry: { readonly items: string[] } = { items: [] }; export function add(item: string) { registry.items.push(item); }", "module-scope non-primitive"],
     ["export function order(left: string, right: string) { return left.localeCompare(right); }", "forbidden reflective or impure member"],
     ["export function order(left: number) { return left.toLocaleString(); }", "forbidden reflective or impure member"],
     ["export function grab(key: string) { return (Math as unknown as Record<string, () => number>)[key](); }", "call through a computed member"],
