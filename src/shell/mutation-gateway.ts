@@ -2,9 +2,10 @@
 // every journal append passes here. The shell part is thin — take the local
 // mutex, read the epoch store and the journal tail, hand the facts to the
 // pure core (`authorizeMutation`, `planAppend`, `haltStateAfter`), and apply
-// the result. Holding or reacquiring the mutex grants nothing; the epoch does.
+// the result. Holding or reacquiring the mutex grants nothing; the epoch does,
+// and only for the gateway instance that acquired it in this process.
 import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, shouldAttemptTakeover } from "../core/authority.js";
-import type { AccountVirginity } from "../core/authority.js";
+import type { AccountVirginity, EpochStoreState } from "../core/authority.js";
 import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
 import { readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
@@ -90,6 +91,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
   for (const secret of options.secrets) if (secret.length === 0) throw new RangeError("empty secret cannot be redacted");
   if (options.instanceId.length === 0) throw new RangeError("instanceId must be non-empty");
   const { paths, secrets, clock, instanceId } = options;
+  /** The epoch this gateway instance acquired in this process; a persisted holder id is not an acquisition (G3-F2). */
   let ownEpoch: number | null = null;
 
   const redact = (text: string): string => redactSecrets(text, secrets);
@@ -147,15 +149,18 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       if (request.action.kind !== "journal_append") return { ok: false, reason: "WITNESS_CANNOT_MUTATE_BROKER", lockHeld: true };
       const draft = request.action.entry;
       const witnessInstance = (draft as { readonly instanceId?: unknown }).instanceId;
-      if (entries.some(entry => entry.type === entryType && entry["instanceId"] === witnessInstance)) return { ok: false, reason: "WITNESS_ALREADY_RECORDED", lockHeld: true };
+      // One witness line per instance, whatever its type: a suppressed instance never held an epoch, a fenced one was never suppressed.
+      if (entries.some(entry => isWitnessEntryType(entry.type) && entry["instanceId"] === witnessInstance)) return { ok: false, reason: "WITNESS_ALREADY_RECORDED", lockHeld: true };
       const appended = appendUnderLock(entries, draft);
       return appended.ok ? { ok: true, seq: appended.entry.seq, stalenessNeutral: true } : { ok: false, reason: appended.reason, lockHeld: true };
     }
 
     // G1-F1: matching the epoch is necessary, not sufficient — the store names the instance that acquired it.
-    // An observer that merely read the winner's epoch (even after the winner's heartbeat went stale) is not the writer.
     if (store.kind !== "present" || store.holderId !== instanceId) return { ok: false, reason: "NOT_THE_WRITER", lockHeld: true };
     const epoch = request.epoch as number;
+    // G3-F2: a persisted holder id is not an acquisition. A restarted process with the same id must acquire again;
+    // the epoch it presents must be the one this gateway instance won.
+    if (ownEpoch !== epoch) return { ok: false, reason: "NOT_ACQUIRED_IN_PROCESS", lockHeld: true };
     if (store.seedPending) {
       const isSeedEntry = request.action.kind === "journal_append" && entryType === "BOOTSTRAP" && (request.action.entry as { readonly epochSeeded?: unknown }).epochSeeded === true;
       if (!isSeedEntry) return { ok: false, reason: "SEED_NOT_JOURNALED", lockHeld: true };
@@ -178,6 +183,8 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     const draft = request.action.entry;
     if (entryType === "UNHALT") return { ok: false, reason: "UNHALT_REQUIRES_MANUAL_PATH", lockHeld: true };
     if (isWitnessEntryType(entryType)) return { ok: false, reason: "AUTHORITATIVE_TYPE_REQUIRED", lockHeld: true };
+    // G3-F1: the line that lands must claim the epoch that authorized it, not one the caller chose.
+    if ((draft as { readonly epoch?: unknown }).epoch !== epoch) return { ok: false, reason: "ENTRY_EPOCH_MISMATCH", lockHeld: true };
     if (options.binding !== undefined && (entryType === "INTENT" || entryType === "OUTCOME")) {
       const entryBinding = (draft as { readonly binding?: unknown }).binding;
       const bindingRecord = typeof entryBinding === "object" && entryBinding !== null ? entryBinding as Partial<AccountBinding> : {};
@@ -193,6 +200,54 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
   }
 
+  function acquireUnderLock(observed: EpochStoreState, evidence: { readonly account: AccountVirginity }): AcquisitionResult {
+    const fresh = readEpochStore(paths);
+    // Observed outside the mutex: the epoch this taker expects to increment. Of two concurrent takers exactly one
+    // still sees it inside the mutex; the other observes the change and demotes itself to a witness.
+    if (fresh.kind === "present" && !(observed.kind === "present" && observed.epoch === fresh.epoch)) {
+      return { kind: "LOST", observedEpoch: fresh.epoch };
+    }
+    const rival = liveRivalHolder();
+    if (rival !== null) return { kind: "SUPPRESSED", holderId: rival, reason: "LOCK_HELD" };
+    const loaded = loadJournal();
+    if ("corrupt" in loaded) return { kind: "REFUSED", reason: "JOURNAL_CORRUPT" };
+    const entries = loaded.file.parsed.entries;
+    const plan = planEpochAcquisition(fresh, { account: evidence.account, journalEmpty: entries.length === 0 });
+    const now = clock();
+    switch (plan.kind) {
+      case "REFUSE":
+        return { kind: "REFUSED", reason: plan.reason };
+      case "SEED_BOOTSTRAP":
+        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: true });
+        writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+        ownEpoch = plan.epoch;
+        return { kind: "WON", epoch: plan.epoch, seeded: "bootstrap" };
+      case "SEED_GAP": {
+        // G3-F3: the GAP line, the HALT line, and the halt flag become durable first. Only then does the store come
+        // into existence. An interruption anywhere before that leaves an absent store facing a non-empty journal,
+        // which is the GAP path again on the next attempt — never a silently seeded store.
+        const gap = appendUnderLock(entries, { at: utcIso(now), epoch: plan.epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
+        if (!gap.ok) return { kind: "REFUSED", reason: gap.reason };
+        const halt = appendUnderLock([...entries, gap.entry], { at: utcIso(now), epoch: plan.epoch, type: "HALT", reason: plan.haltReason, detail: "epoch store re-seeded on the GAP path; reconcile before un-halt", sticky: false });
+        if (!halt.ok) return { kind: "REFUSED", reason: halt.reason };
+        writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
+        writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+        ownEpoch = plan.epoch;
+        return { kind: "GAP_HALT", epoch: plan.epoch };
+      }
+      case "INCREMENT": {
+        const decision = compareAndIncrement(fresh, plan.expected);
+        if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
+        if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
+        // G2-F1: a seed that has not been journaled yet is inherited by the new acquirer, never cleared by acquisition.
+        writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending });
+        writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
+        ownEpoch = decision.next;
+        return { kind: "WON", epoch: decision.next, seeded: plan.seedPending ? "bootstrap" : null };
+      }
+    }
+  }
+
   return {
     async openJournal() {
       return withMutex(paths, () => {
@@ -203,51 +258,13 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     },
 
     async acquireAuthority(evidence) {
-      // Observed outside the mutex: the epoch this taker expects to increment. Of two concurrent takers exactly one
-      // still sees it inside the mutex; the other observes the change and demotes itself to a witness.
       const observed = readEpochStore(paths);
-      return withMutex(paths, () => {
-        const fresh = readEpochStore(paths);
-        if (fresh.kind === "present" && !(observed.kind === "present" && observed.epoch === fresh.epoch)) {
-          return { kind: "LOST", observedEpoch: fresh.epoch };
-        }
-        const rival = liveRivalHolder();
-        if (rival !== null) return { kind: "SUPPRESSED", holderId: rival, reason: "LOCK_HELD" };
-        const loaded = loadJournal();
-        if ("corrupt" in loaded) return { kind: "REFUSED", reason: "JOURNAL_CORRUPT" };
-        const entries = loaded.file.parsed.entries;
-        const plan = planEpochAcquisition(fresh, { account: evidence.account, journalEmpty: entries.length === 0 });
-        const now = clock();
-        switch (plan.kind) {
-          case "REFUSE":
-            return { kind: "REFUSED", reason: plan.reason };
-          case "SEED_BOOTSTRAP":
-            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: true });
-            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
-            ownEpoch = plan.epoch;
-            return { kind: "WON", epoch: plan.epoch, seeded: "bootstrap" };
-          case "SEED_GAP": {
-            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
-            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
-            ownEpoch = plan.epoch;
-            const gap = appendUnderLock(entries, { at: utcIso(now), epoch: plan.epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
-            if (!gap.ok) return { kind: "REFUSED", reason: gap.reason };
-            const halt = appendUnderLock([...entries, gap.entry], { at: utcIso(now), epoch: plan.epoch, type: "HALT", reason: plan.haltReason, detail: "epoch store re-seeded on the GAP path; reconcile before un-halt", sticky: false });
-            if (!halt.ok) return { kind: "REFUSED", reason: halt.reason };
-            return { kind: "GAP_HALT", epoch: plan.epoch };
-          }
-          case "INCREMENT": {
-            const decision = compareAndIncrement(fresh, plan.expected);
-            if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
-            if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
-            // G2-F1: a seed that has not been journaled yet is inherited by the new acquirer, never cleared by acquisition.
-            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending });
-            writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
-            ownEpoch = decision.next;
-            return { kind: "WON", epoch: decision.next, seeded: plan.seedPending ? "bootstrap" : null };
-          }
-        }
-      });
+      try {
+        return await withMutex(paths, () => acquireUnderLock(observed, evidence));
+      } catch (error) {
+        // A failed durable write (journal, store, holder) is a refusal, never a half-acquired authority.
+        return { kind: "REFUSED", reason: redact(messageOf(error)) };
+      }
     },
 
     async heartbeat() {

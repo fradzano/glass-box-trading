@@ -73,7 +73,7 @@ describe("S-J-01 journal format", () => {
     const two = encodedLine(cycleEntry(2));
     const tornFragment = two.slice(0, 57);
     writeFileSync(paths.value.journal, one + two + tornFragment, "utf8");
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
 
     const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
     const opened = await gateway.openJournal();
@@ -84,7 +84,8 @@ describe("S-J-01 journal format", () => {
     expect(readFileSync(path.join(paths.value.quarantineDir, quarantineFiles[0]!), "utf8")).toBe(tornFragment);
     expect(readFileSync(paths.value.journal, "utf8")).toBe(one + two);
 
-    const appended = await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(3)) } });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    const appended = await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(3, { epoch: 2 })) } });
     expect(appended).toMatchObject({ ok: true, seq: 3 });
     const text = readFileSync(paths.value.journal, "utf8");
     expect(text.startsWith(one + two)).toBe(true);
@@ -100,9 +101,10 @@ describe("S-J-01 journal format", () => {
     const paths = resolveStateDir(stateDir);
     if (!paths.ok) throw new Error(paths.reason);
     writeFileSync(paths.value.journal, encodedLine(cycleEntry(1)) + "{garbage}\n" + encodedLine(cycleEntry(3)), "utf8");
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
     await expect(gateway.openJournal()).rejects.toThrow(/corrupt/u);
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toEqual({ kind: "REFUSED", reason: "JOURNAL_CORRUPT" });
     const appended = await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(4)) } });
     expect(appended).toMatchObject({ ok: false, reason: "JOURNAL_CORRUPT" });
   });

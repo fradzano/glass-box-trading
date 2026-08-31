@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, inject, it } from "vitest";
@@ -97,9 +97,10 @@ describe("S-G12-01 lock held by a live instance", () => {
 
   it("S-G12-01 concurrent in-process appends reach the file serialized, never interleaved", async () => {
     const paths = freshPaths();
-    writeFileSync(paths.epoch, JSON.stringify({ epoch: 1, holderId: "writer", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const gateway = gatewayFor(paths, "writer", () => TEST_ONLY_AT_MS);
-    const results = await Promise.all(Array.from({ length: 25 }, (_, index) => gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { cycleIndex: index })) } })));
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    const results = await Promise.all(Array.from({ length: 25 }, (_, index) => gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2, cycleIndex: index })) } })));
     expect(results.every(result => result.ok)).toBe(true);
     const parsed = parseJournalText(readFileSync(paths.journal, "utf8"));
     expect(parsed.corrupt).toEqual([]);
@@ -108,22 +109,24 @@ describe("S-G12-01 lock held by a live instance", () => {
     expect(new Set(parsed.entries.map(entry => (entry as unknown as { cycleIndex: number }).cycleIndex)).size).toBe(25);
   });
 
-  it("S-G12-01 concurrent appends from separate processes are serialized through the same lock", async () => {
+  it("S-G12-01 concurrent appends from separate processes (one writer, four witnesses) are serialized through the same lock", async () => {
     const compiledDist = inject("compiledDist");
     const paths = freshPaths();
-    writeFileSync(paths.epoch, JSON.stringify({ epoch: 1, holderId: "writer", acquiredAt: TEST_ONLY_AT }), "utf8");
-    const processes = await Promise.all(Array.from({ length: 5 }, (_, index) => runCli(compiledDist, [paths.root, "writer", "append", "8", "1", `proc-${String(index)}`])));
-    for (const result of processes) expect(result.code, result.stderr).toBe(0);
+    writeFileSync(paths.epoch, JSON.stringify({ epoch: 1, holderId: "dead", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
+    writeFileSync(paths.holder, JSON.stringify({ holderId: "dead", heartbeatAt: 0 }), "utf8");
+    const processes = await Promise.all([
+      runCli(compiledDist, [paths.root, "writer", "write", "20"]),
+      ...Array.from({ length: 4 }, (_, index) => runCli(compiledDist, [paths.root, `bystander-${String(index)}`, "witness"])),
+    ]);
+    for (const result of processes) expect(result.code, result.stderr + result.stdout).toBe(0);
     const parsed = parseJournalText(readFileSync(paths.journal, "utf8"));
     expect(parsed.corrupt).toEqual([]);
     expect(parsed.torn).toBeNull();
-    expect(parsed.entries.map(entry => entry.seq)).toEqual(Array.from({ length: 40 }, (_, index) => index + 1));
-    const byProcess = new Map<string, number>();
-    for (const entry of parsed.entries) {
-      const tag = (entry as unknown as { tradingDay: string }).tradingDay;
-      byProcess.set(tag, (byProcess.get(tag) ?? 0) + 1);
-    }
-    expect([...byProcess.values()]).toEqual([8, 8, 8, 8, 8]);
+    expect(parsed.entries.map(entry => entry.seq)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
+    expect(parsed.entries.filter(entry => entry.type === "CYCLE")).toHaveLength(20);
+    expect(parsed.entries.filter(entry => entry.type === "SUPPRESSED").map(entry => entry["instanceId"]).sort()).toEqual(["bystander-0", "bystander-1", "bystander-2", "bystander-3"]);
+    expect(parsed.entries.filter(entry => entry.type === "CYCLE").every(entry => entry.epoch === 2)).toBe(true);
+    expect(readEpochStore(paths)).toMatchObject({ kind: "present", epoch: 2, holderId: "writer" });
   }, 60_000);
 });
 
@@ -155,7 +158,17 @@ describe("S-G12-02 time alone never grants authority", () => {
     expect(await late.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2, seeded: null });
     expect(readEpochStore(paths)).toMatchObject({ kind: "present", epoch: 2, holderId: "late" });
     expect(await late.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "STALE_EPOCH" });
-    expect(await late.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: true });
+    // G3-F1: the appended entry's own epoch field is bound to the authorized request epoch.
+    expect(await late.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 1 })) } })).toMatchObject({ ok: false, reason: "ENTRY_EPOCH_MISMATCH" });
+    expect(await late.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 7 })) } })).toMatchObject({ ok: false, reason: "ENTRY_EPOCH_MISMATCH" });
+    expect(await late.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: true });
+    expect(entriesOf(paths).map(entry => entry.epoch)).toEqual([1, 2]);
+    // G3-F2: a restarted process with the same instanceId is not the acquirer of this process lifetime.
+    const lateAgain = gatewayFor(paths, "late", () => TEST_ONLY_AT_MS + BOUND_MS + 2);
+    expect(await lateAgain.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(2, { epoch: 2 })) } })).toMatchObject({ ok: false, reason: "NOT_ACQUIRED_IN_PROCESS" });
+    expect(await lateAgain.dispatch(submitOrder(2))).toMatchObject({ ok: false, reason: "NOT_ACQUIRED_IN_PROCESS" });
+    expect(await lateAgain.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 3 });
+    expect(await lateAgain.dispatch({ class: "authoritative", epoch: 3, action: { kind: "journal_append", entry: draftOf(cycleEntry(2, { epoch: 3 })) } })).toMatchObject({ ok: true, seq: 3 });
   });
 });
 
@@ -193,8 +206,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(fenced).toMatchObject({ ok: true, seq: 3, stalenessNeutral: true });
     expect(await old.dispatch({ class: "witness", action: { kind: "journal_append", entry: draftOf(witnessEntry(3, "FENCED_OUT", { instanceId: "old", staleEpoch: 1, observedEpoch: 2 })) } })).toMatchObject({ ok: false, reason: "WITNESS_ALREADY_RECORDED" });
     expect(await old.dispatch({ class: "witness", action: { kind: "journal_append", entry: draftOf(witnessEntry(3, "FENCED_OUT", { instanceId: "old", staleEpoch: 1, observedEpoch: 3 })) } })).toMatchObject({ ok: false, reason: "WITNESS_ALREADY_RECORDED" });
+    expect(await old.dispatch({ class: "witness", action: { kind: "journal_append", entry: draftOf(witnessEntry(3, "SUPPRESSED", { instanceId: "old", holderId: "successor", reason: "EPOCH_CHANGED" })) } })).toMatchObject({ ok: false, reason: "WITNESS_ALREADY_RECORDED" });
     expect(entriesOf(paths).map(entry => entry.type)).toEqual(["BOOTSTRAP", "CYCLE", "FENCED_OUT"]);
-    expect(await successor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(4)) } })).toMatchObject({ ok: true, seq: 4 });
+    expect(await successor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(4, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 4 });
     expect(readEpochStore(paths)).toMatchObject({ kind: "present", epoch: 2 });
   });
 
@@ -212,7 +226,7 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     writeFileSync(paths.epoch, "{corrupt", "utf8");
     expect(readEpochStore(paths)).toMatchObject({ kind: "unreadable" });
     expect(await taker.dispatch(submitOrder(2))).toMatchObject({ ok: false, reason: "EPOCH_UNREADABLE" });
-    expect(await taker.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "EPOCH_UNREADABLE" });
+    expect(await taker.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: false, reason: "EPOCH_UNREADABLE" });
     const third = gatewayFor(paths, "third", () => now + BOUND_MS + 1);
     expect(await third.acquireAuthority({ account: "virgin" })).toEqual({ kind: "REFUSED", reason: "EPOCH_UNREADABLE" });
     expect(await third.dispatch({ class: "witness", action: { kind: "journal_append", entry: draftOf(witnessEntry(1, "SUPPRESSED", { instanceId: "third", holderId: "taker", reason: "EPOCH_UNREADABLE" })) } })).toMatchObject({ ok: true });
@@ -237,12 +251,12 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(loser?.kind === "LOST" || loser?.kind === "SUPPRESSED").toBe(true);
     expect(readEpochStore(paths)).toMatchObject({ kind: "present", epoch: 5 });
     const [winner, other] = results[0].kind === "WON" ? [left, right] : [right, left];
-    expect(await winner.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: true });
-    expect(await other.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
+    expect(await winner.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 5 })) } })).toMatchObject({ ok: true });
+    expect(await other.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 5 })) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
     expect(await other.dispatch({ class: "authoritative", epoch: 4, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false });
     // G1-F1: once the winner's heartbeat is stale, the loser still cannot dispatch with the epoch it merely observed — it never acquired it.
     const laterLoser = gatewayFor(paths, other === left ? "left" : "right", () => TEST_ONLY_AT_MS + BOUND_MS + 1);
-    expect(await laterLoser.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
+    expect(await laterLoser.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 5 })) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
     expect(await laterLoser.dispatch(submitOrder(5))).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
     expect(entriesOf(paths)).toHaveLength(1);
   });
@@ -284,6 +298,17 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(entriesOf(gapPaths)[1]).toMatchObject({ type: "HALT", reason: "EPOCH_STORE_RESET", sticky: false });
     expect(readHaltState(gapPaths)).toMatchObject({ halted: true, reason: "EPOCH_STORE_RESET" });
     expect(readEpochStore(gapPaths)).toMatchObject({ kind: "present", epoch: 1 });
+    // G3-F3: if the GAP/HALT pair cannot land, no store may exist afterwards — the next attempt takes the GAP path again.
+    const blockedPaths = freshPaths();
+    writeFileSync(blockedPaths.journal, "", "utf8");
+    chmodSync(blockedPaths.journal, 0o444);
+    const blocked = gatewayFor(blockedPaths, "agent", () => TEST_ONLY_AT_MS);
+    expect(await blocked.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "REFUSED", reason: expect.stringContaining("EPERM") });
+    expect(readEpochStore(blockedPaths)).toEqual({ kind: "absent" });
+    expect(existsSync(blockedPaths.holder)).toBe(false);
+    chmodSync(blockedPaths.journal, 0o644);
+    expect(await gatewayFor(blockedPaths, "agent-retry", () => TEST_ONLY_AT_MS + 1_000).acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
+    expect(entriesOf(blockedPaths).map(entry => entry.type)).toEqual(["GAP", "HALT"]);
     // Unknown account state is treated as non-virgin.
     const unknownPaths = freshPaths();
     expect(await gatewayFor(unknownPaths, "agent", () => TEST_ONLY_AT_MS).acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "GAP_HALT" });
@@ -305,8 +330,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     // G1-F2: the obligation is persisted in the store, not in process memory — a restarted instance inherits it.
     expect(readEpochStore(seedPaths)).toMatchObject({ kind: "present", epoch: 1, seedPending: true });
     const restarted = gatewayFor(seedPaths, "agent", () => TEST_ONLY_AT_MS + 500);
-    expect(await restarted.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
-    expect(await restarted.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    // G3-F2 first: the restarted process never acquired; had it acquired, the inherited flag (G2-F1, tested below) would still block it.
+    expect(await restarted.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "NOT_ACQUIRED_IN_PROCESS" });
+    expect(await restarted.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "NOT_ACQUIRED_IN_PROCESS" });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
     expect(readEpochStore(seedPaths)).toMatchObject({ kind: "present", epoch: 1, seedPending: false });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(2)) } })).toMatchObject({ ok: true, seq: 2 });
@@ -316,7 +342,7 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     const inheritor = gatewayFor(takeoverPaths, "inheritor", () => TEST_ONLY_AT_MS + BOUND_MS + 1);
     expect(await inheritor.acquireAuthority({ account: "virgin" })).toMatchObject({ kind: "WON", epoch: 2, seeded: "bootstrap" });
     expect(readEpochStore(takeoverPaths)).toMatchObject({ kind: "present", epoch: 2, holderId: "inheritor", seedPending: true });
-    expect(await inheritor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    expect(await inheritor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
     expect(await inheritor.dispatch(submitOrder(2))).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
     expect(await inheritor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 1 });
     expect(readEpochStore(takeoverPaths)).toMatchObject({ kind: "present", epoch: 2, seedPending: false });

@@ -64,13 +64,14 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
   it("S-G12-04 the gateway rejects UNHALT from the agent path; only the manual tool appends it, journaled with the operator", async () => {
     const paths = resolveStateDir(temporaryStateDir());
     if (!paths.ok) throw new Error(paths.reason);
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
-    expect(await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(haltEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 1 });
     expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "MANUAL", sticky: false });
-    expect(await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(2)) } })).toMatchObject({ ok: true, seq: 2 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(2, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 2 });
     expect(readHaltState(paths.value).halted).toBe(true);
-    expect(await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(unhaltEntry(3)) } })).toMatchObject({ ok: false, reason: "UNHALT_REQUIRES_MANUAL_PATH" });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(unhaltEntry(3, { epoch: 2 })) } })).toMatchObject({ ok: false, reason: "UNHALT_REQUIRES_MANUAL_PATH" });
     expect(readHaltState(paths.value).halted).toBe(true);
     // A fresh process sees the same persisted halt.
     const restarted = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS + 1_000, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
@@ -83,7 +84,7 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(entries.at(-1)).toMatchObject({ type: "UNHALT", operator: "felix", actor: "human", reason: "reviewed positions, resuming" });
     expect(await manualUnhalt({ paths: paths.value, operator: "", reason: "x", clock: () => TEST_ONLY_AT_MS + 3_000, secrets: [], instanceId: "manual", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false });
     // The sticky halt survives the manual tool as well.
-    expect(await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { reason: "PROVENANCE_BROKEN", sticky: true })) } })).toMatchObject({ ok: true });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "PROVENANCE_BROKEN", sticky: true })) } })).toMatchObject({ ok: true });
     expect(await manualUnhalt({ paths: paths.value, operator: "felix", reason: "try", clock: () => TEST_ONLY_AT_MS + 4_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false, reason: "HALT_IS_STICKY" });
     expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "PROVENANCE_BROKEN", sticky: true });
   });
@@ -103,9 +104,10 @@ describe("S-G12-05 the halt flag is a persisted file and a core input", () => {
     if (!paths.ok) throw new Error(paths.reason);
     expect(existsSync(paths.value.halt)).toBe(false);
     expect(readHaltState(paths.value)).toEqual(NOT_HALTED);
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
-    await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { reason: "GAP", detail: "lost journal" })) } });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "GAP", detail: "lost journal" })) } })).toMatchObject({ ok: true });
     expect(existsSync(paths.value.halt)).toBe(true);
     expect(path.dirname(paths.value.halt)).toBe(paths.value.root);
     const persisted = readHaltState(paths.value);

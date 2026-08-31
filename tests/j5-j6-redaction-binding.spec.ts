@@ -60,19 +60,20 @@ describe("S-J-05 secrets never reach the journal", () => {
   it("S-J-05 a fake key injected into an error path never reaches the journal file", async () => {
     const paths = resolveStateDir(temporaryStateDir());
     if (!paths.ok) throw new Error(paths.reason);
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const gateway = createMutationGateway({ paths: paths.value, secrets: [FAKE_KEY, FAKE_SECRET, FAKE_PING], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
     const errorText = `AuthError: 403 Forbidden for APCA-API-KEY-ID=${FAKE_KEY} secret=${FAKE_SECRET} ping=${FAKE_PING}`;
     const result = await gateway.dispatch({
       class: "authoritative",
-      epoch: 1,
-      action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { reasonCodes: ["AUTH_FAILURE"], batchVerdicts: [{ code: "SCHEMA_VETO", reason: errorText }] })) },
+      epoch: 2,
+      action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2, reasonCodes: ["AUTH_FAILURE"], batchVerdicts: [{ code: "SCHEMA_VETO", reason: errorText }] })) },
     });
     expect(result).toMatchObject({ ok: true, seq: 1 });
     const rejected = await gateway.dispatch({
       class: "authoritative",
-      epoch: 1,
-      action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { reasonCodes: ["NOT_A_CODE"], batchVerdicts: [{ code: "SCHEMA_VETO", reason: errorText }] })) },
+      epoch: 2,
+      action: { kind: "journal_append", entry: draftOf(cycleEntry(1, { epoch: 2, reasonCodes: ["NOT_A_CODE"], batchVerdicts: [{ code: "SCHEMA_VETO", reason: errorText }] })) },
     });
     expect(rejected).toMatchObject({ ok: false });
     expect(JSON.stringify(rejected)).not.toContain(FAKE_KEY);
@@ -139,7 +140,7 @@ describe("S-J-06 account binding", () => {
   it("S-J-06 the gateway refuses a broker mutation whose binding differs from the configured one, journals it, and halts", async () => {
     const paths = resolveStateDir(temporaryStateDir());
     if (!paths.ok) throw new Error(paths.reason);
-    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const port = recordingPort();
     const gateway = createMutationGateway({
       paths: paths.value,
@@ -150,21 +151,22 @@ describe("S-J-06 account binding", () => {
       lockTakeoverBoundMs: 60_000,
       binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID },
     });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
     const wrongAccount = await gateway.dispatch({
       class: "authoritative",
-      epoch: 1,
+      epoch: 2,
       action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: "entry:x", binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: "PA_OTHER" } } },
     });
     expect(wrongAccount).toMatchObject({ ok: false, reason: "ACCOUNT_BINDING_MISMATCH" });
     const wrongOrigin = await gateway.dispatch({
       class: "authoritative",
-      epoch: 1,
+      epoch: 2,
       action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: "entry:x", binding: { profile: "dev", tradingOrigin: "https://api.alpaca.markets", accountId: TEST_ONLY_ACCOUNT_ID } } },
     });
     expect(wrongOrigin).toMatchObject({ ok: false, reason: "ACCOUNT_BINDING_MISMATCH" });
     const wrongRole = await gateway.dispatch({
       class: "authoritative",
-      epoch: 1,
+      epoch: 2,
       action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: "entry:x", binding: { profile: "competition", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } } },
     });
     expect(wrongRole).toMatchObject({ ok: false, reason: "ACCOUNT_BINDING_MISMATCH" });
@@ -174,25 +176,27 @@ describe("S-J-06 account binding", () => {
     expect(entries[0]).toMatchObject({ type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH" });
     expect(readHaltState(paths.value)).toMatchObject({ halted: true, reason: "ACCOUNT_BINDING_MISMATCH" });
     // Order-related journal entries must carry the same binding.
-    const foreignIntent = await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(intentEntry(1, { binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: "PA_OTHER" } })) } });
+    const foreignIntent = await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(intentEntry(1, { epoch: 2, binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: "PA_OTHER" } })) } });
     expect(foreignIntent).toMatchObject({ ok: false, reason: "ACCOUNT_BINDING_MISMATCH" });
-    const boundIntent = await gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(intentEntry(1)) } });
+    const boundIntent = await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(intentEntry(1, { epoch: 2 })) } });
     expect(boundIntent).toMatchObject({ ok: true });
     // In a fresh, un-halted state the correctly bound request reaches the port exactly once, with the bound triplet.
     const freshPaths = resolveStateDir(temporaryStateDir());
     if (!freshPaths.ok) throw new Error(freshPaths.reason);
-    writeFileSync(freshPaths.value.epoch, JSON.stringify({ epoch: 1, holderId: "writer-a", acquiredAt: TEST_ONLY_AT }), "utf8");
+    writeFileSync(freshPaths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior-writer", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
     const freshGateway = createMutationGateway({ paths: freshPaths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: port, instanceId: "writer-a", lockTakeoverBoundMs: 60_000, binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } });
+    expect(await freshGateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
     const accepted = await freshGateway.dispatch({
       class: "authoritative",
-      epoch: 1,
+      epoch: 2,
       action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: "entry:x", binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } } },
     });
     expect(accepted).toMatchObject({ ok: true });
     expect(port.calls).toHaveLength(1);
     // Without a configured binding, no broker mutation is possible at all.
-    const unbound = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: port, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
-    expect(await unbound.dispatch({ class: "authoritative", epoch: 1, action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: "entry:y", binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } } } })).toMatchObject({ ok: false, reason: "NO_ACCOUNT_BINDING" });
+    const unbound = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS + 120_000, brokerPort: port, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await unbound.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 3 });
+    expect(await unbound.dispatch({ class: "authoritative", epoch: 3, action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: "entry:y", binding: { profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID } } } })).toMatchObject({ ok: false, reason: "NO_ACCOUNT_BINDING" });
     expect(port.calls).toHaveLength(1);
   });
 });
