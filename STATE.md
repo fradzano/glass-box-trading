@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-25 (P1 branch cut)
+**Last updated:** 2026-08-31 (P1 R3 handoff)
 **Branch:** `p1/pure-entry-core` (branched from local `main` at `598f43e`; no GitHub remote yet)
 **Last accepted phase artifact:** P0 at `0486dd3`
 **P0 release baseline:** local `main` at `598f43e`
@@ -50,7 +50,7 @@
 ## Now
 
 **Build order ladder: Szenario ✅ → Axiom ✅ → Spec ✅ → winning/submission
-reverse read ✅ → Code next.**
+reverse read ✅ → P1 code and adversarial closure in progress.**
 
 - Axioms distilled (28, `docs/AXIOMS.md`), owner-reviewed 2026-08-25; owner
   calls A–D decided (DECISIONS.md).
@@ -85,11 +85,34 @@ reverse read ✅ → Code next.**
   spec, decisions, submission acceptance, and `docs/EVIDENCE-DEBT.md`, then
   counter-verified. This was an adversarial winning-path review, not a formal
   bis-0 termination; executable implementation paths remain evidence debt.
-- **P1 is next:** build the TypeScript/Node foundation and complete pure
-  entry-decision core for S-CORE-01..03 and G1–G8 (37 cases), including the
-  architecture boundary and a local glass-box fixture. No broker-capable
-  adapter exists in this phase. Acceptance and failure conditions live only in
-  the linked P1 plan section.
+- **P1 implementation is green but not yet accepted.** The TypeScript/Node
+  foundation, pure entry-decision core, architecture gate, exact-integer risk
+  arithmetic, 37 allocated SPEC cases, and local pass/veto glass-box fixture
+  are implemented. No broker-capable adapter exists. Current coherent work
+  commit: `cbc3090` on `p1/pure-entry-core`; tracked worktree clean, no process
+  running, no remote.
+- Repository verification last ran fully green at `c367f16` (39 tests plus
+  typecheck, lint, architecture, build/fixture, and phase partition). The fresh
+  blind Close follow-up at `cbc3090` then ran all 39 tests, typecheck, lint, and
+  architecture green and returned `RESOLVED`; rerun the full repository command
+  before accepting R3.
+- P1 adversarial run store:
+  `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p1-pure-entry-core`.
+  R1 and R2 are protocol-closed. R3 has five confirmed findings: parser numeric
+  escape (B), incomplete close snapshot validation (B), exact-width credit
+  equality (B), prototype-key record lookup crash (A), and architecture syntax
+  bypasses (B). Parser, close, and equality have fresh blind `RESOLVED`
+  counterchecks. Prototype-safe lookups and the broadened architecture checker
+  are implemented and green locally but their archived R3 fix-gate prompts
+  have not yet been executed.
+- **Exact next criterion:** run fresh blind Sol fix gates from
+  `.tmp/p1-verify-store/prompts/R3-fixverify-prototype-records.md` and
+  `R3-fixverify-architecture-syntax.md`, archive each response immediately,
+  then run `npm.cmd run verify` and write/commit the complete R3 protocol and
+  registers. P1 still needs later empty deep passes, a booked mutation probe,
+  the owner-counter-signed foreign final lens, final blind audit/re-audit, and
+  the P1 evidence/maps/state/decisions closeout. It is not yet a bis-0
+  termination and must not be marked complete early.
 
 ## Next (after P1)
 
@@ -104,6 +127,12 @@ reverse read ✅ → Code next.**
   are green.
 
 ## Open threads
+
+- P1 verification remains active. No A/B implementation finding is currently
+  known open after the Close follow-up, but two R3 fix gates and every formal
+  termination criterion named above remain open. Preserve the external run
+  store and its disclosed non-blind provisional-call errata; do not rewrite
+  their history.
 
 - O5 (CONCEPT §9): remaining gate thresholds — freeze before the actual first
   arm; cycle cadence is already fixed at 15 minutes.
