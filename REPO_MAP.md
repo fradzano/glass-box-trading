@@ -31,12 +31,14 @@
 - `src/core/domain.ts`
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
+- `src/core/lifecycle.ts` — Pure lifecycle core (P5: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03,
 - `src/core/order-identity.ts`
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
 - `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
@@ -49,6 +51,8 @@
 - `src/shell/render-fixture.ts`
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
+- `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
+- `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
 - `STATE.md` — STATE — live cursor
 - `tests/core-contract.spec.ts`
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and

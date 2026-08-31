@@ -44,6 +44,8 @@ export function validStartupConfig(stateDir: string, sinkPath: string, overrides
     QUALIFYING_ACTIVITY_CHECKPOINT: "2026-09-01T20:00:00Z",
     QUALIFICATION_WINDOW_END: "2026-09-02T20:00:00Z",
     QUALIFICATION_MAX_LOSS_CENTS: 50_000,
+    COMPETITION_START: "2026-08-28T15:00:00Z",
+    FLATTEN_DATE: "2026-09-03",
   };
   // An `undefined` override removes the field: the caller expresses "symbol absent" without a delete.
   const merged: RawStartupConfig = {};

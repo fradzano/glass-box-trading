@@ -200,7 +200,7 @@ export interface DecisionResult {
   readonly actions: readonly EntryActionPlan[];
 }
 
-export type CloseRoute = "ordinary" | "emergency" | "expiry" | "kill" | "watchdog";
+export type CloseRoute = "ordinary" | "emergency" | "expiry" | "kill" | "watchdog" | "residue" | "deadline";
 export type CloseAttemptState = "new" | "accepted" | "partially_filled" | "confirmation_unclear" | "filled" | "rejected" | "canceled" | "expired";
 
 export interface CloseAttemptSnapshot {

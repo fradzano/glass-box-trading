@@ -142,13 +142,14 @@ function isRuntimeQuote(value: unknown): value is OptionQuote {
 
 export type PricingFailure = "QUOTE_MISSING" | "NET_PREMIUM_ZERO" | "LIMIT_KIND_CONTRADICTS_QUOTES" | "CREDIT_LIMIT_NOT_POSITIVE" | "LIMIT_OUT_OF_RANGE";
 
-interface NetPricing {
+export interface NetPricing {
   readonly kind: EntryLimitKind;
   /** Twice the signed net mid in cents; the sign decides debit (paying) versus credit (receiving). */
   readonly netMidTwiceCents: bigint;
 }
 
-function netMidTwice(legs: readonly OptionLeg[], quotesByContract: Readonly<Record<string, OptionQuote>>): NetPricing | "QUOTE_MISSING" | "NET_PREMIUM_ZERO" {
+/** Exported for the S-X-05 escalation ladder (P5): the ladder starts at this mid and steps from it. */
+export function netMidTwice(legs: readonly OptionLeg[], quotesByContract: Readonly<Record<string, OptionQuote>>): NetPricing | "QUOTE_MISSING" | "NET_PREMIUM_ZERO" {
   let signed = 0n;
   for (const optionLeg of legs) {
     const optionQuote = ownValue(quotesByContract, optionLeg.contractId);
@@ -497,7 +498,7 @@ function closeRecordFrom(entry: JournalEntry): CloseAttemptRecord | null {
   const quantity = entry["quantity"];
   const limit = limitFrom(entry["submittedLimit"]);
   if (typeof attemptId !== "string" || typeof lifecycleId !== "string" || typeof exposureLifecycleId !== "string"
-    || (route !== "ordinary" && route !== "emergency" && route !== "expiry" && route !== "kill" && route !== "watchdog")
+    || (route !== "ordinary" && route !== "emergency" && route !== "expiry" && route !== "kill" && route !== "watchdog" && route !== "residue" && route !== "deadline")
     || !isNonnegativeSafeInteger(generation) || legs === null || !isNonnegativeSafeInteger(quantity) || quantity < 1 || limit === null) return null;
   return { attemptId, closeLifecycleId: lifecycleId, exposureLifecycleId, route, generation: integerUnit(generation, "Quantity"), legs, quantity: integerUnit(quantity, "Quantity"), limit, status: "submitted", filledQuantity: integerUnit(0, "Quantity") };
 }
@@ -1048,6 +1049,13 @@ export function skipDraft(context: DraftContext, reasonCodes: readonly ReasonCod
   return { at: context.atIso, epoch: context.epoch, type: "SKIP", reasonCodes, snapshot };
 }
 
+export interface LifecycleVeto {
+  readonly candidateId: string;
+  /** S-G9-01 (`EXPIRY`) and S-G11-01/02 (`DEADLINE`): entry vetoes decided by the P5 lifecycle core after the gate vector. */
+  readonly code: "EXPIRY" | "DEADLINE";
+  readonly reason: string;
+}
+
 export interface CycleDraftInput {
   readonly cycleIndex: number;
   readonly tradingDay: string;
@@ -1056,6 +1064,7 @@ export interface CycleDraftInput {
   /** Why the analyst produced no batch this cycle (timeout, error, 429), or null when it answered (S-CYC-01). */
   readonly analystSkip: string | null;
   readonly reasonCodes: readonly ReasonCode[];
+  readonly lifecycleVetoes?: readonly LifecycleVeto[];
 }
 
 export function cycleDraft(context: DraftContext, input: CycleDraftInput): JournalDraft {
@@ -1064,6 +1073,7 @@ export function cycleDraft(context: DraftContext, input: CycleDraftInput): Journ
   const candidateVerdicts: unknown[] = [
     ...input.decision.result.candidateVerdicts,
     ...input.decision.unpriceable.map(item => ({ candidateId: item.candidateId, decision: "VETO", pricing: item.reason })),
+    ...(input.lifecycleVetoes ?? []).map(item => ({ candidateId: item.candidateId, decision: "VETO", code: item.code, reason: item.reason })),
   ];
   return {
     at: context.atIso,
@@ -1157,14 +1167,22 @@ export function entryResolutionDraft(context: DraftContext, clientOrderId: strin
     : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }] };
 }
 
+export type RunnerHaltReason =
+  | "KILL" | "BROKER_PRICE_BREACH" | "AUTH_FAILURE" | "CONFIG_INVALID"
+  | "GAP" | "RESIDUE_UNRESOLVED" | "PROVENANCE_BROKEN" | "WATCHDOG_TAKEOVER" | "DEADLINE_FLATTEN_FAILED"
+  | "EXPIRY_EVICTION_STUCK" | "CLOSE_LADDER_CAPPED";
+
 /**
- * A kill halt is sticky (S-G13-03). The other reasons block new entries
+ * A kill halt is sticky (S-G13-03), and so is a broken competition provenance
+ * (S-CYC-09: un-halt cannot clear it). The other reasons block new entries
  * pending reconciliation and a manual un-halt: a price breach (S-X-02), a
  * credential fence (S-G12-06 — re-arm only under halt after full
- * reconciliation), and an invalid configuration (S-CYC-11).
+ * reconciliation), an invalid configuration (S-CYC-11), an unexplained book
+ * (G10), a journal gap over a foreign book (S-CYC-09), a watchdog takeover
+ * (S-G14-02), and a failed Thursday flatten assertion (S-G11-01).
  */
-export function haltDraft(context: DraftContext, reason: "KILL" | "BROKER_PRICE_BREACH" | "AUTH_FAILURE" | "CONFIG_INVALID", detail: string): JournalDraft {
-  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: reason === "KILL" };
+export function haltDraft(context: DraftContext, reason: RunnerHaltReason, detail: string): JournalDraft {
+  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: reason === "KILL" || reason === "PROVENANCE_BROKEN" };
 }
 
 export function killDraft(context: DraftContext, equityCents: number, thresholdCents: number): JournalDraft {

@@ -55,10 +55,17 @@ export function outcomeStatuses(): readonly OutcomeStatus[] {
   return ["filled", "partially_filled", "rejected", "canceled", "expired", "confirmation_unclear"];
 }
 
-export type HaltReason = "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN" | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID" | "BROKER_PRICE_BREACH";
+export type HaltReason =
+  | "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN"
+  | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID" | "BROKER_PRICE_BREACH" | "WATCHDOG_TAKEOVER" | "DEADLINE_FLATTEN_FAILED"
+  | "EXPIRY_EVICTION_STUCK" | "CLOSE_LADDER_CAPPED";
 
 export function haltReasons(): readonly HaltReason[] {
-  return ["MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN", "RESIDUE_UNRESOLVED", "CONFIG_INVALID", "BROKER_PRICE_BREACH"];
+  return [
+    "MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN",
+    "RESIDUE_UNRESOLVED", "CONFIG_INVALID", "BROKER_PRICE_BREACH", "WATCHDOG_TAKEOVER", "DEADLINE_FLATTEN_FAILED",
+    "EXPIRY_EVICTION_STUCK", "CLOSE_LADDER_CAPPED",
+  ];
 }
 
 export type SuppressionReason = "LOCK_HELD" | "EPOCH_UNREADABLE" | "EPOCH_CHANGED";
@@ -302,10 +309,10 @@ interface EntrySchema {
   readonly check: (body: Readonly<Record<string, unknown>>) => string | null;
 }
 
-export type CloseRouteLabel = "ordinary" | "emergency" | "expiry" | "kill" | "watchdog";
+export type CloseRouteLabel = "ordinary" | "emergency" | "expiry" | "kill" | "watchdog" | "residue" | "deadline";
 
 export function closeRouteLabels(): readonly CloseRouteLabel[] {
-  return ["ordinary", "emergency", "expiry", "kill", "watchdog"];
+  return ["ordinary", "emergency", "expiry", "kill", "watchdog", "residue", "deadline"];
 }
 
 /**
@@ -444,8 +451,19 @@ function schemaFor(type: JournalEntryType, body: Readonly<Record<string, unknown
         check: body => isSafeInteger(body["equityCents"]) && isSafeInteger(body["thresholdCents"]) ? null : "KILL_INVALID",
       };
     case "DEADLINE_RECONCILIATION":
+      // S-G11-03: the dedicated entry may name the submitted revision it references.
+      return {
+        required: ["reasonCodes", "snapshot"],
+        optional: ["reference"],
+        check: body => (Object.hasOwn(body, "reference") && !isNonEmptyString(body["reference"]) ? "REFERENCE_INVALID" : snapshotBearing(body)),
+      };
     case "TERMINAL":
-      return { required: ["reasonCodes", "snapshot"], check: snapshotBearing };
+      // S-G11-04: a still-risk-bearing remainder is recorded explicitly (structure, max loss, expiry consequence).
+      return {
+        required: ["reasonCodes", "snapshot"],
+        optional: ["remainder"],
+        check: body => (Object.hasOwn(body, "remainder") && !isPlainRecord(body["remainder"]) ? "REMAINDER_INVALID" : snapshotBearing(body)),
+      };
   }
 }
 

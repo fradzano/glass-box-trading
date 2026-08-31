@@ -73,6 +73,8 @@ async function fenceHarness(): Promise<FenceHarness> {
     analyst: () => { analystCalls.count += 1; return Promise.resolve("{\"candidates\":[]}"); },
     analystTimeoutMs: 200, clock: () => NOW, calendar, tradingDay: "2026-08-31", cycleIndex: cycleIndex++, profile: "dev",
     decisionConfig: TEST_ONLY_O5_CONFIG, executionConfig: TEST_ONLY_EXECUTION_CONFIG,
+    // P4-scope harness: the P5 lifecycle layer is exercised by its own suites (see CycleDependencies.lifecycle).
+    lifecycle: null, ping: null,
   });
   return {
     paths, fake, analystCalls,

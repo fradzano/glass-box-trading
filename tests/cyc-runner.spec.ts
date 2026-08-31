@@ -121,6 +121,8 @@ async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; 
         analyst: input => { analystCalls.count += 1; return (overrides?.analyst ?? analyst)(input); },
         analystTimeoutMs: 200, clock: () => clock.now, calendar, tradingDay: "2026-08-31", profile: "dev",
         decisionConfig: TEST_ONLY_O5_CONFIG, executionConfig: TEST_ONLY_EXECUTION_CONFIG,
+        // P3-scope harness: the P5 lifecycle layer is exercised by its own suites (see CycleDependencies.lifecycle).
+        lifecycle: null, ping: null,
         ...overrides,
         cycleIndex: index,
       });
