@@ -42,7 +42,7 @@ describe("G8 schema and whitelist", () => {
   });
 
   it("S-G8-03 applies inclusive whitelist bounds and vetoes one unit beyond each", () => {
-    const equality = candidate({ quantity: TEST_ONLY_O5_CONFIG.maxCandidateQuantity, remainingTradingSessions: TEST_ONLY_O5_CONFIG.expiryMaxSessions, legs: [leg({ strikeCents: integerUnit(60_000, "StrikeCents") })] });
+    const equality = candidate({ quantity: lotCount(TEST_ONLY_O5_CONFIG.maxCandidateQuantity), remainingTradingSessions: TEST_ONLY_O5_CONFIG.expiryMaxSessions, legs: [leg({ strikeCents: integerUnit(60_000, "StrikeCents") })] });
     const equalitySnapshot = marketFor(equality, snapshot({ spotCentsByUnderlying: { SPY: integerUnit(50_000, "StrikeCents") } }));
     expect(run([equality], equalitySnapshot).candidateVerdicts[0]?.gateVector[7]).toMatchObject({ passed: true });
 
@@ -51,7 +51,7 @@ describe("G8 schema and whitelist", () => {
       candidate({ candidateId: "structure", declaredStructureType: "calendar", legs: [leg({ contractId: "OUT-STRUCTURE" })] }),
       candidate({ candidateId: "expiry", remainingTradingSessions: integerUnit(TEST_ONLY_O5_CONFIG.expiryMaxSessions + 1, "Quantity"), legs: [leg({ contractId: "OUT-EXPIRY" })] }),
       candidate({ candidateId: "strike", legs: [leg({ contractId: "OUT-STRIKE", strikeCents: integerUnit(60_001, "StrikeCents") })] }),
-      candidate({ candidateId: "qty", quantity: integerUnit(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1, "Quantity"), legs: [leg({ contractId: "OUT-QTY" })] }),
+      candidate({ candidateId: "qty", quantity: lotCount(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1), legs: [leg({ contractId: "OUT-QTY" })] }),
     ];
     const decisionSnapshot = outside.reduce((current, value) => marketFor(value, current), snapshot());
     const result = run(outside, decisionSnapshot);
@@ -71,7 +71,7 @@ describe("G8 schema and whitelist", () => {
   });
 
   it("S-G8-04 vetoes rather than repairing out-of-range values", () => {
-    const oversized = candidate({ quantity: integerUnit(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1, "Quantity") });
+    const oversized = candidate({ quantity: lotCount(TEST_ONLY_O5_CONFIG.maxCandidateQuantity + 1) });
     const result = run([oversized]);
     expect(result.actions).toEqual([]);
     expect(result.candidateVerdicts[0]?.gateVector[7]?.reasons).toContainEqual(expect.stringContaining("quantity"));

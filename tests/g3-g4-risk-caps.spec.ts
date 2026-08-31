@@ -14,7 +14,7 @@ describe("G3 and G4 exact risk caps", () => {
 
   it("S-G4-01 counts filled and reserved exposure across sleeves with equality inclusive", () => {
     const config = { ...TEST_ONLY_O5_CONFIG, maxUnderlyingExposureCents: integerUnit(20_000, "MoneyCents") };
-    const existing = exposure({ risk: [{ kind: "filled", state: "filled", maxLossCents: integerUnit(5_000, "MoneyCents") }, { kind: "entry", state: "fillable", maxLossCents: integerUnit(5_000, "MoneyCents") }] });
+    const existing = exposure({ risk: [{ kind: "filled", maxLossCents: integerUnit(5_000, "MoneyCents") }, { kind: "entry", state: "fillable", maxLossCents: integerUnit(5_000, "MoneyCents") }] });
     const equality = candidate({ entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
     const above = candidate({ entryLimit: { kind: "debit", priceCents: integerUnit(101, "OptionPriceCents") } });
     expect(decide(snapshot({ exposureLifecycles: [existing] }), { kind: "candidates", candidates: [equality] }, config, TEST_ONLY_NOW).candidateVerdicts[0]?.gateVector[3]).toMatchObject({ passed: true });

@@ -1,4 +1,4 @@
-import { integerUnit } from "../core/domain.js";
+import { integerUnit, lotCount } from "../core/domain.js";
 import type { AnalystBatch, DecisionConfig, DecisionSnapshot } from "../core/domain.js";
 
 export const TEST_ONLY_P1_NOW = integerUnit(1_788_197_400_000, "EpochMilliseconds");
@@ -88,21 +88,21 @@ export const P1_RECORDED_CANDIDATES: AnalystBatch = {
       candidateId: "convex-pass",
       declaredStructureType: "long_option",
       sleeve: "convex",
-      quantity: integerUnit(1, "Quantity"),
+      quantity: lotCount(1),
       remainingTradingSessions: integerUnit(5, "Quantity"),
       rationale: "Buy one capped SPY call around the scheduled event; premium is the complete risk.",
       entryLimit: { kind: "debit", priceCents: integerUnit(102, "OptionPriceCents") },
-      legs: [{ contractId: "SPY-PASS", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_000, "StrikeCents"), right: "call", side: "buy", ratio: integerUnit(1, "Quantity") }],
+      legs: [{ contractId: "SPY-PASS", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_000, "StrikeCents"), right: "call", side: "buy", ratio: lotCount(1) }],
     },
     {
       candidateId: "naked-short-veto",
       declaredStructureType: "long_option",
       sleeve: "income",
-      quantity: integerUnit(1, "Quantity"),
+      quantity: lotCount(1),
       remainingTradingSessions: integerUnit(5, "Quantity"),
       rationale: "Collect premium by selling one uncovered call; the loss is not fixed at entry.",
       entryLimit: { kind: "credit", priceCents: integerUnit(210, "OptionPriceCents") },
-      legs: [{ contractId: "SPY-VETO", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_500, "StrikeCents"), right: "call", side: "sell", ratio: integerUnit(1, "Quantity") }],
+      legs: [{ contractId: "SPY-VETO", underlying: "SPY", expiry: "2026-09-04", strikeCents: integerUnit(50_500, "StrikeCents"), right: "call", side: "sell", ratio: lotCount(1) }],
     },
   ],
 };

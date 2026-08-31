@@ -43,7 +43,7 @@
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
 - `tests/g8-schema-whitelist.spec.ts`
-- `tools/check-core-architecture.mjs`
+- `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.

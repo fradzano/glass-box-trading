@@ -11,6 +11,23 @@ export type BasisPoints = IntegerUnit<"BasisPoints">;
 export type EpochMilliseconds = IntegerUnit<"EpochMilliseconds">;
 export type Quantity = IntegerUnit<"Quantity">;
 
+declare const lotBrand: unique symbol;
+
+/** A positive lot count: candidate quantities and leg ratios are never zero. Only `lotCount` constructs it. */
+export type LotCount = number & {
+  readonly [lotBrand]: "LotCount";
+};
+
+export function lotCount(value: number): LotCount {
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError("LotCount must be a safe integer");
+  }
+  if (value < 1) {
+    throw new RangeError("LotCount must be at least one");
+  }
+  return value as LotCount;
+}
+
 export function integerUnit<Name extends string>(value: number, name: Name): IntegerUnit<Name> {
   if (!Number.isSafeInteger(value)) {
     throw new RangeError(`${name} must be a safe integer`);
@@ -33,14 +50,14 @@ export interface OptionLeg {
   readonly strikeCents: StrikeCents;
   readonly right: OptionRight;
   readonly side: LegSide;
-  readonly ratio: Quantity;
+  readonly ratio: LotCount;
 }
 
 export interface EntryCandidate {
   readonly candidateId: string;
   readonly declaredStructureType: string;
   readonly sleeve: Sleeve;
-  readonly quantity: Quantity;
+  readonly quantity: LotCount;
   readonly remainingTradingSessions: Quantity;
   readonly rationale: string;
   readonly entryLimit: {
@@ -66,20 +83,19 @@ export interface OptionQuote {
   readonly quotedAt: EpochMilliseconds;
 }
 
-export type EntryReservationState =
-  | "intent"
-  | "fillable"
-  | "confirmation_unclear"
-  | "filled"
-  | "rejected"
-  | "canceled"
-  | "expired";
+export type OpenEntryState = "intent" | "fillable" | "confirmation_unclear";
+export type ReleasedEntryState = "rejected" | "canceled" | "expired";
+export type EntryReservationState = OpenEntryState | "filled" | ReleasedEntryState;
 
-export interface ExposureRiskComponent {
-  readonly kind: "filled" | "entry" | "exit";
-  readonly state: EntryReservationState;
-  readonly maxLossCents: MoneyCents;
-}
+/**
+ * Exposure risk is represented exactly once per truth: a filled entry is a
+ * `filled` position component and never an `entry` component in a "filled"
+ * state. Released entry states carry no risk; every other entry state counts.
+ */
+export type ExposureRiskComponent =
+  | { readonly kind: "filled"; readonly maxLossCents: MoneyCents }
+  | { readonly kind: "entry"; readonly state: OpenEntryState | ReleasedEntryState; readonly maxLossCents: MoneyCents }
+  | { readonly kind: "exit"; readonly state: EntryReservationState; readonly maxLossCents: MoneyCents };
 
 export interface ExposureLifecycle {
   readonly exposureLifecycleId: string;
@@ -175,7 +191,7 @@ export interface EntryActionPlan {
   readonly submittedLimit: EntryCandidate["entryLimit"];
   readonly reservedMaxLossCents: MoneyCents;
   readonly legs: readonly OptionLeg[];
-  readonly quantity: Quantity;
+  readonly quantity: LotCount;
 }
 
 export interface DecisionResult {

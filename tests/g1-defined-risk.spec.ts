@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
-import { integerUnit } from "../src/core/domain.js";
+import { integerUnit, lotCount } from "../src/core/domain.js";
 import type { EntryCandidate, OptionLeg } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, leg, marketFor, quote, snapshot } from "./fixtures.js";
 
@@ -17,7 +17,7 @@ function verticalLegs(): readonly [OptionLeg, OptionLeg] {
 
 describe("G1 defined risk", () => {
   it("S-G1-01 accepts a vertical debit and derives max loss from the submitted debit", () => {
-    const value = candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: integerUnit(2, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } });
+    const value = candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: lotCount(2), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } });
     expect(gateOne(value).reservedMaxLossCents).toBe(25_000);
 
     const [lowerLong, higherShort] = verticalLegs();
@@ -31,7 +31,7 @@ describe("G1 defined risk", () => {
 
   it("S-G1-02 accepts a vertical credit and derives width minus submitted credit", () => {
     const [longLeg, shortLeg] = verticalLegs();
-    const value = candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }], quantity: integerUnit(2, "Quantity"), entryLimit: { kind: "credit", priceCents: integerUnit(150, "OptionPriceCents") } });
+    const value = candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }], quantity: lotCount(2), entryLimit: { kind: "credit", priceCents: integerUnit(150, "OptionPriceCents") } });
     const base = marketFor(value);
     const decisionSnapshot = snapshot({ ...base, quotesByContract: { ...base.quotesByContract, [value.legs[0]!.contractId]: quote({ bidCents: integerUnit(250, "OptionPriceCents"), askCents: integerUnit(252, "OptionPriceCents") }) } });
     expect(gateOne(value, decisionSnapshot).reservedMaxLossCents).toBe(70_000);
@@ -71,7 +71,7 @@ describe("G1 defined risk", () => {
   });
 
   it("S-G1-04 accepts a long option and uses the submitted buy limit", () => {
-    expect(gateOne(candidate({ quantity: integerUnit(3, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(75, "OptionPriceCents") } })).reservedMaxLossCents).toBe(22_500);
+    expect(gateOne(candidate({ quantity: lotCount(3), entryLimit: { kind: "debit", priceCents: integerUnit(75, "OptionPriceCents") } })).reservedMaxLossCents).toBe(22_500);
   });
 
   it("S-G1-05 vetoes every naked short pattern", () => {
@@ -81,7 +81,7 @@ describe("G1 defined risk", () => {
 
   it("S-G1-06 vetoes a ratio spread with a net short side", () => {
     const [longLeg, shortLeg] = verticalLegs();
-    const value = candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [longLeg, { ...shortLeg, ratio: integerUnit(2, "Quantity") }], entryLimit: { kind: "credit", priceCents: integerUnit(100, "OptionPriceCents") } });
+    const value = candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [longLeg, { ...shortLeg, ratio: lotCount(2) }], entryLimit: { kind: "credit", priceCents: integerUnit(100, "OptionPriceCents") } });
     expect(gateOne(value).gateVector[0]).toMatchObject({ passed: false, code: "DEFINED_RISK" });
   });
 
@@ -113,7 +113,7 @@ describe("G1 defined risk", () => {
     const expiryMaxLossCents = (value: EntryCandidate): number => {
       const strikes = value.legs.map(optionLeg => optionLeg.strikeCents);
       const points = [0, ...strikes, Math.max(...strikes) + 1_000_000];
-      const premium = value.entryLimit.kind === "debit" ? -value.entryLimit.priceCents : value.entryLimit.priceCents;
+      const premium = value.entryLimit.kind === "debit" ? -Number(value.entryLimit.priceCents) : Number(value.entryLimit.priceCents);
       const pnlAt = (spot: number) => value.legs.reduce((total, optionLeg) => {
         const intrinsic = optionLeg.right === "call" ? Math.max(spot - optionLeg.strikeCents, 0) : Math.max(optionLeg.strikeCents - spot, 0);
         return total + (optionLeg.side === "buy" ? intrinsic : -intrinsic) * optionLeg.ratio;
@@ -122,8 +122,8 @@ describe("G1 defined risk", () => {
     };
     const [longLeg, shortLeg] = verticalLegs();
     const structures = [
-      candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: integerUnit(2, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } }),
-      candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }], quantity: integerUnit(3, "Quantity"), entryLimit: { kind: "credit", priceCents: integerUnit(150, "OptionPriceCents") } }),
+      candidate({ declaredStructureType: "vertical_debit", legs: verticalLegs(), quantity: lotCount(2), entryLimit: { kind: "debit", priceCents: integerUnit(125, "OptionPriceCents") } }),
+      candidate({ declaredStructureType: "vertical_credit", sleeve: "income", legs: [{ ...longLeg, side: "sell" }, { ...shortLeg, side: "buy" }], quantity: lotCount(3), entryLimit: { kind: "credit", priceCents: integerUnit(150, "OptionPriceCents") } }),
       candidate({
         declaredStructureType: "iron_condor",
         sleeve: "income",

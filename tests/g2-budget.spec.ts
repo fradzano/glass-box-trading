@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decide, reconcilePartialFillRisk } from "../src/core/decision.js";
-import { integerUnit } from "../src/core/domain.js";
-import type { DecisionConfig, EntryCandidate, EntryReservationState, ExposureRiskComponent, MoneyCents } from "../src/core/domain.js";
+import { integerUnit, lotCount } from "../src/core/domain.js";
+import type { DecisionConfig, EntryCandidate, ExposureRiskComponent, MoneyCents, ReleasedEntryState } from "../src/core/domain.js";
 import { TEST_ONLY_NOW, TEST_ONLY_O5_CONFIG, candidate, exposure, leg, snapshot } from "./fixtures.js";
 
 function run(candidateValues: readonly EntryCandidate[], decisionSnapshot = snapshot(), config: DecisionConfig = TEST_ONLY_O5_CONFIG) {
@@ -12,7 +12,7 @@ describe("G2 sleeve budgets", () => {
   it("S-G2-01 passes exact equality with the remaining income budget", () => {
     expect(() => integerUnit(-1, "MoneyCents")).toThrow("MoneyCents must be non-negative");
     const malformedSnapshot = snapshot({
-      exposureLifecycles: [exposure({ sleeve: "convex", risk: [{ kind: "filled", state: "filled", maxLossCents: -1 as MoneyCents }] })],
+      exposureLifecycles: [exposure({ sleeve: "convex", risk: [{ kind: "filled", maxLossCents: -1 as MoneyCents }] })],
     });
     expect(run([candidate()], malformedSnapshot).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false, code: "BUDGET" });
     const value = candidate({ sleeve: "income", declaredStructureType: "long_option", entryLimit: { kind: "debit", priceCents: integerUnit(12_000, "OptionPriceCents") } });
@@ -45,10 +45,10 @@ describe("G2 sleeve budgets", () => {
   });
 
   it("S-G2-06 splits partial fills into actual fill risk and remaining limit reservation exactly once", () => {
-    const tenLot = candidate({ quantity: integerUnit(10, "Quantity"), entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
+    const tenLot = candidate({ quantity: lotCount(10), entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
     const reconciled = reconcilePartialFillRisk(tenLot, integerUnit(4, "Quantity"), integerUnit(80, "OptionPriceCents"), integerUnit(6, "Quantity"));
     expect(reconciled.components).toEqual([
-      { kind: "filled", state: "filled", maxLossCents: 32_000 },
+      { kind: "filled", maxLossCents: 32_000 },
       { kind: "entry", state: "fillable", maxLossCents: 60_000 },
     ]);
     expect(reconciled.totalMaxLossCents).toBe(92_000);
@@ -61,7 +61,7 @@ describe("G2 sleeve budgets", () => {
     const creditTenLot = candidate({
       declaredStructureType: "vertical_credit",
       sleeve: "income",
-      quantity: integerUnit(10, "Quantity"),
+      quantity: lotCount(10),
       entryLimit: { kind: "credit", priceCents: integerUnit(100, "OptionPriceCents") },
       legs: [
         leg({ contractId: "short-call", side: "sell", strikeCents: integerUnit(50_000, "StrikeCents") }),
@@ -77,15 +77,17 @@ describe("G2 sleeve budgets", () => {
   });
 
   it("S-G2-07 releases entry reservation on every terminal path and never reserves exits", () => {
-    const terminalStates: readonly EntryReservationState[] = ["filled", "rejected", "canceled", "expired"];
-    for (const state of terminalStates) {
+    const releasedStates: readonly ReleasedEntryState[] = ["rejected", "canceled", "expired"];
+    for (const state of releasedStates) {
       const decisionSnapshot = snapshot({ exposureLifecycles: [exposure({ sleeve: "convex", risk: [{ kind: "entry", state, maxLossCents: integerUnit(800_000, "MoneyCents") }, { kind: "exit", state: "fillable", maxLossCents: integerUnit(800_000, "MoneyCents") }] })] });
       expect(run([candidate()], decisionSnapshot).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: true });
     }
+    const filledPosition = snapshot({ exposureLifecycles: [exposure({ sleeve: "convex", risk: [{ kind: "filled", maxLossCents: integerUnit(800_000, "MoneyCents") }] })] });
+    expect(run([candidate()], filledPosition).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false, code: "BUDGET" });
   });
 
   it("S-G2-08 keeps income and convex budgets disjoint", () => {
-    const incomeFull = snapshot({ exposureLifecycles: [exposure({ risk: [{ kind: "filled", state: "filled", maxLossCents: integerUnit(1_200_000, "MoneyCents") }] })] });
+    const incomeFull = snapshot({ exposureLifecycles: [exposure({ risk: [{ kind: "filled", maxLossCents: integerUnit(1_200_000, "MoneyCents") }] })] });
     expect(run([candidate()], incomeFull).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: true });
     const incomeCandidate = candidate({ sleeve: "income" });
     expect(run([incomeCandidate], incomeFull).candidateVerdicts[0]?.gateVector[1]).toMatchObject({ passed: false });

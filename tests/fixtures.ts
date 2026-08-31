@@ -1,5 +1,5 @@
 import type { DecisionConfig, DecisionSnapshot, EntryCandidate, ExposureLifecycle, OptionContract, OptionLeg, OptionQuote } from "../src/core/domain.js";
-import { integerUnit } from "../src/core/domain.js";
+import { integerUnit, lotCount } from "../src/core/domain.js";
 
 export const TEST_ONLY_NOW = integerUnit(1_788_197_400_000, "EpochMilliseconds");
 
@@ -40,7 +40,7 @@ export function leg(overrides: Partial<OptionLeg> = {}): OptionLeg {
     strikeCents: integerUnit(50_000, "StrikeCents"),
     right: "call",
     side: "buy",
-    ratio: integerUnit(1, "Quantity"),
+    ratio: lotCount(1),
     ...overrides,
   };
 }
@@ -50,7 +50,7 @@ export function candidate(overrides: Partial<EntryCandidate> = {}): EntryCandida
     candidateId: "candidate-long-spy",
     declaredStructureType: "long_option",
     sleeve: "convex",
-    quantity: integerUnit(1, "Quantity"),
+    quantity: lotCount(1),
     remainingTradingSessions: integerUnit(5, "Quantity"),
     rationale: "Test-only scheduled-event convexity fixture.",
     entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") },

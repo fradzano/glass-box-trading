@@ -1,4 +1,4 @@
-import { integerUnit } from "./domain.js";
+import { integerUnit, lotCount } from "./domain.js";
 import type {
   AnalystBatch,
   CandidateVerdict,
@@ -33,13 +33,6 @@ function asMoneyCents(value: number): MoneyCents {
   return integerUnit(value, "MoneyCents");
 }
 
-function multiplyMoney(priceCents: number, quantity: number): MoneyCents | null {
-  const product = BigInt(priceCents) * 100n * BigInt(quantity);
-  return product >= 0n && product <= 9_007_199_254_740_991n
-    ? asMoneyCents(Number(product))
-    : null;
-}
-
 function sameContractShape(legs: readonly OptionLeg[]): boolean {
   const first = legs[0];
   return first !== undefined && legs.every(optionLeg =>
@@ -52,7 +45,47 @@ function hasUnitRatios(legs: readonly OptionLeg[]): boolean {
   return legs.every(optionLeg => optionLeg.ratio === 1);
 }
 
-function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, priceCents = candidate.entryLimit.priceCents): DefinedRiskResult {
+type ExpiryPayoffBound =
+  | { readonly kind: "bounded"; readonly maxLossPerShareCents: bigint }
+  | { readonly kind: "unbounded" };
+
+/**
+ * Exact expiry payoff of a unit-ratio option structure. P&L is piecewise linear
+ * in the underlying price, so its minimum lies at price zero, at a strike, or
+ * at infinity; a negative slope beyond the highest strike means unbounded loss.
+ * This single evaluation is the source of truth for every reserved maximum
+ * loss; the declared-structure checks only constrain which patterns may pass.
+ */
+function expiryPayoffBound(legs: readonly OptionLeg[], entryLimit: EntryCandidate["entryLimit"], priceCents: number): ExpiryPayoffBound {
+  const premium = entryLimit.kind === "debit" ? -BigInt(priceCents) : BigInt(priceCents);
+  const slopeBeyondHighestStrike = legs.reduce(
+    (slope, optionLeg) => optionLeg.right === "call" ? slope + (optionLeg.side === "buy" ? 1n : -1n) * BigInt(optionLeg.ratio) : slope,
+    0n,
+  );
+  if (slopeBeyondHighestStrike < 0n) return { kind: "unbounded" };
+  const breakpoints = [0n, ...legs.map(optionLeg => BigInt(optionLeg.strikeCents))];
+  let minimumPnl: bigint | null = null;
+  for (const spot of breakpoints) {
+    const pnl = legs.reduce((total, optionLeg) => {
+      const strike = BigInt(optionLeg.strikeCents);
+      const intrinsic = optionLeg.right === "call" ? (spot > strike ? spot - strike : 0n) : (strike > spot ? strike - spot : 0n);
+      return total + (optionLeg.side === "buy" ? intrinsic : -intrinsic) * BigInt(optionLeg.ratio);
+    }, premium);
+    minimumPnl = minimumPnl === null || pnl < minimumPnl ? pnl : minimumPnl;
+  }
+  return { kind: "bounded", maxLossPerShareCents: minimumPnl === null || minimumPnl >= 0n ? 0n : -minimumPnl };
+}
+
+function reserveFromPayoff(legs: readonly OptionLeg[], entryLimit: EntryCandidate["entryLimit"], priceCents: number, quantity: number, structure: string): DefinedRiskResult {
+  const bound = expiryPayoffBound(legs, entryLimit, priceCents);
+  if (bound.kind === "unbounded") return { maxLossCents: null, reasons: [`${structure} leg pattern has unbounded loss`] };
+  const product = bound.maxLossPerShareCents * 100n * BigInt(quantity);
+  return product <= 9_007_199_254_740_991n
+    ? { maxLossCents: asMoneyCents(Number(product)), reasons: [] }
+    : { maxLossCents: null, reasons: [`${structure} maximum loss exceeds the exact integer range`] };
+}
+
+function definedRisk(candidate: EntryCandidate, quantity: number = candidate.quantity, priceCents: number = candidate.entryLimit.priceCents): DefinedRiskResult {
   const duplicateContract = new Set(candidate.legs.map(optionLeg => optionLeg.contractId)).size !== candidate.legs.length;
   if (duplicateContract) return { maxLossCents: null, reasons: ["degenerate structure repeats a contract"] };
   if (!hasUnitRatios(candidate.legs)) return { maxLossCents: null, reasons: ["non-unit leg ratio can leave a net short side"] };
@@ -62,10 +95,7 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     if (candidate.legs.length !== 1 || candidate.legs[0]?.side !== "buy" || candidate.entryLimit.kind !== "debit") {
       return { maxLossCents: null, reasons: ["long option must contain one buy leg and a debit limit"] };
     }
-    const maxLossCents = multiplyMoney(priceCents, quantity);
-    return maxLossCents === null
-      ? { maxLossCents: null, reasons: ["long-option maximum loss exceeds the exact integer range"] }
-      : { maxLossCents, reasons: [] };
+    return reserveFromPayoff(candidate.legs, candidate.entryLimit, priceCents, quantity, "long-option");
   }
 
   if (candidate.declaredStructureType === "vertical_debit" || candidate.declaredStructureType === "vertical_credit") {
@@ -82,16 +112,10 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
       ? longLeg.strikeCents < shortLeg.strikeCents
       : longLeg.strikeCents > shortLeg.strikeCents;
     if (candidate.declaredStructureType === "vertical_debit" && candidate.entryLimit.kind === "debit" && isLongPayoff) {
-      const maxLossCents = multiplyMoney(priceCents, quantity);
-      return maxLossCents === null
-        ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
-        : { maxLossCents, reasons: [] };
+      return reserveFromPayoff(candidate.legs, candidate.entryLimit, priceCents, quantity, "vertical");
     }
     if (candidate.declaredStructureType === "vertical_credit" && candidate.entryLimit.kind === "credit" && !isLongPayoff && priceCents <= widthCents) {
-      const maxLossCents = multiplyMoney(widthCents - priceCents, quantity);
-      return maxLossCents === null
-        ? { maxLossCents: null, reasons: ["vertical maximum loss exceeds the exact integer range"] }
-        : { maxLossCents, reasons: [] };
+      return reserveFromPayoff(candidate.legs, candidate.entryLimit, priceCents, quantity, "vertical");
     }
     return { maxLossCents: null, reasons: ["vertical leg direction, limit kind, or credit is incompatible with its declared payoff"] };
   }
@@ -105,14 +129,12 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
     if (puts.length !== 2 || calls.length !== 2 || puts[0]?.side !== "buy" || puts[1]?.side !== "sell" || calls[0]?.side !== "sell" || calls[1]?.side !== "buy") {
       return { maxLossCents: null, reasons: ["iron condor legs do not cap both wings"] };
     }
+    if (puts[1].strikeCents >= calls[0].strikeCents) return { maxLossCents: null, reasons: ["iron condor wings overlap: the short put must lie below the short call"] };
     const putWidth = puts[1].strikeCents - puts[0].strikeCents;
     const callWidth = calls[1].strikeCents - calls[0].strikeCents;
     const widestWing = Math.max(putWidth, callWidth);
     if (widestWing <= 0 || priceCents > widestWing) return { maxLossCents: null, reasons: ["iron condor credit exceeds the widest wing"] };
-    const maxLossCents = multiplyMoney(widestWing - priceCents, quantity);
-    return maxLossCents === null
-      ? { maxLossCents: null, reasons: ["iron-condor maximum loss exceeds the exact integer range"] }
-      : { maxLossCents, reasons: [] };
+    return reserveFromPayoff(candidate.legs, candidate.entryLimit, priceCents, quantity, "iron-condor");
   }
 
   return { maxLossCents: null, reasons: ["maximum loss is not computable from the leg pattern"] };
@@ -121,9 +143,10 @@ function definedRisk(candidate: EntryCandidate, quantity = candidate.quantity, p
 function countedRisk(component: ExposureRiskComponent): bigint {
   if (component.kind === "exit") return 0n;
   if (component.kind === "filled") return BigInt(component.maxLossCents);
-  return component.state === "intent" || component.state === "fillable" || component.state === "confirmation_unclear"
-    ? BigInt(component.maxLossCents)
-    : 0n;
+  // Fail closed: only an explicitly released reservation stops counting.
+  return component.state === "rejected" || component.state === "canceled" || component.state === "expired"
+    ? 0n
+    : BigInt(component.maxLossCents);
 }
 
 function riskBySleeve(snapshot: DecisionSnapshot, sleeve: Sleeve): bigint | null {
@@ -147,7 +170,7 @@ function verdict(gate: GateVerdict["gate"], code: GateVerdict["code"], reasons: 
 }
 
 function ownRecordValue<Value>(record: Readonly<Record<string, Value>>, key: string): Value | undefined {
-  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function isRuntimeOptionQuote(value: unknown): value is OptionQuote {
@@ -304,18 +327,26 @@ function evaluateCandidate(
   ];
   const passed = gateVector.every(gateVerdict => gateVerdict.passed);
   const action = passed && risk.maxLossCents !== null && underlying !== ""
-    ? {
+    ? Object.freeze({
         kind: "ENTRY_ACTION_PLAN" as const,
         candidateId: candidate.candidateId,
         exposureLifecycleId: `exposure:${clientOrderId}`,
         clientOrderId,
         sleeve: candidate.sleeve,
         underlying,
-        submittedLimit: candidate.entryLimit,
+        submittedLimit: Object.freeze({ kind: candidate.entryLimit.kind, priceCents: candidate.entryLimit.priceCents }),
         reservedMaxLossCents: risk.maxLossCents,
-        legs: candidate.legs,
+        legs: Object.freeze(candidate.legs.map(optionLeg => Object.freeze({
+          contractId: optionLeg.contractId,
+          underlying: optionLeg.underlying,
+          expiry: optionLeg.expiry,
+          strikeCents: optionLeg.strikeCents,
+          right: optionLeg.right,
+          side: optionLeg.side,
+          ratio: optionLeg.ratio,
+        }))),
         quantity: candidate.quantity,
-      }
+      })
     : null;
   return {
     verdict: {
@@ -395,7 +426,7 @@ function parseLeg(value: unknown): OptionLeg | null {
   const side = value["side"];
   const ratio = value["ratio"];
   if (typeof contractId !== "string" || typeof underlying !== "string" || typeof expiry !== "string" || !isSafeInteger(strikeCents) || strikeCents < 0 || (right !== "call" && right !== "put") || (side !== "buy" && side !== "sell") || !isSafeInteger(ratio) || ratio <= 0) return null;
-  return { contractId, underlying, expiry, strikeCents: integerUnit(strikeCents, "StrikeCents"), right, side, ratio: integerUnit(ratio, "Quantity") };
+  return { contractId, underlying, expiry, strikeCents: integerUnit(strikeCents, "StrikeCents"), right, side, ratio: lotCount(ratio) };
 }
 
 function parseCandidate(value: unknown): EntryCandidate | null {
@@ -418,7 +449,7 @@ function parseCandidate(value: unknown): EntryCandidate | null {
     candidateId,
     declaredStructureType,
     sleeve,
-    quantity: integerUnit(quantity, "Quantity"),
+    quantity: lotCount(quantity),
     remainingTradingSessions: integerUnit(remainingTradingSessions, "Quantity"),
     rationale,
     entryLimit: { kind: entryLimitKind, priceCents: integerUnit(entryLimitPriceCents, "OptionPriceCents") },
@@ -460,7 +491,7 @@ export function reconcilePartialFillRisk(
   const remainingRisk = definedRisk(candidate, remainingQuantity, candidate.entryLimit.priceCents).maxLossCents;
   if (filledRisk === null || remainingRisk === null) throw new RangeError("partial fill risk is unavailable for undefined-risk structure");
   const components: ExposureRiskComponent[] = [];
-  if (filledQuantity > 0) components.push({ kind: "filled", state: "filled", maxLossCents: filledRisk });
+  if (filledQuantity > 0) components.push({ kind: "filled", maxLossCents: filledRisk });
   if (remainingQuantity > 0) components.push({ kind: "entry", state: "fillable", maxLossCents: remainingRisk });
   return { components, totalMaxLossCents: asMoneyCents(filledRisk + remainingRisk) };
 }
