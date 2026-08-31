@@ -43,7 +43,13 @@ export type MutationRequest =
 export type DispatchResult =
   | { readonly ok: true; readonly seq: number; readonly stalenessNeutral: boolean }
   | { readonly ok: true; readonly broker: BrokerMutationResult }
-  | { readonly ok: false; readonly reason: string; readonly lockHeld: boolean };
+  | {
+    readonly ok: false;
+    readonly reason: string;
+    readonly lockHeld: boolean;
+    /** Present when the broker port itself answered or threw; absent when the gateway refused before the port. */
+    readonly source?: "broker_port";
+  };
 
 export type AcquisitionResult =
   | { readonly kind: "WON"; readonly epoch: number; readonly seeded: "bootstrap" | null }
@@ -174,9 +180,10 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       }
       try {
         const broker = await options.brokerPort.mutate(request.action.mutation);
-        return broker.ok ? { ok: true, broker } : { ok: false, reason: redact(broker.reason), lockHeld: true };
+        return broker.ok ? { ok: true, broker } : { ok: false, reason: redact(broker.reason), lockHeld: true, source: "broker_port" };
       } catch (error) {
-        return { ok: false, reason: redact(messageOf(error)), lockHeld: true };
+        // The port threw after the gateway authorized: the order may or may not exist at the broker (S-CYC-04).
+        return { ok: false, reason: `PORT_ERROR:${redact(messageOf(error))}`, lockHeld: true, source: "broker_port" };
       }
     }
 

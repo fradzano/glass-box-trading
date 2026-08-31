@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 evening (P2 closed on its branch: green, riskiest mechanism gate-confirmed after seven calls; awaiting Felix's merge word)
-**Branch:** `p2/journal-authority` at `615dbd0` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`, `5d875ea`; robustness `615dbd0`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
-**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on its branch and not yet merged**: it awaits Felix's word.
+**Last updated:** 2026-08-31 night (P3 closed on its branch: green at `5afb5d1`, executor path gate-CONFIRMED after two calls; P2 and P3 both await Felix's merge word)
+**Branch:** `p3/broker-execution` at `5afb5d1` (implementation `3961d64`, breach halt `c66c3be`, gate closure `5afb5d1`; branched from `p2/journal-authority` at `f1ff38c` — P2 was not merged when P3 started; a `--no-ff` merge of P2 followed by P3 is conflict-free by construction); no GitHub remote yet
+**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on `p2/journal-authority` (`f1ff38c`) and not yet merged**; P3 is **implemented on `p3/broker-execution` and not yet merged**. Both await Felix's word; merge order is P2 then P3.
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P2 — durable journal and mutation authority
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p2--durable-journal-and-mutation-authority)) — implementation complete, closing
+**Current implementation phase:** P3 — broker execution under fakes
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p3--broker-execution-under-fakes)) — implementation complete, closing
 
 ## Done
 
@@ -121,6 +121,52 @@ One phase per session; every session ends with the handoff protocol in
   DECISIONS.md 2026-08-31). **Next action is Felix's:** merge
   `p2/journal-authority` into local `main` (`--no-ff`), or not. P3 then
   branches from the merge.
+- **P3 — broker execution under fakes — implemented at `3961d64`, breach
+  halt and probe closure at `c66c3be`, gate closure at `5afb5d1` (2026-08-31, branch
+  `p3/broker-execution` from the unmerged P2 head `f1ff38c`).** All 12
+  allocated cases (S-CYC-01/02/04/05/06, S-G13-01..03, S-X-01..04) have tests
+  (39 tests, 4 new files); `npm run verify` exit 0 (116 tests, static gate,
+  sandbox gate now executing the execution core, partition check).
+  Delivered: pure `src/core/execution.ts` (limit pricing from the decision's
+  quotes, fill classification, broker answers onto the closed OUTCOME set,
+  the eight-claim revalidation claimset, kill predicate and kill plan,
+  emergency-close eligibility, the journal fold of every entry and close
+  lifecycle, the validating `DecisionSnapshot` adapter, clock-free UTC
+  conversion); shell `fake-broker` (fills, partials, sync/async rejection,
+  lost acknowledgements, duplicates, cancel races, scripted read failures)
+  and `cycle-runner` (phases 0–5, primary entry before any order, INTENT →
+  revalidation → gateway → OUTCOME, kill management under the fence, the
+  emergency close only with the journal down and authority valid, the
+  AUDIT_GAP reconciliation on recovery). Additive changes to accepted
+  phases are listed in DECISIONS.md (P1 `definedRiskAt`; P2 OUTCOME
+  `brokerReason`, INTENT `action: "close"`, HALT reason
+  `BROKER_PRICE_BREACH`, gateway `source: "broker_port"`). Evidence-debt rows
+  discharged: AUS-2, BEQ-3, BEQ-10, KGV-5, KGV-6, WIN-11, WIN-12,
+  RES-P1-01a..d (✅); in part WIN-1 (S-J-09 link is P6) and WIN-18 (emergency
+  retry not driven). Verification record: store
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p3-broker-execution`
+  (`LEDGER.md`): mutation probe 12/14 caught at `3961d64`, 13/14 at
+  `c66c3be` with M13 declared (defence-in-depth check unreachable by
+  construction); one finding from the evidence-debt reconciliation (missing
+  S-X-02 halt) closed at `c66c3be`. **Blind gate on the executor path:** first call (Codex job
+  `task-mthde869-81r6p8`, `prompts/G1-executor-path.md`, `--write`) returned
+  **REJECTED** on one executed variant, G1-F1 (a `cancel_order` sent while
+  the journal was unavailable), closed red-first at `5afb5d1` (cancel loop
+  only under a durable `HALT`; 116 tests); four of five claims held. The fix
+  verification (Codex job `task-mthe6upm-hpouop`,
+  `prompts/G2-fixverify-journal-down-kill.md`) returned **CONFIRMED** at
+  `5afb5d1` across seven executed variants (journal writable/unavailable,
+  no-structure case, fill during outage, adopted close, recovery order
+  `AUDIT_GAP` → durable `HALT` → cancel → `KILL`, unreadable epoch store →
+  zero mutations). **P3 closing state:** the executor path is
+  gate-confirmed by executed evidence; pricing arithmetic, snapshot
+  adapter, fold, and fake broker rest on the repository gates and the
+  13/14 probe (declared reduced depth, DECISIONS.md 2026-08-31).
+  Declared reduced depth (DECISIONS.md 2026-08-31): red-first is weaker than
+  P2's here (core and tests written together), the probe carries the
+  tests-bite evidence, no bis-0 criterion is claimed. **Not merged; P2 is
+  not merged either.** Next actions are Felix's: merge P2 (`--no-ff`) then
+  P3, or not. P4 then branches from the accepted P3.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
@@ -128,15 +174,21 @@ One phase per session; every session ends with the handoff protocol in
   recorded in DECISIONS.md (entry of 2026-08-31, "Verification depth for
   P2–P6 is reduced by declaration").
 
-## Next (after P2)
+## Next (after P3)
 
-- **P3 — broker execution state machine and cycle safety under fakes** on its
-  own branch from the accepted P2: the `DecisionSnapshot` adapter (discharges
-  `RES-P1-01a..c`, reconstructs prior quotes via `latestQuoteSamples`), the
-  fake broker behind `BrokerMutationPort`, the cycle runner that emits exactly
-  one primary entry per invocation through the gateway. Scope in
-  `config/implementation-phases.json` (12 cases).
-- Continue P3–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
+- **P4 — fail-closed startup and analyst boundary** on its own branch from
+  the accepted P3: config validation (S-CYC-11: `EXPECTED_ACCOUNT_ID`,
+  profile, canonical paper origin, the S-G12-02 and staleness couplings, O5
+  bounds present, `STATE_DIR`, diagnostic sink, S-X-06 capability flag),
+  the pinned MCP build/launch verifier and exact tool inventory, the
+  credential fence (S-G12-06 `AUTH_FAILURE`), and the analyst schema
+  boundary wired to `parseAnalystOutput`. Scope in
+  `config/implementation-phases.json` (2 cases: S-CYC-11, S-G12-06). The
+  runner's `analyst` port and `market` port get their real adapters here;
+  `ExecutionConfig` (`LIMIT_TOLERANCE`, `KILL_EQUITY_THRESHOLD`,
+  `INITIAL_CAPITAL`) joins the validated configuration and
+  `validateKillThreshold` becomes an arming check.
+- Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
 - Aug 26–27 target: reach the P7 market-hours dev certificate if every earlier

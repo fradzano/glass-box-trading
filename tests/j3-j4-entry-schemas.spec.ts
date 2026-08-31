@@ -78,7 +78,9 @@ describe("S-J-03 closed entry schemas", () => {
     expect(validateJournalEntry(cycleEntry(1, { reasonCodes: "AUTH_FAILURE" }))).toMatchObject({ ok: false });
     const outcome = minimalEntry("OUTCOME") as unknown as Record<string, unknown>;
     expect(validateJournalEntry({ ...outcome, status: "executed" })).toMatchObject({ ok: false, reason: "UNKNOWN_OUTCOME_STATUS" });
-    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null })).toMatchObject({ ok: true });
+    // Since P3 (S-X-03) a rejection must carry the broker's reason verbatim; a reasonless rejection is refused.
+    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, brokerReason: "insufficient options buying power" })).toMatchObject({ ok: true });
+    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null })).toMatchObject({ ok: false, reason: "REJECTION_WITHOUT_BROKER_REASON" });
     expect(validateJournalEntry({ ...outcome, status: "rejected" })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
     expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: 101 })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
     expect(validateJournalEntry({ ...outcome, status: "filled", filledQuantity: 0 })).toMatchObject({ ok: false });

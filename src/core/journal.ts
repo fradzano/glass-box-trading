@@ -55,10 +55,10 @@ export function outcomeStatuses(): readonly OutcomeStatus[] {
   return ["filled", "partially_filled", "rejected", "canceled", "expired", "confirmation_unclear"];
 }
 
-export type HaltReason = "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN" | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID";
+export type HaltReason = "MANUAL" | "GAP" | "EPOCH_STORE_RESET" | "ACCOUNT_BINDING_MISMATCH" | "KILL" | "AUTH_FAILURE" | "PROVENANCE_BROKEN" | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID" | "BROKER_PRICE_BREACH";
 
 export function haltReasons(): readonly HaltReason[] {
-  return ["MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN", "RESIDUE_UNRESOLVED", "CONFIG_INVALID"];
+  return ["MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN", "RESIDUE_UNRESOLVED", "CONFIG_INVALID", "BROKER_PRICE_BREACH"];
 }
 
 export type SuppressionReason = "LOCK_HELD" | "EPOCH_UNREADABLE" | "EPOCH_CHANGED";
@@ -297,7 +297,40 @@ function validateVerdictList(value: unknown): boolean {
 
 interface EntrySchema {
   readonly required: readonly string[];
+  /** Keys that may be present; absent keys are not defaulted. */
+  readonly optional?: readonly string[];
   readonly check: (body: Readonly<Record<string, unknown>>) => string | null;
+}
+
+export type CloseRouteLabel = "ordinary" | "emergency" | "expiry" | "kill" | "watchdog";
+
+export function closeRouteLabels(): readonly CloseRouteLabel[] {
+  return ["ordinary", "emergency", "expiry", "kill", "watchdog"];
+}
+
+/**
+ * A close INTENT (A5: every ordinary close has a durable intent before
+ * submission) is the INTENT type with `action: "close"`. It names the
+ * exposure it reduces, its route-independent close lifecycle and attempt
+ * generation (S-G7-01), the closing legs, the submitted limit, and a reason;
+ * it reserves nothing (S-G2-07) and carries no entry gate vector.
+ */
+function closeIntentSchema(): EntrySchema {
+  return {
+    required: ["action", "clientOrderId", "exposureLifecycleId", "closeLifecycleId", "route", "generation", "legs", "quantity", "submittedLimit", "reason", "binding"],
+    check: body => {
+      if (!isNonEmptyString(body["clientOrderId"]) || !isNonEmptyString(body["exposureLifecycleId"]) || !isNonEmptyString(body["closeLifecycleId"])) return "INTENT_IDENTITY_INVALID";
+      if (typeof body["route"] !== "string" || !(closeRouteLabels() as readonly string[]).includes(body["route"])) return "INTENT_ROUTE_INVALID";
+      if (!isNonnegativeInteger(body["generation"])) return "INTENT_GENERATION_INVALID";
+      const legs = body["legs"];
+      if (!Array.isArray(legs) || legs.length === 0 || !legs.every(validateLeg)) return "INTENT_LEGS_INVALID";
+      if (!isPositiveInteger(body["quantity"])) return "INTENT_QUANTITY_INVALID";
+      const limit = body["submittedLimit"];
+      if (!isPlainRecord(limit) || hasExactKeys(limit, ["kind", "priceCents"]) !== null || (limit["kind"] !== "debit" && limit["kind"] !== "credit") || !isNonnegativeInteger(limit["priceCents"])) return "INTENT_LIMIT_INVALID";
+      if (!isNonEmptyString(body["reason"])) return "INTENT_REASON_INVALID";
+      return validateBinding(body["binding"]);
+    },
+  };
 }
 
 function snapshotBearing(body: Readonly<Record<string, unknown>>): string | null {
@@ -308,7 +341,8 @@ function optionalSnapshotBearing(body: Readonly<Record<string, unknown>>): strin
   return validateReasonCodes(body["reasonCodes"]) ?? (body["snapshot"] === null ? null : validateSnapshot(body["snapshot"]));
 }
 
-function schemaFor(type: JournalEntryType): EntrySchema {
+function schemaFor(type: JournalEntryType, body: Readonly<Record<string, unknown>>): EntrySchema {
+  if (type === "INTENT" && body["action"] === "close") return closeIntentSchema();
   switch (type) {
     case "CYCLE":
       return {
@@ -327,7 +361,10 @@ function schemaFor(type: JournalEntryType): EntrySchema {
     case "INTENT":
       return {
         required: ["clientOrderId", "exposureLifecycleId", "sleeve", "structureType", "legs", "quantity", "submittedLimit", "reservedMaxLossCents", "gateVector", "rationale", "binding"],
+        // An entry INTENT may say so explicitly; any other action label is refused (the close variant is selected above).
+        optional: ["action"],
         check: body => {
+          if (Object.hasOwn(body, "action") && body["action"] !== "entry") return "INTENT_ACTION_INVALID";
           if (!isNonEmptyString(body["clientOrderId"]) || !isNonEmptyString(body["exposureLifecycleId"])) return "INTENT_IDENTITY_INVALID";
           if (body["sleeve"] !== "income" && body["sleeve"] !== "convex") return "INTENT_SLEEVE_INVALID";
           const structureType = body["structureType"];
@@ -344,6 +381,8 @@ function schemaFor(type: JournalEntryType): EntrySchema {
     case "OUTCOME":
       return {
         required: ["clientOrderId", "status", "brokerOrderId", "brokerTimestamps", "filledQuantity", "avgFillPriceCents", "reasonCodes", "binding"],
+        // S-X-03: a rejection carries the broker's reason verbatim; other statuses may carry one or null.
+        optional: ["brokerReason"],
         check: body => {
           if (!isNonEmptyString(body["clientOrderId"])) return "OUTCOME_IDENTITY_INVALID";
           const status = body["status"];
@@ -356,6 +395,9 @@ function schemaFor(type: JournalEntryType): EntrySchema {
           if (!isNonnegativeInteger(filled) || (price !== null && !isNonnegativeInteger(price))) return "OUTCOME_FILL_INVALID";
           if (status === "rejected" && (filled !== 0 || price !== null)) return "REJECTION_CARRIES_FILL";
           if ((status === "filled" || status === "partially_filled") && filled === 0) return "OUTCOME_FILL_INVALID";
+          const brokerReason = body["brokerReason"];
+          if (Object.hasOwn(body, "brokerReason") && brokerReason !== null && typeof brokerReason !== "string") return "OUTCOME_BROKER_REASON_INVALID";
+          if (status === "rejected" && !isNonEmptyString(brokerReason)) return "REJECTION_WITHOUT_BROKER_REASON";
           return validateReasonCodes(body["reasonCodes"]) ?? validateBinding(body["binding"]);
         },
       };
@@ -411,8 +453,8 @@ export function validateJournalEntry(value: unknown): Validation<JournalEntry> {
   if (!isPlainRecord(value)) return { ok: false, reason: "ENTRY_NOT_A_RECORD" };
   const type = value["type"];
   if (!isJournalEntryType(type)) return { ok: false, reason: "UNKNOWN_ENTRY_TYPE" };
-  const schema = schemaFor(type);
-  const keyIssue = hasExactKeys(value, ["seq", "at", "epoch", "type", ...schema.required], ["corrects"]);
+  const schema = schemaFor(type, value);
+  const keyIssue = hasExactKeys(value, ["seq", "at", "epoch", "type", ...schema.required], ["corrects", ...(schema.optional ?? [])]);
   if (keyIssue !== null) return { ok: false, reason: keyIssue };
   if (!isPositiveInteger(value["seq"])) return { ok: false, reason: "SEQ_INVALID" };
   if (!isUtcIsoTimestamp(value["at"])) return { ok: false, reason: "at: NOT_UTC_ISO" };

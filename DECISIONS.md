@@ -554,3 +554,163 @@ small, no ADR split).
   `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority\LEDGER.md`.
   Merge into local `main` only on Felix's word; P3 starts from the accepted
   P2 on its own branch.
+
+- **2026-08-31 — P3 starts on `p3/broker-execution` from the unmerged P2 head
+  (`f1ff38c`), not from a merge.** The owner's word on merging
+  `p2/journal-authority` into `main` was still pending when the P3 session
+  began; a branch from P2's head is a superset of any later `--no-ff` merge,
+  so it can be merged after P2 without conflict and pre-empts nothing. The
+  merge decisions for P2 and P3 remain the owner's.
+- **2026-08-31 — P3 design decisions (broker execution under fakes).**
+  (a) *The executable limit replaces the analyst's stated limit before
+  `decide`* (S-X-01): `priceEntryLimit` derives mid ± `LIMIT_TOLERANCE` from
+  the snapshot's quotes at the penny tick (a debit rounds its mid up and adds
+  the tolerance, a credit rounds down and subtracts it), so G1–G4 reserve
+  from the very value the executor submits; the analyst's limit only
+  declares the kind (a contradiction with the quotes is a pricing refusal);
+  a re-price is the same function on fresh quotes followed by `decide`
+  (WIN-11). The penny tick is the ETF universe's; a coarser broker tick is a
+  P7 observation, not a P3 assumption. (b) *An OUTCOME is written only for a
+  terminal broker status* (filled, rejected, canceled, expired; a cancel
+  after a partial fill is `partially_filled`); a working order yields no
+  OUTCOME and keeps counting as fillable exposure from its INTENT until phase
+  0 of a later cycle sees its terminal status (S-X-04). Phase 0 re-reads
+  every `intent`, `confirmation_unclear`, and `fillable` lifecycle by client
+  order ID; a never-confirmed order the broker does not know is released as
+  `RECONCILIATION` `NOT_SUBMITTED`, a formerly working order that vanished
+  blocks entries instead of releasing (fail closed). (c) *The revalidation
+  claimset has eight claims and no narrower reading*: account bound, equity
+  not below the kill threshold, positions fingerprint, open-orders
+  fingerprint, control epoch, not halted, limit and reserve unchanged, G1–G4
+  still pass on a `decide` re-run against the fresh book (G7 vetoes there
+  because the INTENT is durable; only G1–G4 are read). A void lands as
+  `RECONCILIATION` `REVALIDATION_VOID` with the claimset and violated claims
+  as item fields (the OUTCOME schema has no room and a void is not a broker
+  outcome). (d) *The primary CYCLE entry is appended before phase 4*, so
+  the decision is durable before any INTENT or order (A5, A7); a failing
+  CYCLE append is the S-CYC-06 case. (e) *A close has a durable intent too*
+  (A5): the INTENT schema gains `action: "close"` (route, generation,
+  closing legs, limit, reason, no gate vector, no rationale floor); entry
+  INTENTs may carry `action: "entry"` or omit it, so P2 fixtures are
+  unchanged. (f) *A rejection carries the broker's reason verbatim* (S-X-03):
+  OUTCOME gains `brokerReason`, optional in general and mandatory non-empty
+  for `rejected` (`BROKER_REASON_ABSENT` when the broker sent none); the one
+  P2 fixture that asserted a reasonless rejection validates was updated and a
+  negative case added. (g) *Kill management is mechanical*: working orders
+  are classified by whether every leg offsets a held position (cancel the
+  rest, adopt the reducers); intact journaled structures are flattened whole
+  through the S-G7 close lifecycle at a plain S-X-01 limit (the S-X-05
+  ladder is P5); anything an intact lifecycle does not explain is residue and
+  is closed leg by leg (S-X-06's discriminated policy is P5); `KILL` lands
+  only when the reloaded book is flat, a lost cancel acknowledgement keeps it
+  non-flat. (h) *The journal-unavailable rule keeps the emergency path
+  reachable*: a phase-0 append failure blocks entries but the snapshot and
+  the kill predicate still run; the emergency close goes through the same
+  gateway under the deterministic attempt ID (`close:<exposure>:g<n>`, next
+  unused generation, an existing sufficient close adopted first) and only if
+  every leg offsets a held position; detection on recovery probes that
+  attempt ID at the broker and journals `AUDIT_GAP_EMERGENCY_CLOSE` with the
+  broker's data and an explicit "no durable prior INTENT". (i) *Broker-port
+  answers are distinguishable from gateway refusals*: the gateway tags
+  `ok: false` results that came from the port with `source: "broker_port"`
+  (a thrown port error becomes `PORT_ERROR:…`), so the runner never mistakes
+  a refusal before the port for a broker answer; the fake's synchronous
+  rejection is `REJECTED:<reason>`, a duplicate is
+  `DUPLICATE_CLIENT_ORDER_ID`, anything else is a lost acknowledgement.
+  (j) *The adapter is pure and lives in the core*: `assembleDecisionSnapshot`
+  validates every contract, quote, spot, broker figure, prior sample, and
+  reconstructed lifecycle and builds every unit through `integerUnit`/
+  `lotCount`; the shell calls it and passes only raw analyst text to
+  `parseAnalystOutput` (RES-P1-01a..d discharged). A rejected snapshot is
+  journaled as `SKIP` `WORLD_PARTIAL` with the reason in the runner's
+  report only — the closed SKIP schema has no detail field; declared
+  limitation. (k) *UTC conversion is done in the core without the host
+  clock* (civil-from-days), because journal timestamps are strings and the
+  decision core needs milliseconds. (l) *A fill worse than the submitted
+  limit halts new entries* (S-X-02): the OUTCOME carries
+  `BROKER_PRICE_BREACH`, the fold reserves the actual exposure, and the runner
+  appends a non-sticky `HALT` with the new reason `BROKER_PRICE_BREACH` so
+  entries stay blocked pending reconciliation and a manual un-halt; the
+  fail-ping half of "alarm" is P5.
+- **2026-08-31 — P3 additive changes to accepted phases.** P1: `definedRiskAt`
+  is exported (the fold prices filled portions at the actual fill price,
+  including a breach). P2: OUTCOME `brokerReason` (optional, mandatory for
+  rejections), INTENT `action: "close"` variant, HALT reason
+  `BROKER_PRICE_BREACH`, and the gateway's `source: "broker_port"` tag. None
+  changes an accepted P1/P2 test's claim; one P2 fixture gained the reason.
+- **2026-08-31 — P3 verification record (declared reduced depth).** Final
+  code commit `c66c3be` on `p3/broker-execution` (`npm run verify` exit 0:
+  115 tests, static and sandbox gates — the sandbox now executes the
+  execution core as its seventh path — partition check P3 = 12). Order of
+  work, stated plainly: the P3 core and its tests were written in one
+  sitting and first executed together; the red state was observed only for
+  three first-run failures (two test-side, one real: the runner returned
+  after a phase-0 journal failure before evaluating the kill predicate,
+  which would have made the S-CYC-06 emergency close unreachable exactly
+  when the journal is down — corrected before the first commit). P3's
+  red-first discipline is therefore weaker than P2's; the probe below is the
+  evidence that the tests bite. Mutation probe (store
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p3-broker-execution`,
+  `responses/P3-probe-mutation.json` and `…-rerun.json`): fourteen
+  hand-written mutants on the P3 mechanisms — kill predicate `<=`, debit
+  limit minus tolerance, breach/improvement swapped, claimset without
+  `POSITIONS_UNCHANGED`, kill never reported by revalidation, emergency close
+  allowed to open a leg, `confirmation_unclear` releasing its reservation,
+  flatness ignoring positions, runner submitting despite a void verdict,
+  runner skipping phase 0, reasonless rejection accepted by the schema,
+  rejection mapped to canceled, runner emergency close ignoring eligibility,
+  runner executing entries after a mid-cycle kill. 12/14 caught at `3961d64`;
+  survivor M14 closed at `c66c3be` by a two-plan test (the second plan must be
+  `NOT_SENT` with no second INTENT) and re-run caught; survivor M13 is
+  declared, not tested: the runner's eligibility check guards flatten targets
+  that `planKillManagement` derived from the very book the check reads, so
+  no executed variant can make it fail — defence in depth, C-class. Also
+  found by the evidence-debt reconciliation, not by a test: S-X-02's halt
+  after a price breach was missing; closed at `c66c3be` (HALT reason
+  `BROKER_PRICE_BREACH`, non-sticky, test in `tests/cyc-runner.spec.ts`).
+  Limit of the probe: hand-picked mutants on the mechanisms the tests were
+  written for, not a mutation-testing tool run. Blind counter-verification:
+  one gate call on the executor path (durable intent and passed re-check
+  before any entry order; kill management under the fence; the
+  journal-unavailable rule; phase-0 resolution before any new order; broker
+  answers onto the closed outcome set) — prompt
+  `prompts/G1-executor-path.md`, launched `--write` from the repository
+  directory as Codex job `task-mthde869-81r6p8`; verdict recorded in the store's
+  `LEDGER.md` and in `STATE.md` → Now when it arrives. Until then P3 is
+  *green and probed*, not gate-confirmed.
+- **2026-08-31 — P3 gate finding G1-F1 closed: kill management sends no
+  cancel while the journal is unavailable.** The first blind gate call on
+  the executor path (Codex job `task-mthde869-81r6p8`, `REJECTED`) executed the
+  case journal read-only + kill + one resting risk-increasing entry: the
+  runner canceled the entry before the permitted emergency close, a broker
+  mutation with no durable record outside the single S-CYC-06 exception.
+  Closed at `5afb5d1` as prescribed: without a durable `HALT` the cancel
+  loop does not run; the resting entry stays at the broker, counted as
+  fillable exposure from its INTENT, and the next cycle that can append the
+  `HALT` cancels it. Trade-off stated: during a journal outage a resting
+  entry may fill; the fill becomes held exposure that the same emergency
+  route may close, and every mutation stays inside the specified exception.
+  Four of five claims held on executed variants; the gateway's two
+  administrative appends (reset pair, manual `UNHALT`) were noted as the
+  known exceptions to "every append passes `dispatch`". Fix verification
+  launched as Codex job `task-mthe6upm-hpouop`; verdict recorded in the store's
+  `LEDGER.md` and `STATE.md` → Now.
+- **2026-08-31 — P3 closing state: green, gate-confirmed on its riskiest
+  mechanism, awaiting the owner's word for the merges.** Final code commit
+  `5afb5d1` on `p3/broker-execution` (`npm run verify` exit 0: 116 tests,
+  static and sandbox gates, partition check). The reduced depth delivered:
+  13/14 mutation probe (M13 declared), one evidence-debt finding closed
+  (S-X-02 breach halt), and two blind gate calls on the executor path — one
+  `REJECTED` with a single class-A finding (G1-F1: a cancel sent while the
+  journal was unavailable), closed red-first as the gate prescribed, and
+  one `CONFIRMED` across seven executed variants including recovery order
+  and the unreadable epoch store. Confirmed by executed evidence: durable
+  INTENT plus passed re-check before any entry order, kill management under
+  the fence, the journal-unavailable rule with its single exception,
+  phase-0 resolution before any new order, the closed-outcome mapping.
+  Not gate-verified: pricing arithmetic, snapshot adapter, fold, and fake
+  broker beyond the repository gates and the probe. This is the declared
+  reduced depth, not a bis-0 termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p3-broker-execution/LEDGER.md`.
+  Merges into local `main` only on Felix's word (P2 first, then P3); P4
+  starts from the accepted P3 on its own branch.

@@ -479,6 +479,17 @@ export function parseAnalystOutput(raw: string): AnalystBatch {
   }
 }
 
+/**
+ * The exact reserved maximum loss of `quantity` units of `candidate` if the
+ * structure were entered at `priceCents`, or null when the leg pattern has no
+ * fixed loss. P3's journal fold prices filled portions through this at the
+ * broker's actual fill price, including a fill worse than the limit
+ * (S-X-02 reserves the actual exposure rather than the original bound).
+ */
+export function definedRiskAt(candidate: EntryCandidate, quantity: Quantity, priceCents: OptionPriceCents): MoneyCents | null {
+  return definedRisk(candidate, quantity, priceCents).maxLossCents;
+}
+
 export function reconcilePartialFillRisk(
   candidate: EntryCandidate,
   filledQuantity: Quantity,
