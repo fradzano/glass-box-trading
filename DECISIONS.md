@@ -329,6 +329,13 @@ small, no ADR split).
   locale methods are absent or throw; it first proves the instrument on six
   laundered mutants, then runs the recorded fixture twice (determinism), the
   malformed-parser and stale-snapshot paths, a full-fill reconciliation, and a
-  fresh close plan. Declared limit: a runtime guard is complete only for the
-  paths it executes; the static gate remains the guard for unexecuted code,
-  and the Core/shell lens judges boundary placement.
+  fresh close plan. Declared limits, stated exactly: the runtime guard is
+  sound only for the paths it executes and only for the capabilities its
+  taming removes (clock, randomness, locale, code generation, stack
+  observation, mutation of intrinsics); the static gate rejects every
+  impurity and laundering class in its 66-mutant self-test — including any
+  use of a standard-library object as a value — but a static analysis of
+  TypeScript is not sound against an author who intends to escape it, so
+  unexecuted laundering can survive it. Together they hold shared completion
+  gate 2 for executed core code; the Core/shell lens judges boundary
+  placement and intent.

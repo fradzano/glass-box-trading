@@ -14,10 +14,13 @@
 // module specifier that leaves src/core. Every file under src/core must be a
 // `.ts` file so nothing escapes the program.
 //
-// Declared limit (see DECISIONS.md): the gate proves that the declared core
-// references only core code and a reviewed standard-library subset; it does
-// not prove that the declared boundary sits at the right place — that is the
-// job of the Core/shell-mixing lens.
+// Declared limit (see DECISIONS.md): this is a static analysis of source
+// text. It rejects every impurity and laundering class enumerated in its
+// self-test, but static analysis of TypeScript cannot be sound against an
+// author who intends to escape it; unexecuted laundering may survive it.
+// Runtime purity of executed paths is enforced separately by
+// tools/run-core-sandboxed.mjs. Neither gate judges whether the declared
+// boundary sits at the right place — that is the Core/shell-mixing lens.
 
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -50,6 +53,7 @@ const FORBIDDEN_MEMBER_NAMES = new Set([
   "constructor", "__proto__", "prototype", "caller", "callee", "arguments",
   "random", "now",
   "localeCompare", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", "toLocaleLowerCase", "toLocaleUpperCase",
+  "stack", "captureStackTrace", "prepareStackTrace", "stackTraceLimit",
   "getPrototypeOf", "setPrototypeOf", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors", "defineProperty", "defineProperties", "assign",
 ]);
 
@@ -126,6 +130,22 @@ export function inspectCoreDirectory(coreRoot) {
     return { kind: inLib ? "lib" : "foreign", symbol: resolved };
   }
 
+  const PRIMITIVE_LIB_VALUES = new Set(["Infinity", "NaN", "undefined"]);
+
+  // A standard-library object may be *used* (`Math.max(...)`, `new Map()`,
+  // `BigInt(x)`) but never *flow* as a value: no aliasing into variables,
+  // arguments, returns, spreads, or destructuring. This removes every alias
+  // route to mutating or reflecting on an intrinsic.
+  function inspectLibValueUsage(fileName, node, symbol) {
+    if (PRIMITIVE_LIB_VALUES.has(symbol.name)) return;
+    const parent = node.parent;
+    const isCallee = (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node;
+    const isMemberObject = (ts.isPropertyAccessExpression(parent) && parent.expression === node)
+      || (ts.isElementAccessExpression(parent) && parent.expression === node && ts.isStringLiteralLike(parent.argumentExpression));
+    const isTypeOf = ts.isTypeOfExpression(parent);
+    if (!isCallee && !isMemberObject && !isTypeOf) report(fileName, `standard-library object '${symbol.name}' used as a value (aliasing is forbidden)`);
+  }
+
   function checkLibSymbol(fileName, symbol, spelled) {
     const isGlobal = symbol.parent === undefined || (symbol.parent.flags & ts.SymbolFlags.Module) !== 0 && symbol.parent.escapedName === "__global";
     const fullName = checker.getFullyQualifiedName(symbol).replace(/^"[^"]*"\./u, "").replace(/Constructor\./u, ".");
@@ -146,7 +166,11 @@ export function inspectCoreDirectory(coreRoot) {
       if (FORBIDDEN_MEMBER_NAMES.has(provenance.symbol.name) && ts.isPropertyAccessExpression(node.parent)) report(fileName, `forbidden reflective member '${spelled}'`);
       return;
     }
-    if (provenance.kind === "lib") { checkLibSymbol(fileName, provenance.symbol, spelled); return; }
+    if (provenance.kind === "lib") {
+      checkLibSymbol(fileName, provenance.symbol, spelled);
+      if (provenance.symbol.parent === undefined || ((provenance.symbol.parent.flags & ts.SymbolFlags.Module) !== 0 && provenance.symbol.parent.escapedName === "__global")) inspectLibValueUsage(fileName, node, provenance.symbol);
+      return;
+    }
     if (provenance.kind === "unresolved") { report(fileName, `unresolved identifier '${spelled}'`); return; }
     report(fileName, `identifier '${spelled}' resolves outside the core and the standard library`);
   }
@@ -195,18 +219,27 @@ export function inspectCoreDirectory(coreRoot) {
     // inside the enclosing function. Writing through a parameter, a module-level
     // binding, a standard-library object (`Math.max = ...`), a function object,
     // or a property chain is mutation of state the core does not own.
+    function isFreshValue(expression) {
+      const inner = ts.isParenthesizedExpression(expression) ? expression.expression : expression;
+      return ts.isObjectLiteralExpression(inner) || ts.isArrayLiteralExpression(inner) || ts.isNewExpression(inner) || ts.isCallExpression(inner);
+    }
+
+    function isOwnedOperand(operand) {
+      if (isFreshValue(operand)) return true;
+      if (!ts.isIdentifier(operand)) return false;
+      const symbol = checker.getSymbolAtLocation(operand);
+      const declaration = symbol?.valueDeclaration;
+      if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !isInside(root, declaration.getSourceFile().fileName)) return false;
+      if (declaration.initializer === undefined || !isFreshValue(declaration.initializer)) return false;
+      for (let current = declaration.parent; current !== undefined && !ts.isSourceFile(current); current = current.parent) {
+        if (ts.isFunctionLike(current)) return true;
+      }
+      return false;
+    }
+
     function inspectMutationTarget(target, node) {
       if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return;
-      const operand = target.expression;
-      if (ts.isIdentifier(operand)) {
-        const symbol = checker.getSymbolAtLocation(operand);
-        const declaration = symbol?.valueDeclaration;
-        if (declaration !== undefined && ts.isVariableDeclaration(declaration) && isInside(root, declaration.getSourceFile().fileName)) {
-          for (let current = declaration.parent; current !== undefined && !ts.isSourceFile(current); current = current.parent) {
-            if (ts.isFunctionLike(current)) return;
-          }
-        }
-      }
+      if (isOwnedOperand(target.expression)) return;
       report(fileName, `write to state the core does not own '${node.getText(sourceFile)}'`);
     }
 
@@ -232,6 +265,10 @@ export function inspectCoreDirectory(coreRoot) {
       if (ts.isBinaryExpression(node) && ASSIGNMENT_OPERATORS.has(node.operatorToken.kind)) inspectMutationTarget(node.left, node);
       if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) inspectMutationTarget(node.operand, node);
       if (ts.isDeleteExpression(node)) report(fileName, `delete is forbidden in the core '${node.getText(sourceFile)}'`);
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "Object" && ["freeze", "seal", "preventExtensions"].includes(node.expression.name.text)) {
+        const argument = node.arguments[0];
+        if (argument === undefined || !isOwnedOperand(argument)) report(fileName, `extensibility change on state the core does not own '${node.getText(sourceFile)}'`);
+      }
       if (ts.isElementAccessExpression(node) && !isPartOfType(node)) {
         const argument = node.argumentExpression;
         if (ts.isStringLiteralLike(argument)) {
@@ -362,6 +399,14 @@ function runSelfTest() {
     ["export function grab() { return Math['ran' + 'dom'](); }", "core must type-check"],
     ["export function merge(a: object) { return Object.assign(a, { x: 1 }); }", "forbidden reflective or impure member"],
     ["export function drop(record: Record<string, number>) { delete record['x']; return record; }", "delete is forbidden"],
+    ["export function poison() { const m = Math; m.max = () => 0; return 1; }", "used as a value"],
+    ["export function alias() { return Math; }", "used as a value"],
+    ["export function alias() { return pick(Math); } function pick(value: object) { return value; }", "used as a value"],
+    ["export function freeze() { Object.freeze(Math); return 1; }", "used as a value"],
+    ["export function freeze(target: object) { Object.freeze(target); return 1; }", "extensibility change on state the core does not own"],
+    ["export function trace() { return new Error('x').stack; }", "forbidden reflective or impure member"],
+    ["export function trace() { const { stack } = new Error('x'); return stack; }", "forbidden reflective or impure member name 'stack'"],
+    ["export function spread() { return { ...Math }; }", "used as a value"],
   ];
   for (const [source, expected] of mutants) {
     const found = inspectInlineCore({ "mutant.ts": source });
@@ -385,7 +430,7 @@ function runSelfTest() {
       "export function big(values: readonly number[]): bigint { return values.map(value => BigInt(value)).reduce((total, value) => total + value, 0n); }",
       "export function safe(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value); }",
       "export function keys(record: Readonly<Record<string, unknown>>): readonly string[] { return Object.keys(record).sort(); }",
-      "export function frozen<T extends object>(value: T): Readonly<T> { return Object.freeze(value); }",
+      "export function frozen(value: number): Readonly<{ readonly value: number }> { return Object.freeze({ value }); }",
       "export function parse(raw: string): unknown { try { return JSON.parse(raw) as unknown; } catch { return null; } }",
       "export function collect(items: readonly string[]): ReadonlyMap<string, bigint> { const map = new Map<string, bigint>(); for (const item of items) map.set(item, 1n); return map; }",
       "export function fail(): never { throw new RangeError('boundary'); }",
@@ -394,6 +439,9 @@ function runSelfTest() {
       "export function sorted(values: readonly string[]): readonly string[] { return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0); }",
       "export function destructure(point: { readonly x: number; readonly y: number }): number { const { x, y } = point; return x + y; }",
       "export function label(value: number): string { return `${String(value)}:${value.toString(16)}`; }",
+      "export function tally(values: readonly string[]): number { const counts: Record<string, number> = {}; for (const value of values) counts[value] = (counts[value] ?? 0) + 1; let total = 0; for (const key of Object.keys(counts)) total += counts[key] ?? 0; return total; }",
+      "export function frozenPlan(legs: readonly { readonly side: string }[]): readonly { readonly side: string }[] { return Object.freeze(legs.map(leg => Object.freeze({ side: leg.side }))); }",
+      "export function isNum(value: unknown): boolean { return typeof value === 'number' && !Number.isNaN(value) && value !== Infinity; }",
     ].join("\n"),
   });
   if (pure.length > 0) throw new Error(`architecture self-test rejected pure source: ${pure.join("; ")}`);

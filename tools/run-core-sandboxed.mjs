@@ -6,9 +6,13 @@
 // This complements the static gate (tools/check-core-architecture.mjs). The
 // static gate reads the source and rejects known impurity classes; this gate
 // does not read source at all, so laundering through the type system cannot
-// pass it. Its own declared limit: it proves purity only for executed paths —
-// the recorded fixture, a determinism replay, and the sampled lifecycle,
-// partial-fill, and parser paths below. Run with:
+// pass it. Its own declared limit: it proves purity only for the paths it
+// executes (the recorded fixture, a determinism replay, and the sampled
+// lifecycle, partial-fill, and parser paths below) and only for the
+// capabilities the taming removes: clock, randomness, locale, code
+// generation, stack observation, and mutation of intrinsics. Mutation of the
+// core's own module-scope function objects is not observable here and is
+// left to the static gate. Run with:
 //   node --experimental-vm-modules tools/run-core-sandboxed.mjs
 // after `npm run build` (dist/core must exist).
 
@@ -39,6 +43,10 @@ const TAMING = `
     Object.defineProperty(ctor.prototype, "constructor", { value: deny("Function constructor"), writable: false, configurable: false });
   }
   Object.defineProperty(globalThis, "Function", { value: deny("Function"), writable: false, configurable: false });
+  // Stack traces observe the host (file paths, frames): reading them is denied.
+  Error.stackTraceLimit = 0;
+  Object.defineProperty(Error, "prepareStackTrace", { value: () => { throw new Error("ambient access denied: Error.stack"); }, writable: false, configurable: false });
+  Object.defineProperty(Error, "captureStackTrace", { value: deny("Error.captureStackTrace"), writable: false, configurable: false });
   // Freeze every intrinsic reachable from the global object (a minimal harden).
   const seen = new Set();
   const freezeDeep = (value) => {
@@ -134,6 +142,8 @@ async function calibrate() {
     ["locale via structural type", "export function order(left, right) { return left.localeCompare(right); }"],
     ["mutation of a standard object", "export function poison() { Math.max = () => 0; return Math.max(1, 2); }"],
     ["eval", "export function key() { return eval('1 + 1'); }"],
+    ["stack trace observation", "export function trace() { const value = new Error('x').stack; if (typeof value !== 'string') { throw new Error('no stack'); } return value; }"],
+    ["alias mutation of an intrinsic", "export function poison() { const m = Math; m.max = () => 0; return m.max(1, 2); }"],
   ];
   for (const [name, source] of mutants) {
     const context = createTamedRealm();
