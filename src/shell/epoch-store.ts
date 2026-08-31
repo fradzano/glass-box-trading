@@ -48,13 +48,14 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
   const epoch = record["epoch"];
   const holderId = record["holderId"];
   const acquiredAt = record["acquiredAt"];
-  if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string") {
+  const seedPending = record["seedPending"];
+  if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string" || (seedPending !== undefined && typeof seedPending !== "boolean")) {
     return { kind: "unreadable", detail: "epoch store record is malformed" };
   }
-  return { kind: "present", epoch: epoch as number, holderId, acquiredAt };
+  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true };
 }
 
-export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string }): void {
+export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean }): void {
   writeJsonAtomically(paths.epoch, record);
 }
 

@@ -11,7 +11,15 @@ import type { AccountBinding } from "./journal.js";
 export type EpochStoreState =
   | { readonly kind: "absent" }
   | { readonly kind: "unreadable"; readonly detail: string }
-  | { readonly kind: "present"; readonly epoch: number; readonly holderId: string; readonly acquiredAt: string };
+  | {
+    readonly kind: "present";
+    readonly epoch: number;
+    /** The instance that acquired this epoch; only it may dispatch authoritative requests under it. */
+    readonly holderId: string;
+    readonly acquiredAt: string;
+    /** True from a virgin seed until the BOOTSTRAP entry lands; persisted so a restart cannot forget it (G1-F2). */
+    readonly seedPending: boolean;
+  };
 
 export type AccountVirginity = "virgin" | "non_virgin" | "unknown";
 

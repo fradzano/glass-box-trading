@@ -112,7 +112,7 @@ describe("S-G12-01 lock held by a live instance", () => {
     const compiledDist = inject("compiledDist");
     const paths = freshPaths();
     writeFileSync(paths.epoch, JSON.stringify({ epoch: 1, holderId: "writer", acquiredAt: TEST_ONLY_AT }), "utf8");
-    const processes = await Promise.all(Array.from({ length: 5 }, (_, index) => runCli(compiledDist, [paths.root, `proc-${String(index)}`, "append", "8", "1"])));
+    const processes = await Promise.all(Array.from({ length: 5 }, (_, index) => runCli(compiledDist, [paths.root, "writer", "append", "8", "1", `proc-${String(index)}`])));
     for (const result of processes) expect(result.code, result.stderr).toBe(0);
     const parsed = parseJournalText(readFileSync(paths.journal, "utf8"));
     expect(parsed.corrupt).toEqual([]);
@@ -149,6 +149,8 @@ describe("S-G12-02 time alone never grants authority", () => {
     expect(await eager.dispatch(submitOrder(7))).toMatchObject({ ok: false, reason: "STALE_EPOCH" });
     // A stale heartbeat triggers the takeover; the takeover is the epoch increment, and only then may the taker act.
     const late = gatewayFor(paths, "late", () => TEST_ONLY_AT_MS + BOUND_MS + 1);
+    // G1-F1: a stale heartbeat plus the observed epoch is still not authority — acquisition must happen first.
+    expect(await late.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
     expect(await late.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2, seeded: null });
     expect(readEpochStore(paths)).toMatchObject({ kind: "present", epoch: 2, holderId: "late" });
     expect(await late.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "STALE_EPOCH" });
@@ -237,6 +239,11 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(await winner.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: true });
     expect(await other.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
     expect(await other.dispatch({ class: "authoritative", epoch: 4, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false });
+    // G1-F1: once the winner's heartbeat is stale, the loser still cannot dispatch with the epoch it merely observed — it never acquired it.
+    const laterLoser = gatewayFor(paths, other === left ? "left" : "right", () => TEST_ONLY_AT_MS + BOUND_MS + 1);
+    expect(await laterLoser.dispatch({ class: "authoritative", epoch: 5, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
+    expect(await laterLoser.dispatch(submitOrder(5))).toMatchObject({ ok: false, reason: "NOT_THE_WRITER" });
+    expect(entriesOf(paths)).toHaveLength(1);
   });
 
   it("S-G12-07 (3) takeover attempts from separate processes yield exactly one winner and one epoch increment", async () => {
@@ -293,14 +300,20 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
     expect(await seeded.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1, { epochSeeded: false })) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    // G1-F2: the obligation is persisted in the store, not in process memory — a restarted instance inherits it.
+    expect(readEpochStore(seedPaths)).toMatchObject({ kind: "present", epoch: 1, seedPending: true });
+    const restarted = gatewayFor(seedPaths, "agent", () => TEST_ONLY_AT_MS + 500);
+    expect(await restarted.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    expect(await restarted.dispatch(submitOrder(1))).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
+    expect(readEpochStore(seedPaths)).toMatchObject({ kind: "present", epoch: 1, seedPending: false });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(2)) } })).toMatchObject({ ok: true, seq: 2 });
     expect(readdirSync(seedPaths.root).sort()).toEqual(["epoch.json", "halt.json", "holder.json", "journal.jsonl", "quarantine"].filter(name => name !== "halt.json" || existsSync(seedPaths.halt)).sort());
   });
 
   it("S-G12-07 the pure authority core decides acquisition, compare-and-increment, and authorization without any clock", () => {
     const absent: EpochStoreState = { kind: "absent" };
-    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT };
+    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false };
     const unreadable: EpochStoreState = { kind: "unreadable", detail: "x" };
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: true })).toEqual({ kind: "SEED_BOOTSTRAP", epoch: 1 });
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: false })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
@@ -308,7 +321,7 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(planEpochAcquisition(absent, { account: "unknown", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4 });
     expect(planEpochAcquisition(unreadable, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_UNREADABLE" });
-    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
+    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
     expect(compareAndIncrement(present, 3)).toEqual({ kind: "COMMIT", next: 4 });
     expect(compareAndIncrement({ ...present, epoch: 4 }, 3)).toEqual({ kind: "CHANGED", observed: 4 });
     expect(compareAndIncrement(absent, 3)).toEqual({ kind: "CHANGED", observed: null });

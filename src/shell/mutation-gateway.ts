@@ -91,7 +91,6 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
   if (options.instanceId.length === 0) throw new RangeError("instanceId must be non-empty");
   const { paths, secrets, clock, instanceId } = options;
   let ownEpoch: number | null = null;
-  let seedPending = false;
 
   const redact = (text: string): string => redactSecrets(text, secrets);
 
@@ -121,11 +120,12 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
   }
 
-  function holderConflict(): string | null {
+  /** Suppression check at acquisition: a live rival holder (fresh heartbeat) suppresses; a stale one may be fenced. */
+  function liveRivalHolder(): string | null {
     const holder = readHolder(paths);
     if (holder === null || holder.holderId === instanceId) return null;
     if (shouldAttemptTakeover(clock() - holder.heartbeatAt, options.lockTakeoverBoundMs)) return null;
-    return "NOT_THE_WRITER";
+    return holder.holderId;
   }
 
   async function dispatchUnderLock(request: MutationRequest): Promise<DispatchResult> {
@@ -152,10 +152,11 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       return appended.ok ? { ok: true, seq: appended.entry.seq, stalenessNeutral: true } : { ok: false, reason: appended.reason, lockHeld: true };
     }
 
-    const conflict = holderConflict();
-    if (conflict !== null) return { ok: false, reason: conflict, lockHeld: true };
+    // G1-F1: matching the epoch is necessary, not sufficient — the store names the instance that acquired it.
+    // An observer that merely read the winner's epoch (even after the winner's heartbeat went stale) is not the writer.
+    if (store.kind !== "present" || store.holderId !== instanceId) return { ok: false, reason: "NOT_THE_WRITER", lockHeld: true };
     const epoch = request.epoch as number;
-    if (seedPending) {
+    if (store.seedPending) {
       const isSeedEntry = request.action.kind === "journal_append" && entryType === "BOOTSTRAP" && (request.action.entry as { readonly epochSeeded?: unknown }).epochSeeded === true;
       if (!isSeedEntry) return { ok: false, reason: "SEED_NOT_JOURNALED", lockHeld: true };
     }
@@ -188,7 +189,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     }
     const appended = appendUnderLock(entries, draft);
     if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
-    if (seedPending) seedPending = false;
+    if (store.seedPending) writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: false });
     return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
   }
 
@@ -210,11 +211,8 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         if (fresh.kind === "present" && !(observed.kind === "present" && observed.epoch === fresh.epoch)) {
           return { kind: "LOST", observedEpoch: fresh.epoch };
         }
-        const conflict = holderConflict();
-        if (conflict !== null) {
-          const holder = readHolder(paths);
-          return { kind: "SUPPRESSED", holderId: holder?.holderId ?? "", reason: "LOCK_HELD" };
-        }
+        const rival = liveRivalHolder();
+        if (rival !== null) return { kind: "SUPPRESSED", holderId: rival, reason: "LOCK_HELD" };
         const loaded = loadJournal();
         if ("corrupt" in loaded) return { kind: "REFUSED", reason: "JOURNAL_CORRUPT" };
         const entries = loaded.file.parsed.entries;
@@ -224,13 +222,12 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
           case "REFUSE":
             return { kind: "REFUSED", reason: plan.reason };
           case "SEED_BOOTSTRAP":
-            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: true });
             writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
             ownEpoch = plan.epoch;
-            seedPending = true;
             return { kind: "WON", epoch: plan.epoch, seeded: "bootstrap" };
           case "SEED_GAP": {
-            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeEpochStore(paths, { epoch: plan.epoch, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
             writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
             ownEpoch = plan.epoch;
             const gap = appendUnderLock(entries, { at: utcIso(now), epoch: plan.epoch, type: "GAP", reasonCodes: [], snapshot: null, detail: "epoch store absent or reset outside the virgin bootstrap state; prior authority unknown" });
@@ -243,10 +240,9 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
             const decision = compareAndIncrement(fresh, plan.expected);
             if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
             if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
-            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now) });
+            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
             writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
             ownEpoch = decision.next;
-            seedPending = false;
             return { kind: "WON", epoch: decision.next, seeded: null };
           }
         }

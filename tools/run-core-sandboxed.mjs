@@ -218,7 +218,7 @@ async function exerciseCore() {
   if (!halted.halted || unhalted.halted) throw new Error("sandboxed halt fold is wrong");
   paths.push("planAppend(CYCLE, secret) → seq 1 redacted; parseJournalText(torn) → 1 entry + torn; validateJournalEntry(out-of-set) → rejected; haltStateFrom/After → HALT then human UNHALT");
 
-  const present = { kind: "present", epoch: 3, holderId: "a", acquiredAt: "2026-08-31T13:30:00.000Z" };
+  const present = { kind: "present", epoch: 3, holderId: "a", acquiredAt: "2026-08-31T13:30:00.000Z", seedPending: false };
   const staleEpoch = authority.authorizeMutation({ class: "authoritative", epoch: 2, action: { kind: "broker_mutation" } }, present);
   const fresh = authority.authorizeMutation({ class: "authoritative", epoch: 3, action: { kind: "journal_append", entryType: "CYCLE" } }, present);
   const witnessBroker = authority.authorizeMutation({ class: "witness", action: { kind: "broker_mutation" } }, present);

@@ -1,14 +1,14 @@
 // Process-level driver for the fencing and serialization tests: each
 // invocation is one real OS process contending for the same STATE_DIR.
 //   node gateway-cli.js <stateDir> <instanceId> takeover
-//   node gateway-cli.js <stateDir> <instanceId> append <count> <epoch>
+//   node gateway-cli.js <stateDir> <instanceId> append <count> <epoch> [tag]
 // It prints one JSON result to stdout and exits non-zero on any failure.
 import { createMutationGateway, NO_BROKER_PORT } from "./mutation-gateway.js";
 import { resolveStateDir } from "./state-dir.js";
 
-const [stateDirArgument, instanceId, command, countArgument, epochArgument] = process.argv.slice(2);
+const [stateDirArgument, instanceId, command, countArgument, epochArgument, tagArgument] = process.argv.slice(2);
 if (stateDirArgument === undefined || instanceId === undefined || command === undefined) {
-  process.stderr.write("usage: gateway-cli <stateDir> <instanceId> takeover | append <count> <epoch>\n");
+  process.stderr.write("usage: gateway-cli <stateDir> <instanceId> takeover | append <count> <epoch> [tag]\n");
   process.exit(2);
 }
 const paths = resolveStateDir(stateDirArgument);
@@ -39,7 +39,7 @@ if (command === "append") {
           epoch,
           type: "CYCLE",
           cycleIndex: index,
-          tradingDay: instanceId,
+          tradingDay: tagArgument ?? instanceId,
           reasonCodes: [],
           snapshot: { accountId: "TEST_ONLY_CLI_ACCOUNT", snapshotAt: new Date().toISOString(), cashCents: 0, equityCents: 0, positions: [], openOrders: [], quoteSamples: {} },
           batchVerdicts: [],
