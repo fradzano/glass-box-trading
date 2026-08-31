@@ -482,6 +482,14 @@ small, no ADR split).
   acquisition. **G1-F2**: the virgin-seed obligation lived in process
   memory; now `seedPending` is persisted in `epoch.json` and cleared
   atomically after the `BOOTSTRAP` append, so a restart inherits it. The
-  second call (`task-mth7dgrq-6dx7ps`, neutral vocabulary, claims
-  restated for `0431ac9`) is the counter-verification of record; its
-  verdict is recorded in the entry below.
+  second call (`task-mth7dgrq-6dx7ps`, neutral vocabulary, launched
+  without `--write`) could not execute a single probe in its read-only
+  sandbox and returned `VERDICT: NOT ISSUED`; its read-only diagnostic
+  still exposed **G2-F1**: `planEpochAcquisition` had no notion of a
+  pending seed, so a takeover or a same-id re-acquisition of a seed-pending
+  store cleared the obligation and authorized a non-`BOOTSTRAP` append.
+  Closed at `6677b24`: the `INCREMENT` plan inherits `seedPending`, the
+  gateway persists it on the new epoch, only the `BOOTSTRAP` append clears
+  it. The third call (`task-mth87op3-454yk7`, `--write`, claims restated
+  for `6677b24`) is the counter-verification of record; its verdict is
+  recorded in the entry below.
