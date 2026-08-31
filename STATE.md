@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P2 and P3 merged to local `main` on Felix's word; P4 closed on its branch: green at `2aa30fc`, startup/launch boundary gate-CONFIRMED after two calls; the P4 merge awaits Felix's word)
-**Branch:** `p4/fail-closed-startup` at `2aa30fc` plus docs commits (implementation `43ce65f`, gate closure `2aa30fc`; from the P3 merge `a737a80` on local `main`); no GitHub remote yet
-**Last accepted phase artifact:** P3 — merge commit `a737a80` on local `main` (2026-08-31; P2 merged as `9e380fc` immediately before; owner acceptance of the declared reduced depth for both, see DECISIONS.md). `npm run verify` exit 0 on the merged `main`.
+**Last updated:** 2026-08-31 night (P4 merged to local `main` as `43e7170` on Felix's word; P5 opened on `p5/recovery-lifecycle` from the merge)
+**Branch:** `p5/recovery-lifecycle` from the P4 merge `43e7170` on local `main`; no GitHub remote yet
+**Last accepted phase artifact:** P4 — merge commit `43e7170` on local `main` (2026-08-31; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (161 tests).
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P4 — startup and analyst boundary
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p4--startup-and-analyst-boundary)) — implementation complete, closing
+**Current implementation phase:** P5 — recovery and lifecycle
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p5--recovery-and-lifecycle)) — in progress
 
 ## Done
 
@@ -215,9 +215,8 @@ One phase per session; every session ends with the handoff protocol in
   on all three seams are gate-confirmed by executed evidence; the pure
   validator's individual bound checks and the manifest/lock schemas rest
   on the repository gates and the 15/15 probe (declared reduced depth,
-  DECISIONS.md 2026-08-31). **Not merged.** Next action is Felix's: merge
-  `p4/fail-closed-startup` (`--no-ff`) onto `main`, or not. P5 then
-  branches from the accepted P4.
+  DECISIONS.md 2026-08-31). **Merged to `main` as `43e7170` (2026-08-31,
+  owner acceptance; `npm run verify` exit 0 on the merged `main`).**
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
@@ -227,9 +226,8 @@ One phase per session; every session ends with the handoff protocol in
 
 ## Next (after P4)
 
-- **Felix's merge word for `p4/fail-closed-startup`** (`--no-ff` onto
-  `main`); the branch is closed and gate-confirmed.
-- **P5 — recovery and lifecycle** on its own branch from the accepted P4:
+- **P5 — recovery and lifecycle** on `p5/recovery-lifecycle` from the P4
+  merge `43e7170` (in progress):
   scheduler-facing degraded paths, restart/gap bootstrap, reconciliation,
   watchdog takeover as a separate process entry point over the same epoch
   store, close-escalation ladder (`CLOSE_ESCALATION_STEP` is already

@@ -805,3 +805,10 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p4-fail-closed-startup/LEDGER.md`.
   Merge into local `main` only on Felix's word; P5 starts from the
   accepted P4 on its own branch.
+- **2026-08-31 — owner acceptance and merge: P4 is on `main`.** Felix
+  accepted the declared reduced depth for P4 and ordered the merge
+  (session decision prompt, option "Ja, mergen"). `p4/fail-closed-startup`
+  (`acb5be4`) merged as `43e7170`, `--no-ff`, conflict-free by
+  construction (linear ancestry). `npm run verify` exit 0 on the merged
+  `main` (161 tests, all gates). P5 starts from the merge on
+  `p5/recovery-lifecycle`.
