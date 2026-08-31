@@ -3,9 +3,14 @@
 - `tests/core-contract.spec.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/g1-defined-risk.spec.ts`
+- `tests/g12-fencing.spec.ts`
+- `tests/g12-halt.spec.ts`
 - `tests/g2-budget.spec.ts`
 - `tests/g3-g4-risk-caps.spec.ts`
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
 - `tests/g8-schema-whitelist.spec.ts`
+- `tests/j1-j2-journal-format.spec.ts`
+- `tests/j3-j4-entry-schemas.spec.ts`
+- `tests/j5-j6-redaction-binding.spec.ts`

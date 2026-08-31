@@ -26,23 +26,39 @@
 - `package-lock.json`
 - `package.json`
 - `README.md` — Glass Box Trading
+- `src/core/authority.ts` — Pure writer-authority core (S-G12-01/02/07, S-J-06): epoch acquisition
 - `src/core/decision.ts`
 - `src/core/domain.ts`
+- `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
 - `src/core/order-identity.ts`
 - `src/fixtures/p1-recorded-cycle.ts`
+- `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
+- `src/shell/gateway-cli.ts` — Process-level driver for the fencing and serialization tests: each
+- `src/shell/halt-state.ts` — The persisted halt flag (S-G12-05): a file in STATE_DIR, written only as
+- `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
+- `src/shell/manual-unhalt.ts` — The one human path that clears the halt flag (S-G12-04). It is not
+- `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
 - `src/shell/render-decision-view.ts`
 - `src/shell/render-fixture.ts`
+- `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `STATE.md` — STATE — live cursor
 - `tests/core-contract.spec.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/fixtures.ts`
 - `tests/g1-defined-risk.spec.ts`
+- `tests/g12-fencing.spec.ts`
+- `tests/g12-halt.spec.ts`
 - `tests/g2-budget.spec.ts`
 - `tests/g3-g4-risk-caps.spec.ts`
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
 - `tests/g8-schema-whitelist.spec.ts`
+- `tests/global-setup.ts` — Compiles src/** once per test run into a scratch directory so that the
+- `tests/j1-j2-journal-format.spec.ts`
+- `tests/j3-j4-entry-schemas.spec.ts`
+- `tests/j5-j6-redaction-binding.spec.ts`
+- `tests/journal-fixtures.ts`
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`

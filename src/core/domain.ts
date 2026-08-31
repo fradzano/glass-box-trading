@@ -195,7 +195,7 @@ export interface EntryActionPlan {
 }
 
 export interface DecisionResult {
-  readonly batchVerdicts: readonly ({ readonly code: "STALE_SNAPSHOT" | "SCHEMA_VETO"; readonly reason: string })[];
+  readonly batchVerdicts: readonly ({ readonly code: "STALE_SNAPSHOT" | "SCHEMA_VETO" | "HALT"; readonly reason: string })[];
   readonly candidateVerdicts: readonly CandidateVerdict[];
   readonly actions: readonly EntryActionPlan[];
 }

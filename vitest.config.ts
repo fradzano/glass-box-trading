@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     coverage: { enabled: false },
     include: ["tests/**/*.spec.ts"],
+    globalSetup: ["tests/global-setup.ts"],
   },
 });
