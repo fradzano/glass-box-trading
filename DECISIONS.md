@@ -491,5 +491,21 @@ small, no ADR split).
   Closed at `6677b24`: the `INCREMENT` plan inherits `seedPending`, the
   gateway persists it on the new epoch, only the `BOOTSTRAP` append clears
   it. The third call (`task-mth87op3-454yk7`, `--write`, claims restated
-  for `6677b24`) is the counter-verification of record; its verdict is
-  recorded in the entry below.
+  for `6677b24`) executed its probes and returned **`REFUTED`** at
+  `d74d2ce`: claims 2 (nine-process race) and 4 (torn UTF-8 tail) held,
+  three closures were required — **G3-F1** the entry's own epoch field was
+  never bound to the request epoch (a `CYCLE` claiming epoch 99 landed under
+  epoch 1); **G3-F2** the persisted holder id was treated as acquisition, so
+  a fresh gateway with the same `instanceId` reached the broker port and
+  appended without ever acquiring; **G3-F3** the reset path persisted the
+  store before its `GAP`/`HALT` pair, so a failed append left a silently
+  seeded store. All three closed at `c13ab5e` (`ENTRY_EPOCH_MISMATCH`;
+  `NOT_ACQUIRED_IN_PROCESS` — authority is the epoch *this gateway instance
+  won in this process*; `GAP`, `HALT`, and the flag durable before store and
+  holder, a thrown write is a refused acquisition), plus the variant that
+  one witness line per instance now holds across types. **The closures at
+  `c13ab5e` are not yet counter-verified by a gate**: the fourth call
+  (`task-mth9f0wj-a6cuce`, fix verification with adjacent variants) is the
+  one whose verdict decides; until it lands, P2 is green on its own gates
+  and mutation probe but carries an open fix-verification, and must not be
+  reported as counter-verified.

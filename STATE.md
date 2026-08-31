@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 afternoon (P2 implemented and green on its branch; blind gate on the fencing gateway running)
-**Branch:** `p2/journal-authority` at `6677b24` + docs (implementation `d8281e5`, docs `462b5ae`/`d926b81`, gate-finding fixes `0431ac9` and `6677b24`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Last updated:** 2026-08-31 late afternoon (P2 green on its branch after three gate findings were closed; fix verification running)
+**Branch:** `p2/journal-authority` at `c13ab5e` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`; docs `462b5ae`/`d926b81`/`d74d2ce`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
@@ -96,10 +96,16 @@ One phase per session; every session ends with the handoff protocol in
   in memory only; see DECISIONS.md); second call `task-mth7dgrq-6dx7ps`
   ran read-only, could execute nothing (`VERDICT: NOT ISSUED`) but found
   G2-F1 (seed obligation cleared by takeover), closed at `6677b24`; third
-  call `task-mth87op3-454yk7` (`prompts/G3-fixverify-fencing-gateway.md`,
-  launched with `--write`) is the one of record — archive its return under
-  `responses/`, copy the verdict into DECISIONS.md, and only then propose
-  the merge to Felix.
+  call `task-mth87op3-454yk7` (`--write`) executed and returned **REFUTED**
+  with three class-A findings G3-F1/F2/F3 (entry epoch unbound; persisted
+  holder id treated as acquisition — reached the broker port; reset path
+  persisted the store before `GAP`/`HALT`), all closed at `c13ab5e`
+  (`npm run verify` exit 0, 76 tests); fourth call `task-mth9f0wj-a6cuce`
+  (`prompts/G4-fixverify-fencing-gateway.md`, `--write`) is the **fix
+  verification** of those closures and is the verdict of record — archive
+  its return under `responses/`, copy the verdict into DECISIONS.md, and
+  only then propose the merge to Felix. Until it lands, P2 is *not*
+  counter-verified.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
