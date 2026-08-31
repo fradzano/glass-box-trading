@@ -529,8 +529,28 @@ small, no ADR split).
   `RESET_PENDING` and `SEED_NOT_JOURNALED` before touching the journal. The
   seventh call (`task-mthb03w7-pwxs9p`, fix verification of G6-F1 with the
   manual path under pending, seed-pending, normal, sticky, and live-writer
-  stores) is the one whose verdict decides; until it lands, P2 is green on
-  its own gates and mutation probe, carries five gate-confirmed closures and
-  the pending-reset redesign confirmed under all its reset variants, and
-  one open fix-verification on the manual path; it must not be reported as
-  fully counter-verified.
+  stores) returned **`CONFIRMED`** at `5d875ea`, with no new path found.
+- **2026-08-31 — P2 closing state: green, gate-confirmed on its riskiest
+  mechanism, awaiting the owner's word for the merge.** Final code commit
+  `615dbd0` on `p2/journal-authority` (`npm run verify` exit 0: 76 tests,
+  static and sandbox gates, partition check). What the reduced depth
+  delivered for the epoch/fencing gateway: seven blind gate calls — two ended
+  by the provider content filter, one read-only without a verdict, one
+  `REFUTED` with three findings, two `REJECTED` with one finding each, one
+  `CONFIRMED` — and seven closed findings (G1-F1/F2, G2-F1, G3-F1/F2/F3,
+  G5-F1, G6-F1), the last two on the reset path where the second seam
+  forced a design change (persisted pending acquisition) rather than a third
+  patch. Confirmed by executed evidence: entry epoch bound to the request,
+  acquisition in this process, persisted holder id is not authority, one
+  witness line per instance and never the broker, atomic
+  compare-and-increment across nine processes, serialized appends with a
+  UTF-8 torn tail, pending-seed and pending-reset obligations under every
+  interruption, rival, half-pair, and concurrent variant, and the manual
+  un-halt path. Not counter-verified by a gate: the Windows rename retry in
+  `writeJsonAtomically` (`615dbd0`, a robustness fix observed by the seventh
+  reviewer) and everything outside the gateway beyond the repository gates
+  and the 9/9 mutation probe (schemas, redaction, binding, halt fold). This
+  is the declared reduced depth, not a bis-0 termination. Record:
+  `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority\LEDGER.md`.
+  Merge into local `main` only on Felix's word; P3 starts from the accepted
+  P2 on its own branch.

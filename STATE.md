@@ -6,9 +6,9 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 evening (P2 green on its branch; six gate calls, seven findings closed; the manual-un-halt closure's fix verification is running)
-**Branch:** `p2/journal-authority` at `5d875ea` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`, `5d875ea`; docs through `ae10d80`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
-**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
+**Last updated:** 2026-08-31 evening (P2 closed on its branch: green, riskiest mechanism gate-confirmed after seven calls; awaiting Felix's merge word)
+**Branch:** `p2/journal-authority` at `615dbd0` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`, `5d875ea`; robustness `615dbd0`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on its branch and not yet merged**: it awaits Felix's word.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
 ([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p2--durable-journal-and-mutation-authority)) — implementation complete, closing
@@ -110,12 +110,17 @@ One phase per session; every session ends with the handoff protocol in
   executed: every reset variant **held**, one adjacent path **rejected** as
   G6-F1 (manual un-halt bypassed the pending-reset guard → duplicate pair)
   → closed at `5d875ea`; seventh call `task-mthb03w7-pwxs9p`
-  (`prompts/G7-fixverify-manual-unhalt.md`, `--write`) is the **fix
-  verification of G6-F1** and the verdict of record — archive its return
-  under `responses/`, copy the verdict into DECISIONS.md, and only then
-  propose the merge to Felix. Until it lands, the manual un-halt path is
-  *not* counter-verified; the gateway's authority rule, the reset path, and
-  the witness rule are.
+  (`prompts/G7-fixverify-manual-unhalt.md`, `--write`) returned
+  **CONFIRMED** at `5d875ea`; its reviewer also observed a Windows rename
+  sharing flake in the five-process test, closed at `615dbd0` (not
+  gate-verified). **P2 closing state:** `npm run verify` exit 0 at `615dbd0`
+  (76 tests); the epoch/fencing gateway, the reset path, the witness rule,
+  and the manual un-halt path are gate-confirmed by executed evidence;
+  schemas, redaction, binding, and the halt fold rest on the repository
+  gates and the 9/9 mutation probe only (declared reduced depth,
+  DECISIONS.md 2026-08-31). **Next action is Felix's:** merge
+  `p2/journal-authority` into local `main` (`--no-ff`), or not. P3 then
+  branches from the merge.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
