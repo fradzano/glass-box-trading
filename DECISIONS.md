@@ -881,3 +881,26 @@ small, no ADR split).
   zero floor rests at one cent, the smallest legal credit at the floor
   (a zero-price limit order does not exist); with a zero bid such an
   order never fills, which is exactly the S-X-06 expiry-hold precondition.
+- **2026-08-31 — P5 closing state: green, gate-confirmed on its riskiest
+  mechanism at the first call, awaiting the owner's word for the merge.**
+  Final code commit `c4d055c` on `p5/recovery-lifecycle` (`npm run verify`
+  exit 0: 216 tests, static and sandbox gates, partition check). The
+  reduced depth delivered: 15/15 mutation probe (two equivalent mutants
+  declared and replaced by real ones at the same sites, both caught;
+  every mutant compiled before its run), and one blind gate call
+  **CONFIRMED** (Codex job `task-mtho7bkg-yg3zi8`, no filter abort, all
+  five claims on executed evidence: the width cap holds under escalation
+  with one non-stacked halt; a lost cancel acknowledgement never spawns a
+  parallel close child; the watchdog fences before acting, dispatches
+  three closes for three lifecycles without duplicates, and stays quiet
+  against a live writer; bounded/unbounded residue discrimination end to
+  end; the recovery layer reaches no entry and no analyst). Confirmed by
+  executed evidence: the escalation ladder and its caps, the watchdog
+  takeover, the residue discrimination, the recovery/entry separation.
+  Not gate-verified beyond the repository gates and the 15/15 probe: the
+  classification details, the provenance proof, the ping plan, and the
+  deadline entries. This is the declared reduced depth, not a bis-0
+  termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p5-recovery-lifecycle/LEDGER.md`.
+  Merge into local `main` only on Felix's word; P6 starts from the
+  accepted P5 on its own branch.

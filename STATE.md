@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P4 merged to local `main` as `43e7170` on Felix's word; P5 opened on `p5/recovery-lifecycle` from the merge)
-**Branch:** `p5/recovery-lifecycle` from the P4 merge `43e7170` on local `main`; no GitHub remote yet
+**Last updated:** 2026-08-31 late night (P4 merged to local `main` as `43e7170` on Felix's word; P5 closed on its branch: green at `c4d055c`, watchdog/ladder boundary gate-CONFIRMED at the first call; the P5 merge awaits Felix's word)
+**Branch:** `p5/recovery-lifecycle` at `c4d055c` plus docs commits (from the P4 merge `43e7170` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P4 — merge commit `43e7170` on local `main` (2026-08-31; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (161 tests).
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P5 — recovery and lifecycle
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p5--recovery-and-lifecycle)) — in progress
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p5--recovery-and-lifecycle)) — implementation complete, closed on its branch
 
 ## Done
 
@@ -252,7 +252,40 @@ One phase per session; every session ends with the handoff protocol in
   declared and replaced by real ones at the same sites, both caught; every
   mutant compiled before its run). **Blind gate on the watchdog/ladder
   boundary:** first call Codex job `task-mtho7bkg-yg3zi8`
-  (`prompts/G1-watchdog-ladder.md`, `--write`) — verdict pending.
+  (`prompts/G1-watchdog-ladder.md`, `--write`, 20m17s, no filter abort)
+  returned **CONFIRMED** at `18eeab1` (implementation `c4d055c`; the
+  intervening commit is docs-only, noted by the reviewer) across all five
+  executed claims: submitted close limits 200/500/500 with one
+  non-stacked `CLOSE_LADDER_CAPPED` halt and attempts continuing AT the
+  cap; a lost cancel acknowledgement never spawns a parallel close child
+  and a fill-during-cancel reduces exposure via the journaled OUTCOME
+  only; the watchdog fences first (old writer `STALE_EPOCH`), closes the
+  intact structure whole and both unbounded residues leg-wise with no
+  duplicate, and stays quiet against a live writer and on immediate
+  re-invocation; the bounded long floors at 1 cent while the short-stock
+  buy-back escalates uncapped; zero analyst calls and zero entry
+  submissions on every recovery path. No bounded change required; no
+  observations declared. **P5 closing state:** the escalation ladder and
+  its caps, the watchdog takeover, the residue discrimination, and the
+  recovery/entry separation are gate-confirmed by executed evidence; the
+  classification details, provenance proof, ping plan, and deadline
+  entries rest on the repository gates and the 15/15 probe (declared
+  reduced depth, DECISIONS.md 2026-08-31). **Not merged.** Next action is
+  Felix's: merge `p5/recovery-lifecycle` (`--no-ff`) onto `main`, or not.
+  P6 then branches from the accepted P5.
+- **Felix's merge word for `p5/recovery-lifecycle`** (`--no-ff` onto
+  `main`); the branch is closed and gate-confirmed at the first call.
+- **P6 — public evidence pipeline** on its own branch from the accepted
+  P5: pure journal projection, static dashboard rendering a chosen
+  committed revision with explicit cutoff, immutable candidate build,
+  anonymous probe contract, promotion/rollback, the deterministic golden
+  path, and the S-CYC-12 checkpoint/window/failure projection. Scope in
+  `config/implementation-phases.json` (5 cases: S-CYC-07, S-CYC-12,
+  S-J-07..09). The WIN-1 S-J-09 half and WIN-2's SUB-08 half land here.
+- Deferred out of P5, tracked: real scheduler wiring of the lifecycle
+  dependency record (`finalCycleOfSession`, `nextTradingDay`,
+  provenance/exercise-protection ports — P7's dev certificate wires
+  them), the healthchecks.io ping adapter behind the `PingPort` shape.
 - Deferred out of P4, tracked: real analyst/market adapters for the runner
   (the MCP child exists behind ports; the Claude analyst call itself and
   live market data are wired at P7's dev certificate), the Windows
