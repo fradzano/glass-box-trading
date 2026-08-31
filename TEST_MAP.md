@@ -3,8 +3,11 @@
 - `tests/core-contract.spec.ts`
 - `tests/cyc-runner.spec.ts`
 - `tests/cyc05-g13-cyc06-core.spec.ts`
+- `tests/cyc11-mcp-verifier.spec.ts`
+- `tests/cyc11-startup-config.spec.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/g1-defined-risk.spec.ts`
+- `tests/g12-06-credential-fence.spec.ts`
 - `tests/g12-fencing.spec.ts`
 - `tests/g12-halt.spec.ts`
 - `tests/g2-budget.spec.ts`
