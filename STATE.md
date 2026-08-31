@@ -101,8 +101,10 @@ One phase per session; every session ends with the handoff protocol in
   holder id treated as acquisition — reached the broker port; reset path
   persisted the store before `GAP`/`HALT`), all closed at `c13ab5e`
   (`npm run verify` exit 0, 76 tests); fourth call `task-mth9f0wj-a6cuce`
-  (`prompts/G4-fixverify-fencing-gateway.md`, `--write`) is the **fix
-  verification** of those closures and is the verdict of record — archive
+  died at the provider content filter before any probe; fifth call
+  `task-mth9nyst-0i2n0y` (`prompts/G5-fixverify-fencing-gateway.md`,
+  `--write`, no verification skill) is the **fix verification** of those
+  closures and is the verdict of record — archive
   its return under `responses/`, copy the verdict into DECISIONS.md, and
   only then propose the merge to Felix. Until it lands, P2 is *not*
   counter-verified.
