@@ -292,6 +292,7 @@ async function exerciseCore() {
     ANALYST_MCP_CAPABILITY_MANIFEST: "config/analyst-mcp-readonly.json", ANALYST_MCP_RUNTIME_LOCK: "config/analyst-runtime-lock.json",
     ANALYST_ALPACA_PROFILE: "dev", QUALIFYING_ACTIVITY_CHECKPOINT: "2026-09-01T20:00:00Z",
     QUALIFICATION_WINDOW_END: "2026-09-02T20:00:00Z", QUALIFICATION_MAX_LOSS_CENTS: 50_000,
+    COMPETITION_START: "2026-08-28T15:00:00Z", FLATTEN_DATE: "2026-09-03",
   };
   const armed = startup.validateStartupConfig(validRaw, expectations);
   const refusedProfile = startup.validateStartupConfig({ ...validRaw, ALPACA_PROFILE: "prod" }, expectations);
@@ -327,6 +328,40 @@ async function exerciseCore() {
   const importPlanned = journal.planAppend({ lastSeq: 0, priorIntentRationales: [] }, importDraft, []);
   if (!importPlanned.ok || !startup.redactedViolationSummary(refusedProfile.ok ? [] : refusedProfile.violations).includes("ALPACA_PROFILE:UNKNOWN_PROFILE")) throw new Error("sandboxed startup journal material is wrong");
   paths.push("validateStartupConfig(armed / profile / unknown field / origin lookalike / short-capable without flag), manifest+lock schemas agree, verifyMcpLaunch(ok / self-learned hash / env leak), verifyMcpInventory(exact / extra), classifyBrokerFailure(401/403 fence), importedDiagnosticDraft → valid append");
+
+  // P5 lifecycle core: the deadline regime and entry veto, book classification, bootstrap-versus-gap,
+  // the escalation ladder and marketable residue limit, the expiry-hold proof, staleness, and the ping plan.
+  const lifecycle = await loadModuleGraph(context, path.join(DIST, "core", "lifecycle.js"));
+  if (lifecycle.deadlineRegime("2026-09-02", "2026-09-03") !== "normal" || lifecycle.deadlineRegime("2026-09-03", "2026-09-03") !== "flatten" || lifecycle.deadlineRegime("2026-09-04", "2026-09-03") !== "post_flatten") throw new Error("sandboxed deadline regime is wrong");
+  const vetoDeadline = lifecycle.lifecycleEntryVeto(candidate, { regime: "flatten", nextTradingDay: "2026-09-04" });
+  const vetoExpiry = lifecycle.lifecycleEntryVeto(candidate, { regime: "normal", nextTradingDay: "2026-09-04" });
+  const noVeto = lifecycle.lifecycleEntryVeto(candidate, { regime: "normal", nextTradingDay: "2026-09-01" });
+  if (vetoDeadline?.code !== "DEADLINE" || vetoExpiry?.code !== "EXPIRY" || noVeto !== null) throw new Error("sandboxed lifecycle entry veto is wrong");
+  const classifiedBook = { ...heldBook, positions: [...heldBook.positions, { contractId: "SPY", quantity: -100, avgEntryPriceCents: 50_000 }, { contractId: "TSLA", quantity: 1, avgEntryPriceCents: 1 }] };
+  const classified = lifecycle.classifyBook(classifiedBook, fold.entries, fold.closes, ["entry:x"]);
+  const classMap = Object.fromEntries(classified.positions.map(item => [item.contractId, item.class]));
+  if (classMap.SHORT !== "MATCHED" || classMap.SPY !== "RESIDUE" || classMap.TSLA !== "HUMAN_ACTION" || classified.orders.some(item => item.clientOrderId === "entry:x" && item.class !== "CONFIRMATION_UNCLEAR")) throw new Error("sandboxed book classification is wrong");
+  const bootstrapPlan = lifecycle.planPrimaryEntry({ journalEmpty: true, bookVirgin: true, lastPrimaryAtMs: null, nowMs: ms, cycleIntervalMs: 900_000 });
+  const foreignPlan = lifecycle.planPrimaryEntry({ journalEmpty: true, bookVirgin: false, lastPrimaryAtMs: null, nowMs: ms, cycleIntervalMs: 900_000 });
+  const gapPlan = lifecycle.planPrimaryEntry({ journalEmpty: false, bookVirgin: true, lastPrimaryAtMs: ms - 3_600_000, nowMs: ms, cycleIntervalMs: 900_000 });
+  if (bootstrapPlan.kind !== "BOOTSTRAP" || foreignPlan.kind !== "FOREIGN_BOOK_GAP" || gapPlan.kind !== "GAP") throw new Error("sandboxed primary planning is wrong");
+  const escalated = lifecycle.escalateCloseLimit([{ ...legs[0], side: "buy" }, { ...legs[1], side: "sell" }], quotes, 2, 25, lifecycle.closeCapFor(candidate));
+  const atCap = lifecycle.escalateCloseLimit([{ ...legs[0], side: "buy" }, { ...legs[1], side: "sell" }], quotes, 2, 300, lifecycle.closeCapFor(candidate));
+  const marketable = lifecycle.marketableCloseLimit([{ ...legs[0], side: "buy" }], quotes, 1, 10);
+  if (!escalated.ok || escalated.limit.priceCents !== 250 || !atCap.ok || !atCap.atCap || atCap.limit.priceCents !== 500 || !marketable.ok || marketable.limit.priceCents !== 312) throw new Error("sandboxed escalation ladder is wrong");
+  const holdProof = lifecycle.evaluateExpiryHold({ contract: { contractId: "LONG", underlying: "SPY", expiry: "2026-09-04", strikeCents: domain.integerUnit(50_500, "StrikeCents"), right: "call" }, quantity: 1, quote: { ...quotes.LONG, bidCents: domain.integerUnit(0, "OptionPriceCents") }, spotCents: 50_000, pairedShortOrLiability: false, exerciseProtectionConfirmed: true }, ms, 60_000);
+  const holdRefused = lifecycle.evaluateExpiryHold({ contract: { contractId: "LONG", underlying: "SPY", expiry: "2026-09-04", strikeCents: domain.integerUnit(50_500, "StrikeCents"), right: "call" }, quantity: 1, quote: quotes.LONG, spotCents: 50_000, pairedShortOrLiability: false, exerciseProtectionConfirmed: true }, ms, 60_000);
+  if (!holdProof.ok || holdRefused.ok) throw new Error("sandboxed expiry-hold proof is wrong");
+  const session = { isTradingDay: true, opensAt: ms - 1_000, closesAt: ms + 1_000 };
+  const staleAssessment = lifecycle.assessStaleness(ms, session, ms - 5_000, 3_000);
+  const quietAssessment = lifecycle.assessStaleness(ms, { ...session, isTradingDay: false }, ms - 5_000, 3_000);
+  const failPing = lifecycle.planPing({ durableAppendLanded: true, alarmConditions: ["X"] });
+  const successPing = lifecycle.planPing({ durableAppendLanded: true, alarmConditions: [] });
+  if (staleAssessment.kind !== "stale" || quietAssessment.kind !== "quiet" || failPing.kind !== "fail" || successPing.kind !== "success") throw new Error("sandboxed staleness or ping planning is wrong");
+  const provenance = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-28T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityHistory: { complete: true, items: 0 } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
+  const reused = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-27T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityHistory: { complete: true, items: 0 } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
+  if (!provenance.ok || reused.ok || !reused.reuseEvidence) throw new Error("sandboxed provenance proof is wrong");
+  paths.push("deadlineRegime(normal/flatten/post), lifecycleEntryVeto(DEADLINE/EXPIRY/none), classifyBook(matched/residue/human/unclear), planPrimaryEntry(bootstrap/foreign/gap), escalateCloseLimit(step / AT cap 500) + marketableCloseLimit(312), evaluateExpiryHold(proof ok / nonzero bid refused), assessStaleness(stale/quiet) + planPing(fail-over-success), validateCompetitionProvenance(virgin ok / reuse flagged)");
   return paths;
 }
 

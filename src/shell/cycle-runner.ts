@@ -463,7 +463,13 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   const unresolvedIds = entriesBlocked.filter(item => item.startsWith("UNRESOLVED:")).map(item => item.slice("UNRESOLVED:".length));
   if (lifecycleDeps !== null && primaryType !== "BOOTSTRAP") {
     classification = classifyBook(book, lifecycles, closes, unresolvedIds);
-    if (classification.nonMatched.length > 0) {
+    // A declared expiry hold is a TERMINAL residue state (S-X-06): visible and not-flat, but no longer unresolved.
+    const holdSet = new Set(declaredHolds);
+    const unresolved = classification.nonMatched.filter(item => !(item.kind === "position" && holdSet.has(item.contractId)));
+    // Our own intent-without-resolved-outcome blocks transiently through the phase-0 UNRESOLVED mechanism
+    // (S-CYC-10: only a successful classification unblocks — a durable halt would demand a human instead).
+    const hard = unresolved.filter(item => item.class !== "CONFIRMATION_UNCLEAR");
+    if (unresolved.length > 0) {
       await append(bookReconciliationDraft(context(), deps.tradingDay, classification));
       const humans = classification.positions.filter(item => item.class === "HUMAN_ACTION");
       for (const item of humans) {
@@ -474,7 +480,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         await haltFor("PROVENANCE_BROKEN", "manual competition activity detected; the provenance latch is irreversible (S-G10-05, S-CYC-09)");
         alarmConditions.push("PROVENANCE_BROKEN");
       }
-      await haltFor("RESIDUE_UNRESOLVED", `unexplained broker state: ${String(classification.nonMatched.length)} non-MATCHED item(s); new entries halt while risk-reducing resolution continues`);
+      if (hard.length > 0) {
+        await haltFor("RESIDUE_UNRESOLVED", `unexplained broker state: ${String(hard.length)} non-MATCHED item(s); new entries halt while risk-reducing resolution continues`);
+      }
       entriesBlocked.push("RECONCILIATION");
       // BEQ-9: beyond RESIDUE_MAX_SESSIONS the condition raises the active fail-signal while attempts and halt continue.
       const sessions = new Set([...unresolvedReconciliationSessions(entries), deps.tradingDay]);

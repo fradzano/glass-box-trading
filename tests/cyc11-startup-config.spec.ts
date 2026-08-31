@@ -23,6 +23,10 @@ import type { StartupOutcome, StartupPorts } from "../src/shell/startup.js";
 import { resolveStateDir } from "../src/shell/state-dir.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN, journalSnapshot } from "./journal-fixtures.js";
 import { validStartupConfig } from "./startup-fixtures.js";
+
+// P5 extended the closed §0 field set by COMPETITION_START and FLATTEN_DATE
+// (S-CYC-09, G11); their validation is part of the S-CYC-11 fail-closed
+// surface and lives here beside the fields they couple with.
 import type { RawStartupConfig } from "./startup-fixtures.js";
 
 const temporaryDirectories: string[] = [];
@@ -312,5 +316,21 @@ describe("S-CYC-11 shell paths — refusal is durable, the narrow path stays nar
     expect(shell.outcome.armed).toBe(false);
     expect(shell.outcome.refusal).toBe("CONFIG_INVALID");
     expect(shell.outcome.violations.map(item => item.field)).toContain("BOOTSTRAP_DIAGNOSTIC_SINK");
+  });
+});
+
+describe("S-CYC-11 (P5) — the calendar symbols joined the closed field set", () => {
+  it("FLATTEN_DATE must be a valid calendar date and COMPETITION_START a UTC ISO timestamp; both are required", () => {
+    expect(codesFor({ FLATTEN_DATE: undefined })).toContain("MISSING");
+    expect(codesFor({ FLATTEN_DATE: "03.09.2026" })).toContain("WRONG_TYPE");
+    expect(codesFor({ FLATTEN_DATE: "2026-02-30" })).toContain("WRONG_TYPE");
+    expect(codesFor({ COMPETITION_START: undefined })).toContain("MISSING");
+    expect(codesFor({ COMPETITION_START: "2026-08-28" })).toContain("WRONG_TYPE");
+  });
+
+  it("COMPETITION_START must precede the qualifying checkpoint (CALENDAR_UNORDERED)", () => {
+    expect(codesFor({ COMPETITION_START: "2026-09-01T20:00:00Z" })).toContain("CALENDAR_UNORDERED");
+    expect(codesFor({ COMPETITION_START: "2026-09-02T00:00:00Z" })).toContain("CALENDAR_UNORDERED");
+    expect(codesFor({ COMPETITION_START: "2026-08-28T15:00:00Z" })).toEqual([]);
   });
 });
