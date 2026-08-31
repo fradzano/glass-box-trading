@@ -198,8 +198,15 @@ One phase per session; every session ends with the handoff protocol in
   (`LEDGER.md`): mutation probe **15/15 caught** at `43ce65f` (each mutant
   compiled before its run). **Blind gate on the startup/launch boundary:**
   first call Codex job `task-mthi2xj7-ae4fpy`
-  (`prompts/G1-startup-boundary.md`, `--write`, from the repo cwd) —
-  verdict **pending**; P4 is *green and probed*, not yet gate-confirmed.
+  (`prompts/G1-startup-boundary.md`, `--write`, no filter abort, 16
+  executed variants) returned **REJECTED** on one variant, G1-F1 (a 401
+  first seen on the phase-4 re-check fetch after a durable INTENT left no
+  `AUTH_FAILURE` record, and the recovered next cycle submitted an order),
+  closed red-first at `2aa30fc` (the re-check fetch fences through the
+  same halt path; 161 tests, `npm run verify` exit 0); every other claim
+  held, two observations declared without fix (ledger). Fix verification:
+  Codex job `task-mthjmppo-yaet07`
+  (`prompts/G2-fixverify-recheck-fence.md`) — verdict **pending**.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full

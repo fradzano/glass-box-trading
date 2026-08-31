@@ -763,3 +763,25 @@ small, no ADR split).
   those parts. The Windows-event-log implementation of the diagnostic sink
   is likewise deferred to pre-arming; the file-backed sink carries the
   contract under fakes.
+- **2026-08-31 — P4 gate finding G1-F1 closed: the credential fence also
+  fences the phase-4 re-check.** The first blind gate call on the
+  startup/launch boundary (Codex job `task-mthi2xj7-ae4fpy`, **REJECTED**,
+  16 executed variants) executed the case 401 first on the re-check fetch
+  after a durable INTENT: the runner recorded only a generic
+  `REVALIDATION_VOID`, set no halt, and the next cycle with restored
+  credentials consulted the analyst and submitted an order. Closed
+  red-first at `2aa30fc`: the re-check fetch classifies 401/403 through the
+  same `haltForAuthFailure` path as the snapshot and phase-0 reads — one
+  durable non-sticky `HALT AUTH_FAILURE`, the void still documents the
+  violated claims, later plans of the cycle are blocked, the recovered
+  cycle stays management-only until a human un-halts. Declared deviation
+  from the gate's bounded change: no second primary `SKIP` line — the
+  cycle's primary `CYCLE` already landed, and one primary line per cycle
+  is the journal's invariant; the `HALT` carries the durable
+  `AUTH_FAILURE` evidence. Two observations declared without fix (ledger):
+  a phase-0 fence leaves `CYCLE` as the primary line like every other
+  halted cycle, and a journal append failing after the store check falls
+  back to the sink's `CONFIG_INVALID_UNJOURNALABLE` as designed. Every
+  startup-refusal, launcher, and world-class claim held on executed
+  evidence. Fix verification launched as Codex job `task-mthjmppo-yaet07`;
+  verdict recorded in the store's `LEDGER.md` and `STATE.md` → Now.
