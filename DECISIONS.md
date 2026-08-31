@@ -469,7 +469,19 @@ small, no ADR split).
   six bis-0 criteria are not claimed for these phases and must not be
   reported as met. For P2 the record is the store
   `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority`
-  (`LEDGER.md`): `npm run verify` exit 0 at `d8281e5`; mutation probe 9/9
-  caught (one mutant re-run after a non-compiling first form); blind gate on
-  the epoch/fencing gateway launched as Codex job `task-mth6xs72-d7lqbi`
-  (verdict recorded below when archived).
+  (`LEDGER.md`): `npm run verify` exit 0 at `d8281e5` and `0431ac9`;
+  mutation probe 9/9 caught (one mutant re-run after a non-compiling first
+  form); blind gate on the epoch/fencing gateway: the first call
+  (`task-mth6xs72-d7lqbi`) was ended by the provider content filter without
+  a verdict, but its interim inspection named two real edges, closed
+  red-first at `0431ac9` — **G1-F1**: epoch equality plus a fresh rival
+  heartbeat was the whole holder check, so an instance that had only
+  *observed* the winner's epoch could dispatch under it once the winner's
+  heartbeat aged out; now the store's `holderId` must be the requesting
+  instance (`NOT_THE_WRITER`), the heartbeat only decides suppression at
+  acquisition. **G1-F2**: the virgin-seed obligation lived in process
+  memory; now `seedPending` is persisted in `epoch.json` and cleared
+  atomically after the `BOOTSTRAP` append, so a restart inherits it. The
+  second call (`task-mth7dgrq-6dx7ps`, neutral vocabulary, claims
+  restated for `0431ac9`) is the counter-verification of record; its
+  verdict is recorded in the entry below.

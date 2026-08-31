@@ -7,7 +7,7 @@
 > every decision.
 
 **Last updated:** 2026-08-31 afternoon (P2 implemented and green on its branch; blind gate on the fencing gateway running)
-**Branch:** `p2/journal-authority` at `d8281e5` + docs commit (branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Branch:** `p2/journal-authority` at `0431ac9` (implementation `d8281e5`, docs `462b5ae`, gate-finding fixes `0431ac9`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
@@ -90,10 +90,13 @@ One phase per session; every session ends with the handoff protocol in
   WIN-9 (◐, the S-CYC-11 halves belong to P4). Verification record: store
   `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority`
   (`LEDGER.md`): mutation probe 9/9 caught; blind gate on the epoch/fencing
-  gateway = Codex job `task-mth6xs72-d7lqbi` (prompt
-  `prompts/G1-fixverify-fencing-gateway.md`), **result pending** at the time
-  of this update — archive its return under `responses/`, copy the verdict
-  into DECISIONS.md, and only then propose the merge to Felix.
+  gateway: first call `task-mth6xs72-d7lqbi` aborted by the provider content
+  filter (no verdict) after naming two edges that were real and are closed
+  at `0431ac9` (G1-F1 observed-but-not-acquired epoch, G1-F2 seed obligation
+  in memory only; see DECISIONS.md); second call `task-mth7dgrq-6dx7ps`
+  (prompt `prompts/G2-fixverify-fencing-gateway.md`) is the one of record —
+  archive its return under `responses/`, copy the verdict into DECISIONS.md,
+  and only then propose the merge to Felix.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
