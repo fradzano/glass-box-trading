@@ -17,7 +17,7 @@ npm.cmd ci --ignore-scripts
 npm.cmd run verify
 ```
 
-`verify` runs the typechecker, ESLint, 37 allocated SPEC cases plus the fixture acceptance test, the `src/core/**` architecture boundary, a clean build, the local fixture render, and the 90-case phase-partition check. On shells that do not block PowerShell script shims, `npm` is equivalent to `npm.cmd`.
+`verify` runs the typechecker, ESLint, 37 allocated SPEC cases plus the fixture acceptance test, the `src/core/**` architecture boundary (static provenance allow-list with self-test), a clean build, the local fixture render, the sandbox gate (the compiled core executed inside a `node:vm` realm with no clock, randomness, environment, locale, or code generation; `npm.cmd run sandbox` after a build), and the 90-case phase-partition check. On shells that do not block PowerShell script shims, `npm` is equivalent to `npm.cmd`.
 
 The rendered local evidence is `artifacts/p1-decision-view.html`. It is generated from one pure `decide(...)` result containing a complete pass and a reasoned veto. The pass produces an `ENTRY_ACTION_PLAN`; no code in P1 can submit it.
 

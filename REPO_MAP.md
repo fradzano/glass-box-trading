@@ -47,6 +47,7 @@
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
+- `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tsconfig.build.json`
 - `tsconfig.json`
 - `vitest.config.ts`

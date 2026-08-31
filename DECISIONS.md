@@ -271,3 +271,64 @@ small, no ADR split).
   relative escapes. Fixture I/O and HTML rendering live under `src/shell/**`.
   The local pass stops at `ENTRY_ACTION_PLAN`; no order-capable port or adapter
   exists in P1.
+- **2026-08-31 — The typed core boundary is trusted; validation happens before
+  `decide`.** Blind ruling during the P1 adversarial run (store
+  `responses/R4-ruling-typed-boundary.md`): `AGENTS.md`, `CONCEPT.md`, A12,
+  SPEC §1, and the phase plan place schema and shape validation in front of
+  the pure core. Type-invalid runtime values (a `null` contract record, a
+  missing prior-quote map) therefore throw inside the core instead of
+  producing a veto; this is declared residual `RES-P1-01` and every adapter
+  carries the obligation rows `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`.
+  Type-valid but semantically invalid inputs are made unrepresentable
+  instead: `LotCount` (constructed only by `lotCount(≥1)`) types candidate
+  quantities and leg ratios, a filled entry exists only as a `filled`
+  position component, and exposure counting fails closed unless a
+  reservation is explicitly `rejected`/`canceled`/`expired`. Decider if the
+  residual becomes live: Felix Radzanowski.
+- **2026-08-31 — Reserved maximum loss comes from one exact expiry-payoff
+  evaluation.** Per-structure formulas (S-G1-02/03) were the third seam on
+  the same mechanism (an overlapping "iron condor" was reserved at one wing).
+  `expiryPayoffBound` evaluates the piecewise-linear payoff at price zero,
+  every strike, and beyond the highest strike with BigInt arithmetic; a
+  negative far slope is unbounded loss. Declared-structure checks still
+  constrain which patterns may pass (and now require the short put below the
+  short call), but the number is never a formula. Tests compare every
+  reservation to an independent payoff scan.
+- **2026-08-31 — Action plans are deep-frozen copies.** The core returns
+  `ENTRY_ACTION_PLAN` values whose limit and legs are copied and frozen, so
+  no holder of the analyst batch can alter an approved plan after the fact.
+- **2026-08-31 — The architecture gate is a provenance allow-list, not a
+  syntax deny-list.** Blind ruling (`responses/R4-ruling-architecture-seam.md`)
+  on the third seam of the checker: shared completion gate 2 requires a rule
+  that *rejects* impurity, so a deny-list with a documented hole would
+  document non-fulfilment. `tools/check-core-architecture.mjs` now builds a
+  TypeScript program over `src/core/**` with `types: []` and `lib: es2024`
+  and requires every value-position identifier to resolve to core code or to a
+  reviewed ECMAScript allow-list; Node globals, `Date`, `Function`, `eval`,
+  `globalThis`, `Reflect`, `Proxy`, `Promise`, `Intl`, reflective members
+  (`constructor`/`prototype`/`__proto__`), descriptor/prototype APIs,
+  computed access on untyped or callable operands, casts that hide callables,
+  explicit `any`, ambient declarations (except unique-symbol brands), async
+  code, dynamic import, and non-`.ts` core files fail closed. The self-test
+  runs 35 mutants plus a pure control on every `npm run architecture`.
+  Declared limit: the gate proves what the declared core references, not that
+  the boundary sits at the right place — that stays with the Core/shell
+  lens. `.tmp/**` is ignored by ESLint so concurrent probe files cannot fail
+  `npm run verify`.
+- **2026-08-31 — Core purity is additionally enforced at runtime, because a
+  static gate cannot be sound against deliberate laundering.** Two blind
+  counter-verifications of the allow-list gate each produced a new laundering
+  path (structural types, type guards, destructuring, generics, alias
+  mutation, `Object.freeze(Math)`, `new Error().stack`). A second blind ruling
+  (`responses/R4-ruling-architecture-enforcement.md`) held that shared
+  completion gate 2 and SPEC §1 carry no "ordinary code only" qualifier, so
+  enforcement must hold against source-level laundering. `npm run sandbox`
+  (`tools/run-core-sandboxed.mjs`, part of `verify`) executes the compiled
+  core inside a `node:vm` realm whose intrinsics are frozen and in which
+  `Date`, `Intl`, `Math.random`, `eval`, every function constructor, and the
+  locale methods are absent or throw; it first proves the instrument on six
+  laundered mutants, then runs the recorded fixture twice (determinism), the
+  malformed-parser and stale-snapshot paths, a full-fill reconciliation, and a
+  fresh close plan. Declared limit: a runtime guard is complete only for the
+  paths it executes; the static gate remains the guard for unexecuted code,
+  and the Core/shell lens judges boundary placement.
