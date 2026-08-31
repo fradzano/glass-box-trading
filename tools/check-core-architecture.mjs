@@ -29,7 +29,7 @@ const CORE_ROOT = path.resolve("src/core");
 const ALLOWED_LIB_VALUES = new Set([
   "Array", "ArrayBuffer", "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView",
   "Error", "EvalError", "Float32Array", "Float64Array", "Infinity", "Int8Array", "Int16Array", "Int32Array",
-  "JSON", "Map", "Math", "NaN", "Number", "Object", "RangeError", "ReferenceError", "Set", "String", "Symbol",
+  "JSON", "Map", "Math", "NaN", "Number", "Object", "RangeError", "ReferenceError", "Set", "String",
   "SyntaxError", "TypeError", "URIError", "Uint8Array", "Uint8ClampedArray", "Uint16Array", "Uint32Array",
   "WeakMap", "WeakSet", "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
   "isFinite", "isNaN", "parseFloat", "parseInt", "undefined",
@@ -39,10 +39,25 @@ const FORBIDDEN_LIB_MEMBERS = new Set([
   "Math.random",
   "Symbol.for", "Symbol.keyFor",
   "Object.getPrototypeOf", "Object.setPrototypeOf", "Object.getOwnPropertyDescriptor",
-  "Object.getOwnPropertyDescriptors", "Object.defineProperty", "Object.defineProperties",
+  "Object.getOwnPropertyDescriptors", "Object.defineProperty", "Object.defineProperties", "Object.assign",
 ]);
 
-const FORBIDDEN_MEMBER_NAMES = new Set(["constructor", "__proto__", "prototype", "caller", "callee", "arguments"]);
+// Member names that are impure or reflective anywhere in the ECMAScript library.
+// They are denied by *name* -- as property access, computed literal access,
+// destructuring binding, property signature, or method name -- so that
+// structural typing, casts, generics, or destructuring cannot launder them.
+const FORBIDDEN_MEMBER_NAMES = new Set([
+  "constructor", "__proto__", "prototype", "caller", "callee", "arguments",
+  "random", "now",
+  "localeCompare", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", "toLocaleLowerCase", "toLocaleUpperCase",
+  "getPrototypeOf", "setPrototypeOf", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors", "defineProperty", "defineProperties", "assign",
+]);
+
+const ASSIGNMENT_OPERATORS = new Set([
+  ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.PercentEqualsToken, ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
 
 function compilerOptions() {
   return {
@@ -93,6 +108,12 @@ export function inspectCoreDirectory(coreRoot) {
 
   const program = ts.createProgram(sourceFiles, compilerOptions());
   const checker = program.getTypeChecker();
+  for (const diagnostic of ts.getPreEmitDiagnostics(program)) {
+    const file = diagnostic.file;
+    if (file !== undefined && isInside(root, file.fileName)) {
+      report(file.fileName, `core must type-check with no ambient types (strict, lib es2024 only): ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`);
+    }
+  }
 
   function symbolProvenance(symbol) {
     let resolved = symbol;
@@ -181,13 +202,27 @@ export function inspectCoreDirectory(coreRoot) {
         const sourceType = checker.getTypeAtLocation(node.expression);
         if (sourceType.getCallSignatures().length > 0 || sourceType.getConstructSignatures().length > 0) report(fileName, `type assertion hides a callable value '${node.getText(sourceFile)}'`);
       }
-      if (ts.isPropertyAccessExpression(node) && !isPartOfType(node)) {
-        if (FORBIDDEN_MEMBER_NAMES.has(node.name.text)) report(fileName, `forbidden reflective member '${node.getText(sourceFile)}'`);
+      if (ts.isPropertyAccessExpression(node)) {
+        if (FORBIDDEN_MEMBER_NAMES.has(node.name.text)) report(fileName, `forbidden reflective or impure member '${node.getText(sourceFile)}'`);
       }
+      if (ts.isBindingElement(node) || ts.isPropertySignature(node) || ts.isMethodSignature(node) || ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isMethodDeclaration(node) || ts.isPropertyDeclaration(node)) {
+        const nameNode = ts.isBindingElement(node) ? (node.propertyName ?? node.name) : node.name;
+        const spelledName = ts.isIdentifier(nameNode) || ts.isStringLiteralLike(nameNode) ? nameNode.text : null;
+        if (spelledName !== null && FORBIDDEN_MEMBER_NAMES.has(spelledName)) report(fileName, `forbidden reflective or impure member name '${spelledName}' in ${ts.SyntaxKind[node.kind]}`);
+      }
+      if (ts.isBinaryExpression(node) && ASSIGNMENT_OPERATORS.has(node.operatorToken.kind)) {
+        const target = node.left;
+        if ((ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) && isAnyOrCallable(checker.getTypeAtLocation(target.expression))) report(fileName, `mutation of a function object is hidden global state '${node.getText(sourceFile)}'`);
+      }
+      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
+        const target = node.operand;
+        if ((ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) && isAnyOrCallable(checker.getTypeAtLocation(target.expression))) report(fileName, `mutation of a function object is hidden global state '${node.getText(sourceFile)}'`);
+      }
+      if (ts.isDeleteExpression(node)) report(fileName, `delete is forbidden in the core '${node.getText(sourceFile)}'`);
       if (ts.isElementAccessExpression(node) && !isPartOfType(node)) {
         const argument = node.argumentExpression;
         if (ts.isStringLiteralLike(argument)) {
-          if (FORBIDDEN_MEMBER_NAMES.has(argument.text)) report(fileName, `forbidden reflective member '${node.getText(sourceFile)}'`);
+          if (FORBIDDEN_MEMBER_NAMES.has(argument.text)) report(fileName, `forbidden reflective or impure member '${node.getText(sourceFile)}'`);
           const symbol = checker.getSymbolAtLocation(argument);
           if (symbol !== undefined) {
             const provenance = symbolProvenance(symbol);
@@ -248,6 +283,7 @@ export function inspectInlineCore(files) {
   try {
     const core = path.join(temporary, "src", "core");
     mkdirSync(core, { recursive: true });
+    writeFileSync(path.join(temporary, "package.json"), JSON.stringify({ type: "module" }), "utf8");
     for (const [name, source] of Object.entries(files)) writeFileSync(path.join(core, name), source, "utf8");
     return inspectCoreDirectory(core).map(violation => violation.replace(/^.*?src[\\/]core[\\/]/u, ""));
   } finally {
@@ -267,8 +303,8 @@ function runSelfTest() {
     ["export function now() { return Date.now(); }", "not on the core allow-list"],
     ["export function now() { return Date['now'](); }", "not on the core allow-list"],
     ["export function today() { return Date(); }", "not on the core allow-list"],
-    ["export function roll() { return Math.random(); }", "forbidden standard-library member 'Math.random'"],
-    ["export function roll() { return Math['random'](); }", "forbidden standard-library member 'Math.random'"],
+    ["export function roll() { return Math.random(); }", "impure member 'Math.random'"],
+    ["export function roll() { return Math['random'](); }", "impure member"],
     ["export function key() { return process.env.KEY; }", "unresolved identifier 'process'"],
     ["export function key() { return globalThis['Date']; }", "not on the core allow-list"],
     ["export function key() { return eval('process.env.KEY'); }", "not on the core allow-list"],
@@ -282,10 +318,10 @@ function runSelfTest() {
     ["export function make(name: string) { const f = (function () {}) as unknown as Record<string, unknown>; return f[name]; }", "type assertion hides a callable value"],
     ["export function make(name: string, f: Record<string, unknown>) { return f[name]; }", "__PURE_COMPUTED_RECORD_ACCESS_ALLOWED__"],
     ["export function make(name: string) { const f = (() => 1) as any; return f[name](); }", "computed member access"],
-    ["export function proto() { return Object.getPrototypeOf(() => 1); }", "forbidden standard-library member 'Object.getPrototypeOf'"],
+    ["export function proto() { return Object.getPrototypeOf(() => 1); }", "impure member"],
     ["export function ref() { return Reflect.get({}, 'x'); }", "not on the core allow-list"],
     ["export function intl() { return new Intl.DateTimeFormat().format(0); }", "not on the core allow-list"],
-    ["export function sym() { return Symbol.for('registry'); }", "forbidden standard-library member 'Symbol.for'"],
+    ["export function sym() { return Symbol.for('registry'); }", "not on the core allow-list"],
     ["export function later() { return Promise.resolve(1); }", "not on the core allow-list"],
     ["export function later() { return setTimeout(() => 1, 0); }", "unresolved identifier 'setTimeout'"],
     ["export function copy<T>(value: T): T { return structuredClone(value); }", "unresolved identifier 'structuredClone'"],
@@ -293,6 +329,20 @@ function runSelfTest() {
     ["declare global { interface Window { x: number } } export const y = 1;", "global augmentation"],
     ["export function meta() { return import.meta.url; }", "import.meta"],
     ["export async function wait() { return await 1; }", "async code is forbidden"],
+    ["export function roll() { const m: { random(): number } = Math; return m.random(); }", "forbidden reflective or impure member"],
+    ["function isRandom(value: unknown): value is { random(): number } { return true; } export function roll() { const value: unknown = Math; return isRandom(value) ? value.random() : 0; }", "forbidden reflective or impure member"],
+    ["export function roll() { const { random } = Math; return random(); }", "forbidden reflective or impure member name 'random'"],
+    ["export function pick<T extends { random(): number }>(source: T): number { return source.random(); } export function roll() { return pick(Math); }", "forbidden reflective or impure member"],
+    ["export function make() { const { constructor } = function () {}; return constructor; }", "forbidden reflective or impure member name 'constructor'"],
+    ["export function fresh() { return Symbol('x'); }", "not on the core allow-list"],
+    ["export function bump() { (bump as unknown as { count: number }).count = 1; return 1; }", "hides a callable value"],
+    ["function tick() { return 1; } export function bump() { tick.count = (tick.count ?? 0) + 1; return tick.count; }", "core must type-check"],
+    ["export function order(left: string, right: string) { return left.localeCompare(right); }", "forbidden reflective or impure member"],
+    ["export function order(left: number) { return left.toLocaleString(); }", "forbidden reflective or impure member"],
+    ["export function grab(key: string) { return (Math as unknown as Record<string, () => number>)[key](); }", "call through a computed member"],
+    ["export function grab() { return Math['ran' + 'dom'](); }", "core must type-check"],
+    ["export function merge(a: object) { return Object.assign(a, { x: 1 }); }", "forbidden reflective or impure member"],
+    ["export function drop(record: Record<string, number>) { delete record['x']; return record; }", "delete is forbidden"],
   ];
   for (const [source, expected] of mutants) {
     const found = inspectInlineCore({ "mutant.ts": source });
@@ -321,6 +371,10 @@ function runSelfTest() {
       "export function collect(items: readonly string[]): ReadonlyMap<string, bigint> { const map = new Map<string, bigint>(); for (const item of items) map.set(item, 1n); return map; }",
       "export function fail(): never { throw new RangeError('boundary'); }",
       "export function encode(text: string): string { return encodeURIComponent(text); }",
+      "export function pick(values: readonly number[]): number { return Math.max(...values.map(value => Math.abs(value))); }",
+      "export function sorted(values: readonly string[]): readonly string[] { return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0); }",
+      "export function destructure(point: { readonly x: number; readonly y: number }): number { const { x, y } = point; return x + y; }",
+      "export function label(value: number): string { return `${String(value)}:${value.toString(16)}`; }",
     ].join("\n"),
   });
   if (pure.length > 0) throw new Error(`architecture self-test rejected pure source: ${pure.join("; ")}`);
