@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 late afternoon (P2 green on its branch after three gate findings were closed; fix verification running)
-**Branch:** `p2/journal-authority` at `c13ab5e` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`; docs `462b5ae`/`d926b81`/`d74d2ce`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Last updated:** 2026-08-31 evening (P2 green on its branch; five gate calls, six findings closed, three closures gate-confirmed; the reset-path redesign's fix verification is running)
+**Branch:** `p2/journal-authority` at `e44809a` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`; docs `462b5ae`/`d926b81`/`d74d2ce`/`24e99dd`/`7468c3d`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
@@ -102,12 +102,16 @@ One phase per session; every session ends with the handoff protocol in
   persisted the store before `GAP`/`HALT`), all closed at `c13ab5e`
   (`npm run verify` exit 0, 76 tests); fourth call `task-mth9f0wj-a6cuce`
   died at the provider content filter before any probe; fifth call
-  `task-mth9nyst-0i2n0y` (`prompts/G5-fixverify-fencing-gateway.md`,
-  `--write`, no verification skill) is the **fix verification** of those
-  closures and is the verdict of record — archive
-  its return under `responses/`, copy the verdict into DECISIONS.md, and
-  only then propose the merge to Felix. Until it lands, P2 is *not*
-  counter-verified.
+  `task-mth9nyst-0i2n0y` executed: G3-F1/F2 and the witness rule
+  **confirmed**, G3-F3 **rejected** as G5-F1 (reset lines under an epoch
+  with no store; duplicate pair on retry) → reset path redesigned as a
+  persisted pending acquisition at `e44809a` (`npm run verify` exit 0,
+  76 tests); sixth call `task-mthadqew-m9cxj9`
+  (`prompts/G6-fixverify-reset-path.md`, `--write`) is the **fix
+  verification of G5-F1** and the verdict of record — archive its return
+  under `responses/`, copy the verdict into DECISIONS.md, and only then
+  propose the merge to Felix. Until it lands, the reset path is *not*
+  counter-verified; everything else on the gateway is.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full

@@ -504,9 +504,24 @@ small, no ADR split).
   won in this process*; `GAP`, `HALT`, and the flag durable before store and
   holder, a thrown write is a refused acquisition), plus the variant that
   one witness line per instance now holds across types. **The closures at
-  `c13ab5e` are not yet counter-verified by a gate**: the fourth call
+  `c13ab5e` were then put to a fix verification**: the fourth call
   (`task-mth9f0wj-a6cuce`) was ended by the provider content filter before
-  any probe; the fifth (`task-mth9nyst-0i2n0y`, same fix verification,
-  no verification skill, neutral wording) is the one whose verdict decides; until it lands, P2 is green on its own gates
-  and mutation probe but carries an open fix-verification, and must not be
-  reported as counter-verified.
+  any probe; the fifth (`task-mth9nyst-0i2n0y`, no verification skill,
+  neutral wording) executed and returned **`REJECTED`** — G3-F1, G3-F2 and
+  the witness rule **confirmed** under original and adjacent variants (and
+  no new bypass found besides the one below), G3-F3 rejected as **G5-F1**:
+  the reorder let the reset's `GAP`/`HALT` land under epoch 1 before any
+  store existed, and a repaired retry appended a second pair. Second seam
+  on the same mechanism, so per the "fixes carry defects" axiom the design
+  changed instead of a third patch (`e44809a`): the reset is a persisted
+  *pending* acquisition — the store is written first with
+  `resetPending: true`, an epoch under which `authorizeMutation` refuses
+  everything (`RESET_PENDING`); the `GAP`/`HALT` pair and the flag are
+  completed under it, then it is promoted; a failed store write leaves
+  nothing; an interrupted reset is inherited by the next acquirer and
+  completed exactly once (`resetPairPresent`). The sixth call
+  (`task-mthadqew-m9cxj9`, fix verification of G5-F1 with interruption,
+  rival-takeover, and concurrent-taker variants) is the one whose verdict
+  decides; until it lands, P2 is green on its own gates and mutation
+  probe, carries three gate-confirmed closures and one open
+  fix-verification, and must not be reported as fully counter-verified.
