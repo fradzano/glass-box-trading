@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P3 closed on its branch: green at `5afb5d1`, executor path gate-CONFIRMED after two calls; P2 and P3 both await Felix's merge word)
-**Branch:** `p3/broker-execution` at `5afb5d1` (implementation `3961d64`, breach halt `c66c3be`, gate closure `5afb5d1`; branched from `p2/journal-authority` at `f1ff38c` — P2 was not merged when P3 started; a `--no-ff` merge of P2 followed by P3 is conflict-free by construction); no GitHub remote yet
-**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on `p2/journal-authority` (`f1ff38c`) and not yet merged**; P3 is **implemented on `p3/broker-execution` and not yet merged**. Both await Felix's word; merge order is P2 then P3.
+**Last updated:** 2026-08-31 evening (P2 and P3 merged to local `main` on Felix's word; P4 implemented on `p4/fail-closed-startup`, probe 15/15, first blind gate call running)
+**Branch:** `p4/fail-closed-startup` at `43ce65f` (from the P3 merge `a737a80` on local `main`); no GitHub remote yet
+**Last accepted phase artifact:** P3 — merge commit `a737a80` on local `main` (2026-08-31; P2 merged as `9e380fc` immediately before; owner acceptance of the declared reduced depth for both, see DECISIONS.md). `npm run verify` exit 0 on the merged `main`.
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P3 — broker execution under fakes
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p3--broker-execution-under-fakes)) — implementation complete, closing
+**Current implementation phase:** P4 — startup and analyst boundary
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p4--startup-and-analyst-boundary)) — implementation complete, closing
 
 ## Done
 
@@ -164,9 +164,42 @@ One phase per session; every session ends with the handoff protocol in
   13/14 probe (declared reduced depth, DECISIONS.md 2026-08-31).
   Declared reduced depth (DECISIONS.md 2026-08-31): red-first is weaker than
   P2's here (core and tests written together), the probe carries the
-  tests-bite evidence, no bis-0 criterion is claimed. **Not merged; P2 is
-  not merged either.** Next actions are Felix's: merge P2 (`--no-ff`) then
-  P3, or not. P4 then branches from the accepted P3.
+  tests-bite evidence, no bis-0 criterion is claimed. **Merged to `main` as
+  `a737a80` (2026-08-31, after P2 as `9e380fc`; owner acceptance).**
+- **P4 — fail-closed startup and analyst boundary — implemented at
+  `43ce65f` (2026-08-31, branch `p4/fail-closed-startup` from the P3 merge
+  `a737a80`).** Both allocated cases (S-CYC-11, S-G12-06) have tests (44
+  new tests, 3 new files plus one extended P2 guard); `npm run verify` exit
+  0 (160 tests, static gate, sandbox gate now executing the startup core,
+  partition check). Delivered: pure `src/core/startup.ts` (closed-set
+  validation of the whole §0 symbol table — unknown fields rejected,
+  missing indistinguishable from wrong; byte-exact canonical-origin rule;
+  S-G12-02, staleness, and 60-min-SLA couplings; short-capable-whitelist
+  capability gate; qualification ordering and strict cap;
+  `validateKillThreshold` as an arming check; manifest and runtime-lock
+  schemas with identity agreement; pre-spawn MCP launch verifier and exact
+  post-start inventory; constructed child environment with secret-pattern
+  rejection; 401/403 credential-fence classification); shell `runStartup`
+  (CONFIG_INVALID halt over a journalable store, OS-sink fallback
+  `CONFIG_INVALID_UNJOURNALABLE` on a virgin install with zero store side
+  effects, the narrow `CONFIG_INVALID_STATE_DIR` path before any broker
+  access, diagnostic import on repair), `launchVerifiedAnalystChild`
+  (remove bytecode → verify → spawn → inventory; nothing released before
+  acceptance), file-backed diagnostic sink, `BrokerHttpError` transport,
+  and the credential fence in the cycle runner (durable non-sticky
+  `AUTH_FAILURE` halt; world failures never fence). Design decisions and
+  additive changes in DECISIONS.md (2026-08-31: virgin-install refusal
+  yields to the seed rule; shell-supplied expectations; certificate
+  presence only, content is P7). Evidence-debt rows discharged: AUS-3,
+  BEQ-5, BEQ-6, GV-5, KGV-4, KGV-8, KGV-15, KGV-17, WIN-4, WIN-5, WIN-6,
+  WIN-9, WIN-19 (✅); in part KGV-14, WIN-7, WIN-10, WIN-17 (◐ — the
+  remainders are P5/P7). Verification record: store
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p4-fail-closed-startup`
+  (`LEDGER.md`): mutation probe **15/15 caught** at `43ce65f` (each mutant
+  compiled before its run). **Blind gate on the startup/launch boundary:**
+  first call Codex job `task-mthi2xj7-ae4fpy`
+  (`prompts/G1-startup-boundary.md`, `--write`, from the repo cwd) —
+  verdict **pending**; P4 is *green and probed*, not yet gate-confirmed.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
@@ -174,20 +207,26 @@ One phase per session; every session ends with the handoff protocol in
   recorded in DECISIONS.md (entry of 2026-08-31, "Verification depth for
   P2–P6 is reduced by declaration").
 
-## Next (after P3)
+## Next (after P4)
 
-- **P4 — fail-closed startup and analyst boundary** on its own branch from
-  the accepted P3: config validation (S-CYC-11: `EXPECTED_ACCOUNT_ID`,
-  profile, canonical paper origin, the S-G12-02 and staleness couplings, O5
-  bounds present, `STATE_DIR`, diagnostic sink, S-X-06 capability flag),
-  the pinned MCP build/launch verifier and exact tool inventory, the
-  credential fence (S-G12-06 `AUTH_FAILURE`), and the analyst schema
-  boundary wired to `parseAnalystOutput`. Scope in
-  `config/implementation-phases.json` (2 cases: S-CYC-11, S-G12-06). The
-  runner's `analyst` port and `market` port get their real adapters here;
-  `ExecutionConfig` (`LIMIT_TOLERANCE`, `KILL_EQUITY_THRESHOLD`,
-  `INITIAL_CAPITAL`) joins the validated configuration and
-  `validateKillThreshold` becomes an arming check.
+- **Close P4:** record the gate verdict (Codex job `task-mthi2xj7-ae4fpy`)
+  in the store `LEDGER.md`, `DECISIONS.md`, and this file; close any
+  finding red-first; then Felix's merge word for `p4/fail-closed-startup`
+  (`--no-ff` onto `main`).
+- **P5 — recovery and lifecycle** on its own branch from the accepted P4:
+  scheduler-facing degraded paths, restart/gap bootstrap, reconciliation,
+  watchdog takeover as a separate process entry point over the same epoch
+  store, close-escalation ladder (`CLOSE_ESCALATION_STEP` is already
+  validated config), residue policy, expiry eviction, Thursday flatten,
+  Friday terminal behavior. Scope in `config/implementation-phases.json`
+  (22 cases: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03, S-X-05/06).
+  S-G14-04 stays a displayed declared limit. The remaining fail-ping
+  obligations (KGV-14 ◐) land here with the dead-man check.
+- Deferred out of P4, tracked: real analyst/market adapters for the runner
+  (the MCP child exists behind ports; the Claude analyst call itself and
+  live market data are wired at P7's dev certificate), the Windows
+  event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
+  validation (P7; WIN-7/WIN-10/WIN-17 remainders).
 - Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
