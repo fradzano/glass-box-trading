@@ -101,13 +101,16 @@ export function planCloseLifecycle(snapshot: CloseLifecycleSnapshot): CloseLifec
       state,
     };
     seenGenerations.add(attempt.generation);
-    if ((attempt.state === "new" || attempt.state === "accepted") && attempt.filledQuantity !== 0) {
+    if ((attempt.state === "new" || attempt.state === "accepted" || attempt.state === "rejected") && attempt.filledQuantity !== 0) {
       return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
     }
     if (attempt.state === "partially_filled" && (attempt.filledQuantity === 0 || attempt.filledQuantity === attempt.requestedQuantity)) {
       return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
     }
     if (attempt.state === "filled" && attempt.filledQuantity !== attempt.requestedQuantity) {
+      return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
+    }
+    if ((attempt.state === "canceled" || attempt.state === "expired") && attempt.filledQuantity === attempt.requestedQuantity) {
       return { kind: "VETO", closeLifecycleId: lifecycleId, reason: "close lifecycle snapshot is invalid" };
     }
     const remainingAttemptQuantity = attempt.requestedQuantity - attempt.filledQuantity;
