@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 late night (P4 merged to local `main` as `43e7170` on Felix's word; P5 closed on its branch: green at `c4d055c`, watchdog/ladder boundary gate-CONFIRMED at the first call; the P5 merge awaits Felix's word)
-**Branch:** `p5/recovery-lifecycle` at `c4d055c` plus docs commits (from the P4 merge `43e7170` on local `main`); no GitHub remote yet
-**Last accepted phase artifact:** P4 — merge commit `43e7170` on local `main` (2026-08-31; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (161 tests).
+**Last updated:** 2026-09-01 shortly after midnight (P5 merged to local `main` as `4e20de8` on Felix's word; P6 opened on `p6/public-evidence` from the merge)
+**Branch:** `p6/public-evidence` from the P5 merge `4e20de8` on local `main`; no GitHub remote yet
+**Last accepted phase artifact:** P5 — merge commit `4e20de8` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (216 tests).
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P5 — recovery and lifecycle
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p5--recovery-and-lifecycle)) — implementation complete, closed on its branch
+**Current implementation phase:** P6 — public evidence pipeline
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p6--public-evidence-pipeline)) — not started; the next session builds it
 
 ## Done
 
@@ -270,13 +270,12 @@ One phase per session; every session ends with the handoff protocol in
   recovery/entry separation are gate-confirmed by executed evidence; the
   classification details, provenance proof, ping plan, and deadline
   entries rest on the repository gates and the 15/15 probe (declared
-  reduced depth, DECISIONS.md 2026-08-31). **Not merged.** Next action is
-  Felix's: merge `p5/recovery-lifecycle` (`--no-ff`) onto `main`, or not.
-  P6 then branches from the accepted P5.
-- **Felix's merge word for `p5/recovery-lifecycle`** (`--no-ff` onto
-  `main`); the branch is closed and gate-confirmed at the first call.
-- **P6 — public evidence pipeline** on its own branch from the accepted
-  P5: pure journal projection, static dashboard rendering a chosen
+  reduced depth, DECISIONS.md 2026-08-31). **Merged to `main` as
+  `4e20de8` (2026-09-01, owner acceptance; `npm run verify` exit 0 on the
+  merged `main`).**
+- **P6 — public evidence pipeline** on `p6/public-evidence` from the P5
+  merge `4e20de8` (next session): pure journal projection, static
+  dashboard rendering a chosen
   committed revision with explicit cutoff, immutable candidate build,
   anonymous probe contract, promotion/rollback, the deterministic golden
   path, and the S-CYC-12 checkpoint/window/failure projection. Scope in

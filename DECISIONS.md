@@ -904,3 +904,10 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p5-recovery-lifecycle/LEDGER.md`.
   Merge into local `main` only on Felix's word; P6 starts from the
   accepted P5 on its own branch.
+- **2026-09-01 — owner acceptance and merge: P5 is on `main`.** Felix
+  accepted the declared reduced depth for P5 and ordered the merge
+  (session decision prompt, option "Ja, mergen"). `p5/recovery-lifecycle`
+  (`2261b16`) merged as `4e20de8`, `--no-ff`, conflict-free by
+  construction (linear ancestry). `npm run verify` exit 0 on the merged
+  `main` (216 tests, all gates). P6 starts from the merge on
+  `p6/public-evidence`.
