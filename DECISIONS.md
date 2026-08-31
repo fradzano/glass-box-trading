@@ -412,3 +412,64 @@ small, no ADR split).
   stands at R5 of 8 with criteria 1 and 5 met and 2, 3, 4, 6 open; a later
   session may resume it from the store, it must not be reported as a bis-0
   termination. P2 begins on its own branch from this merge.
+
+- **2026-08-31 — P2 design decisions (journal and mutation authority).**
+  (a) *`seq` is assigned by the gateway under the writer mutex*, never by
+  the caller: a draft carrying `seq` is rejected (`SEQ_ASSIGNED_BY_GATEWAY`),
+  which is what makes concurrent appenders from several processes contiguous
+  without a coordination protocol of their own. (b) *A torn last line is
+  quarantined, then cut*: the unterminated bytes are copied verbatim into
+  `STATE_DIR/quarantine/` and the journal is truncated to its last complete
+  line before the next append. The fragment was never an entry, so this is
+  not a rewrite of history (A6: "at most the single in-flight record"); any
+  terminated but invalid line, by contrast, is corruption and nothing after
+  it is trusted (`AFTER_CORRUPT_LINE`), the gateway refuses to open or
+  append (`JOURNAL_CORRUPT`). (c) *The closed sets are functions*
+  (`journalEntryTypes()`, `witnessEntryTypes()`, …) returning fresh literals,
+  because the architecture gate forbids module-scope non-primitive state in
+  `src/core/**` and the P1 core already lives under that rule; the witness
+  class still has exactly one literal (checked by a source scan in
+  `tests/j3-j4-entry-schemas.spec.ts`). (d) *One witness line per instance*:
+  a second `SUPPRESSED`/`FENCED_OUT` from the same `instanceId` is
+  `WITNESS_ALREADY_RECORDED` — "exactly one FENCED_OUT" (S-G12-07) is
+  enforced from the journal, not from process memory. (e) *Holder guard is
+  local, epoch is authority*: `holder.json` (writer id + heartbeat) lets a
+  live writer's rival be `SUPPRESSED` and lets a matching-epoch request from
+  a non-holder be refused (`NOT_THE_WRITER`) while the heartbeat is fresh; an
+  absent holder record refuses nothing — authority is decided by the epoch
+  alone, the holder record only schedules. `heartbeat()` writes the holder
+  record only when the store still carries the caller's epoch, so a fenced
+  writer cannot clobber its successor. (f) *Store reset under an existing
+  journal is a reset* even when the account looks virgin: absent store +
+  non-empty journal, absent store + non-virgin or unknown account → `GAP` +
+  `HALT EPOCH_STORE_RESET`; only virgin + empty journal seeds, and then every
+  authoritative request is `SEED_NOT_JOURNALED` until the `BOOTSTRAP` with
+  `epochSeeded: true` lands. (g) *Manual un-halt appends under the current
+  store epoch* through `src/shell/manual-unhalt.ts` and the gateway's
+  `dispatchManualUnhalt`, without a takeover: the human action is journaled
+  with operator and reason and is refused while the halt is sticky; ordinary
+  `dispatch` refuses `UNHALT` outright. The "no code path clears the flag"
+  claim is held by a source scan (only the manual module and the gateway's
+  refusal mention `UNHALT`) plus the pure transition
+  (`haltStateAfter` clears only on `actor: "human"`). (h) *A foreign account
+  binding halts*: a broker mutation or an order-related entry whose binding
+  differs from the gateway's configured triplet is refused before the port,
+  one `HALT ACCOUNT_BINDING_MISMATCH` is appended, the flag is set (S-J-06
+  "refuse all orders, journal, halt"). (i) *The canonical trading origin is
+  configuration*, not a literal in the core: `bindAccount` takes
+  `canonicalTradingOrigin` and checks its shape (https, lowercase host,
+  `paper-` prefix, no port/path/query/fragment/userinfo) before comparing.
+- **2026-08-31 — Verification depth for P2–P6 is reduced by declaration,
+  not silently.** Under the competition calendar (P2–P6 before Tuesday
+  2026-09-01 15:30 CEST, one phase per session), each phase gets: red-first
+  tests for every allocated case, the repository gates (`npm run verify`),
+  one hand-written mutation probe on the phase's mechanisms, and one blind
+  counter-verification of the phase's riskiest mechanism on the gate tier.
+  No bis-0 run: no round protocol, no lens register, no closing round; the
+  six bis-0 criteria are not claimed for these phases and must not be
+  reported as met. For P2 the record is the store
+  `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority`
+  (`LEDGER.md`): `npm run verify` exit 0 at `d8281e5`; mutation probe 9/9
+  caught (one mutant re-run after a non-compiling first form); blind gate on
+  the epoch/fencing gateway launched as Codex job `task-mth6xs72-d7lqbi`
+  (verdict recorded below when archived).

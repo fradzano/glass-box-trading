@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 midday (P1 accepted and merged; P2 is the active phase)
-**Branch:** `main` holds the accepted P1 (merge of `p1/pure-entry-core`); P2 work starts on `p2/journal-authority` branched from that merge; no GitHub remote yet
-**Last accepted phase artifact:** P1 — merge commit on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md)
+**Last updated:** 2026-08-31 afternoon (P2 implemented and green on its branch; blind gate on the fencing gateway running)
+**Branch:** `p2/journal-authority` at `d8281e5` + docs commit (branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p2--durable-journal-and-mutation-authority))
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p2--durable-journal-and-mutation-authority)) — implementation complete, closing
 
 ## Done
 
@@ -69,27 +69,46 @@ One phase per session; every session ends with the handoff protocol in
   carries the owner's countersignature only). Inherited obligations:
   `RES-P1-01a..d` in `docs/EVIDENCE-DEBT.md` (every adapter validates snapshot
   shape and unit brands before `decide`), WIN-11 (P3), SES/`lockdown` backlog.
-- **P2 — durable journal and mutation authority — is the active phase.**
-  Scope (machine-owned in `config/implementation-phases.json`): 12 cases
-  S-J-01..06 and S-G12-01..05/07. Deliver the append-only JSONL journal with
-  closed entry schemas, redaction, account binding, halt state, epoch store,
-  serialized append path, and the single final mutation gateway; validation
-  and transition decisions stay pure in `src/core/**`, the journal is an
-  adapter in the shell. Acceptance beyond the shared gate: crash/torn-append,
-  concurrent append, stale writer, unreadable epoch, takeover race, witness
-  append, and non-virgin epoch-reset paths execute in isolated temporary
-  state; holding or reacquiring an OS lock never authorizes a stale epoch; the
-  broker port still has no real implementation. Evidence-debt rows to
-  discharge in P2: the S-J/S-G12 rows in `docs/EVIDENCE-DEBT.md`.
+- **P2 — durable journal and mutation authority — implemented at `d8281e5`
+  (2026-08-31).** All 12 allocated cases (S-J-01..06, S-G12-01..05/07) have
+  red-first tests (31 tests, 5 files); `npm run verify` exit 0 (76 tests,
+  static gate, sandbox gate now executing the journal and authority core,
+  partition check). Delivered: pure `src/core/journal.ts` (closed schemas,
+  UTC timestamps, line codec with torn-tail detection, redaction, halt
+  transition, journal folds) and `src/core/authority.ts` (epoch acquisition,
+  compare-and-increment, the single authorization rule, scheduling bounds,
+  account binding); shell `state-dir`, `epoch-store` (atomic writes, holder
+  heartbeat, `wx` mutex), `journal-store` (fsynced append, quarantine),
+  `halt-state`, `mutation-gateway` (the one path for appends and future
+  broker mutations; `NO_BROKER_PORT` is the only port), `manual-unhalt`,
+  `gateway-cli` (real-process races in tests). Torn append, concurrent
+  append (25 in-process, 5×8 across processes), stale writer holding and
+  reacquiring the lock, unreadable epoch, takeover race (2 in-process, 6
+  processes), witness append, and non-virgin epoch reset all execute in
+  temporary `STATE_DIR`s. Evidence-debt rows discharged: BEQ-7, KGV-1/2,
+  KGV-3, KGV-1-REG, KGV-11, WIN-16 (✅); in part BEQ-5, BEQ-6, GV-5, KGV-4,
+  WIN-9 (◐, the S-CYC-11 halves belong to P4). Verification record: store
+  `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p2-journal-authority`
+  (`LEDGER.md`): mutation probe 9/9 caught; blind gate on the epoch/fencing
+  gateway = Codex job `task-mth6xs72-d7lqbi` (prompt
+  `prompts/G1-fixverify-fencing-gateway.md`), **result pending** at the time
+  of this update — archive its return under `responses/`, copy the verdict
+  into DECISIONS.md, and only then propose the merge to Felix.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
-  one blind counter-verification of the phase's riskiest mechanism (for P2:
-  the epoch/fencing gateway). A full bis-0 run per phase does not fit before
-  Tuesday; this is a declared reduction, recorded in DECISIONS.md when P2
-  closes, never a silent one.
+  one blind counter-verification of the phase's riskiest mechanism. A full
+  bis-0 run per phase does not fit before Tuesday; this reduction is now
+  recorded in DECISIONS.md (entry of 2026-08-31, "Verification depth for
+  P2–P6 is reduced by declaration").
 
 ## Next (after P2)
 
+- **P3 — broker execution state machine and cycle safety under fakes** on its
+  own branch from the accepted P2: the `DecisionSnapshot` adapter (discharges
+  `RES-P1-01a..c`, reconstructs prior quotes via `latestQuoteSamples`), the
+  fake broker behind `BrokerMutationPort`, the cycle runner that emits exactly
+  one primary entry per invocation through the gateway. Scope in
+  `config/implementation-phases.json` (12 cases).
 - Continue P3–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
