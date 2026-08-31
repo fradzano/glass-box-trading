@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 early morning (P1 R4 closed; unattended flight ended)
+**Last updated:** 2026-08-31 midday (P1 R5 closed; paused on one owner decision)
 **Branch:** `p1/pure-entry-core` (branched from local `main` at `598f43e`; no GitHub remote yet)
 **Last accepted phase artifact:** P0 at `0486dd3`
 **P0 release baseline:** local `main` at `598f43e`
@@ -87,51 +87,56 @@ reverse read ✅ → P1 code and adversarial closure in progress.**
   bis-0 termination; executable implementation paths remain evidence debt.
 - **P1 implementation is green but not yet accepted.** The TypeScript/Node
   foundation, pure entry-decision core, exact-integer risk arithmetic from one
-  expiry-payoff evaluation, 37 allocated SPEC cases (44 tests), a static
-  architecture gate (provenance allow-list, 66-mutant self-test) plus a runtime
-  sandbox gate (`npm run sandbox`, tamed `node:vm` realm), and the local
-  pass/veto glass-box fixture are implemented. No broker-capable adapter
-  exists. Current coherent work commit: `ce0265a` on `p1/pure-entry-core`;
-  tracked worktree clean, no process running, no remote.
-- Repository verification last ran fully green on 2026-08-31 at `ce0265a`:
-  typecheck, lint, 44 tests, architecture self-test and scan, build/fixture,
-  sandbox gate (10 calibration mutants, 4 executed paths), and phase partition
-  (91 definitions, 90 tests, 1 declared limit).
+  expiry-payoff evaluation, 37 allocated SPEC cases (45 tests), a static
+  architecture gate (provenance allow-list incl. shorthand values, 69-mutant
+  self-test) plus a runtime sandbox gate (`npm run sandbox`, tamed `node:vm`
+  realm, export surface restricted to ordinary shapes, 17 calibration mutants),
+  and the local pass/veto glass-box fixture are implemented. No broker-capable
+  adapter exists. Current coherent work commit: `3db5bd4` on
+  `p1/pure-entry-core`; tracked worktree clean, no process running, no remote.
+- Repository verification last ran fully green on 2026-08-31 at `3db5bd4`
+  (exit 0): typecheck, lint, 45 tests, architecture self-test and scan,
+  build/fixture, sandbox gate (17 calibration mutants, 4 executed paths), and
+  phase partition (91 definitions, 90 tests, 1 declared limit).
 - P1 adversarial run store:
   `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p1-pure-entry-core`.
-  R1–R4 are protocol-closed. **R4 (unattended flight, 2026-08-31 02:40–08:00,
-  owner-authorized)** ran the mutation probe (two mutants booked before the
-  run, both caught), all nine open Series-1 lenses (three blind Terra Cold
-  Reads), seven blind Sol refute gates, three blind rulings, and eleven fix
-  gates. Seven A/B findings: R4-F1 overlapping iron condor under-reserved by
-  half (A, RESOLVED — reservation now comes from one exact expiry-payoff
-  engine); R4-F2 type-valid `entry`/`filled` component hid risk (B, RESOLVED —
-  exposure component union, fail-closed counting); R4-F3 zero-lot candidate
-  through the typed boundary (B, RESOLVED — `LotCount` brand); R4-F4 action
-  plans aliased mutable input (B, RESOLVED — deep-frozen copies); R4-F5
-  architecture-gate bypasses (B, **PATCHED — open B; last valid verdict at `b199aeb`, the hardened state `ce0265a` is not yet counter-verified (two gate calls ended without verdict, E-R4-03/04)**); R4-F6/F7 `null` snapshot
-  records throw instead of vetoing (B, declared residual `RES-P1-01` under
-  blind ruling 1A: shape validation belongs to the shell; obligations
-  `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`; decider Felix — a veto reopens
-  P1 with a core-side validation gateway).
-- **Owner decisions pending before anything else (Vorlage, 2026-08-31 morning):**
-  (1) accept or veto residual `RES-P1-01` (typed core boundary trusted; shell
-  validates shape); (2) the architecture seam `R4-F5`: PATCHED — open B; last valid verdict at `b199aeb`, the hardened state `ce0265a` is not yet counter-verified (two gate calls ended without verdict, E-R4-03/04) — the static gate
-  is provably not sound against deliberate typed laundering (four blind
-  counter-verifications each found a new path); the runtime sandbox gate
-  holds the enumerated ambient capabilities on executed paths. Decide whether
-  that combination, with its limits stated exactly in `DECISIONS.md`, is the
-  accepted enforcement of shared completion gate 2 (then `R4-F5` closes as a
-  declared residual with you as decider) or whether P1 stays open on it.
-- **Exact next criterion after those decisions:** R5 — all nine open Series-1
-  lenses again (every counter is at 0 because R4 redesigned the substance),
-  then R6 as the candidate closing round bundling the nine lenses with the
-  owner-countersigned foreign lens `Observability & evidence integrity`
-  (`COUNTERSIGN.md` in the store, committed before any run). Criterion 4 needs
-  R5 to close without a fix on any mechanism whose chain is ≥ 2 (five of
-  them now). Then blind final audit and re-audit, and the P1 closeout. Round
-  cap is 8; R5–R8 remain. P1 is **not** a bis-0 termination and must not be
-  marked complete early.
+  R1–R5 are protocol-closed; 5 of 8 rounds used. **Owner rulings 2026-08-31
+  (in session):** `RES-P1-01` accepted; R4-F5 to be declared as `RES-P1-02`
+  (option a). **R5 (2026-08-31, three blind Terra Cold Reads over all nine
+  open lenses, blind Sol gates):** R5-F1 forged unit brands (`0 as LotCount`)
+  pass `decide` — gate-ruled COVERED by `RES-P1-01`, wording closed
+  (`RES-P1-01d`, DECISIONS amended); R5-F2 partial-fill reconciliation lost an
+  unobserved unit (B, RESOLVED by a fresh blind gate at `18b27f1`: quantity
+  conservation fail-closed); a WIN-11 claim was REFUTED (path owned by P3;
+  row wording corrected, R5-C1). **R4-F5 is still open (PATCHED — open B):**
+  the blind residual gate refused to countersign `RES-P1-02` three times in a
+  row, each time with a bounded, dependency-free omission *inside the claimed
+  coverage* (shorthand property values in the static rule; accessor/prototype
+  reach of export hardening; internal-slot exports; finally a shape check
+  spoofable through `Symbol.toStringTag`). The first three were closed
+  (`18b27f1`, `3db5bd4`); the coordinator stopped at the fifth REFUSED as
+  promised in the ledger and handed the seam to the owner. Lens counters: two
+  lenses at 1, seven at 0 (fix changed substance); closing-round lens
+  countersigned, not yet run.
+- **Owner decision pending before anything else (Vorlage, 2026-08-31 midday):**
+  R4-F5 / `RES-P1-02`. The gate's prescribed change is known and verified on
+  an isolated copy (classify exports by realm prototype identity —
+  `Array.prototype`, `Function.prototype`, `Object.prototype`/`null` — reject
+  custom prototypes fail-closed; 19 mutants caught, 4 paths intact). Options:
+  (a) apply it and call the gate a sixth time; (b) narrow the *claim* in
+  `DECISIONS.md` (export hardening is best-effort; the residual then covers
+  export-shape gaps) and call the gate on the narrowed declaration; (c) SES/
+  `lockdown` as a pinned dependency (P2 backlog candidate). Full protocol:
+  store `R5.md`, verdicts `responses/R5-residual-architecture-enforcement-3/4/5.md`.
+- **Exact next criterion after that decision:** R6 — all nine open Series-1
+  lenses (three blind Terra Cold Reads; prompts prepared in the store as
+  `prompts/R6-find-*.md`, uncommitted until launch), fully empty, closing
+  without a fix on any mechanism with chain ≥ 2 (criterion 4). Then R7 as the
+  candidate closing round: the lenses still below 2 plus the owner-
+  countersigned foreign lens `Observability & evidence integrity` (one call),
+  entirely empty. Then blind final audit and re-audit, and the P1 closeout.
+  Round cap is 8; R6–R8 remain. P1 is **not** a bis-0 termination and must not
+  be marked complete early.
 
 ## Next (after P1)
 
@@ -147,15 +152,22 @@ reverse read ✅ → P1 code and adversarial closure in progress.**
 
 ## Open threads
 
-- P1 verification remains active. After R4: criterion 1 holds (no open A),
-  criterion 5 holds (mutation and execution probes), criterion 2 depends on
-  the two owner decisions above (`R4-F5` PATCHED — open B; last valid verdict at `b199aeb`, the hardened state `ce0265a` is not yet counter-verified (two gate calls ended without verdict, E-R4-03/04); `RES-P1-01`), criteria 3, 4, 6
-  are open. Full protocol: `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p1-pure-entry-core\R4.md`. Preserve the external run store
-  and its errata (`E-R1-01`, `E-R2-01`, `E-R4-01..03`); do not rewrite history.
-- Harness notes from the flight: the Codex companion queue once left a job
-  `queued` indefinitely (relaunch fresh), one gate call returned an interim
-  message instead of a verdict (archived as such, not evidence), and gate calls
-  that run `npm run verify` on repository copies take 30–45 minutes each.
+- P1 verification remains active. After R5: criterion 1 holds (no open A),
+  criterion 5 holds (calibration mutants as mutation probe, red-first test,
+  execution probe), criterion 2 waits on the owner decision on `R4-F5` /
+  `RES-P1-02` (`RES-P1-01` is fully countersigned), criteria 3, 4, 6 are open.
+  Full protocol: `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p1-pure-entry-core\R5.md`.
+  Preserve the external run store and its errata (`E-R1-01`, `E-R2-01`,
+  `E-R4-01..04`, `E-R5-01..04`); do not rewrite history.
+- Harness notes (R4/R5): launch Codex companion calls from the repository
+  directory (a store-directory launch registers the job under another
+  workspace and `status`/`result` there return nothing); the queue can leave a
+  job `queued` indefinitely (cancel via PowerShell, relaunch fresh; zombie
+  entries `task-mtgioru5-beltgf`, `task-mth0zx0s-ccqad7` are never waited on);
+  Sol calls can end with `model at capacity` or a provider content filter
+  (`E-R5-01`) — archive the interim, relaunch, and phrase purity-gate prompts
+  in neutral engineering vocabulary; a gate call with targeted commands takes
+  10–20 minutes, one that runs `npm run verify` on copies 30–45.
 
 - O5 (CONCEPT §9): remaining gate thresholds — freeze before the actual first
   arm; cycle cadence is already fixed at 15 minutes.
