@@ -678,3 +678,20 @@ small, no ADR split).
   directory as Codex job `task-mthde869-81r6p8`; verdict recorded in the store's
   `LEDGER.md` and in `STATE.md` → Now when it arrives. Until then P3 is
   *green and probed*, not gate-confirmed.
+- **2026-08-31 — P3 gate finding G1-F1 closed: kill management sends no
+  cancel while the journal is unavailable.** The first blind gate call on
+  the executor path (Codex job `task-mthde869-81r6p8`, `REJECTED`) executed the
+  case journal read-only + kill + one resting risk-increasing entry: the
+  runner canceled the entry before the permitted emergency close, a broker
+  mutation with no durable record outside the single S-CYC-06 exception.
+  Closed at `5afb5d1` as prescribed: without a durable `HALT` the cancel
+  loop does not run; the resting entry stays at the broker, counted as
+  fillable exposure from its INTENT, and the next cycle that can append the
+  `HALT` cancels it. Trade-off stated: during a journal outage a resting
+  entry may fill; the fill becomes held exposure that the same emergency
+  route may close, and every mutation stays inside the specified exception.
+  Four of five claims held on executed variants; the gateway's two
+  administrative appends (reset pair, manual `UNHALT`) were noted as the
+  known exceptions to "every append passes `dispatch`". Fix verification
+  launched as Codex job `task-mthe6upm-hpouop`; verdict recorded in the store's
+  `LEDGER.md` and `STATE.md` → Now.

@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P3 implemented and green on `p3/broker-execution`; P2 still awaits Felix's merge word; P3's blind gate call in progress — see Now)
-**Branch:** `p3/broker-execution` (implementation `3961d64`, branched from `p2/journal-authority` at `f1ff38c` — P2 was not merged when P3 started; a `--no-ff` merge of P2 followed by P3 is conflict-free by construction); no GitHub remote yet
+**Last updated:** 2026-08-31 night (P3 green on `p3/broker-execution` at `5afb5d1`; first gate call REJECTED → G1-F1 closed; fix-verification call in progress; P2 and P3 both await Felix's merge word)
+**Branch:** `p3/broker-execution` at `5afb5d1` (implementation `3961d64`, breach halt `c66c3be`, gate closure `5afb5d1`; branched from `p2/journal-authority` at `f1ff38c` — P2 was not merged when P3 started; a `--no-ff` merge of P2 followed by P3 is conflict-free by construction); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **complete on `p2/journal-authority` (`f1ff38c`) and not yet merged**; P3 is **implemented on `p3/broker-execution` and not yet merged**. Both await Felix's word; merge order is P2 then P3.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P3 — broker execution under fakes
@@ -122,10 +122,10 @@ One phase per session; every session ends with the handoff protocol in
   `p2/journal-authority` into local `main` (`--no-ff`), or not. P3 then
   branches from the merge.
 - **P3 — broker execution under fakes — implemented at `3961d64`, breach
-  halt and probe closure at `c66c3be` (2026-08-31, branch
+  halt and probe closure at `c66c3be`, gate closure at `5afb5d1` (2026-08-31, branch
   `p3/broker-execution` from the unmerged P2 head `f1ff38c`).** All 12
   allocated cases (S-CYC-01/02/04/05/06, S-G13-01..03, S-X-01..04) have tests
-  (39 tests, 4 new files); `npm run verify` exit 0 (115 tests, static gate,
+  (39 tests, 4 new files); `npm run verify` exit 0 (116 tests, static gate,
   sandbox gate now executing the execution core, partition check).
   Delivered: pure `src/core/execution.ts` (limit pricing from the decision's
   quotes, fill classification, broker answers onto the closed OUTCOME set,
@@ -148,9 +148,13 @@ One phase per session; every session ends with the handoff protocol in
   (`LEDGER.md`): mutation probe 12/14 caught at `3961d64`, 13/14 at
   `c66c3be` with M13 declared (defence-in-depth check unreachable by
   construction); one finding from the evidence-debt reconciliation (missing
-  S-X-02 halt) closed at `c66c3be`. **Blind gate call on the executor path
-  launched** as Codex job `task-mthde869-81r6p8` (`prompts/G1-executor-path.md`,
-  `--write`, from the repository directory); its verdict is not yet in.
+  S-X-02 halt) closed at `c66c3be`. **Blind gate on the executor path:** first call (Codex job
+  `task-mthde869-81r6p8`, `prompts/G1-executor-path.md`, `--write`) returned
+  **REJECTED** on one executed variant, G1-F1 (a `cancel_order` sent while
+  the journal was unavailable), closed red-first at `5afb5d1` (cancel loop
+  only under a durable `HALT`; 116 tests); four of five claims held. Fix
+  verification launched as Codex job `task-mthe6upm-hpouop`
+  (`prompts/G2-fixverify-journal-down-kill.md`); its verdict is not yet in.
   Declared reduced depth (DECISIONS.md 2026-08-31): red-first is weaker than
   P2's here (core and tests written together), the probe carries the
   tests-bite evidence, no bis-0 criterion is claimed. **Not merged; P2 is
