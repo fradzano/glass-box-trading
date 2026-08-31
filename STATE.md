@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 (P1 R3 handoff)
+**Last updated:** 2026-08-31 (P1 R3 closed)
 **Branch:** `p1/pure-entry-core` (branched from local `main` at `598f43e`; no GitHub remote yet)
 **Last accepted phase artifact:** P0 at `0486dd3`
 **P0 release baseline:** local `main` at `598f43e`
@@ -91,28 +91,30 @@ reverse read ✅ → P1 code and adversarial closure in progress.**
   are implemented. No broker-capable adapter exists. Current coherent work
   commit: `cbc3090` on `p1/pure-entry-core`; tracked worktree clean, no process
   running, no remote.
-- Repository verification last ran fully green at `c367f16` (39 tests plus
-  typecheck, lint, architecture, build/fixture, and phase partition). The fresh
-  blind Close follow-up at `cbc3090` then ran all 39 tests, typecheck, lint, and
-  architecture green and returned `RESOLVED`; rerun the full repository command
-  before accepting R3.
+- Repository verification last ran fully green on 2026-08-31 at `ef4efb4`
+  (code `cbc3090`): typecheck, lint, 39 tests, architecture, build/fixture, and
+  phase partition (91 definitions, 90 tests, 1 declared limit).
 - P1 adversarial run store:
   `C:\Users\felix\verify-runs\fradzano\glass-box-trading\p1-pure-entry-core`.
-  R1 and R2 are protocol-closed. R3 has five confirmed findings: parser numeric
-  escape (B), incomplete close snapshot validation (B), exact-width credit
-  equality (B), prototype-key record lookup crash (A), and architecture syntax
-  bypasses (B). Parser, close, and equality have fresh blind `RESOLVED`
-  counterchecks. Prototype-safe lookups and the broadened architecture checker
-  are implemented and green locally but their archived R3 fix-gate prompts
-  have not yet been executed.
-- **Exact next criterion:** run fresh blind Sol fix gates from
-  `.tmp/p1-verify-store/prompts/R3-fixverify-prototype-records.md` and
-  `R3-fixverify-architecture-syntax.md`, archive each response immediately,
-  then run `npm.cmd run verify` and write/commit the complete R3 protocol and
-  registers. P1 still needs later empty deep passes, a booked mutation probe,
-  the owner-counter-signed foreign final lens, final blind audit/re-audit, and
-  the P1 evidence/maps/state/decisions closeout. It is not yet a bis-0
-  termination and must not be marked complete early.
+  R1, R2, and R3 are protocol-closed (store commit `6421844`). R3 had five
+  confirmed findings: parser numeric escape (B), incomplete close snapshot
+  validation (B), exact-width credit equality (B), prototype-key record lookup
+  crash (A), and architecture syntax bypasses (B). All five are `RESOLVED` by
+  fresh blind Sol fix gates; the close gate first returned `UNADDRESSED` at
+  `c367f16` and closed at `cbc3090`. The last two gates (prototype records,
+  architecture syntax) ran 2026-08-31 from Claude Code via the Codex companion
+  (`gpt-5.6-sol`, xhigh) against `ef4efb4`.
+- **Exact next criterion:** R4 — rerun all nine open Series-1 lenses (every
+  counter is at 0 after R3) as blind Cold Reads with depth proof, and book and
+  run the mutation probe (criterion 5). Criterion 4 needs R4 to close without a
+  fix on any of the three length-2 chains (`Batch-local planned-entry identity
+  reservation`, `Nonnegative unit and forged-snapshot risk validation`,
+  `Dynamic-import architecture coverage`); a third fix on any of them is the
+  Moduswechsel rip cord. Criterion 3 needs a foreign (Series-2 or off-list)
+  final lens counter-signed by the owner in the store *before* that round
+  starts. After that: final blind audit/re-audit and the P1
+  evidence/maps/state/decisions closeout. P1 is not yet a bis-0 termination
+  and must not be marked complete early.
 
 ## Next (after P1)
 
@@ -128,11 +130,10 @@ reverse read ✅ → P1 code and adversarial closure in progress.**
 
 ## Open threads
 
-- P1 verification remains active. No A/B implementation finding is currently
-  known open after the Close follow-up, but two R3 fix gates and every formal
-  termination criterion named above remain open. Preserve the external run
-  store and its disclosed non-blind provisional-call errata; do not rewrite
-  their history.
+- P1 verification remains active. No A/B implementation finding is open after
+  R3; termination criteria 1 and 2 hold, 3–6 remain open (see the R3 protocol
+  in the store). Preserve the external run store and its disclosed non-blind
+  provisional-call errata; do not rewrite their history.
 
 - O5 (CONCEPT §9): remaining gate thresholds — freeze before the actual first
   arm; cycle cadence is already fixed at 15 minutes.
