@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 evening (P2 green on its branch; five gate calls, six findings closed, three closures gate-confirmed; the reset-path redesign's fix verification is running)
-**Branch:** `p2/journal-authority` at `e44809a` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`; docs `462b5ae`/`d926b81`/`d74d2ce`/`24e99dd`/`7468c3d`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
+**Last updated:** 2026-08-31 evening (P2 green on its branch; six gate calls, seven findings closed; the manual-un-halt closure's fix verification is running)
+**Branch:** `p2/journal-authority` at `5d875ea` + docs (implementation `d8281e5`; gate-finding fixes `0431ac9`, `6677b24`, `c13ab5e`, `e44809a`, `5d875ea`; docs through `ae10d80`; branched from the P1 merge `9778e6d` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P1 — merge commit `9778e6d` on local `main` (2026-08-31; owner acceptance with the adversarial run paused at R5, see DECISIONS.md). P2 is **not yet accepted**: it awaits the gate verdict and Felix's word before any merge.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P2 — durable journal and mutation authority
@@ -107,11 +107,15 @@ One phase per session; every session ends with the handoff protocol in
   with no store; duplicate pair on retry) → reset path redesigned as a
   persisted pending acquisition at `e44809a` (`npm run verify` exit 0,
   76 tests); sixth call `task-mthadqew-m9cxj9`
-  (`prompts/G6-fixverify-reset-path.md`, `--write`) is the **fix
-  verification of G5-F1** and the verdict of record — archive its return
+  executed: every reset variant **held**, one adjacent path **rejected** as
+  G6-F1 (manual un-halt bypassed the pending-reset guard → duplicate pair)
+  → closed at `5d875ea`; seventh call `task-mthb03w7-pwxs9p`
+  (`prompts/G7-fixverify-manual-unhalt.md`, `--write`) is the **fix
+  verification of G6-F1** and the verdict of record — archive its return
   under `responses/`, copy the verdict into DECISIONS.md, and only then
-  propose the merge to Felix. Until it lands, the reset path is *not*
-  counter-verified; everything else on the gateway is.
+  propose the merge to Felix. Until it lands, the manual un-halt path is
+  *not* counter-verified; the gateway's authority rule, the reset path, and
+  the witness rule are.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full

@@ -521,7 +521,16 @@ small, no ADR split).
   nothing; an interrupted reset is inherited by the next acquirer and
   completed exactly once (`resetPairPresent`). The sixth call
   (`task-mthadqew-m9cxj9`, fix verification of G5-F1 with interruption,
-  rival-takeover, and concurrent-taker variants) is the one whose verdict
-  decides; until it lands, P2 is green on its own gates and mutation
-  probe, carries three gate-confirmed closures and one open
-  fix-verification, and must not be reported as fully counter-verified.
+  rival-takeover, half-pair, and concurrent-taker variants) held every
+  reset variant and returned **`REJECTED`** on one adjacent path, **G6-F1**:
+  the manual un-halt bypassed the `resetPending` guard, landed an `UNHALT`
+  under a pending epoch, and the next takeover appended a second pair.
+  Closed at `5d875ea` as prescribed: the manual path refuses
+  `RESET_PENDING` and `SEED_NOT_JOURNALED` before touching the journal. The
+  seventh call (`task-mthb03w7-pwxs9p`, fix verification of G6-F1 with the
+  manual path under pending, seed-pending, normal, sticky, and live-writer
+  stores) is the one whose verdict decides; until it lands, P2 is green on
+  its own gates and mutation probe, carries five gate-confirmed closures and
+  the pending-reset redesign confirmed under all its reset variants, and
+  one open fix-verification on the manual path; it must not be reported as
+  fully counter-verified.
