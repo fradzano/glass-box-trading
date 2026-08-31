@@ -254,3 +254,161 @@ small, no ADR split).
   clean-commit gates. `config/implementation-phases.json` owns the case-to-phase
   allocation, and `tools/check_implementation_phases.py` rejects omissions,
   overlaps, stale patterns, or count drift against `docs/SPEC.md`.
+- **2026-08-25 — Establish local `main` as the P0 release baseline at
+  `598f43e`; begin P1 on `p1/pure-entry-core`.** `main` remains release-only,
+  `concept` remains as the historical planning ref, and no remote or push is
+  created by this branch cut.
+- **2026-08-26 — P1 represents money, option prices, strikes, ratios, quantities,
+  basis points, and timestamps as branded safe integers.** Risk comparisons use
+  integer cross-multiplication, so binary floating point never enters max-loss,
+  budget, concentration, liquidity, or whitelist decisions. Unfrozen O5 values
+  exist only in conspicuously named `TEST_ONLY_*` fixtures; the core has no
+  defaults for them.
+- **2026-08-26 — P1 makes the Functional Core / Imperative Shell boundary a
+  checked filesystem boundary.** `src/core/**` may import only within itself;
+  the architecture gate rejects platform/package imports, ambient time,
+  randomness, environment/global access, module-scope mutable state, and
+  relative escapes. Fixture I/O and HTML rendering live under `src/shell/**`.
+  The local pass stops at `ENTRY_ACTION_PLAN`; no order-capable port or adapter
+  exists in P1.
+- **2026-08-31 — The typed core boundary is trusted; validation happens before
+  `decide`.** Blind ruling during the P1 adversarial run (store
+  `responses/R4-ruling-typed-boundary.md`): `AGENTS.md`, `CONCEPT.md`, A12,
+  SPEC §1, and the phase plan place schema and shape validation in front of
+  the pure core. Type-invalid runtime values (a `null` contract record, a
+  missing prior-quote map) therefore throw inside the core instead of
+  producing a veto — and a forged unit brand (`0 as LotCount`, `-1 as
+  OptionPriceCents`, a compiler-accepted assertion that bypassed the validating
+  constructor) passes without a veto (R5-F1, gate-ruled an instance of this
+  residual: obligation row `RES-P1-01d`); this is declared residual `RES-P1-01` and every adapter
+  carries the obligation rows `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`.
+  Type-valid but semantically invalid inputs are made unrepresentable
+  instead: `LotCount` (constructed only by `lotCount(≥1)`) types candidate
+  quantities and leg ratios, a filled entry exists only as a `filled`
+  position component, and exposure counting fails closed unless a
+  reservation is explicitly `rejected`/`canceled`/`expired`. Decider if the
+  residual becomes live: Felix Radzanowski.
+- **2026-08-31 — Reserved maximum loss comes from one exact expiry-payoff
+  evaluation.** Per-structure formulas (S-G1-02/03) were the third seam on
+  the same mechanism (an overlapping "iron condor" was reserved at one wing).
+  `expiryPayoffBound` evaluates the piecewise-linear payoff at price zero,
+  every strike, and beyond the highest strike with BigInt arithmetic; a
+  negative far slope is unbounded loss. Declared-structure checks still
+  constrain which patterns may pass (and now require the short put below the
+  short call), but the number is never a formula. Tests compare every
+  reservation to an independent payoff scan.
+- **2026-08-31 — Action plans are deep-frozen copies.** The core returns
+  `ENTRY_ACTION_PLAN` values whose limit and legs are copied and frozen, so
+  no holder of the analyst batch can alter an approved plan after the fact.
+- **2026-08-31 — The architecture gate is a provenance allow-list, not a
+  syntax deny-list.** Blind ruling (`responses/R4-ruling-architecture-seam.md`)
+  on the third seam of the checker: shared completion gate 2 requires a rule
+  that *rejects* impurity, so a deny-list with a documented hole would
+  document non-fulfilment. `tools/check-core-architecture.mjs` now builds a
+  TypeScript program over `src/core/**` with `types: []` and `lib: es2024`
+  and requires every value-position identifier to resolve to core code or to a
+  reviewed ECMAScript allow-list; Node globals, `Date`, `Function`, `eval`,
+  `globalThis`, `Reflect`, `Proxy`, `Promise`, `Intl`, reflective members
+  (`constructor`/`prototype`/`__proto__`), descriptor/prototype APIs,
+  computed access on untyped or callable operands, casts that hide callables,
+  explicit `any`, ambient declarations (except unique-symbol brands), async
+  code, dynamic import, and non-`.ts` core files fail closed. The self-test
+  runs its mutant table plus a pure control on every `npm run architecture`
+  (the table grows with every counter-verified laundering class; the count in
+  the gate's own output is authoritative).
+  Declared limit: the gate proves what the declared core references, not that
+  the boundary sits at the right place — that stays with the Core/shell
+  lens. `.tmp/**` is ignored by ESLint so concurrent probe files cannot fail
+  `npm run verify`.
+- **2026-08-31 — Core purity is additionally enforced at runtime, because a
+  static gate cannot be sound against deliberate laundering.** Two blind
+  counter-verifications of the allow-list gate each produced a new laundering
+  path (structural types, type guards, destructuring, generics, alias
+  mutation, `Object.freeze(Math)`, `new Error().stack`). A second blind ruling
+  (`responses/R4-ruling-architecture-enforcement.md`) held that shared
+  completion gate 2 and SPEC §1 carry no "ordinary code only" qualifier, so
+  enforcement must hold against source-level laundering. `npm run sandbox`
+  (`tools/run-core-sandboxed.mjs`, part of `verify`) executes the compiled
+  core inside a `node:vm` realm whose intrinsics are frozen and in which
+  `Date`, `Intl`, `Math.random`, `eval`, every function constructor, and the
+  locale methods are absent or throw; it first proves the instrument on six
+  laundered mutants, then runs the recorded fixture twice (determinism), the
+  malformed-parser and stale-snapshot paths, a full-fill reconciliation, and a
+  fresh close plan. Declared limits, stated exactly: the runtime guard
+  observes only the paths it executes and only the capabilities its taming
+  removes (clock, randomness, locale, code generation, stack observation,
+  the symbol registry, mutation of intrinsics, and mutation of the core's
+  exported values, which are restricted to ordinary functions, arrays, and
+  plain records and then hardened after load along their data properties and
+  custom prototype chains — accessor properties, proxies, and objects with
+  mutable internal slots such as `Map`, `Set`, typed arrays, iterators, and
+  generator objects are rejected at load); it does not observe
+  unexecuted paths, mutation of non-exported module-scope objects inside the
+  core, or any capability not in that list. The static gate rejects every
+  impurity and laundering class in its self-test — including any use of a
+  standard-library object as a value — but a static analysis of TypeScript
+  is **not sound** against an author who intends to escape it: four blind
+  counter-verifications each found a new typed laundering path, and the P1
+  run records this seam as open (`R4-F5`, PATCHED) rather than resolved.
+  What the two gates hold together is: accidental impurity is rejected
+  before execution, and the enumerated ambient capabilities cannot be reached
+  on executed paths whatever the source spelled. Intent and boundary
+  placement remain with the Core/shell lens and human review.
+- **2026-08-31 — Owner ruling: residual `RES-P1-01` accepted.** Felix
+  Radzanowski accepted the blind ruling above (the typed core boundary is
+  trusted; shape validation belongs to the shell). Consequence: the core keeps
+  throwing on type-invalid runtime values, every adapter carries the obligation
+  rows `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`, and a P2/P3 adapter that
+  reaches `decide` without shape validation fails its phase gate. A veto would
+  have reopened P1 with a core-side validation gateway; that path is closed.
+- **2026-08-31 — Owner ruling: the two-gate enforcement with its stated limits
+  is the accepted fulfilment of shared completion gate 2 (`R4-F5` declared).**
+  After four blind counter-verifications each produced a fresh typed
+  laundering path, Felix Radzanowski chose declaration over a fifth patch or a
+  hardened-realm dependency (SES/`lockdown`). What is accepted: the static
+  provenance allow-list rejects accidental and negligent impurity before
+  execution; the runtime sandbox denies the enumerated ambient capabilities on
+  every executed path whatever the source spelled; a deliberate core author can
+  still write source that passes the static gate, and an ambient reach on a
+  path the sandbox does not execute is not observed. The P1 run records this
+  as residual `RES-P1-02` with the owner as decider. SES/`lockdown` as a pinned
+  dependency stays a backlog candidate for P2, not a P1 obligation.
+- **2026-08-31 — R5: the owner's declaration of `RES-P1-02` was refused once
+  and then made true, not widened.** The blind residual gate (store
+  `responses/R5-residual-architecture-enforcement-3.md`) refused to countersign
+  because two bounded, dependency-free omissions survived *inside* the claimed
+  coverage: the static rule treated a shorthand property (`{ Math }`) as a
+  property name only, and export hardening followed data properties only, so
+  accessor properties and custom prototype chains reachable from an export
+  stayed mutable on executed paths. Both were closed as the gate prescribed
+  (shorthand values go through the provenance check; hardening denies
+  accessors, traverses prototypes, and skips realm intrinsics), each with
+  calibration mutants in the respective gate. A fourth call then refused once
+  more: `Object.freeze` does not reach mutable internal slots, so exported
+  `Map`/`Set`/typed-array/iterator/generator values stayed mutable inside the
+  claimed coverage. Closed as a class, not per type: export hardening now
+  admits only ordinary functions, arrays, and plain records and rejects every
+  other shape at load (the real core exports nothing else), and a failing
+  freeze is an error. The abstract limit — unexecuted paths, non-exported
+  module state including closure state, an author who intends to escape
+  static analysis — was confirmed as truthfully declared and remains the
+  residual.
+  These are the sixth and seventh seams on `Dynamic-import architecture
+  coverage`; the ledger records why the seventh is the last: any further finding inside the declared limit is
+  not attacked again, and any further finding inside the *claimed* coverage is
+  a new owner decision, not a patch.
+- **2026-08-31 — Owner ruling: P1 is accepted and merged with its adversarial
+  run paused, not terminated.** Felix Radzanowski decided under the competition
+  calendar (P2–P6 due before Tuesday's US open, P7 live certificate in that
+  session) to accept P1 after R5 and merge `p1/pure-entry-core` into local
+  `main`. What is accepted: 37 allocated SPEC cases green (45 tests), the
+  static and runtime purity gates with their limits stated exactly, residual
+  `RES-P1-01` (both countersignatures), and `R4-F5`/`RES-P1-02` with the
+  owner's countersignature only — the blind residual gate refused five times,
+  each time on a bounded omission inside the claimed coverage; the last one
+  (shape classification spoofable through `Symbol.toStringTag`) was closed by
+  the gate's prescribed prototype-identity check with two spoof calibration
+  mutants, but that state is **not counter-verified by a gate**. The loop
+  stands at R5 of 8 with criteria 1 and 5 met and 2, 3, 4, 6 open; a later
+  session may resume it from the store, it must not be reported as a bis-0
+  termination. P2 begins on its own branch from this merge.

@@ -33,7 +33,8 @@ Every implementation phase P1–P7 ends under the same rules:
    generated public artifacts.
 7. `README.md`, `TEST_MAP.md`, `REPO_MAP.md`, `STATE.md`, and `DECISIONS.md`
    are updated where the phase changed their truth. The coherent result is
-   committed on `concept`; no `main` or remote action is implied.
+   committed on its dedicated phase branch; `main` remains release-only and no
+   remote action is implied.
 
 Failure is defined. The agent leaves the last coherent green commit, records
 the exact open case IDs and reproduced blocker in `STATE.md`, and does not

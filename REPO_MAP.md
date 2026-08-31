@@ -2,7 +2,11 @@
 
 - `.env.example` — Copy to .env and fill in. .env is gitignored — keys never enter the repo.
 - `.gitignore` — Secrets — never committed. Real keys live in .env (see .env.example).
-- `CLAUDE.md` — Glass Box Trading — agent instructions
+- `.node-version`
+- `.npmrc`
+- `.nvmrc`
+- `AGENTS.md` — Glass Box Trading — agent instructions
+- `CLAUDE.md`
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
@@ -16,7 +20,34 @@
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec
+- `eslint.config.mjs`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
+- `LICENSE`
+- `package-lock.json`
+- `package.json`
+- `README.md` — Glass Box Trading
+- `src/core/decision.ts`
+- `src/core/domain.ts`
+- `src/core/order-identity.ts`
+- `src/fixtures/p1-recorded-cycle.ts`
+- `src/shell/render-decision-view.ts`
+- `src/shell/render-fixture.ts`
 - `STATE.md` — STATE — live cursor
+- `tests/core-contract.spec.ts`
+- `tests/fixture-view.spec.ts`
+- `tests/fixtures.ts`
+- `tests/g1-defined-risk.spec.ts`
+- `tests/g2-budget.spec.ts`
+- `tests/g3-g4-risk-caps.spec.ts`
+- `tests/g5-liquidity.spec.ts`
+- `tests/g6-session-tradability.spec.ts`
+- `tests/g7-idempotency.spec.ts`
+- `tests/g8-schema-whitelist.spec.ts`
+- `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
+- `tools/clean.mjs`
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
+- `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
+- `tsconfig.build.json`
+- `tsconfig.json`
+- `vitest.config.ts`
