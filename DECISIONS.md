@@ -785,3 +785,23 @@ small, no ADR split).
   startup-refusal, launcher, and world-class claim held on executed
   evidence. Fix verification launched as Codex job `task-mthjmppo-yaet07`;
   verdict recorded in the store's `LEDGER.md` and `STATE.md` → Now.
+- **2026-08-31 — P4 closing state: green, gate-confirmed on its riskiest
+  mechanism, awaiting the owner's word for the merge.** Final code commit
+  `2aa30fc` on `p4/fail-closed-startup` (`npm run verify` exit 0: 161
+  tests, static and sandbox gates, partition check). The reduced depth
+  delivered: 15/15 mutation probe (every mutant compiled before its run),
+  one blind gate call **REJECTED** with a single class-A finding (G1-F1,
+  the credential fence missing the phase-4 re-check seam), closed
+  red-first, and one **CONFIRMED** (Codex job `task-mthjmppo-yaet07`,
+  eight executed variants: both fence status codes on the re-check seam,
+  the snapshot and phase-0 seams, 500/plain errors never fencing, a
+  two-plan cycle leaving the second plan `NOT_SENT`, no stacked halts).
+  Confirmed by executed evidence: every startup refusal path, the
+  launcher's no-release-before-acceptance rule, the constructed child
+  environment, the credential fence on all three seams. Not gate-verified
+  beyond the repository gates and the 15/15 probe: the pure validator's
+  individual bound checks and the manifest/lock schemas. This is the
+  declared reduced depth, not a bis-0 termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p4-fail-closed-startup/LEDGER.md`.
+  Merge into local `main` only on Felix's word; P5 starts from the
+  accepted P4 on its own branch.

@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 evening (P2 and P3 merged to local `main` on Felix's word; P4 implemented on `p4/fail-closed-startup`, probe 15/15, first blind gate call running)
-**Branch:** `p4/fail-closed-startup` at `43ce65f` (from the P3 merge `a737a80` on local `main`); no GitHub remote yet
+**Last updated:** 2026-08-31 night (P2 and P3 merged to local `main` on Felix's word; P4 closed on its branch: green at `2aa30fc`, startup/launch boundary gate-CONFIRMED after two calls; the P4 merge awaits Felix's word)
+**Branch:** `p4/fail-closed-startup` at `2aa30fc` plus docs commits (implementation `43ce65f`, gate closure `2aa30fc`; from the P3 merge `a737a80` on local `main`); no GitHub remote yet
 **Last accepted phase artifact:** P3 — merge commit `a737a80` on local `main` (2026-08-31; P2 merged as `9e380fc` immediately before; owner acceptance of the declared reduced depth for both, see DECISIONS.md). `npm run verify` exit 0 on the merged `main`.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P4 — startup and analyst boundary
@@ -206,7 +206,18 @@ One phase per session; every session ends with the handoff protocol in
   same halt path; 161 tests, `npm run verify` exit 0); every other claim
   held, two observations declared without fix (ledger). Fix verification:
   Codex job `task-mthjmppo-yaet07`
-  (`prompts/G2-fixverify-recheck-fence.md`) — verdict **pending**.
+  (`prompts/G2-fixverify-recheck-fence.md`) returned **CONFIRMED** at
+  `2aa30fc` across eight executed variants (401 and 403 on the re-check
+  seam, the snapshot and phase-0 seams, 500/plain errors never fencing, a
+  two-plan cycle leaving the second plan `NOT_SENT: AUTH_FAILURE`, no
+  stacked halts). **P4 closing state:** the startup refusal paths, the
+  launcher's no-release-before-acceptance rule, and the credential fence
+  on all three seams are gate-confirmed by executed evidence; the pure
+  validator's individual bound checks and the manifest/lock schemas rest
+  on the repository gates and the 15/15 probe (declared reduced depth,
+  DECISIONS.md 2026-08-31). **Not merged.** Next action is Felix's: merge
+  `p4/fail-closed-startup` (`--no-ff`) onto `main`, or not. P5 then
+  branches from the accepted P4.
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
@@ -216,10 +227,8 @@ One phase per session; every session ends with the handoff protocol in
 
 ## Next (after P4)
 
-- **Close P4:** record the gate verdict (Codex job `task-mthi2xj7-ae4fpy`)
-  in the store `LEDGER.md`, `DECISIONS.md`, and this file; close any
-  finding red-first; then Felix's merge word for `p4/fail-closed-startup`
-  (`--no-ff` onto `main`).
+- **Felix's merge word for `p4/fail-closed-startup`** (`--no-ff` onto
+  `main`); the branch is closed and gate-confirmed.
 - **P5 — recovery and lifecycle** on its own branch from the accepted P4:
   scheduler-facing degraded paths, restart/gap bootstrap, reconciliation,
   watchdog takeover as a separate process entry point over the same epoch
