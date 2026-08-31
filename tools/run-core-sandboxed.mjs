@@ -94,20 +94,49 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
   const entry = await load(entryFile);
   await entry.evaluate();
   // Harden: every value the loaded graph exports — functions included — is
-  // deep-frozen, so a laundered defineProperty/assign/setPrototypeOf on a
-  // core export throws instead of installing hidden module state.
+  // deep-frozen along its data properties *and* its custom prototype chain, so
+  // a laundered defineProperty/assign/setPrototypeOf on a core export (or on a
+  // prototype reachable from it) throws instead of installing hidden module
+  // state. Accessor properties on core-owned values are denied outright: a
+  // frozen getter can still close over mutable state. Realm intrinsics are
+  // already frozen by the taming and are skipped, not traversed.
+  const intrinsics = intrinsicsOf(context);
   const seen = new Set();
   const harden = (value) => {
-    if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) return;
+    if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value) || intrinsics.has(value)) return;
     seen.add(value);
-    try { Object.freeze(value); } catch { /* unfreezable views hold no capability */ }
     for (const key of Reflect.ownKeys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor !== undefined && "value" in descriptor) harden(descriptor.value);
+      if (descriptor === undefined) continue;
+      if (!("value" in descriptor)) throw new Error(`export hardening denied accessor property '${String(key)}' on a core-owned value`);
+      harden(descriptor.value);
     }
+    harden(Object.getPrototypeOf(value));
+    try { Object.freeze(value); } catch { /* unfreezable views hold no capability */ }
   };
   for (const module of cache.values()) for (const value of Object.values(module.namespace)) harden(value);
   return entry.namespace;
+}
+
+// Every object reachable from the realm's global object (values, accessors,
+// prototypes): the set the taming already froze. Collected on the host side so
+// export hardening can tell a core-owned prototype from an intrinsic one.
+function intrinsicsOf(context) {
+  const set = new Set();
+  const walk = (value) => {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null || set.has(value)) return;
+    set.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined) continue;
+      if ("value" in descriptor) walk(descriptor.value);
+      if (descriptor.get !== undefined) walk(descriptor.get);
+      if (descriptor.set !== undefined) walk(descriptor.set);
+    }
+    walk(Object.getPrototypeOf(value));
+  };
+  walk(vm.runInContext("globalThis", context));
+  return set;
 }
 
 function stable(value) {
@@ -165,6 +194,9 @@ async function calibrate() {
     ["alias mutation of an intrinsic", "export function poison() { const m = Math; m.max = () => 0; return m.max(1, 2); }"],
     ["symbol registry", "export function registry() { return Symbol.for('glass-box'); }"],
     ["hidden state on an exported function", "export function counter() { const self = counter; Object.defineProperty(self, 'count', { value: 1, writable: true }); return self.count; }"],
+    ["hidden state behind an exported accessor", "let hidden = 0; export const box = { get count() { return ++hidden; } }; export function read() { return box.count; }"],
+    ["hidden state on an exported value's prototype", "const proto = {}; export const box = Object.create(proto); export function poison() { proto.count = (proto.count ?? 0) + 1; return proto.count; }"],
+    ["hidden state via a setter reached from an export", "let hidden = 0; export const box = { set count(value) { hidden = value; }, get current() { return hidden; } }; export function write() { box.count = 7; return box.current; }"],
   ];
   for (const [name, source] of mutants) {
     const context = createTamedRealm();

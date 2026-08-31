@@ -77,7 +77,7 @@ citing the test ID next to it in the same commit that adds the test.
 |---|---|---|
 | WIN-9 | S-CYC-11, S-J-06 | live/redirect/lookalike trading origin with matching account ID, or unknown profile → fail before mutation; valid paper origin + wrong ID still fails; valid market-data origin remains usable |
 | WIN-10 | S-CYC-11 | identical 32-tool inventory from wrong/missing/ambiguous MCP distribution or different checked/launched interpreter → fail before spawn; manifest or launch-artifact drift invalidates pre-arm certificate |
-| WIN-11 | S-G1-01..04, G2–G4, S-X-01/02 | target/mid premium passes but least-favourable submitted limit exceeds sleeve/open-risk budget → veto; re-price recomputes atomically; partial/price-improved fills release only reconciled excess; impossible worse-than-limit broker record halts visibly ○ open in P1: no test drives "target/mid passes but least-favourable submitted limit exceeds budget"; G1–G4 derive risk from the submitted limit (S-G1-02 test) and worse-than-limit fills throw (S-G2-06 test), which supports but does not execute this path |
+| WIN-11 | S-G1-01..04, G2–G4, S-X-01/02 | target/mid premium passes but least-favourable submitted limit exceeds sleeve/open-risk budget → veto; re-price recomputes atomically; partial/price-improved fills release only reconciled excess; impossible worse-than-limit broker record halts visibly ○ open — the full path is owned by P3 (S-X-01 constructs the limit and re-prices; S-X-02 owns worse-than-limit records); P1 decides only from a limit it is given: no P1 test drives "target/mid passes but least-favourable submitted limit exceeds budget"; G1–G4 derive risk from the submitted limit (S-G1-02 test) and worse-than-limit fills throw (S-G2-06 test), which supports but does not execute this path |
 | WIN-12 | S-G13-01 | resting entry during kill: cancel-before-close, full/partial fill race becomes reconciled exposure and is flattened; lost ack never reports flat; existing protective close is neither canceled nor duplicated |
 | WIN-13 | S-CYC-12, submission gate | no candidate/all safe non-fills through Sep 1 → visible competitiveness alarm; qualification attempt remains one-lot, capped, and inside every normal gate; no fill by Sep 2 → internal failure/owner waiver, not invented external ineligibility |
 | WIN-14 | SUB-03, SUB-09 | canonical one-pager reproducibly renders exactly one page and passes the actual form's MIME/size/upload-or-link validation; rejected type causes one recorded target change, not drifting variants |
@@ -92,7 +92,8 @@ citing the test ID next to it in the same commit that adds the test.
 Ruling 1A (run store `responses/R4-ruling-typed-boundary.md`): the typed
 `decide` boundary is trusted; shape validation of snapshots and candidates
 happens before the call. The core therefore throws, rather than vetoes, on
-type-invalid runtime values. Residual `RES-P1-01` in the run ledger. Every
+type-invalid runtime shapes — and a forged unit brand is not caught at all
+(`RES-P1-01d`). Residual `RES-P1-01` in the run ledger. Every
 adapter that assembles a `DecisionSnapshot` or `EntryCandidate` must execute
 these paths before `decide` is reachable:
 
@@ -101,6 +102,7 @@ these paths before `decide` is reachable:
 | RES-P1-01a | S-CORE-03, S-G8-05 (P2/P3 journal reconstruction, P4 analyst boundary) | snapshot assembled with `contractsById[id] = null` or a non-object contract record → adapter rejects the snapshot as invalid and journals it; `decide` is never called with it |
 | RES-P1-01b | §1, S-G6-05, S-CORE-03 (P2/P3) | prior history sample with missing/`null` `quotesByContract` or non-object quote records → adapter rejects the snapshot; `decide` is never called with it |
 | RES-P1-01c | S-CORE-03 (P2/P3) | exposure lifecycle reconstructed with an unknown `kind`/`state` or non-integer `maxLossCents` → adapter rejects the snapshot (the core already counts unknown entry states fail-closed and vetoes negative/unsafe risk) |
+| RES-P1-01d | S-G8-04, S-G1-01, S-CORE-03 (P3 execution, P4 analyst boundary) | candidate assembled outside the analyst parser with a forged unit brand (`quantity: 0 as LotCount`, `priceCents: -1 as OptionPriceCents`) → adapter constructs every unit through `lotCount`/`integerUnit` and never hands `decide` a cast; a forged value would otherwise `PASS` without a veto (R5-F1, gate-ruled an instance of `RES-P1-01`) |
 
 C-class backlog (no debt, tracked for hygiene): KGV-16 wording (fixed),
 KGV-18 traceability (fixed), push channel naming (NUT-3), dashboard deploy

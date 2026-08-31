@@ -155,8 +155,10 @@ export function inspectCoreDirectory(coreRoot) {
     else if (isGlobal && !ALLOWED_LIB_VALUES.has(symbol.name)) report(fileName, `standard-library value '${symbol.name}' is not on the core allow-list`);
   }
 
-  function inspectValueReference(fileName, node, spelled) {
-    const symbol = checker.getSymbolAtLocation(node);
+  function inspectValueReference(fileName, node, spelled, resolvedSymbol = undefined) {
+    // A shorthand property (`{ Math }`) names a property *and* reads a value; the
+    // value symbol must go through the same provenance and value-flow checks.
+    const symbol = resolvedSymbol ?? checker.getSymbolAtLocation(node);
     if (symbol === undefined) {
       report(fileName, `unresolved identifier '${spelled}' (not core code, not standard library)`);
       return;
@@ -290,6 +292,9 @@ export function inspectCoreDirectory(coreRoot) {
       if (ts.isIdentifier(node) && !isPartOfType(node)) {
         const parent = node.parent;
         const isDeclarationName = "name" in parent && parent.name === node && !ts.isPropertyAccessExpression(parent);
+        if (ts.isShorthandPropertyAssignment(parent) && parent.name === node) {
+          inspectValueReference(fileName, node, node.text, checker.getShorthandAssignmentValueSymbol(parent));
+        }
         const isPropertyName = (ts.isPropertyAssignment(parent) && parent.name === node)
           || (ts.isShorthandPropertyAssignment(parent) && parent.name === node)
           || (ts.isPropertySignature(parent) && parent.name === node)
@@ -407,6 +412,9 @@ function runSelfTest() {
     ["export function trace() { return new Error('x').stack; }", "forbidden reflective or impure member"],
     ["export function trace() { const { stack } = new Error('x'); return stack; }", "forbidden reflective or impure member name 'stack'"],
     ["export function spread() { return { ...Math }; }", "used as a value"],
+    ["export function box() { const carrier = { Math }; return carrier.Math; }", "used as a value"],
+    ["export function box() { const carrier = { Object }; return carrier.Object; }", "used as a value"],
+    ["export function grab() { const carrier: Record<string, unknown> = { Math }; const key = Object.getOwnPropertyNames(Math)[0]; return (carrier['Math'] as Record<string, () => number>)[key](); }", "used as a value"],
   ];
   for (const [source, expected] of mutants) {
     const found = inspectInlineCore({ "mutant.ts": source });

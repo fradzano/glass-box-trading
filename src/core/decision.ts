@@ -482,7 +482,11 @@ export function reconcilePartialFillRisk(
   averageFillPriceCents: OptionPriceCents,
   remainingQuantity: Quantity,
 ): { readonly components: readonly ExposureRiskComponent[]; readonly totalMaxLossCents: MoneyCents } {
-  if (BigInt(filledQuantity) + BigInt(remainingQuantity) > BigInt(candidate.quantity)) throw new RangeError("filled plus remaining quantity exceeds approved quantity");
+  // Every approved unit stays accounted: a report that adds up to more than the
+  // approved quantity is impossible, and one that adds up to less has lost a
+  // unit whose terminal state nobody observed (S-G2-07 releases only on an
+  // observed terminal state). Both are rejected fail-closed rather than repaired.
+  if (BigInt(filledQuantity) + BigInt(remainingQuantity) !== BigInt(candidate.quantity)) throw new RangeError("filled plus remaining quantity must equal the approved quantity");
   const fillIsWorseThanLimit = candidate.entryLimit.kind === "debit"
     ? averageFillPriceCents > candidate.entryLimit.priceCents
     : averageFillPriceCents < candidate.entryLimit.priceCents;

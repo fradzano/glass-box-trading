@@ -277,7 +277,10 @@ small, no ADR split).
   SPEC §1, and the phase plan place schema and shape validation in front of
   the pure core. Type-invalid runtime values (a `null` contract record, a
   missing prior-quote map) therefore throw inside the core instead of
-  producing a veto; this is declared residual `RES-P1-01` and every adapter
+  producing a veto — and a forged unit brand (`0 as LotCount`, `-1 as
+  OptionPriceCents`, a compiler-accepted assertion that bypassed the validating
+  constructor) passes without a veto (R5-F1, gate-ruled an instance of this
+  residual: obligation row `RES-P1-01d`); this is declared residual `RES-P1-01` and every adapter
   carries the obligation rows `RES-P1-01a..c` in `docs/EVIDENCE-DEBT.md`.
   Type-valid but semantically invalid inputs are made unrepresentable
   instead: `LotCount` (constructed only by `lotCount(≥1)`) types candidate
@@ -310,7 +313,9 @@ small, no ADR split).
   computed access on untyped or callable operands, casts that hide callables,
   explicit `any`, ambient declarations (except unique-symbol brands), async
   code, dynamic import, and non-`.ts` core files fail closed. The self-test
-  runs 35 mutants plus a pure control on every `npm run architecture`.
+  runs its mutant table plus a pure control on every `npm run architecture`
+  (the table grows with every counter-verified laundering class; the count in
+  the gate's own output is authoritative).
   Declared limit: the gate proves what the declared core references, not that
   the boundary sits at the right place — that stays with the Core/shell
   lens. `.tmp/**` is ignored by ESLint so concurrent probe files cannot fail
@@ -333,7 +338,9 @@ small, no ADR split).
   observes only the paths it executes and only the capabilities its taming
   removes (clock, randomness, locale, code generation, stack observation,
   the symbol registry, mutation of intrinsics, and mutation of the core's
-  exported values, which are hardened after load); it does not observe
+  exported values, which are hardened after load along their data
+  properties and custom prototype chains, accessor properties denied); it
+  does not observe
   unexecuted paths, mutation of non-exported module-scope objects inside the
   core, or any capability not in that list. The static gate rejects every
   impurity and laundering class in its self-test — including any use of a
@@ -364,3 +371,20 @@ small, no ADR split).
   path the sandbox does not execute is not observed. The P1 run records this
   as residual `RES-P1-02` with the owner as decider. SES/`lockdown` as a pinned
   dependency stays a backlog candidate for P2, not a P1 obligation.
+- **2026-08-31 — R5: the owner's declaration of `RES-P1-02` was refused once
+  and then made true, not widened.** The blind residual gate (store
+  `responses/R5-residual-architecture-enforcement-3.md`) refused to countersign
+  because two bounded, dependency-free omissions survived *inside* the claimed
+  coverage: the static rule treated a shorthand property (`{ Math }`) as a
+  property name only, and export hardening followed data properties only, so
+  accessor properties and custom prototype chains reachable from an export
+  stayed mutable on executed paths. Both were closed as the gate prescribed
+  (shorthand values go through the provenance check; hardening denies
+  accessors, traverses prototypes, and skips realm intrinsics), each with
+  calibration mutants in the respective gate. The abstract limit — unexecuted
+  paths, non-exported module state, an author who intends to escape static
+  analysis — was confirmed as truthfully declared and remains the residual.
+  This is the sixth seam on `Dynamic-import architecture coverage`; the ledger
+  records why it is the last: any further finding inside the declared limit is
+  not attacked again, and any further finding inside the *claimed* coverage is
+  a new owner decision, not a patch.

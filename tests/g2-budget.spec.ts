@@ -76,6 +76,18 @@ describe("G2 sleeve budgets", () => {
     )).toThrow("broker fill price is worse than the approved entry limit");
   });
 
+  it("S-G2-06/07 keeps every approved unit accounted: a partial-fill report that loses a unit is rejected, never silently released", () => {
+    const tenLot = candidate({ quantity: lotCount(10), entryLimit: { kind: "debit", priceCents: integerUnit(100, "OptionPriceCents") } });
+    const fill = integerUnit(80, "OptionPriceCents");
+    // 4 filled + 5 resting = 9 of 10: the tenth unit has no observed terminal state and cannot vanish from the reservation.
+    expect(() => reconcilePartialFillRisk(tenLot, integerUnit(4, "Quantity"), fill, integerUnit(5, "Quantity"))).toThrow(RangeError);
+    expect(() => reconcilePartialFillRisk(tenLot, integerUnit(0, "Quantity"), fill, integerUnit(9, "Quantity"))).toThrow(RangeError);
+    // Complete reports still reconcile exactly once.
+    expect(reconcilePartialFillRisk(tenLot, integerUnit(0, "Quantity"), fill, integerUnit(10, "Quantity")).totalMaxLossCents).toBe(100_000);
+    expect(reconcilePartialFillRisk(tenLot, integerUnit(10, "Quantity"), fill, integerUnit(0, "Quantity")).totalMaxLossCents).toBe(80_000);
+    expect(reconcilePartialFillRisk(tenLot, integerUnit(4, "Quantity"), fill, integerUnit(6, "Quantity")).totalMaxLossCents).toBe(92_000);
+  });
+
   it("S-G2-07 releases entry reservation on every terminal path and never reserves exits", () => {
     const releasedStates: readonly ReleasedEntryState[] = ["rejected", "canceled", "expired"];
     for (const state of releasedStates) {
