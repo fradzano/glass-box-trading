@@ -273,6 +273,60 @@ async function exerciseCore() {
   const opening = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "OTHER", side: "buy", quantity: 1 }]);
   if (!execution.killTriggered(9_199_999, 9_200_000) || execution.killTriggered(9_200_000, 9_200_000) || killPlan.cancel.length !== 1 || killPlan.flatten.length !== 1 || killPlan.residue.length !== 0 || !eligible.eligible || opening.eligible || execution.isBookFlat(heldBook)) throw new Error("sandboxed kill plan or emergency eligibility is wrong");
   paths.push("utcIso<->epochMs, priceEntryLimit(credit vertical) → 198, classifyFillPrice(breach/improved), assembleDecisionSnapshot(ok / null contract refused), buildClaimset+revalidateClaimset(holds / kill crossed), intentDraft+OUTCOME → foldLifecycles(filled), planKillManagement(cancel 1, flatten 1), emergencyCloseEligibility(whole close ok / opening leg refused)");
+
+  // P4 startup core: fail-closed config validation, the canonical-origin rule, the MCP launch/inventory verifiers,
+  // the constructed child environment, and the credential-fence classification.
+  const startup = await loadModuleGraph(context, path.join(DIST, "core", "startup.js"));
+  const expectations = { canonicalTradingOrigin: "https://paper-api.alpaca.markets", alertSlaMs: 3_600_000 };
+  const validRaw = {
+    EXPECTED_ACCOUNT_ID: "TEST_ONLY_SANDBOX", ALPACA_PROFILE: "dev", ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets",
+    STATE_DIR: "C:\\state", BOOTSTRAP_DIAGNOSTIC_SINK: "C:\\sink\\d.jsonl",
+    INCOME_BUDGET_CENTS: 1_200_000, CONVEX_BUDGET_CENTS: 800_000, INITIAL_CAPITAL_CENTS: 10_000_000,
+    MAX_LOSS_PER_POSITION_BPS: 2_000, MAX_UNDERLYING_EXPOSURE_CENTS: 500_000, MAX_REL_SPREAD_BPS: 500,
+    MIN_QUOTE_SIZE: 1, QUOTE_MAX_AGE_MS: 60_000, SNAPSHOT_STALENESS_BOUND_MS: 600_000,
+    KILL_EQUITY_THRESHOLD_CENTS: 9_000_000, DEAD_MAN_BOUND_MS: 3_000_000, ALERT_DELIVERY_BUDGET_MS: 600_000,
+    CYCLE_INTERVAL_MS: 900_000, UNDERLYING_UNIVERSE: ["SPY"], STRUCTURE_WHITELIST: ["long_option"],
+    EXPIRY_MIN_SESSIONS: 2, EXPIRY_MAX_SESSIONS: 10, MAX_STRIKE_DISTANCE_BPS: 1_000, MAX_CANDIDATE_QTY: 5,
+    LIMIT_TOLERANCE_CENTS: 5, CLOSE_ESCALATION_STEP_CENTS: 2, RESIDUE_MAX_SESSIONS: 1,
+    ANALYST_TIMEOUT_MS: 240_000, CYCLE_WALLTIME_BUDGET_MS: 300_000, LOCK_TAKEOVER_BOUND_MS: 400_000,
+    ANALYST_MCP_CAPABILITY_MANIFEST: "config/analyst-mcp-readonly.json", ANALYST_MCP_RUNTIME_LOCK: "config/analyst-runtime-lock.json",
+    ANALYST_ALPACA_PROFILE: "dev", QUALIFYING_ACTIVITY_CHECKPOINT: "2026-09-01T20:00:00Z",
+    QUALIFICATION_WINDOW_END: "2026-09-02T20:00:00Z", QUALIFICATION_MAX_LOSS_CENTS: 50_000,
+  };
+  const armed = startup.validateStartupConfig(validRaw, expectations);
+  const refusedProfile = startup.validateStartupConfig({ ...validRaw, ALPACA_PROFILE: "prod" }, expectations);
+  const refusedUnknown = startup.validateStartupConfig({ ...validRaw, EXTRA_KNOB: 1 }, expectations);
+  const refusedOrigin = startup.validateStartupConfig({ ...validRaw, ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets/" }, expectations);
+  const refusedShort = startup.validateStartupConfig({ ...validRaw, STRUCTURE_WHITELIST: ["vertical_credit"] }, expectations);
+  if (!armed.ok || refusedProfile.ok || refusedUnknown.ok || refusedOrigin.ok || refusedShort.ok) throw new Error("sandboxed startup validation is wrong");
+  if (armed.value.decision.cycleIntervalMs !== 900_000 || armed.value.execution.killEquityThresholdCents !== 9_000_000) throw new Error("sandboxed startup bundle is wrong");
+  const sandboxLock = {
+    schemaVersion: 1,
+    source: { repository: "https://example.invalid/repo.git", commit: "a".repeat(40), package: "alpaca-mcp-server", version: "2.3.0", dependencyLockAtCommit: "uv.lock" },
+    interpreter: { implementation: "CPython", version: "3.14.1", launcherSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) },
+    installPolicy: { dedicatedEnvironment: true, buildFromPinnedCommit: true, frozenDependencyLock: true, learnHashesFromInstalledEnvironment: false, verifyImmutableSourceAndPackageFilesBeforeSpawn: true, removeBeforeSpawn: ["**/*.pyc"], requireRemovedFilesAbsentBeforeSpawn: true, disableBytecodeWritesInChild: true },
+  };
+  const sandboxManifest = { schemaVersion: 1, server: { package: "alpaca-mcp-server", version: "2.3.0", runtimeLock: "lock.json" }, analystProfile: "dev", inventoryPolicy: "exact", alpacaToolsets: ["assets"], allowedTools: ["get_asset", "get_clock"] };
+  const lockOk = startup.validateRuntimeLock(sandboxLock);
+  const manifestOk = startup.validateAnalystManifest(sandboxManifest);
+  if (!lockOk.ok || !manifestOk.ok || !startup.verifyManifestLockAgreement(manifestOk.value, lockOk.value).ok) throw new Error("sandboxed manifest/lock validation is wrong");
+  const env = startup.buildAnalystChildEnv(manifestOk.value, { devKeyId: "k", devSecretKey: "s" });
+  const observation = {
+    sourceRepository: sandboxLock.source.repository, sourceCommit: sandboxLock.source.commit, packageName: "alpaca-mcp-server", packageVersion: "2.3.0",
+    dependencyLockMatchesPin: true, interpreterLauncherSha256: sandboxLock.interpreter.launcherSha256, interpreterRuntimeSha256: sandboxLock.interpreter.runtimeSha256,
+    hashProvenance: "runtime_lock", immutableFileMismatches: [], bytecodeArtifactsPresent: [], bytecodeWritesDisabled: true, childEnvironment: env,
+  };
+  const launchOk = startup.verifyMcpLaunch(lockOk.value, observation, []);
+  const launchDrift = startup.verifyMcpLaunch(lockOk.value, { ...observation, hashProvenance: "installed_environment" }, []);
+  const launchLeak = startup.verifyMcpLaunch(lockOk.value, { ...observation, childEnvironment: { ...env, ALPACA_COMP_KEY_ID: "leak" } }, []);
+  const inventoryOk = startup.verifyMcpInventory(manifestOk.value, ["get_asset", "get_clock"]);
+  const inventoryExtra = startup.verifyMcpInventory(manifestOk.value, ["get_asset", "get_clock", "place_order"]);
+  if (!launchOk.ok || launchDrift.ok || launchLeak.ok || !inventoryOk.ok || inventoryExtra.ok) throw new Error("sandboxed MCP verification is wrong");
+  if (startup.classifyBrokerFailure(401) !== "AUTH_FAILURE" || startup.classifyBrokerFailure(403) !== "AUTH_FAILURE" || startup.classifyBrokerFailure(500) !== "WORLD_DEGRADED" || startup.classifyBrokerFailure(null) !== "WORLD_DEGRADED") throw new Error("sandboxed fence classification is wrong");
+  const importDraft = startup.importedDiagnosticDraft({ atIso: "2026-08-31T13:30:00.000Z", epoch: 1 }, { at: "2026-08-31T13:00:00.000Z", code: "CONFIG_INVALID_STATE_DIR", detail: "x" });
+  const importPlanned = journal.planAppend({ lastSeq: 0, priorIntentRationales: [] }, importDraft, []);
+  if (!importPlanned.ok || !startup.redactedViolationSummary(refusedProfile.ok ? [] : refusedProfile.violations).includes("ALPACA_PROFILE:UNKNOWN_PROFILE")) throw new Error("sandboxed startup journal material is wrong");
+  paths.push("validateStartupConfig(armed / profile / unknown field / origin lookalike / short-capable without flag), manifest+lock schemas agree, verifyMcpLaunch(ok / self-learned hash / env leak), verifyMcpInventory(exact / extra), classifyBrokerFailure(401/403 fence), importedDiagnosticDraft → valid append");
   return paths;
 }
 

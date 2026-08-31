@@ -1157,8 +1157,13 @@ export function entryResolutionDraft(context: DraftContext, clientOrderId: strin
     : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }] };
 }
 
-/** A kill halt is sticky (S-G13-03); a price-breach halt is not — it blocks new entries pending reconciliation and a manual un-halt (S-X-02). */
-export function haltDraft(context: DraftContext, reason: "KILL" | "BROKER_PRICE_BREACH", detail: string): JournalDraft {
+/**
+ * A kill halt is sticky (S-G13-03). The other reasons block new entries
+ * pending reconciliation and a manual un-halt: a price breach (S-X-02), a
+ * credential fence (S-G12-06 — re-arm only under halt after full
+ * reconciliation), and an invalid configuration (S-CYC-11).
+ */
+export function haltDraft(context: DraftContext, reason: "KILL" | "BROKER_PRICE_BREACH" | "AUTH_FAILURE" | "CONFIG_INVALID", detail: string): JournalDraft {
   return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: reason === "KILL" };
 }
 

@@ -32,8 +32,12 @@
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
 - `src/core/order-identity.ts`
+- `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
+- `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
+- `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
 - `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
 - `src/shell/gateway-cli.ts` — Process-level driver for the fencing and serialization tests: each
@@ -43,15 +47,19 @@
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
 - `src/shell/render-decision-view.ts`
 - `src/shell/render-fixture.ts`
+- `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `STATE.md` — STATE — live cursor
 - `tests/core-contract.spec.ts`
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
 - `tests/cyc05-g13-cyc06-core.spec.ts`
+- `tests/cyc11-mcp-verifier.spec.ts` — S-CYC-11 analyst boundary — the pinned MCP build/launch verifier and the
+- `tests/cyc11-startup-config.spec.ts` — S-CYC-11 — startup config validation, fail closed. The pure matrix drives
 - `tests/execution-fixtures.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/fixtures.ts`
 - `tests/g1-defined-risk.spec.ts`
+- `tests/g12-06-credential-fence.spec.ts` — S-G12-06 — the credential fence (AUS-3): a broker 401/403 mid-run is
 - `tests/g12-fencing.spec.ts`
 - `tests/g12-halt.spec.ts`
 - `tests/g2-budget.spec.ts`
@@ -65,6 +73,7 @@
 - `tests/j3-j4-entry-schemas.spec.ts`
 - `tests/j5-j6-redaction-binding.spec.ts`
 - `tests/journal-fixtures.ts`
+- `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.

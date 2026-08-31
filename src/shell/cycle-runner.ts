@@ -50,6 +50,8 @@ import type {
 } from "../core/execution.js";
 import type { AccountBinding, JournalDraft, JournalEntry, OutcomeStatus, ReasonCode } from "../core/journal.js";
 import { closeAttemptId, closeLifecycleId, planCloseLifecycle } from "../core/order-identity.js";
+import { classifyBrokerFailure } from "../core/startup.js";
+import { httpStatusOf } from "./broker-errors.js";
 import { readEpochStore } from "./epoch-store.js";
 import type { BrokerReadPort, SubmitPayload } from "./fake-broker.js";
 import { readHaltState } from "./halt-state.js";
@@ -126,14 +128,18 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-type Fetched<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+type Fetched<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string; readonly httpStatus: number | null };
 
 async function fetched<T>(work: () => Promise<T>): Promise<Fetched<T>> {
   try {
     return { ok: true, value: await work() };
   } catch (error) {
-    return { ok: false, error: messageOf(error) };
+    return { ok: false, error: messageOf(error), httpStatus: httpStatusOf(error) };
   }
+}
+
+function isAuthFailure<T>(result: Fetched<T>): boolean {
+  return !result.ok && classifyBrokerFailure(result.httpStatus) === "AUTH_FAILURE";
 }
 
 function closeStateOf(order: BrokerOrderRecord | null): CloseAttemptSnapshot["state"] {
@@ -181,8 +187,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   async function fetchBook(): Promise<Fetched<BrokerBook> & { readonly partial?: boolean }> {
     const [account, positions, openOrders] = await Promise.all([fetched(() => deps.broker.account()), fetched(() => deps.broker.positions()), fetched(() => deps.broker.openOrders())]);
     if (!account.ok || !positions.ok || !openOrders.ok) {
-      const failures = [account, positions, openOrders].filter(result => !result.ok).length;
-      return { ok: false, error: [account, positions, openOrders].map(result => (result.ok ? "ok" : result.error)).join("; "), partial: failures < 3 };
+      const failed = [account, positions, openOrders].flatMap(result => (result.ok ? [] : [result]));
+      const authStatus = failed.map(result => result.httpStatus).find(status => classifyBrokerFailure(status) === "AUTH_FAILURE") ?? null;
+      return { ok: false, error: [account, positions, openOrders].map(result => (result.ok ? "ok" : result.error)).join("; "), httpStatus: authStatus, partial: failed.length < 3 };
     }
     return { ok: true, value: { accountId: account.value.accountId, cashCents: account.value.cashCents, equityCents: account.value.equityCents, positions: positions.value, openOrders: openOrders.value, observedAtMs: deps.clock() } };
   }
@@ -199,6 +206,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     if (record.state !== "intent" && record.state !== "confirmation_unclear" && record.state !== "fillable") continue;
     const lookup = await fetched(() => deps.broker.orderByClientId(record.clientOrderId));
     if (!lookup.ok) {
+      if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
       entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
       resolved.push({ clientOrderId: record.clientOrderId, result: "UNRESOLVED" });
       continue;
@@ -264,8 +272,12 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   // ---- phase 1: one snapshot; a half-answer is an abstention (S-CYC-02) ----
   const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market())]);
   if (!bookFetch.ok || !marketFetch.ok) {
+    // S-G12-06: a broker 401/403 is a credential fence — a distinguishable AUTH_FAILURE that halts, never generic
+    // world unavailability. Market-data failures stay in the S-CYC-02 world classes; only the broker port fences.
+    if (!bookFetch.ok && isAuthFailure(bookFetch)) await haltForAuthFailure(bookFetch.error);
+    const brokerAuthFailure = entriesBlocked.includes("AUTH_FAILURE");
     const anySucceeded = (bookFetch.ok || bookFetch.partial === true) || marketFetch.ok;
-    const reasonCodes: readonly ReasonCode[] = [anySucceeded ? "WORLD_PARTIAL" : "WORLD_UNREACHABLE"];
+    const reasonCodes: readonly ReasonCode[] = brokerAuthFailure ? ["AUTH_FAILURE"] : [anySucceeded ? "WORLD_PARTIAL" : "WORLD_UNREACHABLE"];
     await append(skipDraft(context(), reasonCodes, null));
     return { primary: journalFailure() === null ? "SKIP" : null, reasonCodes, journalFailure: journalFailure(), entriesBlocked, resolved, auditGaps, analystSkip: null, snapshotRejected: null, actions, kill };
   }
@@ -330,6 +342,10 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // S-CYC-05: refetch broker truth and re-check every claim the verdict rested on.
     const claimset = buildClaimset(plan, book, binding, epoch, deps.executionConfig);
     const freshBook = await fetchBook();
+    // S-G12-06 (P4 gate finding G1-F1): a 401/403 on the re-check fetch is the credential fence, not generic
+    // revalidation evidence — the halt lands here, the void below still documents the failed claims, and the
+    // AUTH_FAILURE block keeps every later plan of this cycle from reaching the port.
+    if (!freshBook.ok && isAuthFailure(freshBook)) await haltForAuthFailure(freshBook.error);
     const refreshed = await gateway.openJournal();
     const store = readEpochStore(deps.paths);
     const freshHalt = readHaltState(deps.paths);
@@ -385,6 +401,13 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   async function haltForPriceBreach(clientOrderId: string): Promise<void> {
     if (readHaltState(deps.paths).halted) return;
     await append(haltDraft(context(), "BROKER_PRICE_BREACH", `${clientOrderId}: broker fill worse than the submitted limit; actual exposure reserved; reconcile before un-halt`));
+  }
+
+  /** S-G12-06: an auth failure blocks all orders; re-arm only under halt, after full reconciliation and the documented fence procedure. */
+  async function haltForAuthFailure(detail: string): Promise<void> {
+    if (!entriesBlocked.includes("AUTH_FAILURE")) entriesBlocked.push("AUTH_FAILURE");
+    if (readHaltState(deps.paths).halted) return;
+    await append(haltDraft(context(), "AUTH_FAILURE", `broker credential rejected (401/403): ${detail}; all orders blocked; run the fence procedure (working-order check/cancel in the broker dashboard) before un-halt`));
   }
 
   function assembleFold(journal: readonly JournalEntry[]): { readonly lifecycles: readonly EntryLifecycleRecord[]; readonly closes: readonly CloseAttemptRecord[] } | null {

@@ -10,6 +10,7 @@
 import type { EntryLimitKind, OptionLeg } from "../core/domain.js";
 import { isWorkingBrokerStatus } from "../core/execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "../core/execution.js";
+import { BrokerHttpError } from "./broker-errors.js";
 import type { BrokerMutation, BrokerMutationPort, BrokerMutationResult } from "./mutation-gateway.js";
 
 export interface SubmitPayload {
@@ -68,6 +69,8 @@ export interface FakeBroker {
   setPositions(positions: readonly BrokerPosition[]): void;
   /** The named reads throw on their next call (S-CYC-02 half-answers). */
   failNextReads(kinds: readonly ReadKind[]): void;
+  /** The named reads throw a `BrokerHttpError` with this status until cleared with `null` (S-G12-06 credential fence). */
+  setReadHttpFailure(kinds: readonly ReadKind[], status: number | null): void;
   setSubmitBehaviour(behaviour: (payload: SubmitPayload, clientOrderId: string) => SubmitBehaviour): void;
   setCancelBehaviour(behaviour: (order: BrokerOrderRecord) => CancelBehaviour): void;
   /** Moves a resting order to a new status between cycles (the broker acting while nobody watches, S-X-04). */
@@ -113,6 +116,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
   for (const position of options.positions ?? []) positions.set(position.contractId, { quantity: position.quantity, avgEntryPriceCents: position.avgEntryPriceCents });
   let equityCents = options.equityCents;
   const failing = new Set<ReadKind>();
+  const httpFailing = new Map<ReadKind, number>();
   const mutations: BrokerMutation[] = [];
   let onSubmit: (payload: SubmitPayload, clientOrderId: string) => SubmitBehaviour = options.onSubmit ?? (() => ({ kind: "fill" }));
   let onCancel: (order: BrokerOrderRecord) => CancelBehaviour = options.onCancel ?? (() => "cancel");
@@ -158,6 +162,8 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
   }
 
   function failIfArmed(kind: ReadKind): void {
+    const status = httpFailing.get(kind);
+    if (status !== undefined) throw new BrokerHttpError(status, `fake broker: ${kind} endpoint answered ${String(status)}`);
     if (failing.has(kind)) {
       failing.delete(kind);
       throw new Error(`fake broker: ${kind} endpoint unavailable`);
@@ -266,6 +272,12 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
       for (const position of next) positions.set(position.contractId, { quantity: position.quantity, avgEntryPriceCents: position.avgEntryPriceCents });
     },
     failNextReads: kinds => { for (const kind of kinds) failing.add(kind); },
+    setReadHttpFailure: (kinds, status) => {
+      for (const kind of kinds) {
+        if (status === null) httpFailing.delete(kind);
+        else httpFailing.set(kind, status);
+      }
+    },
     setSubmitBehaviour: behaviour => { onSubmit = behaviour; },
     setCancelBehaviour: behaviour => { onCancel = behaviour; },
     transitionOrder: (clientOrderId, transition) => {

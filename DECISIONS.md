@@ -714,3 +714,94 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p3-broker-execution/LEDGER.md`.
   Merges into local `main` only on Felix's word (P2 first, then P3); P4
   starts from the accepted P3 on its own branch.
+- **2026-08-31 — owner acceptance and merges: P2 and P3 are on `main`.**
+  Felix accepted the declared reduced depth for both phases and ordered both
+  merges (session decision prompt). `p2/journal-authority` (`f1ff38c`)
+  merged as `9e380fc`, `p3/broker-execution` (`6265cd0`) merged as
+  `a737a80`, both `--no-ff`, conflict-free by construction (linear
+  ancestry). `npm run verify` exit 0 on the merged `main` (116 tests). P4
+  starts from the merge on `p4/fail-closed-startup`.
+- **2026-08-31 — P4 design: the CONFIG_INVALID journal entry yields to the
+  seed rule on a virgin install.** S-CYC-11's "CONFIG_INVALID journaled
+  locally" collides with two harder rules on a first-ever run: S-CYC-11
+  itself forbids any broker call before validation, and S-CYC-09 forbids
+  seeding the epoch store without an account classification only a broker
+  call can provide. Resolution (fail-closed composition): `runStartup`
+  appends the `HALT CONFIG_INVALID` only over a present, unencumbered epoch
+  store (seed discharged, no pending reset); otherwise the refusal goes to
+  the OS diagnostic sink as `CONFIG_INVALID_UNJOURNALABLE` and the first
+  armed run over a seeded store imports it as `RECONCILIATION`
+  `CONFIG_INVALID`. A refusal must leave no acquisition side effect — a
+  virgin install may never be mislabeled as a store reset. The failure-only
+  ping fires on every refusal path regardless.
+- **2026-08-31 — P4 additive changes to accepted phases.** P3 core:
+  `haltDraft` reasons widened by `AUTH_FAILURE` and `CONFIG_INVALID`, both
+  non-sticky (manual un-halt after the fence procedure / config repair;
+  S-G12-06, S-CYC-11). P3 shell: the fake broker gained persistent scripted
+  HTTP read failures (`setReadHttpFailure`), carried by the new
+  `BrokerHttpError` transport (`src/shell/broker-errors.ts`); the cycle
+  runner classifies broker read failures through the pure
+  `classifyBrokerFailure` — 401/403 fence as a durable `AUTH_FAILURE` halt,
+  everything else stays in the S-CYC-02 world classes. P2 guard test
+  `tests/g12-fencing.spec.ts` S-G12-07 (2): `diagnostic-sink.ts` joined the
+  writer allow-list — it writes only to the pre-armed OS sink outside
+  `STATE_DIR` and is never state authority.
+- **2026-08-31 — P4 shell literals: canonical origin and alert SLA are
+  expectations, not core constants.** §0 forbids hardcoding config symbols
+  in core logic, but S-CYC-11 must judge the *configured* origin against
+  the canonical paper origin and the timer sum against the 60-minute SLA.
+  Both literals live in `src/shell/startup.ts`
+  (`CANONICAL_PAPER_TRADING_ORIGIN`, `ALERT_SLA_MS`) and are passed to the
+  pure validator as `StartupExpectations`. The origin rule is byte-exact on
+  purpose: only the canonical literal passes, so no normalization surface
+  exists for lookalikes.
+- **2026-08-31 — P4 scope note: competition-profile certificate.** S-CYC-11
+  requires the S-ARM-01 certificate before competition arming. P4 enforces
+  presence (`CERTIFICATE_MISSING` when `ALPACA_PROFILE` is `competition`
+  without `PRE_ARM_CERTIFICATE`); content, digest, and identity validation
+  are owned by S-ARM-01 (P7) with WIN-7/WIN-10/WIN-17 rows kept open for
+  those parts. The Windows-event-log implementation of the diagnostic sink
+  is likewise deferred to pre-arming; the file-backed sink carries the
+  contract under fakes.
+- **2026-08-31 — P4 gate finding G1-F1 closed: the credential fence also
+  fences the phase-4 re-check.** The first blind gate call on the
+  startup/launch boundary (Codex job `task-mthi2xj7-ae4fpy`, **REJECTED**,
+  16 executed variants) executed the case 401 first on the re-check fetch
+  after a durable INTENT: the runner recorded only a generic
+  `REVALIDATION_VOID`, set no halt, and the next cycle with restored
+  credentials consulted the analyst and submitted an order. Closed
+  red-first at `2aa30fc`: the re-check fetch classifies 401/403 through the
+  same `haltForAuthFailure` path as the snapshot and phase-0 reads — one
+  durable non-sticky `HALT AUTH_FAILURE`, the void still documents the
+  violated claims, later plans of the cycle are blocked, the recovered
+  cycle stays management-only until a human un-halts. Declared deviation
+  from the gate's bounded change: no second primary `SKIP` line — the
+  cycle's primary `CYCLE` already landed, and one primary line per cycle
+  is the journal's invariant; the `HALT` carries the durable
+  `AUTH_FAILURE` evidence. Two observations declared without fix (ledger):
+  a phase-0 fence leaves `CYCLE` as the primary line like every other
+  halted cycle, and a journal append failing after the store check falls
+  back to the sink's `CONFIG_INVALID_UNJOURNALABLE` as designed. Every
+  startup-refusal, launcher, and world-class claim held on executed
+  evidence. Fix verification launched as Codex job `task-mthjmppo-yaet07`;
+  verdict recorded in the store's `LEDGER.md` and `STATE.md` → Now.
+- **2026-08-31 — P4 closing state: green, gate-confirmed on its riskiest
+  mechanism, awaiting the owner's word for the merge.** Final code commit
+  `2aa30fc` on `p4/fail-closed-startup` (`npm run verify` exit 0: 161
+  tests, static and sandbox gates, partition check). The reduced depth
+  delivered: 15/15 mutation probe (every mutant compiled before its run),
+  one blind gate call **REJECTED** with a single class-A finding (G1-F1,
+  the credential fence missing the phase-4 re-check seam), closed
+  red-first, and one **CONFIRMED** (Codex job `task-mthjmppo-yaet07`,
+  eight executed variants: both fence status codes on the re-check seam,
+  the snapshot and phase-0 seams, 500/plain errors never fencing, a
+  two-plan cycle leaving the second plan `NOT_SENT`, no stacked halts).
+  Confirmed by executed evidence: every startup refusal path, the
+  launcher's no-release-before-acceptance rule, the constructed child
+  environment, the credential fence on all three seams. Not gate-verified
+  beyond the repository gates and the 15/15 probe: the pure validator's
+  individual bound checks and the manifest/lock schemas. This is the
+  declared reduced depth, not a bis-0 termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p4-fail-closed-startup/LEDGER.md`.
+  Merge into local `main` only on Felix's word; P5 starts from the
+  accepted P4 on its own branch.

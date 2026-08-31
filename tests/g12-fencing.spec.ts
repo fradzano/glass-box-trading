@@ -432,7 +432,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     const shellDirectory = path.resolve("src/shell");
     const files = readdirSync(shellDirectory).filter(name => name.endsWith(".ts"));
     const writers = files.filter(name => /appendFile|createWriteStream|writeSync|writeFile\(|truncateSync|"a"|'a'/u.test(readFileSync(path.join(shellDirectory, name), "utf8")) && name !== "render-fixture.ts");
-    expect(writers.sort()).toEqual(["epoch-store.ts", "journal-store.ts"]);
+    // diagnostic-sink.ts writes ONLY to the pre-armed OS sink outside STATE_DIR (S-CYC-11); it can reach
+    // neither the journal nor the broker and is never state authority.
+    expect(writers.sort()).toEqual(["diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts"]);
     const atomicWriters = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("writeJsonAtomically"));
     expect(atomicWriters.sort()).toEqual(["epoch-store.ts", "halt-state.ts"]);
     const importers = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("./journal-store.js"));
