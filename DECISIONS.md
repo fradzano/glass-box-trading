@@ -338,9 +338,11 @@ small, no ADR split).
   observes only the paths it executes and only the capabilities its taming
   removes (clock, randomness, locale, code generation, stack observation,
   the symbol registry, mutation of intrinsics, and mutation of the core's
-  exported values, which are hardened after load along their data
-  properties and custom prototype chains, accessor properties denied); it
-  does not observe
+  exported values, which are restricted to ordinary functions, arrays, and
+  plain records and then hardened after load along their data properties and
+  custom prototype chains — accessor properties, proxies, and objects with
+  mutable internal slots such as `Map`, `Set`, typed arrays, iterators, and
+  generator objects are rejected at load); it does not observe
   unexecuted paths, mutation of non-exported module-scope objects inside the
   core, or any capability not in that list. The static gate rejects every
   impurity and laundering class in its self-test — including any use of a
@@ -381,10 +383,17 @@ small, no ADR split).
   stayed mutable on executed paths. Both were closed as the gate prescribed
   (shorthand values go through the provenance check; hardening denies
   accessors, traverses prototypes, and skips realm intrinsics), each with
-  calibration mutants in the respective gate. The abstract limit — unexecuted
-  paths, non-exported module state, an author who intends to escape static
-  analysis — was confirmed as truthfully declared and remains the residual.
-  This is the sixth seam on `Dynamic-import architecture coverage`; the ledger
-  records why it is the last: any further finding inside the declared limit is
+  calibration mutants in the respective gate. A fourth call then refused once
+  more: `Object.freeze` does not reach mutable internal slots, so exported
+  `Map`/`Set`/typed-array/iterator/generator values stayed mutable inside the
+  claimed coverage. Closed as a class, not per type: export hardening now
+  admits only ordinary functions, arrays, and plain records and rejects every
+  other shape at load (the real core exports nothing else), and a failing
+  freeze is an error. The abstract limit — unexecuted paths, non-exported
+  module state including closure state, an author who intends to escape
+  static analysis — was confirmed as truthfully declared and remains the
+  residual.
+  These are the sixth and seventh seams on `Dynamic-import architecture
+  coverage`; the ledger records why the seventh is the last: any further finding inside the declared limit is
   not attacked again, and any further finding inside the *claimed* coverage is
   a new owner decision, not a patch.

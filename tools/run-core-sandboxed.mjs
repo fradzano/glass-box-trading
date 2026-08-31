@@ -11,15 +11,19 @@
 // lifecycle, partial-fill, and parser paths below) and only for the
 // capabilities the taming removes: clock, randomness, locale, code
 // generation, stack observation, the symbol registry, mutation of
-// intrinsics, and mutation of the core's exported values (hardened after
-// load). It does not observe: unexecuted paths, mutation of non-exported
-// module-scope objects inside the core, and any capability not listed here.
+// intrinsics, and mutation of the core's exported values (restricted to
+// ordinary functions, arrays, and plain records, then deep-frozen after
+// load; accessors, proxies, and objects with internal slots are rejected).
+// It does not observe: unexecuted paths, mutation of non-exported
+// module-scope objects inside the core (closure state included), and any
+// capability not listed here.
 // Run with:
 //   node --experimental-vm-modules tools/run-core-sandboxed.mjs
 // after `npm run build` (dist/core must exist).
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { types } from "node:util";
 import vm from "node:vm";
 
 const DIST = path.resolve("dist");
@@ -93,17 +97,30 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
   }
   const entry = await load(entryFile);
   await entry.evaluate();
-  // Harden: every value the loaded graph exports — functions included — is
-  // deep-frozen along its data properties *and* its custom prototype chain, so
-  // a laundered defineProperty/assign/setPrototypeOf on a core export (or on a
-  // prototype reachable from it) throws instead of installing hidden module
-  // state. Accessor properties on core-owned values are denied outright: a
-  // frozen getter can still close over mutable state. Realm intrinsics are
-  // already frozen by the taming and are skipped, not traversed.
+  // Harden: everything reachable from the loaded graph's exports is restricted
+  // to shapes that `Object.freeze` actually makes immutable — ordinary
+  // functions, ordinary arrays, and plain records (prototype `Object.prototype`,
+  // `null`, or a core-owned plain record) — and is then deep-frozen along its
+  // data properties and its custom prototype chain. Anything else is rejected
+  // at load: accessor properties (a frozen getter can still close over mutable
+  // state), proxies, and every object with mutable internal slots that freeze
+  // does not reach (Map, Set, typed arrays, ArrayBuffer, iterators, generator
+  // objects, boxed primitives, Date, RegExp …). A failing freeze is an error,
+  // never swallowed. Realm intrinsics are already frozen by the taming and are
+  // skipped, not traversed.
   const intrinsics = intrinsicsOf(context);
   const seen = new Set();
+  const shapeOf = (value) => {
+    if (types.isProxy(value)) return "proxy";
+    if (Array.isArray(value)) return "array";
+    const tag = Object.prototype.toString.call(value);
+    if (typeof value === "function") return tag === "[object Function]" ? "function" : `exotic function ${tag}`;
+    return tag === "[object Object]" ? "record" : `exotic ${tag}`;
+  };
   const harden = (value) => {
     if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value) || intrinsics.has(value)) return;
+    const shape = shapeOf(value);
+    if (shape === "proxy" || shape.startsWith("exotic")) throw new Error(`export hardening denied non-ordinary exported value '${shape}'`);
     seen.add(value);
     for (const key of Reflect.ownKeys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -112,7 +129,8 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
       harden(descriptor.value);
     }
     harden(Object.getPrototypeOf(value));
-    try { Object.freeze(value); } catch { /* unfreezable views hold no capability */ }
+    Object.freeze(value);
+    if (!Object.isFrozen(value)) throw new Error(`export hardening could not freeze a core-owned value ('${shape}')`);
   };
   for (const module of cache.values()) for (const value of Object.values(module.namespace)) harden(value);
   return entry.namespace;
@@ -197,6 +215,10 @@ async function calibrate() {
     ["hidden state behind an exported accessor", "let hidden = 0; export const box = { get count() { return ++hidden; } }; export function read() { return box.count; }"],
     ["hidden state on an exported value's prototype", "const proto = {}; export const box = Object.create(proto); export function poison() { proto.count = (proto.count ?? 0) + 1; return proto.count; }"],
     ["hidden state via a setter reached from an export", "let hidden = 0; export const box = { set count(value) { hidden = value; }, get current() { return hidden; } }; export function write() { box.count = 7; return box.current; }"],
+    ["hidden state in an exported Map", "export const box = new Map(); export function poison() { box.set('k', (box.get('k') ?? 0) + 1); return box.get('k'); }"],
+    ["hidden state in an exported typed array", "export const box = new Uint8Array(1); export function poison() { box[0] += 1; return box[0]; }"],
+    ["hidden state in an exported generator object", "function* gen() { let n = 0; while (true) { yield ++n; } } export const box = gen(); export function next() { return box.next().value; }"],
+    ["hidden state behind an exported proxy", "let hidden = 0; export const box = new Proxy({}, { get() { return ++hidden; } }); export function read() { return box.count; }"],
   ];
   for (const [name, source] of mutants) {
     const context = createTamedRealm();
@@ -204,7 +226,11 @@ async function calibrate() {
     let outcome;
     try {
       const namespace = await loadModuleGraph(context, file, new Map([[file, source]]));
-      const exported = Object.values(namespace)[0];
+      // Call the mutant's function export (not merely its first export): a
+      // non-function first export would throw `not a function` and count as a
+      // catch the hardening never made.
+      const exported = Object.values(namespace).find(candidate => typeof candidate === "function");
+      if (exported === undefined) throw new Error("calibration mutant exports no function");
       const value = exported("b", "a");
       outcome = `returned ${String(value)}`;
     } catch (error) {
