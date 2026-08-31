@@ -805,3 +805,102 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p4-fail-closed-startup/LEDGER.md`.
   Merge into local `main` only on Felix's word; P5 starts from the
   accepted P4 on its own branch.
+- **2026-08-31 — owner acceptance and merge: P4 is on `main`.** Felix
+  accepted the declared reduced depth for P4 and ordered the merge
+  (session decision prompt, option "Ja, mergen"). `p4/fail-closed-startup`
+  (`acb5be4`) merged as `43e7170`, `--no-ff`, conflict-free by
+  construction (linear ancestry). `npm run verify` exit 0 on the merged
+  `main` (161 tests, all gates). P5 starts from the merge on
+  `p5/recovery-lifecycle`.
+- **2026-08-31 — P5 additive changes to accepted phases.** Domain/journal
+  closed sets widened: `CloseRoute`/`CloseRouteLabel` gained `residue` and
+  `deadline`; `HaltReason` gained `WATCHDOG_TAKEOVER`,
+  `DEADLINE_FLATTEN_FAILED`, `EXPIRY_EVICTION_STUCK`, and
+  `CLOSE_LADDER_CAPPED`; `haltDraft` accepts the new reasons and marks
+  `PROVENANCE_BROKEN` sticky alongside `KILL`; `TERMINAL` gained the
+  optional `remainder` field (S-G11-04's explicit open remainder) and
+  `DEADLINE_RECONCILIATION` the optional `reference` (S-G11-03).
+  Execution core: `netMidTwice` is exported for the S-X-05 ladder;
+  `cycleDraft` accepts `lifecycleVetoes` (EXPIRY/DEADLINE verdicts land in
+  the CYCLE's candidate verdicts). Startup core: the closed §0 field set
+  gained `COMPETITION_START` and `FLATTEN_DATE` with the
+  `CALENDAR_UNORDERED` coupling (start before the qualifying checkpoint).
+  P2 guard test S-G12-07 (2): `watchdog.ts` joined the closed broker-port
+  user list — it constructs its own gateway like `gateway-cli.ts` and
+  never calls the port directly.
+- **2026-08-31 — P5 design: the G10 discrimination rule and the equity
+  sentinel.** A leftover book piece is `RESIDUE` when its contract appears
+  in a journaled structure's legs or is share stock of a journaled
+  underlying (assignment mechanics can only touch what we held); a wholly
+  foreign contract is `HUMAN_ACTION`. Any short piece is unbounded
+  (S-X-06), any long piece bounded. Assigned share stock travels through
+  the option-leg order shape as an equity sentinel leg (expiry
+  `1970-01-01`, strike 0, right `call`, contract ID = share symbol,
+  `equityLegExpirySentinel()`); the broker adapter maps a sentinel leg
+  onto an equity order. A foreign contract without metadata gets no
+  fabricated close: the halt stands for the human (S-G10-02's "developer
+  must look"). The empty-journal FOREIGN_BOOK_GAP path classifies without
+  firing the HUMAN_ACTION provenance latch — a lost journal is not proof
+  of manual competition activity.
+- **2026-08-31 — P5 design: gap threshold and the primary substitutes.**
+  S-CYC-08's "first cycle after any gap" triggers when the last primary
+  entry is older than 2 × CYCLE_INTERVAL. A GAP invocation is
+  reconciliation-focused: classification and management closes run,
+  entries resume with the next scheduled cycle (S-J-03: GAP is not a full
+  cycle). A BOOTSTRAP invocation proceeds as a normal cycle per S-CYC-09;
+  its decisions are journaled through their INTENT entries because the
+  BOOTSTRAP schema carries no verdicts.
+- **2026-08-31 — P5 design: S-CYC-10 composition with the G10 halt.** Our
+  own intent-without-resolved-outcome (`CONFIRMATION_UNCLEAR`) blocks
+  entries transiently through the phase-0 UNRESOLVED mechanism and is
+  journaled in the classification each cycle, but does NOT set the durable
+  halt — S-CYC-10's "only a successful classification unblocks" would
+  otherwise demand a human un-halt for every transient broker outage.
+  RESIDUE, UNKNOWN_ORDER, and HUMAN_ACTION set the durable
+  `RESIDUE_UNRESOLVED` halt. A journaled `DECLARED_EXPIRY_HOLD` is a
+  terminal residue state: excluded from the unresolved set and the
+  session clock, never re-enqueued, still visibly not-flat.
+- **2026-08-31 — P5 design: competition provenance failure over a
+  seed-pending store.** A competition bootstrap whose provenance proof
+  fails cannot journal: the virgin-seeded store accepts only the
+  BOOTSTRAP entry (P2 seed rule), and appending one would adopt the
+  unproven baseline. Parallel to the P4 virgin-install decision, the
+  refusal is carried by the failure-only ping
+  (`COMPETITION_PROVENANCE_FAILED`) and the seed stays pending — no order
+  can ever follow, fail-closed by construction. Where the store IS
+  journalable, reuse evidence (pre-start creation, non-empty history)
+  halts sticky `PROVENANCE_BROKEN`; incomplete evidence (missing pages)
+  halts retryably as `GAP`.
+- **2026-08-31 — P5 design: watchdog quiet states, the runner's lifecycle
+  seam, and the ladder floor.** The watchdog stays quiet on an empty
+  journal (no hung writer exists; the external dead-man check owns that
+  alarm) and outside sessions (S-G14-01). `CycleDependencies.lifecycle`
+  is `LifecycleDeps | null`: the P3/P4 suites run the executor path with
+  `null`, every production wiring supplies the full record — the seam is
+  a typed, explicit test-scope marker, not a silent default. The S-X-05
+  zero floor rests at one cent, the smallest legal credit at the floor
+  (a zero-price limit order does not exist); with a zero bid such an
+  order never fills, which is exactly the S-X-06 expiry-hold precondition.
+- **2026-08-31 — P5 closing state: green, gate-confirmed on its riskiest
+  mechanism at the first call, awaiting the owner's word for the merge.**
+  Final code commit `c4d055c` on `p5/recovery-lifecycle` (`npm run verify`
+  exit 0: 216 tests, static and sandbox gates, partition check). The
+  reduced depth delivered: 15/15 mutation probe (two equivalent mutants
+  declared and replaced by real ones at the same sites, both caught;
+  every mutant compiled before its run), and one blind gate call
+  **CONFIRMED** (Codex job `task-mtho7bkg-yg3zi8`, no filter abort, all
+  five claims on executed evidence: the width cap holds under escalation
+  with one non-stacked halt; a lost cancel acknowledgement never spawns a
+  parallel close child; the watchdog fences before acting, dispatches
+  three closes for three lifecycles without duplicates, and stays quiet
+  against a live writer; bounded/unbounded residue discrimination end to
+  end; the recovery layer reaches no entry and no analyst). Confirmed by
+  executed evidence: the escalation ladder and its caps, the watchdog
+  takeover, the residue discrimination, the recovery/entry separation.
+  Not gate-verified beyond the repository gates and the 15/15 probe: the
+  classification details, the provenance proof, the ping plan, and the
+  deadline entries. This is the declared reduced depth, not a bis-0
+  termination. Record:
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p5-recovery-lifecycle/LEDGER.md`.
+  Merge into local `main` only on Felix's word; P6 starts from the
+  accepted P5 on its own branch.

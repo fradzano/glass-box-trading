@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-08-31 night (P2 and P3 merged to local `main` on Felix's word; P4 closed on its branch: green at `2aa30fc`, startup/launch boundary gate-CONFIRMED after two calls; the P4 merge awaits Felix's word)
-**Branch:** `p4/fail-closed-startup` at `2aa30fc` plus docs commits (implementation `43ce65f`, gate closure `2aa30fc`; from the P3 merge `a737a80` on local `main`); no GitHub remote yet
-**Last accepted phase artifact:** P3 — merge commit `a737a80` on local `main` (2026-08-31; P2 merged as `9e380fc` immediately before; owner acceptance of the declared reduced depth for both, see DECISIONS.md). `npm run verify` exit 0 on the merged `main`.
+**Last updated:** 2026-08-31 late night (P4 merged to local `main` as `43e7170` on Felix's word; P5 closed on its branch: green at `c4d055c`, watchdog/ladder boundary gate-CONFIRMED at the first call; the P5 merge awaits Felix's word)
+**Branch:** `p5/recovery-lifecycle` at `c4d055c` plus docs commits (from the P4 merge `43e7170` on local `main`); no GitHub remote yet
+**Last accepted phase artifact:** P4 — merge commit `43e7170` on local `main` (2026-08-31; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (161 tests).
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P4 — startup and analyst boundary
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p4--startup-and-analyst-boundary)) — implementation complete, closing
+**Current implementation phase:** P5 — recovery and lifecycle
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p5--recovery-and-lifecycle)) — implementation complete, closed on its branch
 
 ## Done
 
@@ -215,9 +215,8 @@ One phase per session; every session ends with the handoff protocol in
   on all three seams are gate-confirmed by executed evidence; the pure
   validator's individual bound checks and the manifest/lock schemas rest
   on the repository gates and the 15/15 probe (declared reduced depth,
-  DECISIONS.md 2026-08-31). **Not merged.** Next action is Felix's: merge
-  `p4/fail-closed-startup` (`--no-ff`) onto `main`, or not. P5 then
-  branches from the accepted P4.
+  DECISIONS.md 2026-08-31). **Merged to `main` as `43e7170` (2026-08-31,
+  owner acceptance; `npm run verify` exit 0 on the merged `main`).**
 - Verification depth for P2–P6 under the calendar: red-first tests for every
   allocated case, the repository gates, one mutation probe per phase, and
   one blind counter-verification of the phase's riskiest mechanism. A full
@@ -227,17 +226,66 @@ One phase per session; every session ends with the handoff protocol in
 
 ## Next (after P4)
 
-- **Felix's merge word for `p4/fail-closed-startup`** (`--no-ff` onto
-  `main`); the branch is closed and gate-confirmed.
-- **P5 — recovery and lifecycle** on its own branch from the accepted P4:
-  scheduler-facing degraded paths, restart/gap bootstrap, reconciliation,
-  watchdog takeover as a separate process entry point over the same epoch
-  store, close-escalation ladder (`CLOSE_ESCALATION_STEP` is already
-  validated config), residue policy, expiry eviction, Thursday flatten,
-  Friday terminal behavior. Scope in `config/implementation-phases.json`
-  (22 cases: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03, S-X-05/06).
-  S-G14-04 stays a displayed declared limit. The remaining fail-ping
-  obligations (KGV-14 ◐) land here with the dead-man check.
+- **P5 — recovery and lifecycle — implemented at `c4d055c` (2026-08-31,
+  branch `p5/recovery-lifecycle` from the P4 merge `43e7170`).** All 21
+  allocated test cases (S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03,
+  S-X-05/06; S-G14-04 stays the displayed declared limit) have tests (55
+  new tests, 7 new files plus S-CYC-11 additions); `npm run verify` exit 0
+  (216 tests, static gate, sandbox gate now executing the lifecycle core,
+  partition check). Delivered: pure `src/core/lifecycle.ts` (deadline
+  regime and EXPIRY/DEADLINE entry vetoes, G10 book classification with
+  the documented discrimination rule, bootstrap-versus-gap planning, the
+  competition provenance proof, the S-X-05 escalation ladder with
+  width-cap/zero-floor and the S-X-06 uncapped marketable policy, the
+  declared-expiry-hold proof, watchdog staleness, the ping plan, the P5
+  journal drafts); shell: the cycle runner grew the lifecycle layer
+  (classification + durable halts, eviction/flatten/residue ladder closes
+  as management actions under halt, GAP/BOOTSTRAP primaries, ping),
+  `src/shell/watchdog.ts` + `watchdog-cli.ts` (separate process entry
+  over the same epoch store, fence-first recovery), `src/shell/deadline.ts`
+  (S-G11-03/04 entries). Design decisions and additive changes in
+  DECISIONS.md (2026-08-31, six P5 entries). Evidence-debt rows: AUS-1,
+  BEQ-1, BEQ-2, BEQ-9, DOM-3, GV-1, KGV-7, KGV-14, WIN-3, WIN-8 ✅; WIN-2
+  ◐ (SUB-08 half is P6+). Verification record: store
+  `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p5-recovery-lifecycle`
+  (`LEDGER.md`): mutation probe **15/15 caught** (two equivalent mutants
+  declared and replaced by real ones at the same sites, both caught; every
+  mutant compiled before its run). **Blind gate on the watchdog/ladder
+  boundary:** first call Codex job `task-mtho7bkg-yg3zi8`
+  (`prompts/G1-watchdog-ladder.md`, `--write`, 20m17s, no filter abort)
+  returned **CONFIRMED** at `18eeab1` (implementation `c4d055c`; the
+  intervening commit is docs-only, noted by the reviewer) across all five
+  executed claims: submitted close limits 200/500/500 with one
+  non-stacked `CLOSE_LADDER_CAPPED` halt and attempts continuing AT the
+  cap; a lost cancel acknowledgement never spawns a parallel close child
+  and a fill-during-cancel reduces exposure via the journaled OUTCOME
+  only; the watchdog fences first (old writer `STALE_EPOCH`), closes the
+  intact structure whole and both unbounded residues leg-wise with no
+  duplicate, and stays quiet against a live writer and on immediate
+  re-invocation; the bounded long floors at 1 cent while the short-stock
+  buy-back escalates uncapped; zero analyst calls and zero entry
+  submissions on every recovery path. No bounded change required; no
+  observations declared. **P5 closing state:** the escalation ladder and
+  its caps, the watchdog takeover, the residue discrimination, and the
+  recovery/entry separation are gate-confirmed by executed evidence; the
+  classification details, provenance proof, ping plan, and deadline
+  entries rest on the repository gates and the 15/15 probe (declared
+  reduced depth, DECISIONS.md 2026-08-31). **Not merged.** Next action is
+  Felix's: merge `p5/recovery-lifecycle` (`--no-ff`) onto `main`, or not.
+  P6 then branches from the accepted P5.
+- **Felix's merge word for `p5/recovery-lifecycle`** (`--no-ff` onto
+  `main`); the branch is closed and gate-confirmed at the first call.
+- **P6 — public evidence pipeline** on its own branch from the accepted
+  P5: pure journal projection, static dashboard rendering a chosen
+  committed revision with explicit cutoff, immutable candidate build,
+  anonymous probe contract, promotion/rollback, the deterministic golden
+  path, and the S-CYC-12 checkpoint/window/failure projection. Scope in
+  `config/implementation-phases.json` (5 cases: S-CYC-07, S-CYC-12,
+  S-J-07..09). The WIN-1 S-J-09 half and WIN-2's SUB-08 half land here.
+- Deferred out of P5, tracked: real scheduler wiring of the lifecycle
+  dependency record (`finalCycleOfSession`, `nextTradingDay`,
+  provenance/exercise-protection ports — P7's dev certificate wires
+  them), the healthchecks.io ping adapter behind the `PingPort` shape.
 - Deferred out of P4, tracked: real analyst/market adapters for the runner
   (the MCP child exists behind ports; the Claude analyst call itself and
   live market data are wired at P7's dev certificate), the Windows

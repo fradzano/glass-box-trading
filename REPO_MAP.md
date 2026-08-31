@@ -31,12 +31,14 @@
 - `src/core/domain.ts`
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
+- `src/core/lifecycle.ts` — Pure lifecycle core (P5: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03,
 - `src/core/order-identity.ts`
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
 - `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
@@ -49,8 +51,11 @@
 - `src/shell/render-fixture.ts`
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
+- `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
+- `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
 - `STATE.md` — STATE — live cursor
 - `tests/core-contract.spec.ts`
+- `tests/cyc-recovery-bootstrap.spec.ts` — S-CYC-03 (total connectivity loss), S-CYC-08 (first cycle after a gap),
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
 - `tests/cyc05-g13-cyc06-core.spec.ts`
 - `tests/cyc11-mcp-verifier.spec.ts` — S-CYC-11 analyst boundary — the pinned MCP build/launch verifier and the
@@ -59,22 +64,28 @@
 - `tests/fixture-view.spec.ts`
 - `tests/fixtures.ts`
 - `tests/g1-defined-risk.spec.ts`
+- `tests/g10-reconciliation.spec.ts` — G10 — reconciliation of unexplained state (S-G10-01..05): the closed
+- `tests/g11-deadline.spec.ts` — G11 — deadline flatten and the Friday regime (S-G11-01..04, DOM-3): the
 - `tests/g12-06-credential-fence.spec.ts` — S-G12-06 — the credential fence (AUS-3): a broker 401/403 mid-run is
 - `tests/g12-fencing.spec.ts`
 - `tests/g12-halt.spec.ts`
+- `tests/g14-watchdog.spec.ts` — G14 — the dead-man watchdog (S-G14-01..03, WIN-8): market-hours-aware
 - `tests/g2-budget.spec.ts`
 - `tests/g3-g4-risk-caps.spec.ts`
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
 - `tests/g8-schema-whitelist.spec.ts`
+- `tests/g9-expiry-eviction.spec.ts` — G9 — expiry eviction (S-G9-01..03): the entry veto for an
 - `tests/global-setup.ts` — Compiles src/** once per test run into a scratch directory so that the
 - `tests/j1-j2-journal-format.spec.ts`
 - `tests/j3-j4-entry-schemas.spec.ts`
 - `tests/j5-j6-redaction-binding.spec.ts`
 - `tests/journal-fixtures.ts`
+- `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
+- `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`

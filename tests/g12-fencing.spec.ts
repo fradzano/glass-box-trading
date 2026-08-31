@@ -440,8 +440,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     const importers = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("./journal-store.js"));
     expect(importers).toEqual(["mutation-gateway.ts"]);
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
-    expect(brokerUsers.sort()).toEqual(["gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts"]);
-    for (const name of ["gateway-cli.ts", "manual-unhalt.ts"]) {
+    // watchdog.ts (P5) constructs its own gateway like gateway-cli; it never calls the port directly.
+    expect(brokerUsers.sort()).toEqual(["gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "watchdog.ts"]);
+    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts"]) {
       expect(readFileSync(path.join(shellDirectory, name), "utf8")).not.toMatch(/\.mutate\(/u);
     }
   });

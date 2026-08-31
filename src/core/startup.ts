@@ -30,6 +30,7 @@ export type StartupViolationCode =
   | "WHITELIST_UNKNOWN_STRUCTURE"
   | "SHORT_CAPABILITY_FLAG_MISSING"
   | "QUALIFICATION_UNORDERED"
+  | "CALENDAR_UNORDERED"
   | "QUALIFICATION_CAP_NOT_BELOW_SLEEVE_CAP"
   | "KILL_THRESHOLD_INVALID"
   | "STATE_DIR_NOT_ABSOLUTE"
@@ -112,6 +113,16 @@ function readUtcIso(raw: Raw, field: string, violations: Violations): number | n
   return ms;
 }
 
+function readCalendarDate(raw: Raw, field: string, violations: Violations): string | null {
+  const text = readString(raw, field, violations);
+  if (text === null) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || utcIsoToEpochMs(`${text}T00:00:00Z`) === null) {
+    violation(violations, field, "WRONG_TYPE", "must be a valid calendar date (YYYY-MM-DD)");
+    return null;
+  }
+  return text;
+}
+
 // ---------------------------------------------------------------------------
 // The closed §0 field set P4 arms with (later phases extend this set here)
 // ---------------------------------------------------------------------------
@@ -154,6 +165,8 @@ function knownFields(): readonly string[] {
   "QUALIFYING_ACTIVITY_CHECKPOINT",
   "QUALIFICATION_WINDOW_END",
   "QUALIFICATION_MAX_LOSS_CENTS",
+  "COMPETITION_START",
+  "FLATTEN_DATE",
   "SHORT_ASSIGNMENT_CAPABILITY",
   "PRE_ARM_CERTIFICATE",
   ];
@@ -211,6 +224,8 @@ export interface ValidatedStartup {
   readonly closeEscalationStepCents: number;
   readonly residueMaxSessions: number;
   readonly qualification: QualificationConfig;
+  readonly competitionStartIso: string;
+  readonly flattenDate: string;
   readonly shortAssignmentCapability: boolean;
   readonly manifestPath: string;
   readonly runtimeLockPath: string;
@@ -283,6 +298,8 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   const checkpointMs = readUtcIso(raw, "QUALIFYING_ACTIVITY_CHECKPOINT", violations);
   const windowEndMs = readUtcIso(raw, "QUALIFICATION_WINDOW_END", violations);
   const qualificationMaxLossCents = readInteger(raw, "QUALIFICATION_MAX_LOSS_CENTS", violations, { min: 1 });
+  const competitionStartMs = readUtcIso(raw, "COMPETITION_START", violations);
+  const flattenDate = readCalendarDate(raw, "FLATTEN_DATE", violations);
   const capabilityRaw = raw["SHORT_ASSIGNMENT_CAPABILITY"];
   const shortAssignmentCapability = capabilityRaw === true;
   if (capabilityRaw !== undefined && typeof capabilityRaw !== "boolean") violation(violations, "SHORT_ASSIGNMENT_CAPABILITY", "WRONG_TYPE", "must be a boolean when present");
@@ -320,6 +337,9 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   }
   if (checkpointMs !== null && windowEndMs !== null && checkpointMs >= windowEndMs) {
     violation(violations, "QUALIFYING_ACTIVITY_CHECKPOINT", "QUALIFICATION_UNORDERED", "the qualifying checkpoint must precede QUALIFICATION_WINDOW_END");
+  }
+  if (competitionStartMs !== null && checkpointMs !== null && competitionStartMs >= checkpointMs) {
+    violation(violations, "COMPETITION_START", "CALENDAR_UNORDERED", "COMPETITION_START must precede QUALIFYING_ACTIVITY_CHECKPOINT");
   }
   if (qualificationMaxLossCents !== null && maxLossPerPositionBps !== null && incomeBudgetCents !== null && convexBudgetCents !== null) {
     const strictlyBelowCap = (budgetCents: number): boolean => BigInt(qualificationMaxLossCents) * 10_000n < BigInt(budgetCents) * BigInt(maxLossPerPositionBps);
@@ -376,7 +396,8 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
     profile === null || expectedAccountId === null || origin === null || stateDir === null || diagnosticSink === null ||
     decision === null || execution === null || scheduling === null || alertDeliveryBudgetMs === null || analystTimeoutMs === null ||
     closeEscalationStepCents === null || residueMaxSessions === null || checkpointMs === null || windowEndMs === null ||
-    qualificationMaxLossCents === null || manifestPath === null || runtimeLockPath === null || analystProfile !== "dev"
+    qualificationMaxLossCents === null || competitionStartMs === null || flattenDate === null ||
+    manifestPath === null || runtimeLockPath === null || analystProfile !== "dev"
   ) {
     return { ok: false, violations: [{ field: "*", code: "MISSING", detail: "internal guard: unvalidated field survived without a violation" }] };
   }
@@ -395,6 +416,8 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
       closeEscalationStepCents,
       residueMaxSessions,
       qualification: { checkpointIso: raw["QUALIFYING_ACTIVITY_CHECKPOINT"] as string, windowEndIso: raw["QUALIFICATION_WINDOW_END"] as string, maxLossCents: qualificationMaxLossCents },
+      competitionStartIso: raw["COMPETITION_START"] as string,
+      flattenDate,
       shortAssignmentCapability,
       manifestPath,
       runtimeLockPath,
