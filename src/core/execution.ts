@@ -1051,8 +1051,11 @@ export function skipDraft(context: DraftContext, reasonCodes: readonly ReasonCod
 
 export interface LifecycleVeto {
   readonly candidateId: string;
-  /** S-G9-01 (`EXPIRY`) and S-G11-01/02 (`DEADLINE`): entry vetoes decided by the P5 lifecycle core after the gate vector. */
-  readonly code: "EXPIRY" | "DEADLINE";
+  /**
+   * S-G9-01 (`EXPIRY`) and S-G11-01/02 (`DEADLINE`): entry vetoes decided by the P5 lifecycle core after the gate vector;
+   * S-CYC-12 (`QUALIFICATION_*`): the P6 qualification window's one-lot, cap, and one-live vetoes, after both.
+   */
+  readonly code: "EXPIRY" | "DEADLINE" | "QUALIFICATION_CAP" | "QUALIFICATION_ONE_LOT" | "QUALIFICATION_ONE_LIVE";
   readonly reason: string;
 }
 

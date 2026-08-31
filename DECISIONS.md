@@ -911,3 +911,89 @@ small, no ADR split).
   construction (linear ancestry). `npm run verify` exit 0 on the merged
   `main` (216 tests, all gates). P6 starts from the merge on
   `p6/public-evidence`.
+- **2026-09-01 — P6 starts on `p6/public-evidence` from the P5 merge
+  `4e20de8`.** Scope per `config/implementation-phases.json`: S-CYC-07,
+  S-CYC-12, S-J-07..09 plus the SUB-02/SUB-11 delivery acceptance; external
+  effect boundary: local candidate artifacts and fake promotion endpoints,
+  no GitHub or Vercel mutation.
+- **2026-09-01 — P6 design: the projection marks open exposure at the
+  latest snapshot's own quote samples, and everything else is
+  `UNATTRIBUTED`.** Realized P&L is the journaled entry fill joined to the
+  journaled close fills of the same exposure lifecycle (credit received,
+  debit paid, in integer cents); unrealized P&L is the open remainder marked
+  at twice-mid of the quote samples carried by the same snapshot that
+  supplies current equity — never an older sample, so a mark and the equity
+  it explains share one instant. A leg without a sample in that snapshot
+  makes the lifecycle's unrealized value null and the sleeve's total null;
+  the equity delta minus realized minus computable unrealized is displayed
+  as `UNATTRIBUTED` with a discrepancy line. Fees, assignment residue value,
+  and any broker effect the journal cannot join therefore surface as a
+  number the judge can see, never as a sleeve assignment by inference.
+  The S-CYC-06 emergency close is folded from its `AUDIT_GAP_EMERGENCY_CLOSE`
+  reconciliation item with `intentSeq: null` and links to that item only.
+- **2026-09-01 — P6 design: the qualification window caps every entry, and
+  the mode is a brief, not a gate parameter.** While the S-CYC-12 window is
+  open (checkpoint reached, no ordinary competition fill, window end not
+  reached), every approved entry plan must be one lot, at or below
+  `QUALIFICATION_MAX_LOSS`, and the only live attempt (an entry lifecycle in
+  `intent`/`fillable`/`confirmation_unclear` counts as live; a plan accepted
+  earlier in the same cycle counts too). The vetoes run after the unchanged
+  gate vector and the P5 lifecycle vetoes and are journaled as candidate
+  verdicts in the CYCLE. The analyst receives `AnalystInput.qualification`
+  (`active`, `maxLossCents`, `windowEndMs`) — a prioritisation hint whose
+  record has no field the decision core reads, so the mode structurally
+  cannot widen tolerance, whitelist, expiry, liquidity, sleeve, or
+  concentration bounds. The state is projected at the start of the cycle
+  from the journal, so the cycle that produces the first qualifying fill
+  still carries `COMPETITIVENESS_AT_RISK`; the next one does not. Outside
+  the window nothing changes: after the window end ordinary trading and
+  G11 continue under the normal gates, with `WINNING_ACCEPTANCE_FAILED` in
+  every CYCLE. Dev profile and a wiring without the competition calendar
+  project `NOT_APPLICABLE`.
+- **2026-09-01 — P6 design: the committed journal revision is the content
+  hash until the git port exists.** `journalContentRevision` (sha256 of
+  the complete journal text, 16 hex digits) is what the P6 fake git port
+  returns and what every receipt and page names; the real git port (P8)
+  returns the journal-branch commit and may carry the content hash beside
+  it. The probe contract compares the page's `glass-box-journal-revision`,
+  `-evidence-cutoff`, `-evidence-cutoff-kind`, `-last-updated`, and
+  `-last-seq` meta tags against the publisher's expectation; a page must
+  also answer HTTP 200 without authentication. Receipts (`deployments.json`)
+  and the push state (`publish-state.json`) are sidecar files in STATE_DIR,
+  outside the journal, epoch, and halt flag; acceptance never appends.
+  The journal ref is a shell literal (`journal`) in the publisher
+  dependencies, not a §0 symbol — exact byte equality is the S-J-08 rule,
+  and the refusal is journaled as a `RECONCILIATION` item
+  `journal_push_refused` through the gateway (the publisher's only append).
+- **2026-09-01 — P6 design: immutable routes are carried forward by the
+  atomic build and never overwritten.** `buildSiteAtomically` stages every
+  page next to the output directory, copies the previous `revisions/`
+  subtree into the staging directory first, skips any pinned route that
+  already exists (`preservedImmutable`), and only then swaps directories;
+  a render or write that throws removes the staging directory and leaves
+  the previous output byte-identical (UNF-2). The advancing route is
+  `index.html`; immutable routes are `revisions/<revision>/<kind>/`.
+- **2026-09-01 — P6 additive changes to accepted phases.** P3 core:
+  `LifecycleVeto.code` gained `QUALIFICATION_CAP`, `QUALIFICATION_ONE_LOT`,
+  `QUALIFICATION_ONE_LIVE`. P3 shell: `AnalystInput.qualification`
+  (required field; the analyst adapter of P7 must pass it into the prompt),
+  `LifecycleDeps.qualification?` (optional; absent on a dev wiring), CYCLE
+  `reasonCodes` now carry the qualification codes, `alarmConditions` carry
+  `COMPETITIVENESS_AT_RISK` / `WINNING_ACCEPTANCE_FAILED` (the fail ping is
+  the visible alarm). P2 guard S-G12-07 (2): `dashboard-build.ts` joined the
+  reviewed writer list (site output only), `publisher.ts` the atomic-writer
+  list (sidecar files only). Sandbox gate: the module loader caches the
+  promise of a linked module so an import diamond (projection → execution
+  and projection → lifecycle → execution) no longer hands an unlinked
+  module to a second requester; the core has no import cycles, so the wait
+  always resolves. `npm run verify` gained `npm run dashboard` after the
+  fixture render.
+- **2026-09-01 — P6 scope note: real ports are P8.** The git port
+  (commit on the journal branch, push) and the deploy port (Vercel
+  candidate deployment, anonymous probe over HTTP, `promote`, `rollback`)
+  exist as interfaces with fakes in the tests; wiring them is part of the
+  kickoff release (P8), where the first anonymous clean-browser run against
+  the public alias is the SUB-02 acceptance. The "clean local browser can
+  traverse the golden path" acceptance is met in P6 by the anchor-chain
+  test over the recorded golden journal (`tests/j7-j9-golden-path.spec.ts`)
+  plus `npm run dashboard`; no browser automation runs in the suite.

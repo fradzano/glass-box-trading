@@ -16,8 +16,9 @@
     "architecture": "node tools/check-core-architecture.mjs --self-test",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "fixture": "npm run build && node dist/shell/render-fixture.js",
+    "dashboard": "node dist/shell/render-golden-dashboard.js",
     "sandbox": "node --experimental-vm-modules tools/run-core-sandboxed.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run architecture && npm run fixture && npm run sandbox && python tools/check_implementation_phases.py"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run architecture && npm run fixture && npm run dashboard && npm run sandbox && python tools/check_implementation_phases.py"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

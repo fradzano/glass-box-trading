@@ -21,6 +21,7 @@
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec
 - `eslint.config.mjs`
+- `fixtures/golden-journal.jsonl`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `LICENSE`
 - `package-lock.json`
@@ -33,11 +34,16 @@
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
 - `src/core/lifecycle.ts` — Pure lifecycle core (P5: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03,
 - `src/core/order-identity.ts`
+- `src/core/projection.ts` — Pure public-evidence projection (P6: S-J-07 content, S-J-09, the S-CYC-12
+- `src/core/publish.ts` — Pure publication core (P6: S-J-07 candidate/probe/promotion/rollback,
+- `src/core/qualification.ts` — Pure qualification core (P6: S-CYC-12). A qualifying options activity is a
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
+- `src/fixtures/p6-golden.ts` — The P6 golden-path fixture contract: the expectations, the qualification
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
@@ -47,19 +53,28 @@
 - `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
 - `src/shell/manual-unhalt.ts` — The one human path that clears the halt flag (S-G12-04). It is not
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
+- `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
+- `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
 - `src/shell/render-decision-view.ts`
 - `src/shell/render-fixture.ts`
+- `src/shell/render-golden-dashboard.ts` — Local golden-path render (SUB-02 first working version, P6): builds
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
 - `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
 - `STATE.md` — STATE — live cursor
+- `submission/COPY.md` — Form copy — SUB-07
+- `submission/COVER.md` — Cover image brief — SUB-06
+- `submission/ONE-PAGER.md`
+- `submission/PREFLIGHT.md` — Submission preflight — SUB-09
+- `submission/slides/deck.md`
 - `tests/core-contract.spec.ts`
 - `tests/cyc-recovery-bootstrap.spec.ts` — S-CYC-03 (total connectivity loss), S-CYC-08 (first cycle after a gap),
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
 - `tests/cyc05-g13-cyc06-core.spec.ts`
 - `tests/cyc11-mcp-verifier.spec.ts` — S-CYC-11 analyst boundary — the pinned MCP build/launch verifier and the
 - `tests/cyc11-startup-config.spec.ts` — S-CYC-11 — startup config validation, fail closed. The pure matrix drives
+- `tests/cyc12-qualification.spec.ts` — S-CYC-12 — the qualifying-activity competitiveness gate (WIN-13), driven
 - `tests/execution-fixtures.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/fixtures.ts`
@@ -81,6 +96,9 @@
 - `tests/j1-j2-journal-format.spec.ts`
 - `tests/j3-j4-entry-schemas.spec.ts`
 - `tests/j5-j6-redaction-binding.spec.ts`
+- `tests/j7-j8-publication.spec.ts` — S-J-07 (atomic publication, candidate → anonymous probe → promotion,
+- `tests/j7-j9-golden-path.spec.ts` — The deterministic golden path (SUBMISSION-SPEC §3, SUB-02, S-J-07/S-J-09,
+- `tests/j9-projection.spec.ts` — S-J-09 — the judge-facing performance projection is a pure fold over one
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
@@ -93,4 +111,5 @@
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tsconfig.build.json`
 - `tsconfig.json`
+- `video/README.md` — Video plan — SUB-04
 - `vitest.config.ts`
