@@ -46,6 +46,10 @@ describe("G7 idempotency", () => {
       { ...active, attempts: [{ ...active.attempts[0]!, state: "pending_replace" as CloseLifecycleSnapshot["attempts"][number]["state"] }] },
       { ...active, attempts: [{ ...active.attempts[0]!, requestedQuantity: integerUnit(0, "Quantity"), filledQuantity: integerUnit(0, "Quantity") }] },
       { ...active, currentExposureQuantity: integerUnit(0, "Quantity") },
+      { ...active, attempts: [{ ...active.attempts[0]!, state: "rejected" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, filledQuantity: integerUnit(10, "Quantity"), state: "rejected" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, filledQuantity: integerUnit(10, "Quantity"), state: "canceled" }] },
+      { ...active, attempts: [{ ...active.attempts[0]!, filledQuantity: integerUnit(10, "Quantity"), state: "expired" }] },
     ];
     for (const forged of forgedAttempts) expect(planCloseLifecycle(forged)).toMatchObject({ kind: "VETO" });
 
