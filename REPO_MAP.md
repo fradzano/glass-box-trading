@@ -29,10 +29,13 @@
 - `src/core/authority.ts` — Pure writer-authority core (S-G12-01/02/07, S-J-06): epoch acquisition
 - `src/core/decision.ts`
 - `src/core/domain.ts`
+- `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
 - `src/core/order-identity.ts`
 - `src/fixtures/p1-recorded-cycle.ts`
+- `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
+- `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
 - `src/shell/gateway-cli.ts` — Process-level driver for the fencing and serialization tests: each
 - `src/shell/halt-state.ts` — The persisted halt flag (S-G12-05): a file in STATE_DIR, written only as
 - `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
@@ -43,6 +46,9 @@
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `STATE.md` — STATE — live cursor
 - `tests/core-contract.spec.ts`
+- `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
+- `tests/cyc05-g13-cyc06-core.spec.ts`
+- `tests/execution-fixtures.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/fixtures.ts`
 - `tests/g1-defined-risk.spec.ts`
@@ -59,6 +65,7 @@
 - `tests/j3-j4-entry-schemas.spec.ts`
 - `tests/j5-j6-redaction-binding.spec.ts`
 - `tests/journal-fixtures.ts`
+- `tests/x1-x4-execution-pricing.spec.ts`
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`

@@ -230,6 +230,49 @@ async function exerciseCore() {
   const live = authority.bindAccount({ canonicalTradingOrigin: "https://paper-api.alpaca.markets", expectedAccountId: "PA_TEST_ONLY" }, { profile: "dev", requestedOrigin: "https://api.alpaca.markets", observedOrigin: "https://api.alpaca.markets", brokerReportedAccountId: "PA_TEST_ONLY" });
   if (!bound.ok || live.ok || !authority.validateSchedulingBounds({ lockTakeoverBoundMs: 300_000, cycleWalltimeBudgetMs: 240_000, cycleIntervalMs: 900_000, deadManBoundMs: 3_000_000 }).ok) throw new Error("sandboxed binding decisions are wrong");
   paths.push("authorizeMutation(stale/fresh/witness-broker), compareAndIncrement(commit/changed), planEpochAcquisition(absent+non-virgin) → SEED_GAP, bindAccount(paper ok / live rejected)");
+
+  // P3 execution core: UTC conversion without a clock, limit pricing, fill classification, the snapshot adapter,
+  // the lifecycle fold, the revalidation claimset, the kill plan, and emergency-close eligibility.
+  const execution = await loadModuleGraph(context, path.join(DIST, "core", "execution.js"));
+  const ms = 1_788_183_000_123;
+  if (execution.epochMsToUtcIso(ms) !== "2026-08-31T13:30:00.123Z" || execution.utcIsoToEpochMs("2026-08-31T13:30:00.123Z") !== ms || execution.utcIsoToEpochMs("2026-08-31T15:30:00+02:00") !== null) throw new Error("sandboxed UTC conversion is wrong");
+  const executionConfig = { limitToleranceCents: domain.integerUnit(2, "OptionPriceCents"), killEquityThresholdCents: domain.integerUnit(9_200_000, "MoneyCents"), initialCapitalCents: domain.integerUnit(10_000_000, "MoneyCents") };
+  const legs = [
+    { contractId: "SHORT", underlying: "SPY", expiry: "2026-09-04", strikeCents: domain.integerUnit(50_000, "StrikeCents"), right: "call", side: "sell", ratio: domain.lotCount(1) },
+    { contractId: "LONG", underlying: "SPY", expiry: "2026-09-04", strikeCents: domain.integerUnit(50_500, "StrikeCents"), right: "call", side: "buy", ratio: domain.lotCount(1) },
+  ];
+  const candidate = { candidateId: "c", declaredStructureType: "vertical_credit", sleeve: "income", quantity: domain.lotCount(1), remainingTradingSessions: domain.integerUnit(5, "Quantity"), rationale: "SPY vertical_credit sandbox", entryLimit: { kind: "credit", priceCents: domain.integerUnit(200, "OptionPriceCents") }, legs };
+  const quote = (bid, ask) => ({ bidCents: domain.integerUnit(bid, "OptionPriceCents"), askCents: domain.integerUnit(ask, "OptionPriceCents"), bidSize: domain.integerUnit(20, "Quantity"), askSize: domain.integerUnit(20, "Quantity"), quotedAt: domain.integerUnit(ms, "EpochMilliseconds") });
+  const quotes = { SHORT: quote(300, 302), LONG: quote(100, 102) };
+  const priced = execution.priceEntryLimit(candidate, quotes, executionConfig);
+  if (!priced.ok || priced.candidate.entryLimit.priceCents !== 198 || execution.classifyFillPrice(priced.candidate.entryLimit, 150) !== "BROKER_PRICE_BREACH" || execution.classifyFillPrice(priced.candidate.entryLimit, 199) !== "PRICE_IMPROVED") throw new Error("sandboxed pricing or fill classification is wrong");
+  const market = { quotesByContract: { SHORT: { bidCents: 300, askCents: 302, bidSize: 20, askSize: 20, quotedAtMs: ms, brokerQuotedAt: "raw" } }, contractsById: { SHORT: { contractId: "SHORT", underlying: "SPY", expiry: "2026-09-04", strikeCents: 50_000, right: "call" } }, spotCentsByUnderlying: { SPY: 50_000 } };
+  const book = { accountId: "TEST_ONLY_SANDBOX", cashCents: 1, equityCents: 10_000_000, positions: [], openOrders: [], observedAtMs: ms };
+  const calendar = { isTradingDay: true, opensAt: domain.integerUnit(ms - 1, "EpochMilliseconds"), closesAt: domain.integerUnit(ms + 1, "EpochMilliseconds") };
+  const assembled = execution.assembleDecisionSnapshot({ broker: book, market, journal: [planned.entry], halt: false, profile: "dev", calendar, tradingDay: "2026-08-31", cycleIndex: 1 });
+  const refusedContract = execution.assembleDecisionSnapshot({ broker: book, market: { ...market, contractsById: { SHORT: null } }, journal: [], halt: false, profile: "dev", calendar, tradingDay: "2026-08-31", cycleIndex: 1 });
+  if (!assembled.ok || assembled.snapshot.priorQuotesByUnderlying.SPY === undefined || refusedContract.ok) throw new Error("sandboxed snapshot adapter is wrong");
+  const binding = { profile: "dev", tradingOrigin: "https://paper-api.alpaca.markets", accountId: "TEST_ONLY_SANDBOX" };
+  const entryPlan = { kind: "ENTRY_ACTION_PLAN", candidateId: "c", exposureLifecycleId: "exposure:e", clientOrderId: "entry:e", sleeve: "income", underlying: "SPY", submittedLimit: priced.candidate.entryLimit, reservedMaxLossCents: domain.integerUnit(30_200, "MoneyCents"), legs, quantity: domain.lotCount(1) };
+  const claimset = execution.buildClaimset(entryPlan, book, binding, 1, executionConfig);
+  const recheck = { batchVerdicts: [], candidateVerdicts: [{ candidateId: "c", candidateRationale: "r", decision: "VETO", reservedMaxLossCents: domain.integerUnit(30_200, "MoneyCents"), gateVector: Array.from({ length: 8 }, (_, index) => ({ gate: "G" + String(index + 1), passed: index !== 6, code: "PASS", reasons: [] })) }], actions: [] };
+  const holds = execution.revalidateClaimset(claimset, { book, brokerReportedAccountId: "TEST_ONLY_SANDBOX", epoch: 1, halted: false, recheck });
+  const crossed = execution.revalidateClaimset(claimset, { book: { ...book, equityCents: 9_199_999 }, brokerReportedAccountId: "TEST_ONLY_SANDBOX", epoch: 1, halted: false, recheck });
+  if (!holds.ok || crossed.ok || !crossed.killTriggered || claimset.claims.length !== 8) throw new Error("sandboxed revalidation is wrong");
+  const intentDraft = execution.intentDraft({ atIso: "2026-08-31T13:31:00.000Z", epoch: 1 }, entryPlan, priced.candidate, recheck.candidateVerdicts[0], assembled.snapshot, binding);
+  const intentPlanned = journal.planAppend({ lastSeq: 1, priorIntentRationales: [] }, intentDraft, []);
+  if (!intentPlanned.ok) throw new Error("sandboxed intentDraft did not validate: " + intentPlanned.reason);
+  const outcome = execution.outcomeFromOrder({ clientOrderId: "entry:e", limit: priced.candidate.entryLimit, binding, epoch: 1, atIso: "2026-08-31T13:32:00.000Z" }, { brokerOrderId: "b", clientOrderId: "entry:e", status: "filled", filledQuantity: 1, avgFillPriceCents: 198, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null });
+  const outcomePlanned = journal.planAppend({ lastSeq: 2, priorIntentRationales: [] }, outcome.draft, []);
+  if (!outcomePlanned.ok) throw new Error("sandboxed OUTCOME draft did not validate: " + outcomePlanned.reason);
+  const fold = execution.foldLifecycles([planned.entry, intentPlanned.entry, outcomePlanned.entry]);
+  if (!fold.ok || fold.entries.length !== 1 || fold.entries[0].state !== "filled") throw new Error("sandboxed lifecycle fold is wrong");
+  const heldBook = { ...book, equityCents: 9_000_000, positions: [{ contractId: "SHORT", quantity: -1, avgEntryPriceCents: 300 }, { contractId: "LONG", quantity: 1, avgEntryPriceCents: 100 }], openOrders: [{ brokerOrderId: "o", clientOrderId: "entry:x", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, brokerTimestamps: {}, brokerReason: null, legs: [{ contractId: "OTHER", side: "buy", ratio: 1 }], quantity: 1, limit: null }] };
+  const killPlan = execution.planKillManagement(heldBook, fold.entries);
+  const eligible = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "SHORT", side: "buy", quantity: 1 }, { contractId: "LONG", side: "sell", quantity: 1 }]);
+  const opening = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "OTHER", side: "buy", quantity: 1 }]);
+  if (!execution.killTriggered(9_199_999, 9_200_000) || execution.killTriggered(9_200_000, 9_200_000) || killPlan.cancel.length !== 1 || killPlan.flatten.length !== 1 || killPlan.residue.length !== 0 || !eligible.eligible || opening.eligible || execution.isBookFlat(heldBook)) throw new Error("sandboxed kill plan or emergency eligibility is wrong");
+  paths.push("utcIso<->epochMs, priceEntryLimit(credit vertical) → 198, classifyFillPrice(breach/improved), assembleDecisionSnapshot(ok / null contract refused), buildClaimset+revalidateClaimset(holds / kill crossed), intentDraft+OUTCOME → foldLifecycles(filled), planKillManagement(cancel 1, flatten 1), emergencyCloseEligibility(whole close ok / opening leg refused)");
   return paths;
 }
 
