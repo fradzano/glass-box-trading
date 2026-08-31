@@ -141,6 +141,7 @@ describe("S-G12-02 time alone never grants authority", () => {
     const paths = freshPaths();
     const first = gatewayFor(paths, "first", () => TEST_ONLY_AT_MS);
     expect(await first.acquireAuthority({ account: "virgin" })).toMatchObject({ kind: "WON", epoch: 1 });
+    expect(await first.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
     // A fresh heartbeat: no takeover, regardless of how confident the second instance is.
     const eager = gatewayFor(paths, "eager", () => TEST_ONLY_AT_MS + BOUND_MS);
     expect(await eager.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "SUPPRESSED" });
@@ -266,6 +267,7 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     let now = TEST_ONLY_AT_MS;
     const agent = gatewayFor(paths, "agent", () => now);
     expect(await agent.acquireAuthority({ account: "virgin" })).toMatchObject({ kind: "WON", epoch: 1 });
+    expect(await agent.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
     now += BOUND_MS + 1;
     const watchdog = gatewayFor(paths, "watchdog", () => now);
     expect(await watchdog.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
@@ -308,6 +310,16 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1)) } })).toMatchObject({ ok: true, seq: 1 });
     expect(readEpochStore(seedPaths)).toMatchObject({ kind: "present", epoch: 1, seedPending: false });
     expect(await seeded.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: draftOf(cycleEntry(2)) } })).toMatchObject({ ok: true, seq: 2 });
+    // G2-F1: the seed obligation survives a takeover as well — an acquirer that increments a seed-pending store inherits it.
+    const takeoverPaths = freshPaths();
+    expect(await gatewayFor(takeoverPaths, "seeder", () => TEST_ONLY_AT_MS).acquireAuthority({ account: "virgin" })).toMatchObject({ kind: "WON", epoch: 1, seeded: "bootstrap" });
+    const inheritor = gatewayFor(takeoverPaths, "inheritor", () => TEST_ONLY_AT_MS + BOUND_MS + 1);
+    expect(await inheritor.acquireAuthority({ account: "virgin" })).toMatchObject({ kind: "WON", epoch: 2, seeded: "bootstrap" });
+    expect(readEpochStore(takeoverPaths)).toMatchObject({ kind: "present", epoch: 2, holderId: "inheritor", seedPending: true });
+    expect(await inheritor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(1)) } })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    expect(await inheritor.dispatch(submitOrder(2))).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+    expect(await inheritor.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(bootstrapEntry(1, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 1 });
+    expect(readEpochStore(takeoverPaths)).toMatchObject({ kind: "present", epoch: 2, seedPending: false });
     expect(readdirSync(seedPaths.root).sort()).toEqual(["epoch.json", "halt.json", "holder.json", "journal.jsonl", "quarantine"].filter(name => name !== "halt.json" || existsSync(seedPaths.halt)).sort());
   });
 
@@ -319,7 +331,8 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: false })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "non_virgin", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "unknown", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
-    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4 });
+    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false });
+    expect(planEpochAcquisition({ ...present, seedPending: true }, { account: "non_virgin", journalEmpty: false })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: true });
     expect(planEpochAcquisition(unreadable, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_UNREADABLE" });
     expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
     expect(compareAndIncrement(present, 3)).toEqual({ kind: "COMMIT", next: 4 });

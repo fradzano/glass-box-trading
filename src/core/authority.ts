@@ -31,7 +31,7 @@ export interface AcquisitionEvidence {
 export type AcquisitionPlan =
   | { readonly kind: "SEED_BOOTSTRAP"; readonly epoch: 1 }
   | { readonly kind: "SEED_GAP"; readonly epoch: 1; readonly haltReason: "EPOCH_STORE_RESET" }
-  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number }
+  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number; /** inherited from the store: the seed is still unjournaled (G2-F1) */ readonly seedPending: boolean }
   | { readonly kind: "REFUSE"; readonly reason: "EPOCH_UNREADABLE" | "EPOCH_EXHAUSTED" };
 
 /**
@@ -50,7 +50,7 @@ export function planEpochAcquisition(store: EpochStoreState, evidence: Acquisiti
         : { kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" };
     case "present":
       if (store.epoch >= Number.MAX_SAFE_INTEGER) return { kind: "REFUSE", reason: "EPOCH_EXHAUSTED" };
-      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1 };
+      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1, seedPending: store.seedPending };
   }
 }
 

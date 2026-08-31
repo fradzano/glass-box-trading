@@ -240,10 +240,11 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
             const decision = compareAndIncrement(fresh, plan.expected);
             if (decision.kind === "REFUSE") return { kind: "REFUSED", reason: decision.reason };
             if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
-            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: false });
+            // G2-F1: a seed that has not been journaled yet is inherited by the new acquirer, never cleared by acquisition.
+            writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending });
             writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
             ownEpoch = decision.next;
-            return { kind: "WON", epoch: decision.next, seeded: null };
+            return { kind: "WON", epoch: decision.next, seeded: plan.seedPending ? "bootstrap" : null };
           }
         }
       });
