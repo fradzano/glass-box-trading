@@ -26,6 +26,13 @@ function readJsonFile(file: string): { readonly kind: "absent" } | { readonly ki
   }
 }
 
+const RENAME_RETRY_LIMIT = 40;
+const RENAME_RETRY_PAUSE_MS = 5;
+
+function pauseSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function writeJsonAtomically(file: string, value: unknown): void {
   const temporary = `${file}.${String(process.pid)}.tmp`;
   const descriptor = openSync(temporary, "w");
@@ -35,7 +42,19 @@ export function writeJsonAtomically(file: string, value: unknown): void {
   } finally {
     closeSync(descriptor);
   }
-  renameSync(temporary, file);
+  // On Windows a rename over a file that another process is reading at that instant fails with EPERM/EBUSY/EACCES
+  // (observed once by a blind reviewer in the five-process append test). The replacement is retried briefly; the
+  // temp file is complete and fsynced, so a retry never exposes a partial record. Persistent failure still throws.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(temporary, file);
+      return;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if ((code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") || attempt >= RENAME_RETRY_LIMIT) throw error;
+      pauseSync(RENAME_RETRY_PAUSE_MS);
+    }
+  }
 }
 
 export function readEpochStore(paths: StatePaths): EpochStoreState {
