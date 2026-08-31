@@ -10,9 +10,11 @@
 // executes (the recorded fixture, a determinism replay, and the sampled
 // lifecycle, partial-fill, and parser paths below) and only for the
 // capabilities the taming removes: clock, randomness, locale, code
-// generation, stack observation, and mutation of intrinsics. Mutation of the
-// core's own module-scope function objects is not observable here and is
-// left to the static gate. Run with:
+// generation, stack observation, the symbol registry, mutation of
+// intrinsics, and mutation of the core's exported values (hardened after
+// load). It does not observe: unexecuted paths, mutation of non-exported
+// module-scope objects inside the core, and any capability not listed here.
+// Run with:
 //   node --experimental-vm-modules tools/run-core-sandboxed.mjs
 // after `npm run build` (dist/core must exist).
 
@@ -30,6 +32,9 @@ const TAMING = `
     Object.defineProperty(globalThis, name, { value: undefined, writable: false, configurable: false });
   }
   Object.defineProperty(Math, "random", { value: deny("Math.random"), writable: false, configurable: false });
+  // The symbol registry is realm-global mutable state.
+  Object.defineProperty(Symbol, "for", { value: deny("Symbol.for"), writable: false, configurable: false });
+  Object.defineProperty(Symbol, "keyFor", { value: deny("Symbol.keyFor"), writable: false, configurable: false });
   Object.defineProperty(globalThis, "eval", { value: deny("eval"), writable: false, configurable: false });
   for (const name of ["localeCompare", "toLocaleString", "toLocaleLowerCase", "toLocaleUpperCase"]) {
     Object.defineProperty(String.prototype, name, { value: deny("String.prototype." + name), writable: false, configurable: false });
@@ -88,6 +93,20 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
   }
   const entry = await load(entryFile);
   await entry.evaluate();
+  // Harden: every value the loaded graph exports — functions included — is
+  // deep-frozen, so a laundered defineProperty/assign/setPrototypeOf on a
+  // core export throws instead of installing hidden module state.
+  const seen = new Set();
+  const harden = (value) => {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) return;
+    seen.add(value);
+    try { Object.freeze(value); } catch { /* unfreezable views hold no capability */ }
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor !== undefined && "value" in descriptor) harden(descriptor.value);
+    }
+  };
+  for (const module of cache.values()) for (const value of Object.values(module.namespace)) harden(value);
   return entry.namespace;
 }
 
@@ -144,6 +163,8 @@ async function calibrate() {
     ["eval", "export function key() { return eval('1 + 1'); }"],
     ["stack trace observation", "export function trace() { const value = new Error('x').stack; if (typeof value !== 'string') { throw new Error('no stack'); } return value; }"],
     ["alias mutation of an intrinsic", "export function poison() { const m = Math; m.max = () => 0; return m.max(1, 2); }"],
+    ["symbol registry", "export function registry() { return Symbol.for('glass-box'); }"],
+    ["hidden state on an exported function", "export function counter() { const self = counter; Object.defineProperty(self, 'count', { value: 1, writable: true }); return self.count; }"],
   ];
   for (const [name, source] of mutants) {
     const context = createTamedRealm();

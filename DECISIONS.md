@@ -329,13 +329,19 @@ small, no ADR split).
   locale methods are absent or throw; it first proves the instrument on six
   laundered mutants, then runs the recorded fixture twice (determinism), the
   malformed-parser and stale-snapshot paths, a full-fill reconciliation, and a
-  fresh close plan. Declared limits, stated exactly: the runtime guard is
-  sound only for the paths it executes and only for the capabilities its
-  taming removes (clock, randomness, locale, code generation, stack
-  observation, mutation of intrinsics); the static gate rejects every
-  impurity and laundering class in its 66-mutant self-test — including any
-  use of a standard-library object as a value — but a static analysis of
-  TypeScript is not sound against an author who intends to escape it, so
-  unexecuted laundering can survive it. Together they hold shared completion
-  gate 2 for executed core code; the Core/shell lens judges boundary
-  placement and intent.
+  fresh close plan. Declared limits, stated exactly: the runtime guard
+  observes only the paths it executes and only the capabilities its taming
+  removes (clock, randomness, locale, code generation, stack observation,
+  the symbol registry, mutation of intrinsics, and mutation of the core's
+  exported values, which are hardened after load); it does not observe
+  unexecuted paths, mutation of non-exported module-scope objects inside the
+  core, or any capability not in that list. The static gate rejects every
+  impurity and laundering class in its self-test — including any use of a
+  standard-library object as a value — but a static analysis of TypeScript
+  is **not sound** against an author who intends to escape it: four blind
+  counter-verifications each found a new typed laundering path, and the P1
+  run records this seam as open (`R4-F5`, PATCHED) rather than resolved.
+  What the two gates hold together is: accidental impurity is rejected
+  before execution, and the enumerated ambient capabilities cannot be reached
+  on executed paths whatever the source spelled. Intent and boundary
+  placement remain with the Core/shell lens and human review.
