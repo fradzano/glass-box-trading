@@ -576,3 +576,35 @@ describe("RES-P1-01d at the runner boundary", () => {
     expect(run.fake.mutations).toHaveLength(0);
   });
 });
+
+describe("S-G12-06 the credential fence also fences the phase-4 re-check (P4 gate finding G1-F1)", () => {
+  it("a 401 on the re-check fetch after a durable INTENT journals a HALT AUTH_FAILURE, submits nothing, and the recovered next cycle stays management-only", async () => {
+    // The analyst callback runs between the snapshot and the re-check: the credential dies exactly there.
+    const holder: { fake: FakeBroker | null } = { fake: null };
+    const run = await harness({
+      analyst: () => {
+        holder.fake?.setReadHttpFailure(["account", "positions", "orders"], 401);
+        return Promise.resolve(CANDIDATE_JSON);
+      },
+    });
+    holder.fake = run.fake;
+    const report = await run.cycle();
+    // The INTENT is durable, the re-check evidence is dead: the plan is voided and nothing reaches the port.
+    expect(report.actions[0]).toMatchObject({ result: "VOIDED" });
+    expect(run.fake.mutations).toHaveLength(0);
+    expect(report.entriesBlocked).toContain("AUTH_FAILURE");
+    const halts = entriesOf(run.paths).filter(entry => entry.type === "HALT");
+    expect(halts).toHaveLength(1);
+    expect(halts[0]?.["reason"]).toBe("AUTH_FAILURE");
+    expect(readHaltState(run.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+
+    // Credentials come back; the halt persists: no analyst consultation, no order, no stacked HALT.
+    run.fake.setReadHttpFailure(["account", "positions", "orders"], null);
+    const recovered = await run.cycle();
+    expect(recovered.primary).toBe("CYCLE");
+    expect(recovered.actions).toEqual([]);
+    expect(run.analystCalls.count).toBe(1);
+    expect(run.fake.mutations).toHaveLength(0);
+    expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
+  });
+});

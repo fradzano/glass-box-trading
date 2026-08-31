@@ -342,6 +342,10 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // S-CYC-05: refetch broker truth and re-check every claim the verdict rested on.
     const claimset = buildClaimset(plan, book, binding, epoch, deps.executionConfig);
     const freshBook = await fetchBook();
+    // S-G12-06 (P4 gate finding G1-F1): a 401/403 on the re-check fetch is the credential fence, not generic
+    // revalidation evidence — the halt lands here, the void below still documents the failed claims, and the
+    // AUTH_FAILURE block keeps every later plan of this cycle from reaching the port.
+    if (!freshBook.ok && isAuthFailure(freshBook)) await haltForAuthFailure(freshBook.error);
     const refreshed = await gateway.openJournal();
     const store = readEpochStore(deps.paths);
     const freshHalt = readHaltState(deps.paths);
