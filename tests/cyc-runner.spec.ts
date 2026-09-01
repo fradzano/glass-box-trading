@@ -290,14 +290,28 @@ describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before 
     expect(reconciliation).toMatchObject({ reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: "fake-1" }] });
     expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(2);
 
-    // Never sent at all: phase 0 finds nothing and releases the reservation as NOT_SUBMITTED.
+    // Not found is still ambiguous after a lost acknowledgement: phase 0
+    // journals the negative lookup, blocks entries, and probes the same ID again.
     const neverSent = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack_never_sent" }) } });
     await neverSent.cycle();
     expect(types(neverSent.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
     neverSent.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
     const resolved = await neverSent.cycle();
     expect(resolved.resolved[0]).toMatchObject({ result: "NOT_AT_BROKER" });
+    expect(resolved.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
     expect(entriesOf(neverSent.paths).find(entry => entry.type === "RECONCILIATION")).toMatchObject({ reasonCodes: ["NOT_SUBMITTED"], items: [{ classification: "NOT_AT_BROKER" }] });
+    expect(neverSent.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    const repeated = await neverSent.cycle();
+    expect(repeated.resolved[0]).toMatchObject({ result: "NOT_AT_BROKER" });
+    expect(repeated.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
+    expect(entriesOf(neverSent.paths).filter(entry => entry.type === "RECONCILIATION" && (entry["items"] as { classification?: string }[] | undefined)?.some(item => item.classification === "NOT_AT_BROKER"))).toHaveLength(2);
+    expect(neverSent.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    const originalSubmit = neverSent.fake.mutations.find(mutation => mutation.kind === "submit_order");
+    if (originalSubmit === undefined) throw new Error("fixture");
+    await neverSent.fake.port.mutate(originalSubmit);
+    const appearedLate = await neverSent.cycle({ analyst: () => Promise.resolve(JSON.stringify({ candidates: [] })) });
+    expect(appearedLate.resolved[0]).toMatchObject({ clientOrderId: originalSubmit.clientOrderId, result: "OUTCOME:filled" });
+    expect(appearedLate.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(false);
   });
 
   it("S-CYC-04 / S-G7-02 a replayed client order ID is adopted from the broker's duplicate answer, never re-sent under a fresh ID", async () => {

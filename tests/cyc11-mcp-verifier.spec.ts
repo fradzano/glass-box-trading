@@ -105,12 +105,12 @@ describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree
       writeFileSync(path.join(site, "dependency", "bin", "module.py"), "VALUE = 2\n", "utf8");
       writeFileSync(path.join(source, "bin", "tracked.py"), "VALUE = 3\n", "utf8");
       const ports = createEnvironmentPorts({ root, site, source, runtime: path.join(root, "python.exe"), launcher: path.join(root, "launcher.exe") });
-      await ports.evidence.removeBytecode(["site/bin/**"]);
+      await ports.evidence.removeBytecode(["site/bin/**"], 1_000);
       expect(existsSync(path.join(site, "bin"))).toBe(false);
       expect(existsSync(path.join(site, "kept.py"))).toBe(true);
       expect(existsSync(path.join(site, "dependency", "bin", "module.py"))).toBe(true);
       expect(existsSync(path.join(source, "bin", "tracked.py"))).toBe(true);
-      await expect(ports.evidence.scanBytecode(["site/bin/**"])).resolves.toEqual([]);
+      await expect(ports.evidence.scanBytecode(["site/bin/**"], 1_000)).resolves.toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -302,6 +302,29 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
       operationTimeoutMs: 5,
       child: { spawn: () => new Promise<McpChildHandle>(() => undefined) },
     })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+  });
+
+  it("bounds asynchronous evidence work before spawn and rejects synchronous overruns", async () => {
+    const stalled = fakePorts({}).ports;
+    await expect(launchVerifiedAnalystChild({
+      ...stalled,
+      operationTimeoutMs: 5,
+      evidence: { ...stalled.evidence, removeBytecode: () => new Promise<readonly string[]>(() => undefined) },
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 5 ms");
+
+    const overrun = fakePorts({}).ports;
+    await expect(launchVerifiedAnalystChild({
+      ...overrun,
+      operationTimeoutMs: 5,
+      evidence: {
+        ...overrun.evidence,
+        removeBytecode: () => {
+          const until = Date.now() + 20;
+          while (Date.now() < until) { /* simulate an incorrectly synchronous port */ }
+          return Promise.resolve([]);
+        },
+      },
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 5 ms");
   });
 
   it("bounds stalled inventory and stalled child cleanup", async () => {

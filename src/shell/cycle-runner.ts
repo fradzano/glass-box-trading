@@ -371,6 +371,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order) : derived.draft;
     if (!await append(draft)) break;
     resolved.push({ clientOrderId: record.clientOrderId, result: derived === null ? (order === null ? "NOT_AT_BROKER" : "MATCHED_WORKING") : `OUTCOME:${derived.status}` });
+    if (derived === null && order === null) entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
     if (derived?.fill === "BROKER_PRICE_BREACH") await haltForPriceBreach(record.clientOrderId);
   }
   // An emergency close the journal never saw (S-CYC-06): the next attempt ID of every filled lifecycle is probed at the broker.

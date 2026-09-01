@@ -576,8 +576,10 @@ small, no ADR split).
   OUTCOME and keeps counting as fillable exposure from its INTENT until phase
   0 of a later cycle sees its terminal status (S-X-04). Phase 0 re-reads
   every `intent`, `confirmation_unclear`, and `fillable` lifecycle by client
-  order ID; a never-confirmed order the broker does not know is released as
-  `RECONCILIATION` `NOT_SUBMITTED`, a formerly working order that vanished
+  order ID. The earlier rule that a negative lookup released a never-confirmed
+  order is superseded by R20: after a lost acknowledgement, `RECONCILIATION`
+  `NOT_SUBMITTED` remains uncertain, reserved, and entry-blocking because the
+  request may appear later; a formerly working order that vanished likewise
   blocks entries instead of releasing (fail closed). (c) *The revalidation
   claimset has eight claims and no narrower reading*: account bound, equity
   not below the kill threshold, positions fingerprint, open-orders
@@ -1388,3 +1390,14 @@ small, no ADR split).
   runtime-covered deadline. Runtime cleanup starts holder release independently
   of child stop and preserves timeout/cleanup errors, so a stalled stdio
   transport cannot retain writer authority indefinitely.
+- **2026-09-01 — P7 R20 unifies lost-ack terminality and makes evidence
+  deadlines real.** `NOT_AT_BROKER` after an ambiguous submit never maps to a
+  released lifecycle: the fold retains `confirmation_unclear`, phase 0 blocks
+  entries and re-queries the same client-order ID on every later cycle, and a
+  broker order that appears late is adopted and terminally journaled. Only
+  broker-terminal truth or a pre-submit `REVALIDATION_VOID` releases risk.
+  MCP filesystem scans, hashing, cleanup, and Git reads now yield through
+  asynchronous ports with cooperative aggregate deadlines; Git subprocesses
+  carry their remaining timeout explicitly. The launcher starts timeout
+  measurement before invoking a port and rejects even a synchronously
+  misbehaving port that returns only after its bound.

@@ -91,7 +91,7 @@ function isoDate(ms: number, offsetDays: number): string {
 
 async function runtimeCleanupErrors(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, stopTimeoutMs: number): Promise<unknown[]> {
   const [stopped, released] = await Promise.allSettled([
-    withOperationTimeout(Promise.resolve().then(() => child.stop()), stopTimeoutMs, "MCP_STOP_TIMEOUT"),
+    withOperationTimeout(() => child.stop(), stopTimeoutMs, "MCP_STOP_TIMEOUT"),
     Promise.resolve().then(() => releaseHolder(paths, holderId)),
   ]);
   const errors: unknown[] = [];

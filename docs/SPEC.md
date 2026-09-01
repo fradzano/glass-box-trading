@@ -394,7 +394,10 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   external launch lifecycle operation — evidence collection, connect, inventory,
   tool call, and stop — has a hard runtime-digested deadline. Holder release is
   attempted independently of child shutdown, so a stalled transport cannot
-  retain writer authority indefinitely. Required
+  retain writer authority indefinitely. Evidence cleanup/scans/hashes use
+  asynchronous deadline-aware filesystem operations, and every Git subprocess
+  receives the remaining aggregate timeout; a timed-out pre-spawn operation
+  releases no child or analyst request. Required
   market-data origins are validated separately and are not confused with the
   order-capable paper-only origin.
   If `STATE_DIR` itself cannot open, the impossible local-journal requirement is
@@ -639,8 +642,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   stock, orphan short leg) via the discriminated recovery policy S-X-06.
   (A11)
 - **S-G10-04** Intent without outcome: broker queried by client order ID;
-  found → outcome journaled now; not found → journaled `NOT_SUBMITTED` and
-  the reservation released.
+  found → outcome journaled now; not found → journaled `NOT_SUBMITTED` but
+  remains `CONFIRMATION_UNCLEAR`, reserved, entry-blocking, and queried again
+  on every later phase 0. A negative lookup cannot prove that a lost-
+  acknowledgement request will never appear; only broker-terminal truth or a
+  pre-submit `REVALIDATION_VOID` releases it.
 - **S-G10-05** A manual human trade is journaled `HUMAN_ACTION` — visible to
   the judge as exactly that, never absorbed into agent reasoning. On the dev
   account it follows ordinary reconciliation. On the competition account it

@@ -6,9 +6,9 @@
 // lock, executed by the pinned runtime interpreter with `-S` (no site
 // packages of the base installation) and PYTHONPATH pointing at that
 // directory only — so nothing outside the verified files is importable.
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { promises as fs, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { DEFAULT_INHERITED_ENV_VARS, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -50,10 +50,6 @@ function gitBlobSha1(bytes: Buffer): string {
   return createHash("sha1").update(`blob ${String(bytes.length)}\0`).update(bytes).digest("hex");
 }
 
-function git(cwd: string, args: readonly string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
-
 function walkFiles(directory: string, out: string[]): void {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolute = path.join(directory, entry.name);
@@ -62,13 +58,48 @@ function walkFiles(directory: string, out: string[]): void {
   }
 }
 
-function walkDirectories(directory: string, out: string[]): void {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+function remainingMs(deadlineMs: number, label: string): number {
+  const remaining = deadlineMs - Date.now();
+  if (remaining < 1) throw new Error(`${label}: deadline exceeded`);
+  return remaining;
+}
+
+function gitAsync(cwd: string, args: readonly string[], deadlineMs: number): Promise<string> {
+  const timeout = remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+  return new Promise<string>((resolve, reject) => {
+    execFile("git", [...args], { cwd, encoding: "utf8", timeout, windowsHide: true }, (error, stdout) => {
+      if (error !== null) reject(error instanceof Error ? error : new Error("git command failed", { cause: error }));
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+async function walkFilesAsync(directory: string, out: string[], deadlineMs: number): Promise<void> {
+  remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) await walkFilesAsync(absolute, out, deadlineMs);
+    else out.push(absolute);
+  }
+}
+
+async function walkDirectoriesAsync(directory: string, out: string[], deadlineMs: number): Promise<void> {
+  remainingMs(deadlineMs, "MCP_REMOVE_TIMEOUT");
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    remainingMs(deadlineMs, "MCP_REMOVE_TIMEOUT");
     const absolute = path.join(directory, entry.name);
     out.push(absolute);
-    walkDirectories(absolute, out);
+    await walkDirectoriesAsync(absolute, out, deadlineMs);
   }
+}
+
+async function sha256OfAsync(file: string, deadlineMs: number): Promise<string> {
+  remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+  return createHash("sha256").update(await fs.readFile(file)).digest("hex");
 }
 
 function matchesPattern(relative: string, pattern: string): boolean {
@@ -87,11 +118,12 @@ interface DistInfo {
   readonly version: string;
 }
 
-function installedDistributions(site: string): readonly DistInfo[] {
+async function installedDistributionsAsync(site: string, deadlineMs: number): Promise<readonly DistInfo[]> {
   const out: DistInfo[] = [];
-  for (const entry of readdirSync(site, { withFileTypes: true })) {
+  for (const entry of await fs.readdir(site, { withFileTypes: true })) {
+    remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
     if (!entry.isDirectory() || !entry.name.endsWith(".dist-info")) continue;
-    const metadata = readFileSync(path.join(site, entry.name, "METADATA"), "utf8");
+    const metadata = await fs.readFile(path.join(site, entry.name, "METADATA"), "utf8");
     const name = /^Name:\s*(.+)$/m.exec(metadata)?.[1]?.trim();
     const version = /^Version:\s*(.+)$/m.exec(metadata)?.[1]?.trim();
     if (name !== undefined && version !== undefined) out.push({ name: name.toLowerCase().replace(/[-_.]+/g, "-"), version });
@@ -131,6 +163,25 @@ export function dependencySiteSha256(site: string, packageModuleDir = "alpaca_mc
   return createHash("sha256").update(lines.sort().join("\n")).digest("hex");
 }
 
+async function dependencySiteSha256Async(site: string, packageModuleDir: string, deadlineMs: number): Promise<string> {
+  const files: string[] = [];
+  await walkFilesAsync(site, files, deadlineMs);
+  const projectPrefix = `${packageModuleDir.toLowerCase()}-`;
+  const lines: string[] = [];
+  for (const file of files) {
+    remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+    const relative = path.relative(site, file).split(path.sep).join("/");
+    const parts = relative.split("/");
+    const first = (parts[0] ?? "").toLowerCase();
+    if (relative === ".lock" || first === "bin") continue;
+    if (parts.includes("__pycache__") || relative.endsWith(".pyc")) continue;
+    if (first === packageModuleDir.toLowerCase() || (first.startsWith(projectPrefix) && first.endsWith(".dist-info"))) continue;
+    if ((parts.at(-2) ?? "").endsWith(".dist-info") && INSTALLER_METADATA.has(parts.at(-1) ?? "")) continue;
+    lines.push(`${relative} ${await sha256OfAsync(file, deadlineMs)}`);
+  }
+  return createHash("sha256").update(lines.sort().join("\n")).digest("hex");
+}
+
 export type LaunchObservation = Omit<McpLaunchObservation, "childEnvironment">;
 
 export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageModuleDir = "alpaca_mcp_server"): { readonly evidence: McpEvidencePort; readonly child: McpChildPort; readonly extra: () => EnvironmentEvidence; readonly lastObservation: () => LaunchObservation | null } {
@@ -138,19 +189,20 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
   let lastObservation: LaunchObservation | null = null;
 
   const evidence: McpEvidencePort = {
-    gather(lock: RuntimeLock): Promise<Omit<McpLaunchObservation, "childEnvironment">> {
-      const sourceRepository = git(paths.source, ["remote", "get-url", "origin"]).replace(/\/?$/, "").replace(/\.git$/, "") + ".git";
-      const sourceCommit = git(paths.source, ["rev-parse", "HEAD"]);
-      const installed = installedDistributions(paths.site);
+    async gather(lock: RuntimeLock, operationTimeoutMs: number): Promise<Omit<McpLaunchObservation, "childEnvironment">> {
+      const deadlineMs = Date.now() + operationTimeoutMs;
+      const sourceRepository = (await gitAsync(paths.source, ["remote", "get-url", "origin"], deadlineMs)).replace(/\/?$/, "").replace(/\.git$/, "") + ".git";
+      const sourceCommit = await gitAsync(paths.source, ["rev-parse", "HEAD"], deadlineMs);
+      const installed = await installedDistributionsAsync(paths.site, deadlineMs);
       const project = installed.find(item => item.name === lock.source.package.toLowerCase().replace(/[-_.]+/g, "-"));
       // Dependency lock: the pinned commit's lock (from git objects, not the working tree) must cover every installed distribution at the same version.
-      const pinnedLock = git(paths.source, ["show", `${lock.source.commit}:${lock.source.dependencyLockAtCommit}`]);
+      const pinnedLock = await gitAsync(paths.source, ["show", `${lock.source.commit}:${lock.source.dependencyLockAtCommit}`], deadlineMs);
       const locked = lockedPackages(pinnedLock);
       const dependencyLockMatchesPin = installed.every(item => item.name === project?.name || locked.get(item.name) === item.version);
-      const dependencyContentMatchesPin = dependencySiteSha256(paths.site, packageModuleDir) === lock.source.dependencySiteSha256;
+      const dependencyContentMatchesPin = await dependencySiteSha256Async(paths.site, packageModuleDir, deadlineMs) === lock.source.dependencySiteSha256;
       // Immutable package files: every tracked file of the package at the pinned commit must be byte-identical in the installed copy, and nothing else may be there.
       const treeRoot = `src/${packageModuleDir}`;
-      const tree = git(paths.source, ["ls-tree", "-r", lock.source.commit, "--", treeRoot]);
+      const tree = await gitAsync(paths.source, ["ls-tree", "-r", lock.source.commit, "--", treeRoot], deadlineMs);
       const expected = new Map<string, string>();
       for (const line of tree.split("\n")) {
         const match = /^\d+ blob ([0-9a-f]{40})\t(.+)$/.exec(line);
@@ -158,14 +210,15 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       }
       const installedRoot = path.join(paths.site, packageModuleDir);
       const observedFiles: string[] = [];
-      walkFiles(installedRoot, observedFiles);
+      await walkFilesAsync(installedRoot, observedFiles, deadlineMs);
       const mismatches: string[] = [];
       const seen = new Set<string>();
       for (const file of observedFiles) {
         const relative = path.relative(installedRoot, file).split(path.sep).join("/");
         if (relative.split("/").includes("__pycache__") || relative.endsWith(".pyc")) continue;
         seen.add(relative);
-        const blob = gitBlobSha1(readFileSync(file));
+        remainingMs(deadlineMs, "MCP_EVIDENCE_TIMEOUT");
+        const blob = gitBlobSha1(await fs.readFile(file));
         if (expected.get(relative) !== blob) mismatches.push(`${relative}: installed ${blob}, pinned ${expected.get(relative) ?? "absent"}`);
       }
       for (const [relative, blob] of expected) if (!seen.has(relative)) mismatches.push(`${relative}: pinned ${blob}, installed absent`);
@@ -173,12 +226,13 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       // The pinned package still gets the stronger independent git-object comparison above; this tree digest
       // closes the gap where a dependency kept its locked version metadata but its installed bytes changed.
       const siteFiles: string[] = [];
-      walkFiles(paths.site, siteFiles);
-      const artifactLines = siteFiles.flatMap(file => {
+      await walkFilesAsync(paths.site, siteFiles, deadlineMs);
+      const artifactLines: string[] = [];
+      for (const file of siteFiles) {
         const relative = path.relative(paths.site, file).split(path.sep).join("/");
-        if (relative.split("/").includes("__pycache__") || relative.endsWith(".pyc")) return [];
-        return [`${relative} ${sha256Of(file)}`];
-      });
+        if (relative.split("/").includes("__pycache__") || relative.endsWith(".pyc")) continue;
+        artifactLines.push(`${relative} ${await sha256OfAsync(file, deadlineMs)}`);
+      }
       launchArtifactsSha256 = createHash("sha256").update(artifactLines.sort().join("\n")).digest("hex");
       const observed: LaunchObservation = {
         sourceRepository,
@@ -187,23 +241,24 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
         packageVersion: project?.version ?? "",
         dependencyLockMatchesPin,
         dependencyContentMatchesPin,
-        interpreterLauncherSha256: sha256Of(paths.launcher),
-        interpreterRuntimeSha256: sha256Of(paths.runtime),
+        interpreterLauncherSha256: await sha256OfAsync(paths.launcher, deadlineMs),
+        interpreterRuntimeSha256: await sha256OfAsync(paths.runtime, deadlineMs),
         hashProvenance: "runtime_lock",
         immutableFileMismatches: mismatches,
         bytecodeArtifactsPresent: [],
         bytecodeWritesDisabled: true,
       };
       lastObservation = observed;
-      return Promise.resolve(observed);
+      return observed;
     },
-    removeBytecode(patterns: readonly string[]): Promise<readonly string[]> {
+    async removeBytecode(patterns: readonly string[], operationTimeoutMs: number): Promise<readonly string[]> {
+      const deadlineMs = Date.now() + operationTimeoutMs;
       const removed: string[] = [];
       if (patterns.includes(SITE_BIN_PATTERN)) {
         const siteBin = path.join(paths.site, "bin");
         try {
-          if (statSync(siteBin).isDirectory()) {
-            rmSync(siteBin, { recursive: true, force: true });
+          if ((await fs.stat(siteBin)).isDirectory()) {
+            await fs.rm(siteBin, { recursive: true, force: true });
             removed.push(siteBin);
           }
         } catch {
@@ -213,36 +268,39 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       const recursivePatterns = patterns.filter(pattern => pattern !== SITE_BIN_PATTERN);
       for (const root of [paths.site, paths.source]) {
         const directories: string[] = [];
-        walkDirectories(root, directories);
+        await walkDirectoriesAsync(root, directories, deadlineMs);
         for (const directory of directories) {
+          remainingMs(deadlineMs, "MCP_REMOVE_TIMEOUT");
           const relative = path.relative(root, directory).split(path.sep).join("/");
           if (recursivePatterns.some(pattern => pattern.endsWith("/**") && matchesPattern(`${relative}/x`, pattern))) {
-            rmSync(directory, { recursive: true, force: true });
+            await fs.rm(directory, { recursive: true, force: true });
             removed.push(directory);
           }
         }
         const files: string[] = [];
         try {
-          walkFiles(root, files);
+          await walkFilesAsync(root, files, deadlineMs);
         } catch {
           // directories removed above may vanish from the listing; the scan below is the authority
         }
         for (const file of files) {
+          remainingMs(deadlineMs, "MCP_REMOVE_TIMEOUT");
           const relative = path.relative(root, file).split(path.sep).join("/");
           if (recursivePatterns.some(pattern => !pattern.endsWith("/**") && matchesPattern(relative, pattern))) {
-            rmSync(file, { force: true });
+            await fs.rm(file, { force: true });
             removed.push(file);
           }
         }
       }
-      return Promise.resolve(removed);
+      return removed;
     },
-    scanBytecode(patterns: readonly string[]): Promise<readonly string[]> {
+    async scanBytecode(patterns: readonly string[], operationTimeoutMs: number): Promise<readonly string[]> {
+      const deadlineMs = Date.now() + operationTimeoutMs;
       const surviving: string[] = [];
       if (patterns.includes(SITE_BIN_PATTERN)) {
         const siteBin = path.join(paths.site, "bin");
         try {
-          if (statSync(siteBin).isDirectory()) surviving.push(siteBin);
+          if ((await fs.stat(siteBin)).isDirectory()) surviving.push(siteBin);
         } catch {
           // Exact site/bin is absent as required.
         }
@@ -250,13 +308,14 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       const recursivePatterns = patterns.filter(pattern => pattern !== SITE_BIN_PATTERN);
       for (const root of [paths.site, paths.source]) {
         const files: string[] = [];
-        walkFiles(root, files);
+        await walkFilesAsync(root, files, deadlineMs);
         for (const file of files) {
+          remainingMs(deadlineMs, "MCP_SCAN_TIMEOUT");
           const relative = path.relative(root, file).split(path.sep).join("/");
           if (recursivePatterns.some(pattern => matchesPattern(relative, pattern))) surviving.push(file);
         }
       }
-      return Promise.resolve(surviving);
+      return surviving;
     },
   };
 
@@ -277,10 +336,10 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       });
       const client = new Client({ name: "glass-box-trading", version: "0.1.0" });
       try {
-        await withOperationTimeout(client.connect(transport), operationTimeoutMs, "MCP_CONNECT_TIMEOUT");
+        await withOperationTimeout(() => client.connect(transport), operationTimeoutMs, "MCP_CONNECT_TIMEOUT");
       } catch (error) {
         try {
-          await withOperationTimeout(client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
+          await withOperationTimeout(() => client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
         } catch (cleanupError) {
           throw new AggregateError([error, cleanupError], "MCP connect failed and transport cleanup did not complete", { cause: cleanupError });
         }
@@ -288,20 +347,20 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       }
       return {
         async listTools(): Promise<readonly string[]> {
-          const result = await withOperationTimeout(client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
+          const result = await withOperationTimeout(() => client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
           return result.tools.map(tool => tool.name);
         },
         async listToolDefinitions() {
-          const result = await withOperationTimeout(client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
+          const result = await withOperationTimeout(() => client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
           return result.tools.map(tool => ({ name: tool.name, description: tool.description ?? "", inputSchema: tool.inputSchema }));
         },
         async callTool(name, args) {
-          const result = await withOperationTimeout(client.callTool({ name, arguments: { ...args } }), operationTimeoutMs, "MCP_CALL_TOOL_TIMEOUT");
+          const result = await withOperationTimeout(() => client.callTool({ name, arguments: { ...args } }), operationTimeoutMs, "MCP_CALL_TOOL_TIMEOUT");
           const content = Array.isArray(result["content"]) ? (result["content"] as readonly unknown[]) : [];
           return { content, isError: result["isError"] === true };
         },
         async stop(): Promise<void> {
-          await withOperationTimeout(client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
+          await withOperationTimeout(() => client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
         },
       };
     },

@@ -627,7 +627,13 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
             avgFillPriceCents: isNonnegativeSafeInteger(price) ? integerUnit(price, "OptionPriceCents") : record.avgFillPriceCents,
             brokerOrderId: typeof brokerOrderId === "string" ? brokerOrderId : record.brokerOrderId,
           });
-        } else if (classification === "NOT_AT_BROKER" || classification === "REVALIDATION_VOID") {
+        } else if (classification === "NOT_AT_BROKER") {
+          // A negative lookup cannot distinguish a never-sent request from a
+          // delayed broker effect after a lost acknowledgement. Keep the
+          // reservation and exact-ID reconciliation active until terminal
+          // broker truth exists.
+          entryRecords.set(clientOrderId, { ...record, state: "confirmation_unclear" });
+        } else if (classification === "REVALIDATION_VOID") {
           entryRecords.set(clientOrderId, { ...record, state: "canceled" });
         } else {
           return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} carries unknown classification ${String(classification)}` };

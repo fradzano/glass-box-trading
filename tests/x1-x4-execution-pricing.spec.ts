@@ -189,14 +189,15 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     const orphanIntent = foldLifecycles(seqd([intent]));
     expect(orphanIntent).toMatchObject({ ok: true, entries: [{ state: "intent" }] });
 
-    // Phase 0 resolution: found working → fillable; found terminal → OUTCOME; not found → released as NOT_SUBMITTED.
+    // Phase 0 resolution: found working → fillable; found terminal → OUTCOME;
+    // not found remains uncertain because a lost acknowledgement may appear later.
     const foundWorking = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "new" }));
     expect(foldLifecycles(seqd([intent, unclear!.draft, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "fillable" }] });
     const foundFilled = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", filledQuantity: 1, avgFillPriceCents: 198 }));
     expect(foldLifecycles(seqd([intent, unclear!.draft, foundFilled!.draft]))).toMatchObject({ ok: true, entries: [{ state: "filled", filledQuantity: 1 }] });
     const notFound = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, null);
     expect(notFound).toMatchObject({ reasonCodes: ["NOT_SUBMITTED"], items: [{ classification: "NOT_AT_BROKER" }] });
-    expect(foldLifecycles(seqd([intent, unclear!.draft, notFound]))).toMatchObject({ ok: true, entries: [{ state: "canceled" }] });
+    expect(foldLifecycles(seqd([intent, unclear!.draft, notFound]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });
     // A duplicate response on replay adopts the existing order instead of erroring or re-sending (S-G7-02).
     const duplicate = outcomeFromSubmit(context, { kind: "duplicate", order: brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", filledQuantity: 1, avgFillPriceCents: 198 }) });
     expect(duplicate).toMatchObject({ status: "filled", draft: { brokerOrderId: "broker-1" } });
