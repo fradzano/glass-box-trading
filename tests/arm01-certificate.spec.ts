@@ -31,7 +31,8 @@ const DIGEST_A = "a".repeat(64);
 const DIGEST_B = "b".repeat(64);
 
 function sample(bid: number, ask: number) {
-  return { bidCents: bid, askCents: ask, bidSize: 25, askSize: 30, quotedAt: "2026-09-01T14:00:00.000Z", brokerQuotedAt: "2026-09-01T14:00:00.123456789Z" };
+  // `quotedAt` is the broker instant truncated to milliseconds, exactly as `mapLatestQuote` derives it.
+  return { bidCents: bid, askCents: ask, bidSize: 25, askSize: 30, quotedAt: "2026-09-01T14:00:00.000Z", brokerQuotedAt: "2026-09-01T14:00:00.000456789Z" };
 }
 
 function snapshot(positions: readonly { contractId: string; quantity: number }[]) {
@@ -64,7 +65,7 @@ function passingJournal(overrides: { readonly g5?: boolean; readonly outcomeStat
     entry(1, "BOOTSTRAP", { snapshot: snapshot([]), epochSeeded: true }),
     entry(2, "CYCLE", { cycleIndex: 1, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([]), batchVerdicts: [], candidateVerdicts: [] }),
     entry(3, "INTENT", { action: "entry", clientOrderId: "entry:credit", exposureLifecycleId: "exposure:credit", sleeve: "income", structureType: "vertical_credit", legs: LEGS, quantity: 1, submittedLimit: { kind: "credit", priceCents: 18 }, reservedMaxLossCents: 18_200, gateVector: gateVector(overrides.g5 ?? true), rationale: { paidFrom: "income_drift", snapshotReferences: ["x"], text: "SPY vertical_credit" }, binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT } }),
-    entry(4, "OUTCOME", { clientOrderId: "entry:credit", status: overrides.outcomeStatus ?? "filled", brokerOrderId: "broker-1", brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:03:05.000Z" }, filledQuantity: (overrides.outcomeStatus ?? "filled") === "filled" ? 1 : 0, avgFillPriceCents: (overrides.outcomeStatus ?? "filled") === "filled" ? 19 : null, reasonCodes: [], binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT }, brokerReason: null }),
+    entry(4, "OUTCOME", { clientOrderId: "entry:credit", status: overrides.outcomeStatus ?? "filled", brokerOrderId: "broker-1", brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", [(overrides.outcomeStatus ?? "filled") === "canceled" ? "canceled_at" : "filled_at"]: "2026-09-01T14:03:05.000Z" }, filledQuantity: (overrides.outcomeStatus ?? "filled") === "filled" ? 1 : 0, avgFillPriceCents: (overrides.outcomeStatus ?? "filled") === "filled" ? 19 : null, reasonCodes: [], binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT }, brokerReason: null }),
     entry(5, "CYCLE", { cycleIndex: 2, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot((overrides.reconciled ?? true) ? [{ contractId: SHORT, quantity: -1 }, { contractId: LONG, quantity: 1 }] : []), batchVerdicts: [], candidateVerdicts: [] }),
   ];
   if (overrides.fence ?? true) journal.push(entry(6, "HALT", { reason: "AUTH_FAILURE", detail: "broker credential rejected (401)", sticky: false }));
@@ -189,6 +190,24 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ journal: oldQuotes })).failures).toContain("a liquidity quote sample carries a timestamp outside the test window");
   });
 
+  it("gate findings G4: broker timestamps are required, ratios must be covered per right, the recorded quote instant equals the broker's, the certificate carries a self-digest", () => {
+    const noBrokerTimes = buildCertificate(inputs({ orderObservations: [{ observedAt: "2026-09-01T14:03:01.000Z", order: { ...order("accepted", false), brokerTimestamps: {} } }], journal: passingJournal().map(item => (item.seq === 4 ? { ...item, brokerTimestamps: {} } : item)) }));
+    expect(noBrokerTimes.failures.some(item => item.includes("local times do not substitute"))).toBe(true);
+    const ratioSpread = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [{ ...LEGS[0], ratio: 2 }, LEGS[1]] } : item));
+    expect(buildCertificate(inputs({ journal: ratioSpread })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const crossRight = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [LEGS[0], { ...LEGS[1], contractId: "SPY260904P00770000", right: "put" }] } : item));
+    expect(buildCertificate(inputs({ journal: crossRight })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const skewedQuote = passingJournal().map(item => (item.seq === 2 ? { ...item, snapshot: { ...snapshot([]), quoteSamples: { SPY: { [SHORT]: { ...sample(50, 52), brokerQuotedAt: "2026-09-01T14:30:00.000000000Z" }, [LONG]: sample(30, 32) } } } } : item));
+    expect(buildCertificate(inputs({ journal: skewedQuote })).failures).toContain("a liquidity quote sample's recorded instant does not equal its broker timestamp");
+    const certificate = buildCertificate(inputs());
+    expect(certificate.evidenceDigest).toMatch(/^[0-9a-f]{64}$/);
+    const edited = JSON.parse(JSON.stringify(certificate)) as Record<string, unknown>;
+    (edited["evidence"] as Record<string, unknown>)["liquidity"] = [{ ...(certificate.evidence.liquidity[0] as object), brokerQuotedAt: "2026-09-01T14:00:00.123456789Z" }, certificate.evidence.liquidity[1]];
+    const verdict = validateArmingCertificate(edited, { runtimeDigest: DIGEST_A, policyDigest: DIGEST_B, canonicalTradingOrigin: ORIGIN });
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.violations).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
+  });
+
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
     expect(buildCertificate(inputs({ fence: null })).failures).toContain("the credential-fence drill was not performed");
     expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
@@ -255,6 +274,12 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: () => 5 }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: new Date(0) }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: "NaN" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(true);
+    // G4-K3: Map, Set, RegExp, class instances, and null-prototype objects are not records.
+    expect(policyDigest({ ...raw, UNDERLYING_UNIVERSE: new Map([["x", 1]]) }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, UNDERLYING_UNIVERSE: [1, new Set([1])] }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: /x/ }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: Object.create(null) as object }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: { nested: { deep: [1, "two", null, true] } } }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(true);
     expect(policyDigest({ ...raw, ALPACA_TRADING_ORIGIN: "https://api.alpaca.markets" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
   });
 
@@ -322,5 +347,13 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(violationsOf({ ...serialized, evidence: { ...evidence, fill: { ...(evidence["fill"] as Record<string, unknown>), filledQuantity: "1" } } })).toContain("certificate fill.filledQuantity has the wrong type");
     expect(violationsOf({ ...serialized, window: { startedAt: "2030-01-01T13:35:00.000Z", endedAt: "2030-01-01T15:10:00.000Z" } })).toContain("certificate fill.filledAt lies outside the certificate window");
     expect(violationsOf({ ...serialized, evidence: { ...evidence, fence: { ...(evidence["fence"] as Record<string, unknown>), canceledAtFence: [1] } } })).toContain("certificate fence.canceledAtFence has the wrong type");
+    // G4-K2: typed but semantically impossible values do not arm (and every edit trips the self-digest as well).
+    const withEdit = (clause: string, patch: Record<string, unknown>): readonly string[] => violationsOf({ ...serialized, evidence: { ...evidence, [clause]: { ...(evidence[clause] as Record<string, unknown>), ...patch } } });
+    expect(withEdit("fill", { filledQuantity: -1 })).toContain("certificate fill quantity or price is not a real fill");
+    expect(withEdit("finalSnapshot", { accountId: "DIFFERENT-ACCOUNT" })).toContain("certificate final snapshot is not on the certificate's account or was not paginated");
+    expect(withEdit("creditAcceptance", { terminalStatus: "forged-terminal" })).toContain("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
+    expect(withEdit("creditAcceptance", { intentSeq: 9 })).toContain("certificate credit acceptance sequence is not ordered");
+    expect(withEdit("fence", { unhaltSeq: 1 })).toContain("certificate fence sequence is not ordered");
+    expect(withEdit("fill", { filledQuantity: -1 })).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
   });
 });

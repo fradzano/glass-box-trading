@@ -113,7 +113,10 @@ export function containsNonCanonical(value: unknown): boolean {
   // such values cannot arrive from a JSON-loaded policy and are not distinguished here without reflection.)
   const unwrapped = (value as { readonly valueOf?: () => unknown }).valueOf;
   if (typeof unwrapped === "function" && unwrapped.call(value) !== value) return true;
-  if (Object.keys(value).length === 0 && JSON.stringify(value) !== "{}") return true;
+  // Digest material admits no empty object: a Map, Set, RegExp, or symbol-keyed object shows no own string keys and
+  // would otherwise canonicalize as `{}` exactly like an empty record; refusing every keyless object closes that
+  // class without reflection (gate finding G4-K3, P7). No legitimate policy or evidence value is an empty object.
+  if (Object.keys(value).length === 0) return true;
   return Object.values(value).some(containsNonCanonical);
 }
 
@@ -282,6 +285,11 @@ export interface FinalSnapshotEvidence {
   readonly pagesComplete: boolean;
 }
 
+/** The digest a certificate carries over its own account, window, digests, inventory flag, and evidence: any later edit of the file breaks it. */
+export function certificateEvidenceDigest(certificate: Omit<PreArmCertificate, "evidenceDigest" | "verdict" | "failures">): string {
+  return sha256Text(canonicalJson({ schemaVersion: certificate.schemaVersion, role: certificate.role, accountId: certificate.accountId, tradingOrigin: certificate.tradingOrigin, window: certificate.window, runtimeDigest: certificate.runtimeDigest, policyDigest: certificate.policyDigest, fieldClassificationVersion: certificate.fieldClassificationVersion, mcpInventoryAccepted: certificate.mcpInventoryAccepted, evidence: certificate.evidence }));
+}
+
 export interface PreArmCertificate {
   readonly schemaVersion: 1;
   readonly verdict: "PASS" | "FAIL";
@@ -301,6 +309,8 @@ export interface PreArmCertificate {
     readonly finalSnapshot: FinalSnapshotEvidence | null;
   };
   readonly failures: readonly string[];
+  /** `certificateEvidenceDigest` of everything above except verdict and failures. */
+  readonly evidenceDigest: string;
 }
 
 /** `successful_dev_live_test_at`: exists only inside a PASS certificate (S-ARM-01). */
@@ -358,10 +368,10 @@ function positiveAcceptanceStatuses(): readonly string[] {
   return ["new", "accepted", "open", "pending_new", "partially_filled", "filled"];
 }
 
-function fullLegsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string; readonly underlying: string; readonly expiry: string }[] {
+function fullLegsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string; readonly underlying: string; readonly expiry: string; readonly right: string; readonly ratio: number }[] {
   const legs = entry["legs"];
   if (!Array.isArray(legs)) return [];
-  return legs.flatMap(leg => (isRecord(leg) && typeof leg["contractId"] === "string" && typeof leg["side"] === "string" && typeof leg["underlying"] === "string" && typeof leg["expiry"] === "string" ? [{ contractId: leg["contractId"], side: leg["side"], underlying: leg["underlying"], expiry: leg["expiry"] }] : []));
+  return legs.flatMap(leg => (isRecord(leg) && typeof leg["contractId"] === "string" && typeof leg["side"] === "string" && typeof leg["underlying"] === "string" && typeof leg["expiry"] === "string" && typeof leg["right"] === "string" && Number.isSafeInteger(leg["ratio"]) && (leg["ratio"] as number) > 0 ? [{ contractId: leg["contractId"], side: leg["side"], underlying: leg["underlying"], expiry: leg["expiry"], right: leg["right"], ratio: leg["ratio"] as number }] : []));
 }
 
 function legsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string }[] {
@@ -442,11 +452,14 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const clientOrderId = intent["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
     const legs = fullLegsOf(intent);
-    const buys = legs.filter(leg => leg.side === "buy").length;
-    const sells = legs.filter(leg => leg.side === "sell").length;
+    const ratioOf = (side: string, right: string | null): number => legs.filter(leg => leg.side === side && (right === null || leg.right === right)).reduce((sum, leg) => sum + leg.ratio, 0);
+    const buys = ratioOf("buy", null);
+    const sells = ratioOf("sell", null);
     const oneUnderlying = new Set(legs.map(leg => leg.underlying)).size === 1;
     const oneExpiry = new Set(legs.map(leg => leg.expiry)).size === 1;
-    if (legs.length < 2 || buys === 0 || sells === 0 || buys !== sells || !oneUnderlying || !oneExpiry) {
+    // Every sold contract of a right needs a bought contract of the same right on the same underlying and expiry.
+    const coveredPerRight = ["call", "put"].every(right => ratioOf("sell", right) <= ratioOf("buy", right));
+    if (legs.length < 2 || buys === 0 || sells === 0 || buys !== sells || !oneUnderlying || !oneExpiry || !coveredPerRight) {
       failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg on the same underlying and expiry, one per sold leg, is not defined-risk`);
       return null;
     }
@@ -477,8 +490,12 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const brokerOrderId = typeof outcome["brokerOrderId"] === "string" ? outcome["brokerOrderId"] : accepted.order.brokerOrderId;
     const timestamps = isRecord(outcome["brokerTimestamps"]) ? outcome["brokerTimestamps"] : {};
     const terminalField = terminal === "filled" ? "filled_at" : "canceled_at";
-    const terminalAt = typeof timestamps[terminalField] === "string" ? timestamps[terminalField] : outcome.at;
-    const acceptedAt = accepted.order.brokerTimestamps["submitted_at"] ?? accepted.observedAt;
+    const terminalAt = typeof timestamps[terminalField] === "string" ? timestamps[terminalField] : null;
+    const acceptedAt = accepted.order.brokerTimestamps["submitted_at"] ?? null;
+    if (terminalAt === null || acceptedAt === null) {
+      failures.push(`credit lifecycle ${clientOrderId}: the broker's submission and terminal timestamps are required evidence; local times do not substitute`);
+      return null;
+    }
     const acceptedMs = instantOf(acceptedAt);
     const terminalMs = instantOf(terminalAt);
     if (acceptedMs === null || terminalMs === null || acceptedMs > terminalMs) {
@@ -523,14 +540,15 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
     });
     if (later === undefined) continue;
     const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
-    const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : fill.at;
+    const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : null;
+    if (filledAtInstant === null || typeof fill["brokerOrderId"] !== "string" || fill["brokerOrderId"].length === 0) continue;
     if (outsideWindow(inputs.window, intent.at, fill.at, filledAtInstant, later.at)) continue;
     return {
       clientOrderId,
-      brokerOrderId: typeof fill["brokerOrderId"] === "string" ? fill["brokerOrderId"] : "",
+      brokerOrderId: fill["brokerOrderId"],
       filledQuantity: fill["filledQuantity"] as number,
       avgFillPriceCents: fill["avgFillPriceCents"] as number,
-      filledAt: typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : fill.at,
+      filledAt: filledAtInstant,
       outcomeSeq: fill.seq,
       reconciledSnapshotSeq: later.seq,
     };
@@ -610,15 +628,15 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
     const snapshotEntry = liquidity[0] === undefined ? undefined : inputs.journal.find(entry => entry.seq === liquidity[0]?.snapshotSeq);
     if (snapshotEntry !== undefined && outsideWindow(inputs.window, snapshotEntry.at)) failures.push("the snapshot consumed by the liquidity gate lies outside the test window");
     if (liquidity.some(item => outsideWindow(inputs.window, item.quotedAt, brokerInstantToIso(item.brokerQuotedAt) ?? undefined))) failures.push("a liquidity quote sample carries a timestamp outside the test window");
+    if (liquidity.some(item => brokerInstantToIso(item.brokerQuotedAt) !== item.quotedAt)) failures.push("a liquidity quote sample's recorded instant does not equal its broker timestamp");
     const legIds = new Set(legsOf(intentForLiquidity).map(leg => leg.contractId));
     if ([...legIds].some(id => !liquidity.some(item => item.contractId === id))) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   }
   const fence = fenceFrom(inputs, failures);
   const finalSnapshot = finalSnapshotFrom(inputs, failures);
-  return {
-    schemaVersion: CERTIFICATE_SCHEMA_VERSION,
-    verdict: failures.length === 0 ? "PASS" : "FAIL",
-    role: "dev",
+  const body = {
+    schemaVersion: CERTIFICATE_SCHEMA_VERSION as 1,
+    role: "dev" as const,
     accountId: inputs.accountId,
     tradingOrigin: inputs.tradingOrigin,
     window: inputs.window,
@@ -627,8 +645,8 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
     fieldClassificationVersion: CONFIG_FIELD_CLASSIFICATION_VERSION,
     mcpInventoryAccepted: inputs.mcpInventoryAccepted,
     evidence: { liquidity, creditAcceptance, fill, fence, finalSnapshot },
-    failures,
   };
+  return { ...body, verdict: failures.length === 0 ? "PASS" : "FAIL", failures, evidenceDigest: certificateEvidenceDigest(body) };
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +662,7 @@ export interface ArmingExpectations {
 export type CertificateValidation = { readonly ok: true; readonly successfulDevLiveTestAt: string } | { readonly ok: false; readonly violations: readonly string[] };
 
 function certificateKeys(): readonly string[] {
-  return ["schemaVersion", "verdict", "role", "accountId", "tradingOrigin", "window", "runtimeDigest", "policyDigest", "fieldClassificationVersion", "mcpInventoryAccepted", "evidence", "failures"];
+  return ["schemaVersion", "verdict", "role", "accountId", "tradingOrigin", "window", "runtimeDigest", "policyDigest", "fieldClassificationVersion", "mcpInventoryAccepted", "evidence", "failures", "evidenceDigest"];
 }
 
 /** A certificate is trusted only as a whole: exact schema, PASS, dev role, canonical origin, and both digests equal to the deployment's own. */
@@ -680,8 +698,37 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
     for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) violations.push(...clauseViolations(clause, evidence[clause], shapes[clause] ?? {}, windowMs));
     const finalSnapshot = evidence["finalSnapshot"];
     if (isRecord(finalSnapshot) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true)) violations.push("certificate final snapshot is not flat and fully paginated");
+    if (isRecord(finalSnapshot) && (finalSnapshot["accountId"] !== raw["accountId"] || !(Number.isSafeInteger(finalSnapshot["orderPagesFetched"]) && (finalSnapshot["orderPagesFetched"] as number) >= 1))) violations.push("certificate final snapshot is not on the certificate's account or was not paginated");
     const fence = evidence["fence"];
     if (isRecord(fence) && fence["httpStatus"] !== 401 && fence["httpStatus"] !== 403) violations.push("certificate fence evidence is not a credential rejection");
+    if (isRecord(fence) && !(Number.isSafeInteger(fence["haltSeq"]) && Number.isSafeInteger(fence["unhaltSeq"]) && (fence["haltSeq"] as number) > 0 && (fence["haltSeq"] as number) < (fence["unhaltSeq"] as number))) violations.push("certificate fence sequence is not ordered");
+    const credit = evidence["creditAcceptance"];
+    if (isRecord(credit)) {
+      if (!positiveAcceptanceStatuses().includes(String(credit["acceptedStatus"])) || (credit["terminalStatus"] !== "filled" && credit["terminalStatus"] !== "canceled")) violations.push("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
+      if (!(Number.isSafeInteger(credit["intentSeq"]) && Number.isSafeInteger(credit["outcomeSeq"]) && (credit["intentSeq"] as number) > 0 && (credit["intentSeq"] as number) < (credit["outcomeSeq"] as number))) violations.push("certificate credit acceptance sequence is not ordered");
+      if ((instantOf(credit["acceptedAt"]) ?? 0) > (instantOf(credit["terminalAt"]) ?? 0)) violations.push("certificate credit acceptance does not precede its terminal instant");
+      if (typeof credit["clientOrderId"] !== "string" || credit["clientOrderId"].length === 0 || typeof credit["brokerOrderId"] !== "string" || credit["brokerOrderId"].length === 0) violations.push("certificate credit acceptance lacks order identities");
+    }
+    const fill = evidence["fill"];
+    if (isRecord(fill)) {
+      if (!(Number.isSafeInteger(fill["filledQuantity"]) && (fill["filledQuantity"] as number) >= 1) || !(Number.isSafeInteger(fill["avgFillPriceCents"]) && (fill["avgFillPriceCents"] as number) >= 0)) violations.push("certificate fill quantity or price is not a real fill");
+      if (!(Number.isSafeInteger(fill["outcomeSeq"]) && Number.isSafeInteger(fill["reconciledSnapshotSeq"]) && (fill["outcomeSeq"] as number) > 0 && (fill["outcomeSeq"] as number) < (fill["reconciledSnapshotSeq"] as number))) violations.push("certificate fill reconciliation sequence is not ordered");
+      if (typeof fill["clientOrderId"] !== "string" || fill["clientOrderId"].length === 0 || typeof fill["brokerOrderId"] !== "string" || fill["brokerOrderId"].length === 0) violations.push("certificate fill lacks order identities");
+    }
+    if (Array.isArray(liquidity)) {
+      for (const item of liquidity) {
+        if (!isRecord(item)) continue;
+        const brokerIso = typeof item["brokerQuotedAt"] === "string" ? brokerInstantToIso(item["brokerQuotedAt"]) : null;
+        if (brokerIso === null || brokerIso !== item["quotedAt"]) violations.push("certificate liquidity sample's broker timestamp does not match its recorded instant");
+        if (!(Number.isSafeInteger(item["bidSize"]) && (item["bidSize"] as number) > 0 && Number.isSafeInteger(item["askSize"]) && (item["askSize"] as number) > 0 && Number.isSafeInteger(item["bidCents"]) && (item["bidCents"] as number) >= 0 && Number.isSafeInteger(item["askCents"]) && (item["askCents"] as number) >= (item["bidCents"] as number))) violations.push("certificate liquidity sample is not a two-sided sized quote");
+      }
+    }
+  }
+  // The self-digest: every field above except verdict and failures must hash to the recorded value.
+  if (typeof raw["evidenceDigest"] !== "string" || containsNonCanonical(raw["evidence"]) || containsNonCanonical(raw["window"])) violations.push("certificate evidence digest is absent or the material is not canonical");
+  else {
+    const recomputed = sha256Text(canonicalJson({ schemaVersion: raw["schemaVersion"], role: raw["role"], accountId: raw["accountId"], tradingOrigin: raw["tradingOrigin"], window: raw["window"], runtimeDigest: raw["runtimeDigest"], policyDigest: raw["policyDigest"], fieldClassificationVersion: raw["fieldClassificationVersion"], mcpInventoryAccepted: raw["mcpInventoryAccepted"], evidence: raw["evidence"] }));
+    if (recomputed !== raw["evidenceDigest"]) violations.push("certificate evidence digest mismatch: the certificate was edited after it was produced");
   }
   if (violations.length > 0 || endedAt === null) return { ok: false, violations };
   return { ok: true, successfulDevLiveTestAt: endedAt };

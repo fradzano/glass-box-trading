@@ -150,7 +150,7 @@ export function mapOrder(raw: unknown): BrokerOrderRecord | null {
   const status = raw["status"];
   const quantity = integerText(raw["qty"]);
   const filledQuantity = integerText(raw["filled_qty"] ?? "0");
-  if (typeof brokerOrderId !== "string" || typeof clientOrderId !== "string" || typeof status !== "string" || quantity === null || filledQuantity === null) return null;
+  if (typeof brokerOrderId !== "string" || brokerOrderId.length === 0 || typeof clientOrderId !== "string" || clientOrderId.length === 0 || typeof status !== "string" || status.length === 0 || quantity === null || filledQuantity === null) return null;
   // A broker order record with a non-positive quantity, a negative fill, or a fill beyond the order is malformed, not partial.
   if (quantity < 1 || filledQuantity < 0 || filledQuantity > quantity) return null;
   const legsRaw = raw["legs"];

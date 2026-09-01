@@ -93,6 +93,10 @@ describe("documents", () => {
     expect(mapOrder({ ...RECORDED_ORDER, qty: "0" })).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, qty: "-1" })).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, qty: "1", filled_qty: "2" })).toBeNull();
+    // G4-K6: empty identities are malformed records, never de-duplicated into one.
+    expect(mapOrder({ ...RECORDED_ORDER, id: "" })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, client_order_id: "" })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, status: "" })).toBeNull();
   });
 
   it("maps a filled debit single-leg order with a rounded average fill", () => {
