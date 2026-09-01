@@ -169,7 +169,7 @@ describe("S-CYC-09 / WIN-2 — the competition provenance proof", () => {
 });
 
 describe("S-CYC-10 / BEQ-2 — failed resolution stays blocking", () => {
-  it("S-CYC-10 an unresolvable CONFIRMATION_UNCLEAR blocks entries and is journaled each cycle; only a successful classification unblocks", async () => {
+  it("S-CYC-10 an unresolvable CONFIRMATION_UNCLEAR blocks entries until broker-terminal truth", async () => {
     const harness = await lifecycleHarness();
     harness.fake.setSubmitBehaviour(() => ({ kind: "lose_ack" }));
     const first = await harness.cycle();
@@ -186,9 +186,18 @@ describe("S-CYC-10 / BEQ-2 — failed resolution stays blocking", () => {
     const items = reconciliation?.["items"] as readonly Record<string, unknown>[];
     expect(items.some(item => item["class"] === "CONFIRMATION_UNCLEAR")).toBe(true);
 
-    // A successful classification unblocks: the broker answers, the working order is matched, entries flow again.
+    // A successful identity match is still non-terminal: the broker answers,
+    // but a working order remains blocked after the lost acknowledgement.
     const third = await harness.cycle();
     expect(third.resolved).toMatchObject([{ result: "MATCHED_WORKING" }]);
-    expect(third.actions).toMatchObject([{ result: "SUBMITTED" }]);
+    expect(third.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
+    expect(third.actions.every(action => action.result !== "SUBMITTED")).toBe(true);
+    expect(harness.analystCalls.count).toBe(1);
+
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    harness.fake.transitionOrder(clientOrderId, { status: "canceled", reason: "terminal broker truth" });
+    const fourth = await harness.cycle();
+    expect(fourth.resolved).toMatchObject([{ result: "OUTCOME:canceled" }]);
+    expect(fourth.actions).toMatchObject([{ result: "SUBMITTED" }]);
   });
 });

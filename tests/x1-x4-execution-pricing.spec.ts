@@ -4,6 +4,7 @@ import { integerUnit } from "../src/core/domain.js";
 import type { EntryActionPlan } from "../src/core/domain.js";
 import {
   classifyFillPrice,
+  entryAcknowledgementDraft,
   entryResolutionDraft,
   epochMsToUtcIso,
   exposureLifecyclesFrom,
@@ -159,7 +160,7 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     expect(outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "pending_new" }))).toBeNull();
     expect(isWorkingBrokerStatus("some_status_the_closed_set_does_not_name")).toBe(true);
     const intent = intentDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan, creditVertical({ entryLimit: plan.submittedLimit }), { candidateId: plan.candidateId, candidateRationale: "r", decision: "PASS", reservedMaxLossCents: plan.reservedMaxLossCents, gateVector: Array.from({ length: 8 }, (_, index) => ({ gate: `G${String(index + 1)}` as "G1", passed: true, code: "PASS" as const, reasons: [] })) }, snapshot(), BINDING);
-    const working = foldLifecycles(seqd([intent, entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "accepted" }))]));
+    const working = foldLifecycles(seqd([intent, entryAcknowledgementDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "accepted" }))]));
     if (!working.ok) throw new Error(working.reason);
     expect(working.entries[0]).toMatchObject({ state: "fillable", brokerOrderId: "broker-1" });
     const counted = exposureLifecyclesFrom(working.entries);
@@ -189,10 +190,11 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     const orphanIntent = foldLifecycles(seqd([intent]));
     expect(orphanIntent).toMatchObject({ ok: true, entries: [{ state: "intent" }] });
 
-    // Phase 0 resolution: found working → fillable; found terminal → OUTCOME;
-    // not found remains uncertain because a lost acknowledgement may appear later.
+    // Phase 0 resolution: found working proves identity but does not terminate
+    // lost-ack uncertainty; found terminal → OUTCOME; not found stays uncertain.
     const foundWorking = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "new" }));
-    expect(foldLifecycles(seqd([intent, unclear!.draft, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "fillable" }] });
+    expect(foldLifecycles(seqd([intent, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });
+    expect(foldLifecycles(seqd([intent, unclear!.draft, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });
     const foundFilled = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", filledQuantity: 1, avgFillPriceCents: 198 }));
     expect(foldLifecycles(seqd([intent, unclear!.draft, foundFilled!.draft]))).toMatchObject({ ok: true, entries: [{ state: "filled", filledQuantity: 1 }] });
     const notFound = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, null);

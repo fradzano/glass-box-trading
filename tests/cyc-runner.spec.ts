@@ -227,12 +227,14 @@ describe("S-X-01/03/04 through the runner: INTENT before order, OUTCOME after, e
     const resting = await harness({ broker: { onSubmit: () => ({ kind: "accept" }) } });
     const first = await resting.cycle();
     expect(first.actions[0]).toMatchObject({ result: "SUBMITTED", status: null, detail: "working" });
-    expect(types(resting.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT"]);
+    expect(types(resting.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "RECONCILIATION"]);
     const clientOrderId = first.actions[0]!.clientOrderId;
-    // While it rests, the next cycle's phase 0 records it as matched-working and G2 still counts its reservation.
+    const acknowledged = entriesOf(resting.paths)[3]!;
+    expect(acknowledged).toMatchObject({ items: [{ kind: "entry_order", clientOrderId, classification: "ACKNOWLEDGED_WORKING", brokerOrderId: "fake-1" }] });
+    // While it rests, the next cycle's phase 0 observes it as still working and G2 keeps counting its acknowledged reservation.
     const quiet = (): Promise<string> => Promise.resolve(JSON.stringify({ candidates: [] }));
     const second = await resting.cycle({ analyst: quiet });
-    expect(second.resolved).toEqual([{ clientOrderId, result: "MATCHED_WORKING" }]);
+    expect(second.resolved).toEqual([{ clientOrderId, result: "STILL_WORKING" }]);
     expect(types(resting.paths).slice(3, 5)).toEqual(["RECONCILIATION", "CYCLE"]);
     const cycleTwo = entriesOf(resting.paths)[4]!;
     expect((cycleTwo["snapshot"] as { openOrders: { clientOrderId: string }[] }).openOrders.map(order => order.clientOrderId)).toEqual([clientOrderId]);
@@ -283,11 +285,18 @@ describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before 
     run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
     const second = await run.cycle();
     expect(second.resolved).toEqual([{ clientOrderId, result: "MATCHED_WORKING" }]);
+    expect(second.entriesBlocked).toContain(`UNRESOLVED:${clientOrderId}`);
     const sequence = types(run.paths);
     expect(sequence.indexOf("RECONCILIATION")).toBeLessThan(sequence.lastIndexOf("CYCLE"));
-    // The resolved (working) reservation still counts, so the second cycle's identical structure is a different identity but the sleeve carries both.
+    // Exact identity is known, but the working order is not terminal: no new
+    // entry may be submitted yet.
     const reconciliation = entriesOf(run.paths).find(entry => entry.type === "RECONCILIATION")!;
     expect(reconciliation).toMatchObject({ reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: "fake-1" }] });
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    run.fake.transitionOrder(clientOrderId, { status: "canceled", reason: "terminally canceled after lost acknowledgement" });
+    const terminal = await run.cycle();
+    expect(terminal.resolved).toEqual([{ clientOrderId, result: "OUTCOME:canceled" }]);
+    expect(terminal.entriesBlocked).not.toContain(`UNRESOLVED:${clientOrderId}`);
     expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(2);
 
     // Not found is still ambiguous after a lost acknowledgement: phase 0

@@ -19,6 +19,7 @@ import {
   classifyWorkingOrder,
   cycleDraft,
   emergencyCloseEligibility,
+  entryAcknowledgementDraft,
   entryResolutionDraft,
   epochMsToUtcIso,
   haltDraft,
@@ -371,7 +372,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order) : derived.draft;
     if (!await append(draft)) break;
     resolved.push({ clientOrderId: record.clientOrderId, result: derived === null ? (order === null ? "NOT_AT_BROKER" : "MATCHED_WORKING") : `OUTCOME:${derived.status}` });
-    if (derived === null && order === null) entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
+    if (derived === null && (order === null || record.state === "intent" || record.state === "confirmation_unclear")) entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
     if (derived?.fill === "BROKER_PRICE_BREACH") await haltForPriceBreach(record.clientOrderId);
   }
   // An emergency close the journal never saw (S-CYC-06): the next attempt ID of every filled lifecycle is probed at the broker.
@@ -667,6 +668,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       if (later.ok && later.value !== null) derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
     }
     if (derived !== null) await append(derived.draft);
+    else if (observation.kind === "acknowledged") await append(entryAcknowledgementDraft(context(), plan.clientOrderId, observation.order));
     actions.push({ clientOrderId: plan.clientOrderId, result: "SUBMITTED", status: derived?.status ?? null, detail: derived === null ? "working" : null });
     // S-CYC-04 applies inside the batch too. If the port answer cannot prove
     // whether this submit exists at the broker, no sibling plan may cross the

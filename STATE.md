@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 (P7 R20 keeps negative lost-ack lookups unresolved and makes MCP evidence deadlines genuinely asynchronous; the supervised market-hours run remains gated)
+**Last updated:** 2026-09-01 (P7 R21 keeps both negative and working lost-ack resolutions blocked until broker-terminal truth and aligns the certificate SPEC; the supervised market-hours run remains gated)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R20. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import; R15 binds PASS to the exact final open-state transition, makes shutdown cleanup independent, canonicalizes the effective terminal lifecycle outcome, and repairs operative documentation; R16 moves the historical end instant before the last writer read and enforces a wheel-authenticated dependency-site digest; R17 binds acceptance and fill to the same exact effective terminal broker OUTCOME; R18 makes every risk-increasing entry lifecycle terminal before PASS and rejects journal changes across flat snapshots; R19 blocks same-batch siblings after a lost acknowledgement and bounds MCP lifecycle cleanup; R20 preserves lost-ack uncertainty across negative lookups and moves evidence work to asynchronous deadline-aware ports. **Next action:** complete an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R21. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import; R15 binds PASS to the exact final open-state transition, makes shutdown cleanup independent, canonicalizes the effective terminal lifecycle outcome, and repairs operative documentation; R16 moves the historical end instant before the last writer read and enforces a wheel-authenticated dependency-site digest; R17 binds acceptance and fill to the same exact effective terminal broker OUTCOME; R18 makes every risk-increasing entry lifecycle terminal before PASS and rejects journal changes across flat snapshots; R19 blocks same-batch siblings after a lost acknowledgement and bounds MCP lifecycle cleanup; R20 preserves lost-ack uncertainty across negative lookups and moves evidence work to asynchronous deadline-aware ports; R21 durably distinguishes normal working acknowledgements from lost-ack discovery and blocks the latter until terminal truth. **Next action:** complete an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 
@@ -359,7 +359,7 @@ One phase per session; every session ends with the handoff protocol in
   with `--preflight` / `--smoke-cycle` / `--owner-go`, `agent-cli.ts` = one
   scheduled cycle), config assembly and `.env` loading, the healthchecks
   ping port, digests. `config/policy.json` holds the proposed O5 values; Felix's
-  freeze remains pending. The R20 `npm run verify` passed 33 files / 333 tests
+  freeze remains pending. The R21 `npm run verify` passed 33 files / 333 tests
   plus build, architecture, dashboard, sandbox, and phase gates. The sandbox
   gate executes the certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17
   are closed.
@@ -384,7 +384,9 @@ One phase per session; every session ends with the handoff protocol in
   siblings after a lost acknowledgement and gives MCP lifecycle operations a
   hard bound while releasing the holder independently; R20 keeps every
   negative lost-ack lookup reserved and repeatedly reconciled, and makes MCP
-  evidence scans/hashes/Git reads asynchronous and deadline-aware. **Next action:** complete a
+  evidence scans/hashes/Git reads asynchronous and deadline-aware; R21 keeps a
+  lost-ack order entry-blocking even after it appears as working, while a
+  normal acknowledgement is durably recorded separately. **Next action:** complete a
   fresh clean A/B-zero gate, obtain Felix's explicit O5 freeze, then run
   `npm run certificate` during the session under supervision. The command may
   reach only the bound dev paper account. P7 acceptance requires its real PASS

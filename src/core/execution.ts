@@ -426,7 +426,7 @@ export type LifecycleFold =
   | { readonly ok: false; readonly reason: string };
 
 /** The closed set of classifications an entry-order reconciliation item may carry; anything else fails the fold (RES-P1-01c). */
-export type EntryOrderClassification = "MATCHED_WORKING" | "NOT_AT_BROKER" | "REVALIDATION_VOID";
+export type EntryOrderClassification = "ACKNOWLEDGED_WORKING" | "MATCHED_WORKING" | "NOT_AT_BROKER" | "REVALIDATION_VOID";
 
 function isLeg(value: unknown): value is { contractId: string; underlying: string; expiry: string; strikeCents: number; right: "call" | "put"; side: LegSide; ratio: number } {
   return isRecord(value)
@@ -616,13 +616,18 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
         if (typeof clientOrderId !== "string") return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} entry_order item has no client order ID` };
         const record = entryRecords.get(clientOrderId);
         if (record === undefined) return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} references unknown entry ${clientOrderId}` };
-        if (classification === "MATCHED_WORKING") {
+        if (classification === "ACKNOWLEDGED_WORKING" || classification === "MATCHED_WORKING") {
           const filled = item["filledQuantity"];
           const price = item["avgFillPriceCents"];
           const brokerOrderId = item["brokerOrderId"];
+          // Seeing the exact order proves identity, but a working status does
+          // not settle whether an unacknowledged submit will fill. Preserve
+          // that uncertainty until broker-terminal truth arrives. An order
+          // whose acknowledgement was observed normally was already fillable.
+          const state = classification === "ACKNOWLEDGED_WORKING" || record.state === "fillable" ? "fillable" : "confirmation_unclear";
           entryRecords.set(clientOrderId, {
             ...record,
-            state: "fillable",
+            state,
             filledQuantity: isNonnegativeSafeInteger(filled) ? integerUnit(filled, "Quantity") : record.filledQuantity,
             avgFillPriceCents: isNonnegativeSafeInteger(price) ? integerUnit(price, "OptionPriceCents") : record.avgFillPriceCents,
             brokerOrderId: typeof brokerOrderId === "string" ? brokerOrderId : record.brokerOrderId,
@@ -1200,6 +1205,17 @@ export function entryResolutionDraft(context: DraftContext, clientOrderId: strin
   return order === null
     ? { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: ["NOT_SUBMITTED"], items: [{ kind: "entry_order", clientOrderId, classification: "NOT_AT_BROKER" }] }
     : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }] };
+}
+
+/** Durable proof that submit returned an acknowledgement for this exact working broker order. */
+export function entryAcknowledgementDraft(context: DraftContext, clientOrderId: string, order: BrokerOrderRecord): JournalDraft {
+  return {
+    at: context.atIso,
+    epoch: context.epoch,
+    type: "RECONCILIATION",
+    reasonCodes: [],
+    items: [{ kind: "entry_order", clientOrderId, classification: "ACKNOWLEDGED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }],
+  };
 }
 
 export type RunnerHaltReason =

@@ -1401,3 +1401,11 @@ small, no ADR split).
   carry their remaining timeout explicitly. The launcher starts timeout
   measurement before invoking a port and rejects even a synchronously
   misbehaving port that returns only after its bound.
+- **2026-09-01 — P7 R21 requires terminal truth after a lost acknowledgement
+  and aligns the normative acceptance states.** Matching the exact client-order
+  ID proves identity but a still-working broker status does not terminate
+  lost-ack uncertainty. `intent`/`confirmation_unclear` therefore remain
+  entry-blocking through `MATCHED_WORKING` and are re-queried until a terminal
+  fill, rejection, cancel, or expiry is journaled; normally acknowledged
+  working orders retain the ordinary fillable-risk behavior. S-ARM-01 now names
+  the fast-fill acceptance states already required by the certificate decision.

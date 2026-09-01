@@ -127,8 +127,9 @@ IDs/timestamps proving:
 1. fresh market-hours option quotes including bid/ask sizes and quote timestamps
    were consumed by the real liquidity gate;
 2. a defined-risk credit mleg received a positive broker acceptance state
-   (`new`/`accepted`/`open`) and then reached `filled` or harness-requested
-   `canceled`, recorded as an `OUTCOME`; the observed broker order must equal
+   (`new`/`accepted`/`open`/`pending_new`, or `partially_filled`/`filled` when
+   a fast fill precedes the driver's first observation) and then reached
+   `filled` or harness-requested `canceled`, recorded as an `OUTCOME`; the observed broker order must equal
    the INTENT's client/broker identity, complete leg ratios and sides, one-lot
    quantity, credit limit kind, and price; any synchronous or asynchronous
    `rejected` state or shape disagreement makes the certificate FAIL;
@@ -642,11 +643,14 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   stock, orphan short leg) via the discriminated recovery policy S-X-06.
   (A11)
 - **S-G10-04** Intent without outcome: broker queried by client order ID;
-  found → outcome journaled now; not found → journaled `NOT_SUBMITTED` but
-  remains `CONFIRMATION_UNCLEAR`, reserved, entry-blocking, and queried again
-  on every later phase 0. A negative lookup cannot prove that a lost-
-  acknowledgement request will never appear; only broker-terminal truth or a
-  pre-submit `REVALIDATION_VOID` releases it.
+  found terminal → outcome journaled now; found still working → identity
+  journaled but the lifecycle remains `CONFIRMATION_UNCLEAR`, reserved,
+  entry-blocking, and queried again; not found → journaled `NOT_SUBMITTED` with
+  the same retained uncertainty. Neither a negative lookup nor a working match
+  proves that a lost-acknowledgement request has reached terminal truth; only a
+  broker-terminal outcome or a pre-submit `REVALIDATION_VOID` releases it. A
+  normally acknowledged working submit is durably distinguished as
+  `ACKNOWLEDGED_WORKING` and follows ordinary fillable-risk accounting.
 - **S-G10-05** A manual human trade is journaled `HUMAN_ACTION` — visible to
   the judge as exactly that, never absorbed into agent reasoning. On the dev
   account it follows ordinary reconciliation. On the competition account it
