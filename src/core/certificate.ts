@@ -442,6 +442,25 @@ function liquidityFor(entry: JournalEntry, journal: readonly JournalEntry[]): re
   return out;
 }
 
+/**
+ * The defined-risk shape of an entry INTENT: at least two legs on one underlying and one expiry, the total bought
+ * ratio equal to the total sold ratio, and per right no more sold than bought (exact integer sums; G4-K5, G5-L5).
+ */
+function definedRiskShape(entry: JournalEntry): boolean {
+  const legs = fullLegsOf(entry);
+  const ratioOf = (side: string, right: string | null): bigint => legs.filter(leg => leg.side === side && (right === null || leg.right === right)).reduce((sum, leg) => sum + BigInt(leg.ratio), 0n);
+  const buys = ratioOf("buy", null);
+  const sells = ratioOf("sell", null);
+  const oneUnderlying = new Set(legs.map(leg => leg.underlying)).size === 1;
+  const oneExpiry = new Set(legs.map(leg => leg.expiry)).size === 1;
+  const coveredPerRight = ["call", "put"].every(right => ratioOf("sell", right) <= ratioOf("buy", right));
+  return legs.length >= 2 && buys > 0n && sells > 0n && buys === sells && oneUnderlying && oneExpiry && coveredPerRight;
+}
+
+function nonBlank(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): CreditAcceptanceEvidence | null {
   const intents = inputs.journal.filter(entry => isEntryIntent(entry) && isRecord(entry["submittedLimit"]) && entry["submittedLimit"]["kind"] === "credit");
   if (intents.length === 0) {
@@ -451,15 +470,7 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
   for (const intent of intents) {
     const clientOrderId = intent["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
-    const legs = fullLegsOf(intent);
-    const ratioOf = (side: string, right: string | null): number => legs.filter(leg => leg.side === side && (right === null || leg.right === right)).reduce((sum, leg) => sum + leg.ratio, 0);
-    const buys = ratioOf("buy", null);
-    const sells = ratioOf("sell", null);
-    const oneUnderlying = new Set(legs.map(leg => leg.underlying)).size === 1;
-    const oneExpiry = new Set(legs.map(leg => leg.expiry)).size === 1;
-    // Every sold contract of a right needs a bought contract of the same right on the same underlying and expiry.
-    const coveredPerRight = ["call", "put"].every(right => ratioOf("sell", right) <= ratioOf("buy", right));
-    if (legs.length < 2 || buys === 0 || sells === 0 || buys !== sells || !oneUnderlying || !oneExpiry || !coveredPerRight) {
+    if (!definedRiskShape(intent)) {
       failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg on the same underlying and expiry, one per sold leg, is not defined-risk`);
       return null;
     }
@@ -530,6 +541,8 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
     if (typeof clientOrderId !== "string") continue;
     const intent = inputs.journal.find(entry => isEntryIntent(entry) && entry.seq < fill.seq && entry["clientOrderId"] === clientOrderId);
     if (intent === undefined) continue;
+    // The filled entry must itself be a defined-risk, G1-passed structure (G5-L2): an unrelated naked fill is no evidence.
+    if (!definedRiskShape(intent) || !gatePassed(intent, "G1")) continue;
     const legs = legsOf(intent);
     if (legs.length === 0) continue;
     // Reconciliation: a later snapshot-bearing entry whose broker positions carry every filled leg with the sign its side implies.
@@ -541,7 +554,7 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
     if (later === undefined) continue;
     const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
     const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : null;
-    if (filledAtInstant === null || typeof fill["brokerOrderId"] !== "string" || fill["brokerOrderId"].length === 0) continue;
+    if (filledAtInstant === null || !nonBlank(fill["brokerOrderId"])) continue;
     if (outsideWindow(inputs.window, intent.at, fill.at, filledAtInstant, later.at)) continue;
     return {
       clientOrderId,
@@ -705,15 +718,16 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
     const credit = evidence["creditAcceptance"];
     if (isRecord(credit)) {
       if (!positiveAcceptanceStatuses().includes(String(credit["acceptedStatus"])) || (credit["terminalStatus"] !== "filled" && credit["terminalStatus"] !== "canceled")) violations.push("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
+      if (credit["terminalStatus"] === "canceled" && credit["harnessRequestedCancel"] !== true) violations.push("certificate credit acceptance ended in a cancel the harness did not request");
       if (!(Number.isSafeInteger(credit["intentSeq"]) && Number.isSafeInteger(credit["outcomeSeq"]) && (credit["intentSeq"] as number) > 0 && (credit["intentSeq"] as number) < (credit["outcomeSeq"] as number))) violations.push("certificate credit acceptance sequence is not ordered");
       if ((instantOf(credit["acceptedAt"]) ?? 0) > (instantOf(credit["terminalAt"]) ?? 0)) violations.push("certificate credit acceptance does not precede its terminal instant");
-      if (typeof credit["clientOrderId"] !== "string" || credit["clientOrderId"].length === 0 || typeof credit["brokerOrderId"] !== "string" || credit["brokerOrderId"].length === 0) violations.push("certificate credit acceptance lacks order identities");
+      if (!nonBlank(credit["clientOrderId"]) || !nonBlank(credit["brokerOrderId"]) || !nonBlank(credit["exposureLifecycleId"])) violations.push("certificate credit acceptance lacks order identities");
     }
     const fill = evidence["fill"];
     if (isRecord(fill)) {
       if (!(Number.isSafeInteger(fill["filledQuantity"]) && (fill["filledQuantity"] as number) >= 1) || !(Number.isSafeInteger(fill["avgFillPriceCents"]) && (fill["avgFillPriceCents"] as number) >= 0)) violations.push("certificate fill quantity or price is not a real fill");
       if (!(Number.isSafeInteger(fill["outcomeSeq"]) && Number.isSafeInteger(fill["reconciledSnapshotSeq"]) && (fill["outcomeSeq"] as number) > 0 && (fill["outcomeSeq"] as number) < (fill["reconciledSnapshotSeq"] as number))) violations.push("certificate fill reconciliation sequence is not ordered");
-      if (typeof fill["clientOrderId"] !== "string" || fill["clientOrderId"].length === 0 || typeof fill["brokerOrderId"] !== "string" || fill["brokerOrderId"].length === 0) violations.push("certificate fill lacks order identities");
+      if (!nonBlank(fill["clientOrderId"]) || !nonBlank(fill["brokerOrderId"])) violations.push("certificate fill lacks order identities");
     }
     if (Array.isArray(liquidity)) {
       for (const item of liquidity) {
@@ -721,6 +735,7 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
         const brokerIso = typeof item["brokerQuotedAt"] === "string" ? brokerInstantToIso(item["brokerQuotedAt"]) : null;
         if (brokerIso === null || brokerIso !== item["quotedAt"]) violations.push("certificate liquidity sample's broker timestamp does not match its recorded instant");
         if (!(Number.isSafeInteger(item["bidSize"]) && (item["bidSize"] as number) > 0 && Number.isSafeInteger(item["askSize"]) && (item["askSize"] as number) > 0 && Number.isSafeInteger(item["bidCents"]) && (item["bidCents"] as number) >= 0 && Number.isSafeInteger(item["askCents"]) && (item["askCents"] as number) >= (item["bidCents"] as number))) violations.push("certificate liquidity sample is not a two-sided sized quote");
+        if (!nonBlank(item["contractId"]) || !(Number.isSafeInteger(item["snapshotSeq"]) && (item["snapshotSeq"] as number) > 0)) violations.push("certificate liquidity sample lacks a contract or a snapshot sequence");
       }
     }
   }

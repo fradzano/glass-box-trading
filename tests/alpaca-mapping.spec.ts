@@ -77,6 +77,10 @@ describe("documents", () => {
     expect(mapPosition({ symbol: "SPY260904C00645000", qty: "-1", side: "short", avg_entry_price: "1.235" })).toEqual({ contractId: "SPY260904C00645000", quantity: -1, avgEntryPriceCents: 124 });
     expect(mapPosition({ symbol: "SPY260904C00645000", qty: "2", side: "short", avg_entry_price: "1.00" })).toEqual({ contractId: "SPY260904C00645000", quantity: -2, avgEntryPriceCents: 100 });
     expect(mapPosition({ symbol: "", qty: "1", avg_entry_price: "1" })).toBeNull();
+    // G5-L6: the side must be known and agree with the sign.
+    expect(mapPosition({ symbol: "SPY", qty: "1", side: "sideways", avg_entry_price: "1" })).toBeNull();
+    expect(mapPosition({ symbol: "SPY", qty: "-1", side: "long", avg_entry_price: "1" })).toBeNull();
+    expect(mapPosition({ symbol: "SPY", qty: "1", side: "long", avg_entry_price: "1" })).toEqual({ contractId: "SPY", quantity: 1, avgEntryPriceCents: 100 });
   });
 
   it("maps a recorded mleg order: credit sign, legs with ratios, non-null timestamps only, no invented reason", () => {
@@ -97,6 +101,10 @@ describe("documents", () => {
     expect(mapOrder({ ...RECORDED_ORDER, id: "" })).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, client_order_id: "" })).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, status: "" })).toBeNull();
+    // G5-L6: whitespace identities and an mleg document without its legs are partial records.
+    expect(mapOrder({ ...RECORDED_ORDER, id: "  " })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, legs: [] })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, legs: null })).toBeNull();
   });
 
   it("maps a filled debit single-leg order with a rounded average fill", () => {

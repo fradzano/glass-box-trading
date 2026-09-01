@@ -125,8 +125,12 @@ export function mapPosition(raw: unknown): BrokerPosition | null {
   const contractId = raw["symbol"];
   const quantity = integerText(raw["qty"]);
   const avgEntryPriceCents = dollarsToCentsRounded(raw["avg_entry_price"]);
-  if (typeof contractId !== "string" || contractId.length === 0 || quantity === null || avgEntryPriceCents === null) return null;
-  const signed = raw["side"] === "short" && quantity > 0 ? -quantity : quantity;
+  const side = raw["side"];
+  if (typeof contractId !== "string" || contractId.trim().length === 0 || quantity === null || avgEntryPriceCents === null || (side !== "long" && side !== "short")) return null;
+  // The side and the sign must agree: a long position is positive, a short one negative (G5-L6).
+  if (side === "long" && quantity <= 0) return null;
+  if (side === "short" && quantity === 0) return null;
+  const signed = side === "short" && quantity > 0 ? -quantity : quantity;
   return { contractId, quantity: signed, avgEntryPriceCents: Math.abs(avgEntryPriceCents) };
 }
 
@@ -150,10 +154,12 @@ export function mapOrder(raw: unknown): BrokerOrderRecord | null {
   const status = raw["status"];
   const quantity = integerText(raw["qty"]);
   const filledQuantity = integerText(raw["filled_qty"] ?? "0");
-  if (typeof brokerOrderId !== "string" || brokerOrderId.length === 0 || typeof clientOrderId !== "string" || clientOrderId.length === 0 || typeof status !== "string" || status.length === 0 || quantity === null || filledQuantity === null) return null;
+  if (typeof brokerOrderId !== "string" || brokerOrderId.trim().length === 0 || typeof clientOrderId !== "string" || clientOrderId.trim().length === 0 || typeof status !== "string" || status.trim().length === 0 || quantity === null || filledQuantity === null) return null;
   // A broker order record with a non-positive quantity, a negative fill, or a fill beyond the order is malformed, not partial.
   if (quantity < 1 || filledQuantity < 0 || filledQuantity > quantity) return null;
   const legsRaw = raw["legs"];
+  // A multi-leg document without its legs is a partial record, never a single-leg order (G5-L6).
+  if (raw["order_class"] === "mleg" && (!Array.isArray(legsRaw) || legsRaw.length === 0)) return null;
   let legs: BrokerOrderLeg[];
   if (Array.isArray(legsRaw) && legsRaw.length > 0) {
     const mapped: BrokerOrderLeg[] = [];

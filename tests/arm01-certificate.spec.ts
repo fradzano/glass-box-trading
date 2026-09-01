@@ -208,6 +208,36 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     if (!verdict.ok) expect(verdict.violations).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
   });
 
+  it("gate findings G5: an unrelated naked fill is no fill evidence, ratio sums are exact, blank identities are absent", () => {
+    // A harness-canceled credit plus an unrelated single-leg fill must not PASS.
+    const nakedFill = [
+      ...passingJournal({ outcomeStatus: "canceled", reconciled: false }).filter(item => item.seq <= 5),
+      entry(6, "INTENT", { action: "entry", clientOrderId: "entry:naked", exposureLifecycleId: "exposure:naked", sleeve: "income", structureType: "long_option", legs: [LEGS[0]], quantity: 1, submittedLimit: { kind: "credit", priceCents: 50 }, reservedMaxLossCents: 0, gateVector: gateVector(true), rationale: { paidFrom: "income_drift", snapshotReferences: ["x"], text: "SPY long_option" }, binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT } }),
+      entry(7, "OUTCOME", { clientOrderId: "entry:naked", status: "filled", brokerOrderId: "broker-2", brokerTimestamps: { submitted_at: "2026-09-01T14:06:00.000Z", filled_at: "2026-09-01T14:06:05.000Z" }, filledQuantity: 1, avgFillPriceCents: 50, reasonCodes: [], binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT }, brokerReason: null }),
+      entry(8, "CYCLE", { cycleIndex: 3, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([{ contractId: SHORT, quantity: -1 }]), batchVerdicts: [], candidateVerdicts: [] }),
+      entry(9, "HALT", { reason: "AUTH_FAILURE", detail: "x", sticky: false }),
+      entry(10, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "x" }),
+    ];
+    const canceledObservations = [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: { ...order("canceled", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", canceled_at: "2026-09-01T14:03:05.000Z" } } }];
+    const certificate = buildCertificate(inputs({ journal: nakedFill, orderObservations: canceledObservations, harnessCancels: ["entry:credit"] }));
+    expect(certificate.verdict).toBe("FAIL");
+    expect(certificate.evidence.fill).toBeNull();
+    // Ratio sums are exact integers, never floating sums that round.
+    const overflow = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [{ ...LEGS[0], ratio: Number.MAX_SAFE_INTEGER }, { ...LEGS[0], contractId: "SPY260904C00771000", ratio: 1 }, { ...LEGS[1], ratio: Number.MAX_SAFE_INTEGER }, { ...LEGS[1], contractId: "SPY260904C00773000", ratio: 2 }] } : item));
+    expect(buildCertificate(inputs({ journal: overflow })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    // Blank identities are absent identities.
+    const blankBroker = passingJournal().map(item => (item.seq === 4 ? { ...item, brokerOrderId: " " } : item));
+    expect(buildCertificate(inputs({ journal: blankBroker })).evidence.fill).toBeNull();
+    // At arming, an unrequested cancel never arms even with a recomputed self-digest.
+    const passing = buildCertificate(inputs());
+    const serialized = JSON.parse(JSON.stringify(passing)) as Record<string, unknown>;
+    const evidence = serialized["evidence"] as Record<string, unknown>;
+    const forged = { ...serialized, evidence: { ...evidence, creditAcceptance: { ...(evidence["creditAcceptance"] as Record<string, unknown>), terminalStatus: "canceled", harnessRequestedCancel: false } } };
+    const verdict = validateArmingCertificate(forged, { runtimeDigest: DIGEST_A, policyDigest: DIGEST_B, canonicalTradingOrigin: ORIGIN });
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.violations).toContain("certificate credit acceptance ended in a cancel the harness did not request");
+  });
+
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
     expect(buildCertificate(inputs({ fence: null })).failures).toContain("the credential-fence drill was not performed");
     expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
