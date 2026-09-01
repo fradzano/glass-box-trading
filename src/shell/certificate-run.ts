@@ -104,6 +104,10 @@ function latestHaltSeq(entries: readonly JournalEntry[]): number | null {
   return entries.some(entry => entry.seq > halt.seq && entry["actor"] === "human") ? null : halt.seq;
 }
 
+function terminalHaltTransitionSeq(entries: readonly JournalEntry[]): number | null {
+  return [...entries].reverse().find(entry => entry.type === "HALT" || entry["actor"] === "human")?.seq ?? null;
+}
+
 async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
   const { runtime, clock, log } = options;
   const startedAt = epochMsToUtcIso(clock());
@@ -233,7 +237,6 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     if (!confirmed) throw new Error(`fence cancel of ${id} was not terminally confirmed`);
     canceledAtFence.push(id);
   }
-  const fence: FenceObservation = { httpStatus: fenceStatus, workingOrdersAtFence: working, canceledAtFence };
   if (fenceStatus !== 401 && fenceStatus !== 403) throw new Error(`fence drill did not observe 401/403 (got ${String(fenceStatus)})`);
   const halted = await runtime.gateway.openJournal();
   const authHalt = [...halted.entries].reverse().find(entry => entry.seq > beforeFenceSeq && entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
@@ -248,10 +251,21 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
   const unhalt = await manualUnhalt({ paths: runtime.paths, operator: approval.operator, reason: approval.reason, clock, secrets: runtime.secrets, instanceId: "certificate-unhalt", lockTakeoverBoundMs: runtime.config.scheduling.lockTakeoverBoundMs, expectedHaltSeq: authHalt.seq, expectedHaltReason: "AUTH_FAILURE" });
   log(`manual un-halt: ${unhalt.ok ? "ok" : unhalt.reason}`);
   if (!unhalt.ok) throw new Error(`manual fence un-halt refused: ${unhalt.reason}`);
+  if (!("seq" in unhalt)) throw new Error("manual fence un-halt returned no journal sequence");
+  const unhaltSeq = unhalt.seq;
+  const fence: FenceObservation = { httpStatus: fenceStatus, haltSeq: authHalt.seq, unhaltSeq, workingOrdersAtFence: working, canceledAtFence };
 
   // ---- phase D: the final fully paginated snapshot and the certificate ----
+  const beforeFinal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (beforeFinal === null || beforeFinal.halt.halted || terminalHaltTransitionSeq(beforeFinal.entries) !== unhaltSeq) {
+    throw new Error("refusing final snapshot: writer authority or exact fence un-halt transition changed");
+  }
   const snapshot = await runtime.broker.fullSnapshot();
-  const journal = (await runtime.gateway.openJournal()).entries;
+  const afterFinal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (afterFinal === null || afterFinal.halt.halted || terminalHaltTransitionSeq(afterFinal.entries) !== unhaltSeq) {
+    throw new Error("refusing certificate: writer authority or halt transition changed during the final snapshot");
+  }
+  const journal = afterFinal.entries;
   const endedAt = epochMsToUtcIso(clock());
   const certificate = buildCertificate({
     accountId: runtime.binding.accountId,

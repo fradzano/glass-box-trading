@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 (P7 R14 fixed recovery bounds, exact halt bracket, and exact MCP environment reconstruction; the supervised market-hours run remains gated)
+**Last updated:** 2026-09-01 (P7 R15 closes final PASS bracketing, shutdown cleanup, effective lifecycle selection, and operative truth; the supervised market-hours run remains gated)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R14. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import. **Next action:** complete repository verification and an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R15. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import; R15 binds PASS to the exact final open-state transition, makes shutdown cleanup independent, canonicalizes the effective terminal lifecycle outcome, and repairs operative documentation. **Next action:** complete repository verification and an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 
@@ -340,8 +340,9 @@ One phase per session; every session ends with the handoff protocol in
   live market data are wired at P7's dev certificate), the Windows
   event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
   validation (P7; WIN-7/WIN-10/WIN-17 remainders).
-- **P7 — supervised dev live certificate — implemented and pre-live hardened (2026-09-01, branch
-  `p7/dev-live-certificate` from the P6 merge `bce890a`; prior clean base `256dc2d`, R2/R3 hardening committed at current branch HEAD).**
+- **P7 — supervised dev live certificate — implemented and in the final
+  pre-live zero gate (2026-09-01, branch `p7/dev-live-certificate` from the P6
+  merge `bce890a`; clean R14 commit `5cbce17`, R15 fixes under verification).**
   Pure core: `src/core/certificate.ts` (versioned field classification with
   the new `deployment` class, `policyDigest`, `runtimeDigest`, evidence
   extraction from the journal plus broker observations, PASS/FAIL
@@ -357,12 +358,11 @@ One phase per session; every session ends with the handoff protocol in
   certificate driver (`certificate-run.ts`), the CLIs (`certificate-cli.ts`
   with `--preflight` / `--smoke-cycle` / `--owner-go`, `agent-cli.ts` = one
   scheduled cycle), config assembly and `.env` loading, the healthchecks
-  ping port, digests. `config/policy.json` holds the proposed O5 values
-  (owner freeze pending — DECISIONS.md P7 scope notes). `npm run verify`
-  exit 0 (296 tests after R3; new hardening coverage in
-  `tests/p7-launch-hardening.spec.ts` plus the extended certificate, runner,
-  halt, fencing, and MCP suites); the sandbox gate executes the
-  certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17 closed.
+  ping port, digests. `config/policy.json` holds the proposed O5 values; Felix's
+  freeze remains pending. The R15 `npm run verify` passed 33 files / 321 tests
+  plus build, architecture, dashboard, sandbox, and phase gates. The sandbox
+  gate executes the certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17
+  are closed.
   Verified against the dev account off-hours (02:51–02:54 CEST): the
   preflight passes every S-CYC-11 check (the first attempt caught a CRLF
   clone and a name-normalization defect, both fixed), two smoke cycles
@@ -370,23 +370,20 @@ One phase per session; every session ends with the handoff protocol in
   by G5/G6 as it must be outside the session. The dev STATE_DIR
   (`glass-box-state/dev` under the user profile) carries that smoke
   journal (2 entries, epoch 3); the live run will open with an S-CYC-08 GAP
-  cycle. The R2 blind Go/No-Go returned NO-GO; its account/auth persistence,
-  exact broker-order/fill proof, aggregate walltime, map/state, and coherent-tree
-  findings were closed in R3. Its isolated fix-gate then found a fresh-holder
-  overlap in the pre-runtime safety fence plus an adjacent A/B set. R4/R5 add:
-  the denial-only safety interlock and final entry halt veto; same-credit-
-  lifecycle acceptance/fill proof on the bound account; authority before every
-  broker read with witness/exit-0 suppression; holder-safe `CONFIG_INVALID`;
-  deadline-deferred, HTTP-checked pings; and fail-signaled flatten recovery on
-  exceptional certificate exits. The targeted 8-file/107-test closure suite is
-  green; the final full `npm run verify` is also green (33 files / 305 tests,
-  all build, architecture, sandbox, dashboard, and phase gates). A clean commit
-  and fresh isolated fix-gate remain. **Next action:** close that gate, obtain
-  the explicit O5 freeze, then
-  `npm run certificate`
-  inside the session (from 15:30 CEST). Not P7: the Scheduled Task installer, the real
-  git/Vercel ports, the competition-arming wiring of the certificate into
-  `runStartup` (P8 release session; `validateArmingCertificate` is ready).
+  cycle. Adversarial rounds R2–R14 closed account binding, fence persistence,
+  journal/projection crash recovery, exact lifecycle evidence, stable broker
+  snapshots, aggregate deadlines, kernel writer serialization, lost-ack abort
+  recovery, physical state identity, and exact MCP child-environment isolation.
+  The R14 cold-read found four B defects; R15 now binds PASS to the exact final
+  halt transition, releases the holder even if MCP shutdown fails, uses one
+  effective terminal OUTCOME for lifecycle selection, and repairs operative
+  documentation. **Next action:** complete R15 Full Verify and a fresh clean
+  A/B-zero gate, obtain Felix's explicit O5 freeze, then run
+  `npm run certificate` during the session under supervision. The command may
+  reach only the bound dev paper account. P7 acceptance requires its real PASS
+  certificate and a stably flat account. The Scheduled Task installer, real
+  git/Vercel ports, and competition-arming wiring are P8; the
+  `validateArmingCertificate` core is ready.
 - Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.

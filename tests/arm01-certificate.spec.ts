@@ -93,7 +93,7 @@ function inputs(overrides: Partial<CertificateInputs> = {}): CertificateInputs {
     journal: passingJournal(),
     orderObservations: observations(),
     harnessCancels: [],
-    fence: { httpStatus: 401, workingOrdersAtFence: [], canceledAtFence: [] },
+    fence: { httpStatus: 401, haltSeq: 6, unhaltSeq: 7, workingOrdersAtFence: [], canceledAtFence: [] },
     finalSnapshot: { at: "2026-09-01T15:09:00.000Z", accountId: ACCOUNT, cashCents: 10_000_100, equityCents: 10_000_100, positions: [], nonTerminalOrders: [], orderPagesFetched: 1, pagesComplete: true, consistentReads: 2 },
     ...overrides,
   };
@@ -131,6 +131,35 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     const identityCertificate = buildCertificate(inputs({ journal: foreignOutcomeIdentity }));
     expect(identityCertificate.verdict).toBe("FAIL");
     expect(identityCertificate.failures.some(item => item.includes("does not equal the terminal OUTCOME"))).toBe(true);
+  });
+
+  it("selects a later filled credit lifecycle by its effective terminal outcome, not an earlier observation", () => {
+    const baseIntent = passingJournal().find(item => item.seq === 3);
+    if (baseIntent === undefined) throw new Error("fixture");
+    const cancelIntent = { ...baseIntent, seq: 3, at: "2026-09-01T14:03:00.000Z", clientOrderId: "entry:cancel", exposureLifecycleId: "exposure:cancel" } as JournalEntry;
+    const filledIntent = { ...baseIntent, seq: 5, at: "2026-09-01T14:05:00.000Z", clientOrderId: "entry:filled", exposureLifecycleId: "exposure:filled" } as JournalEntry;
+    const journal = [
+      ...passingJournal().filter(item => item.seq < 3),
+      cancelIntent,
+      entry(4, "OUTCOME", { clientOrderId: "entry:cancel", status: "canceled", brokerOrderId: "broker-cancel", brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", canceled_at: "2026-09-01T14:04:00.000Z" }, filledQuantity: 0, avgFillPriceCents: null }),
+      filledIntent,
+      entry(6, "OUTCOME", { clientOrderId: "entry:filled", status: "confirmation_unclear", brokerOrderId: null, brokerTimestamps: { submitted_at: "2026-09-01T14:05:00.000Z" }, filledQuantity: 0, avgFillPriceCents: null }),
+      entry(7, "OUTCOME", { clientOrderId: "entry:filled", status: "filled", brokerOrderId: "broker-filled", brokerTimestamps: { submitted_at: "2026-09-01T14:05:00.000Z", filled_at: "2026-09-01T14:07:00.000Z" }, filledQuantity: 1, avgFillPriceCents: 19 }),
+      entry(8, "CYCLE", { cycleIndex: 3, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([{ contractId: SHORT, quantity: -1 }, { contractId: LONG, quantity: 1 }]), batchVerdicts: [], candidateVerdicts: [] }),
+      entry(9, "HALT", { reason: "AUTH_FAILURE", detail: "broker credential rejected (401)", sticky: false }),
+      entry(10, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "fence drill complete" }),
+    ];
+    const observed = (clientOrderId: string, brokerOrderId: string, status: string, filled: boolean): OrderObservation => ({ observedAt: "2026-09-01T14:07:01.000Z", order: { ...order(status, filled), clientOrderId, brokerOrderId } });
+    const certificate = buildCertificate(inputs({
+      journal,
+      harnessCancels: ["entry:cancel"],
+      orderObservations: [observed("entry:cancel", "broker-cancel", "accepted", false), observed("entry:filled", "broker-filled", "accepted", false), observed("entry:filled", "broker-filled", "filled", true)],
+      fence: { httpStatus: 401, haltSeq: 9, unhaltSeq: 10, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+
+    expect(certificate.verdict).toBe("PASS");
+    expect(certificate.evidence.creditAcceptance?.clientOrderId).toBe("entry:filled");
+    expect(certificate.evidence.fill?.clientOrderId).toBe("entry:filled");
   });
 
   it("requires an exact one-lot quantitative reconciliation, not merely matching position signs", () => {
@@ -279,10 +308,12 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
 
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
     expect(buildCertificate(inputs({ fence: null })).failures).toContain("the credential-fence drill was not performed");
-    expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
-    expect(buildCertificate(inputs({ journal: passingJournal({ fence: false }) })).failures).toContain("no AUTH_FAILURE halt was journaled by the fence drill");
-    expect(buildCertificate(inputs({ journal: passingJournal({ unhalt: false }) })).failures.some(item => item.includes("was not cleared"))).toBe(true);
-    expect(buildCertificate(inputs({ fence: { httpStatus: 401, workingOrdersAtFence: ["resting"], canceledAtFence: [] } })).failures).toContain("the fence drill left working order(s) without confirmed cancellation: resting");
+    expect(buildCertificate(inputs({ fence: { httpStatus: 500, haltSeq: 6, unhaltSeq: 7, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
+    expect(buildCertificate(inputs({ journal: passingJournal({ fence: false }) })).failures).toContain("the fence drill's exact AUTH_FAILURE halt sequence is absent or mismatched");
+    expect(buildCertificate(inputs({ journal: passingJournal({ unhalt: false }) })).failures.some(item => item.includes("exact human un-halt sequence"))).toBe(true);
+    expect(buildCertificate(inputs({ fence: { httpStatus: 401, haltSeq: 6, unhaltSeq: 7, workingOrdersAtFence: ["resting"], canceledAtFence: [] } })).failures).toContain("the fence drill left working order(s) without confirmed cancellation: resting");
+    const laterHalt = entry(8, "HALT", { reason: "ACCOUNT_BINDING_MISMATCH", detail: "bound account changed", sticky: true });
+    expect(buildCertificate(inputs({ journal: [...passingJournal(), laterHalt] })).failures).toContain("a later halt transition invalidates the fence drill's final un-halted state");
   });
 
   it("the final snapshot must be flat, fully paginated, and on the bound account; the inventory must have been accepted; the window ordered", () => {

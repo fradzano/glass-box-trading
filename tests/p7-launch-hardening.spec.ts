@@ -6,7 +6,7 @@ import { createAccountBoundBrokerPort } from "../src/shell/account-bound-broker.
 import { parseJournalText } from "../src/core/journal.js";
 import type { JournalEntry } from "../src/core/journal.js";
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
-import { buildRuntime, withVerifiedChildFailureCleanup } from "../src/shell/agent-runtime.js";
+import { buildRuntime, shutdownRuntimeResources, withVerifiedChildFailureCleanup } from "../src/shell/agent-runtime.js";
 import type { AgentRuntime } from "../src/shell/agent-runtime.js";
 import { admitCertificateCommand, CERTIFICATE_RUN_LIMITS } from "../src/shell/certificate-command-guard.js";
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
@@ -698,6 +698,18 @@ describe("P7 launch hardening — runtime and holder identity", () => {
     let stopCalls = 0;
 
     await expect(withVerifiedChildFailureCleanup({ stop: () => { stopCalls += 1; return Promise.resolve(); } }, resolved.value, "runtime-builder", () => { throw new Error("digest input disappeared"); })).rejects.toThrow("digest input disappeared");
+
+    expect(stopCalls).toBe(1);
+    expect(readHolder(resolved.value)).toBeNull();
+  });
+
+  it("releases the runtime holder even when verified-child shutdown fails", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-runtime-shutdown-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeHolder(resolved.value, { holderId: "runtime-owner", heartbeatAt: 1 });
+    let stopCalls = 0;
+
+    await expect(shutdownRuntimeResources({ stop: () => { stopCalls += 1; return Promise.reject(new Error("child close failed")); } }, resolved.value, "runtime-owner")).rejects.toThrow("child close failed");
 
     expect(stopCalls).toBe(1);
     expect(readHolder(resolved.value)).toBeNull();

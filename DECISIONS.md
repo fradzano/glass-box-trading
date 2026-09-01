@@ -1315,13 +1315,26 @@ small, no ADR split).
   must still vanish from the flat snapshot. Atomic writer-epoch/heartbeat/
   journal checks bracket the stable flat snapshot, so a takeover or human
   halt change during the read also prevents a false proof.
-- **2026-09-01 — P7 R13 closes ambient harness and MCP launch inputs.** The
+- **2026-09-01 — P7 R13 closes ambient harness inputs and exact recovery
+  bracketing.** The
   certificate attempt/recovery bounds are positive code constants covered by
   `runtimeDigest`; ambient `CERTIFICATE_*` variables can no longer disable the
   abort path. Recovery compares the exact terminal HALT journal sequence across
-  its flat snapshot, not merely the projected boolean. The pinned MCP SDK's
+  its flat snapshot, not merely the projected boolean.
+- **2026-09-01 — P7 R14 reconstructs the exact MCP child environment.** The pinned MCP SDK's
   implicit Windows environment is neutralized with explicit empty overrides,
   then a `-S` Python bootstrap reconstructs the exact validated environment
   before any verified package import. Secrets are captured in-process and never
   enter argv; exact non-secret literals undo interpreter rewrites such as a
   prefixed `PYTHONPATH`.
+- **2026-09-01 — P7 R15 closes final certificate state, shutdown, lifecycle
+  selection, and operative truth.** Fence evidence names the exact halt/un-halt journal
+  sequences produced by the supervised run. Atomic writer reads bracket the
+  final stable broker snapshot and require that exact human un-halt to remain
+  the terminal halt transition with no active halt. Verified-child stop and
+  holder release are attempted independently, so a transport close failure
+  cannot retain writer ownership. Certificate lifecycle ranking and validation
+  now share the latest broker-terminal OUTCOME, so a reconciled fill after a
+  lost acknowledgement outranks an earlier harness-canceled attempt. README and
+  STATE now name the real dev-paper reachability, the owner/O5/P8 boundaries,
+  the current verification count, and the same R13–R15 decision sequence.

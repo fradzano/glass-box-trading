@@ -160,6 +160,13 @@ same mutex; the exact terminal `HALT` sequence must be unchanged across that
 bracket. Changed authority, any intervening human halt transition, or a still-uncertain
 lifecycle makes recovery unresolved.
 
+The normal PASS path applies the corresponding open-state proof after the
+credential fence: the certificate binds the exact `AUTH_FAILURE` `HALT` and
+human `UNHALT` sequences produced by that run, and two atomic writer reads
+bracket the final stable broker snapshot. Both reads must retain authority,
+show no active halt, and name that same `UNHALT` as the terminal halt
+transition. A replacement halt or un-halt invalidates the certificate run.
+
 The supervised certificate driver's entry/flatten attempt counts and intervals
 are positive constants in the executable runtime identity. Ambient environment
 variables cannot reduce or disable the abort fence/recovery path; changing a

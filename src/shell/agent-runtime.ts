@@ -101,6 +101,15 @@ export async function withVerifiedChildFailureCleanup<T>(child: Pick<VerifiedChi
   }
 }
 
+/** Stop the verified child and release writer ownership independently. */
+export async function shutdownRuntimeResources(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string): Promise<void> {
+  const cleanupErrors: unknown[] = [];
+  try { await child.stop(); } catch (error) { cleanupErrors.push(error); }
+  try { await releaseHolder(paths, holderId); } catch (error) { cleanupErrors.push(error); }
+  if (cleanupErrors.length === 1) throw cleanupErrors[0];
+  if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, "runtime shutdown cleanup was incomplete");
+}
+
 export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuild> {
   const { repoRoot, clock, log } = options;
   const env = loadEnvironment(repoRoot, options.processEnv);
@@ -377,8 +386,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
         return report;
       },
       shutdown: async () => {
-        await child.stop();
-        await releaseHolder(paths, options.instanceId);
+        await shutdownRuntimeResources(child, paths, options.instanceId);
       },
     },
       };

@@ -331,6 +331,9 @@ export interface OrderObservation {
 
 export interface FenceObservation {
   readonly httpStatus: number;
+  /** Exact transitions observed and produced by this driver run. */
+  readonly haltSeq: number;
+  readonly unhaltSeq: number;
   readonly workingOrdersAtFence: readonly string[];
   readonly canceledAtFence: readonly string[];
 }
@@ -476,8 +479,15 @@ function brokerOrderMatchesIntent(intent: JournalEntry, order: BrokerOrderRecord
     && limit["kind"] === order.limit.kind && limit["priceCents"] === order.limit.priceCents;
 }
 
+function effectiveOutcomeFor(inputs: CertificateInputs, intent: JournalEntry): JournalEntry | undefined {
+  const brokerTerminal = new Set(["filled", "partially_filled", "rejected", "canceled", "expired"]);
+  return inputs.journal
+    .filter(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === intent["clientOrderId"] && brokerTerminal.has(String(entry["status"])))
+    .sort((left, right) => right.seq - left.seq)[0];
+}
+
 function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): CreditAcceptanceEvidence | null {
-  const terminalStatus = (intent: JournalEntry): unknown => inputs.journal.find(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === intent["clientOrderId"])?.["status"];
+  const terminalStatus = (intent: JournalEntry): unknown => effectiveOutcomeFor(inputs, intent)?.["status"];
   // Prefer a filled credit lifecycle over an earlier harness-canceled attempt:
   // the fill clause must bind to the same exact lifecycle as acceptance.
   const intents = inputs.journal
@@ -515,7 +525,7 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
       continue;
     }
     const accepted = observations.find(item => positiveAcceptanceStatuses().includes(item.order.status));
-    const outcome = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === clientOrderId).sort((a, b) => b.seq - a.seq)[0];
+    const outcome = effectiveOutcomeFor(inputs, intent);
     if (outcome !== undefined && outcome["status"] === "rejected") {
       failures.push(`credit lifecycle ${clientOrderId} was rejected by the broker`);
       continue;
@@ -632,16 +642,18 @@ function fenceFrom(inputs: CertificateInputs, failures: string[]): FenceDrillEvi
   const canceled = new Set(inputs.fence.canceledAtFence);
   const unreconciled = [...new Set(inputs.fence.workingOrdersAtFence)].filter(clientOrderId => !canceled.has(clientOrderId));
   if (unreconciled.length > 0) failures.push(`the fence drill left working order(s) without confirmed cancellation: ${unreconciled.join(",")}`);
-  const halt = inputs.journal.find(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
-  if (halt === undefined) {
-    failures.push("no AUTH_FAILURE halt was journaled by the fence drill");
+  const halt = inputs.journal.find(entry => entry.seq === inputs.fence?.haltSeq);
+  if (halt === undefined || halt.type !== "HALT" || halt["reason"] !== "AUTH_FAILURE") {
+    failures.push("the fence drill's exact AUTH_FAILURE halt sequence is absent or mismatched");
     return null;
   }
-  const unhalt = inputs.journal.find(entry => entry.type === "UNHALT" && entry.seq > halt.seq);
-  if (unhalt === undefined) {
-    failures.push("the AUTH_FAILURE halt was not cleared by the documented fence procedure (manual un-halt after reconciliation)");
+  const unhalt = inputs.journal.find(entry => entry.seq === inputs.fence?.unhaltSeq);
+  if (unhalt === undefined || unhalt.type !== "UNHALT" || unhalt["actor"] !== "human" || unhalt.seq <= halt.seq) {
+    failures.push("the fence drill's exact human un-halt sequence is absent, mismatched, or unordered");
     return null;
   }
+  const terminalHaltTransition = [...inputs.journal].reverse().find(entry => entry.type === "HALT" || (entry.type === "UNHALT" && entry["actor"] === "human"));
+  if (terminalHaltTransition?.seq !== unhalt.seq) failures.push("a later halt transition invalidates the fence drill's final un-halted state");
   if (outsideWindow(inputs.window, halt.at, unhalt.at)) {
     failures.push("the fence drill's halt and un-halt lie outside the test window");
     return null;
