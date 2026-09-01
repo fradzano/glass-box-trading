@@ -114,7 +114,12 @@ safety is green.
 ### S-ARM-01 — dev live-test certificate
 
 `successful_dev_live_test_at` exists only as the timestamp inside a PASS
-certificate at `PRE_ARM_CERTIFICATE`; an operator cannot type or override it.
+certificate at `PRE_ARM_CERTIFICATE`; normal startup has no independent
+timestamp override. The trusted local operator supplies that certificate, and
+its complete-body digest detects accidental or unreviewed edits. This is an
+integrity and semantic-evidence boundary, not an external attestation against a
+malicious local operator or modified verifier that deliberately regenerates a
+synthetic certificate.
 The certificate contains the literal dev role/account ID, canonical paper
 origin, UTC test window, `runtimeDigest`, role-neutral `policyDigest`, and broker
 IDs/timestamps proving:
@@ -123,17 +128,22 @@ IDs/timestamps proving:
    were consumed by the real liquidity gate;
 2. a defined-risk credit mleg received a positive broker acceptance state
    (`new`/`accepted`/`open`) and then reached `filled` or harness-requested
-   `canceled`, recorded as an `OUTCOME`; any synchronous or asynchronous
-   `rejected` state makes the certificate FAIL;
-3. a minimal defined-risk mleg followed a real fill through broker
-   reconciliation and journal `OUTCOME` rather than accept/cancel alone;
+   `canceled`, recorded as an `OUTCOME`; the observed broker order must equal
+   the INTENT's client/broker identity, complete leg ratios and sides, one-lot
+   quantity, credit limit kind, and price; any synchronous or asynchronous
+   `rejected` state or shape disagreement makes the certificate FAIL;
+3. exactly one lot of that defined-risk mleg followed a real fill through
+   broker reconciliation and journal `OUTCOME` rather than accept/cancel
+   alone; the later broker snapshot must contain exactly the signed filled
+   leg quantities, not merely positions with compatible signs;
 4. the credential-fence drill required by S-G12-06 passed; and
 5. the final fully paginated dev snapshot contains zero positions and zero
    non-terminal orders.
 
 `runtimeDigest` canonically covers executable core/shell code, schemas,
 dependency locks, the MCP capability manifest, the pinned MCP runtime lock, and
-the verified immutable launch artifacts. `policyDigest` canonically covers
+the verified immutable launch artifacts, including the complete importable MCP
+site tree. `policyDigest` canonically covers
 every role-independent behavior value and risk limit, including the normalized
 paper trading origin. Its closed exclusions are the identity fields
 `ALPACA_PROFILE` and `EXPECTED_ACCOUNT_ID`, dev/competition credentials, and
@@ -147,8 +157,8 @@ closed identity/secret set. The competition role, account ID, credentials, and
 provenance are then checked separately by S-J-06/S-CYC-09; switching only those
 closed identity fields cannot invalidate an otherwise identical dev proof.
 
-Any absent observation, incomplete page, unresolved order, account mismatch,
-or runtime/policy digest mismatch makes the certificate FAIL and blocks
+Any absent observation, unstable or incomplete snapshot, unresolved order,
+account mismatch, or runtime/policy digest mismatch makes the certificate FAIL and blocks
 competition arming in S-CYC-11. A runtime or role-independent policy change
 invalidates the certificate and requires a new market-hours run. The test uses the dev
 account only and keeps every submitted structure inside the same defined-risk

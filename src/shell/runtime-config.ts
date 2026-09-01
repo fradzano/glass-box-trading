@@ -70,6 +70,7 @@ export function rawStartupConfig(policy: Readonly<Record<string, unknown>>, env:
   if (env["STATE_DIR"] !== undefined) raw["STATE_DIR"] = env["STATE_DIR"];
   if (env["BOOTSTRAP_DIAGNOSTIC_SINK"] !== undefined) raw["BOOTSTRAP_DIAGNOSTIC_SINK"] = env["BOOTSTRAP_DIAGNOSTIC_SINK"];
   if (env["PRE_ARM_CERTIFICATE"] !== undefined) raw["PRE_ARM_CERTIFICATE"] = env["PRE_ARM_CERTIFICATE"];
+  raw["ANALYST_MODEL"] = env["ANALYST_MODEL"] ?? "claude-sonnet-5";
   return raw;
 }
 

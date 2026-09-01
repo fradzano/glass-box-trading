@@ -120,17 +120,25 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       const observedFiles: string[] = [];
       walkFiles(installedRoot, observedFiles);
       const mismatches: string[] = [];
-      const artifactLines: string[] = [];
       const seen = new Set<string>();
       for (const file of observedFiles) {
         const relative = path.relative(installedRoot, file).split(path.sep).join("/");
         if (relative.split("/").includes("__pycache__") || relative.endsWith(".pyc")) continue;
         seen.add(relative);
         const blob = gitBlobSha1(readFileSync(file));
-        artifactLines.push(`${relative} ${blob}`);
         if (expected.get(relative) !== blob) mismatches.push(`${relative}: installed ${blob}, pinned ${expected.get(relative) ?? "absent"}`);
       }
       for (const [relative, blob] of expected) if (!seen.has(relative)) mismatches.push(`${relative}: pinned ${blob}, installed absent`);
+      // Bind the complete importable site tree, including third-party dependency bytes, into the runtime digest.
+      // The pinned package still gets the stronger independent git-object comparison above; this tree digest
+      // closes the gap where a dependency kept its locked version metadata but its installed bytes changed.
+      const siteFiles: string[] = [];
+      walkFiles(paths.site, siteFiles);
+      const artifactLines = siteFiles.flatMap(file => {
+        const relative = path.relative(paths.site, file).split(path.sep).join("/");
+        if (relative.split("/").includes("__pycache__") || relative.endsWith(".pyc")) return [];
+        return [`${relative} ${sha256Of(file)}`];
+      });
       launchArtifactsSha256 = createHash("sha256").update(artifactLines.sort().join("\n")).digest("hex");
       const observed: LaunchObservation = {
         sourceRepository,
@@ -195,9 +203,11 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       // The environment arrives exactly as the launcher validated it (WIN-6); nothing is added here.
       const transport = new StdioClientTransport({
         command: paths.runtime,
-        args: ["-S", "-c", `from ${packageModuleDir}.cli import main; main()`, "--transport", "stdio"],
+        // `-P` prevents Python from prepending cwd to sys.path; imports can come only from the explicitly
+        // constructed PYTHONPATH whose package bytes were verified immediately before this spawn.
+        args: ["-P", "-S", "-c", `from ${packageModuleDir}.cli import main; main()`, "--transport", "stdio"],
         env: { ...env },
-        cwd: paths.root,
+        cwd: paths.site,
         stderr: "pipe",
       });
       const client = new Client({ name: "glass-box-trading", version: "0.1.0" });

@@ -15,6 +15,7 @@ import type { JournalEntry } from "../src/core/journal.js";
 import { closeAttemptId, closeLifecycleId } from "../src/core/order-identity.js";
 import { runCycle } from "../src/shell/cycle-runner.js";
 import type { CycleDependencies, CycleReport } from "../src/shell/cycle-runner.js";
+import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { readEpochStore } from "../src/shell/epoch-store.js";
 import { createFakeBroker } from "../src/shell/fake-broker.js";
 import type { FakeBroker, FakeBrokerOptions } from "../src/shell/fake-broker.js";
@@ -96,11 +97,14 @@ interface Harness {
   readonly analystCalls: { count: number };
 }
 
-async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; readonly analyst?: CycleDependencies["analyst"]; readonly seedEntries?: readonly Record<string, unknown>[] } = {}): Promise<Harness> {
+async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; readonly analyst?: CycleDependencies["analyst"]; readonly seedEntries?: readonly Record<string, unknown>[]; readonly mutationHttpStatus?: number } = {}): Promise<Harness> {
   const paths = freshPaths();
   const clock = { now: NOW };
   const fake = createFakeBroker({ accountId: TEST_ONLY_ACCOUNT_ID, cashCents: 10_000_000, equityCents: 10_000_000, clock: () => clock.now, ...options.broker });
-  const gateway = createMutationGateway({ paths, secrets: ["TEST_ONLY_SECRET_KEY"], clock: () => clock.now, brokerPort: fake.port, instanceId: "runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
+  const brokerPort = options.mutationHttpStatus === undefined
+    ? fake.port
+    : { mutate: () => Promise.reject(new BrokerHttpError(options.mutationHttpStatus as number, "credential scope rejected")) };
+  const gateway = createMutationGateway({ paths, secrets: ["TEST_ONLY_SECRET_KEY"], clock: () => clock.now, brokerPort, instanceId: "runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
   const acquired = await gateway.acquireAuthority({ account: "virgin" });
   if (acquired.kind !== "WON") throw new Error(`fixture acquisition failed: ${JSON.stringify(acquired)}`);
   const priorSample = { bidCents: 99, askCents: 101, bidSize: 20, askSize: 20, quotedAt: TEST_ONLY_AT, brokerQuotedAt: "2026-08-31T13:29:59.871234567Z" };
@@ -608,5 +612,16 @@ describe("S-G12-06 the credential fence also fences the phase-4 re-check (P4 gat
     expect(run.analystCalls.count).toBe(1);
     expect(run.fake.mutations).toHaveLength(0);
     expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
+  });
+
+  it("a 403 returned by the order mutation is preserved through the gateway and durably halts the runner", async () => {
+    const run = await harness({ mutationHttpStatus: 403 });
+    const report = await run.cycle();
+
+    expect(report.actions).toContainEqual(expect.objectContaining({ status: "confirmation_unclear" }));
+    expect(report.entriesBlocked).toContain("AUTH_FAILURE");
+    expect(readHaltState(run.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+    expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
+    expect(run.fake.mutations).toHaveLength(0);
   });
 });

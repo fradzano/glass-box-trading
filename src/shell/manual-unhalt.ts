@@ -14,6 +14,8 @@ export interface ManualUnhaltOptions {
   readonly secrets: readonly string[];
   readonly instanceId: string;
   readonly lockTakeoverBoundMs: number;
+  readonly expectedHaltSeq?: number;
+  readonly expectedHaltReason?: string;
 }
 
 export async function manualUnhalt(options: ManualUnhaltOptions): Promise<DispatchResult> {
@@ -25,5 +27,10 @@ export async function manualUnhalt(options: ManualUnhaltOptions): Promise<Dispat
     instanceId: options.instanceId,
     lockTakeoverBoundMs: options.lockTakeoverBoundMs,
   });
-  return gateway.dispatchManualUnhalt({ operator: options.operator, reason: options.reason });
+  return gateway.dispatchManualUnhalt({
+    operator: options.operator,
+    reason: options.reason,
+    ...(options.expectedHaltSeq === undefined ? {} : { expectedHaltSeq: options.expectedHaltSeq }),
+    ...(options.expectedHaltReason === undefined ? {} : { expectedHaltReason: options.expectedHaltReason }),
+  });
 }

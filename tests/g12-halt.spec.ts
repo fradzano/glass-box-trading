@@ -77,7 +77,11 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     const restarted = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS + 1_000, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
     expect((await restarted.openJournal()).halt.halted).toBe(true);
 
-    const unhalted = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed positions, resuming", clock: () => TEST_ONLY_AT_MS + 2_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 });
+    const staleApproval = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed stale halt", clock: () => TEST_ONLY_AT_MS + 2_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 999, expectedHaltReason: "AUTH_FAILURE" });
+    expect(staleApproval).toMatchObject({ ok: false, reason: "HALT_CHANGED_SINCE_RECONCILIATION" });
+    expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "MANUAL", sticky: false });
+
+    const unhalted = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed positions, resuming", clock: () => TEST_ONLY_AT_MS + 2_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "MANUAL" });
     expect(unhalted).toMatchObject({ ok: true });
     expect(readHaltState(paths.value)).toEqual(NOT_HALTED);
     const entries = parseJournalText(readFileSync(paths.value.journal, "utf8")).entries;

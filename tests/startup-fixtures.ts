@@ -36,6 +36,7 @@ export function validStartupConfig(stateDir: string, sinkPath: string, overrides
     CLOSE_ESCALATION_STEP_CENTS: 2,
     RESIDUE_MAX_SESSIONS: 1,
     ANALYST_TIMEOUT_MS: 240_000,
+    ANALYST_MODEL: "claude-sonnet-5",
     CYCLE_WALLTIME_BUDGET_MS: 300_000,
     LOCK_TAKEOVER_BOUND_MS: 400_000,
     ANALYST_MCP_CAPABILITY_MANIFEST: "config/analyst-mcp-readonly.json",

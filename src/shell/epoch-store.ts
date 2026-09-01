@@ -100,6 +100,16 @@ export function removeHolder(paths: StatePaths): void {
   rmSync(paths.holder, { force: true });
 }
 
+/** Release only the caller's lease; a stale predecessor must never delete a successor's holder record. */
+export async function releaseHolder(paths: StatePaths, holderId: string): Promise<boolean> {
+  return withMutex(paths, () => {
+    const current = readHolder(paths);
+    if (current === null || current.holderId !== holderId) return false;
+    removeHolder(paths);
+    return true;
+  });
+}
+
 const MUTEX_STALE_MS = 15_000;
 const MUTEX_TIMEOUT_MS = 20_000;
 

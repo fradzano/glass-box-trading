@@ -27,10 +27,10 @@ export interface AccountView {
 }
 
 export interface BrokerReadPort {
-  account(): Promise<AccountView>;
-  positions(): Promise<readonly BrokerPosition[]>;
-  openOrders(): Promise<readonly BrokerOrderRecord[]>;
-  orderByClientId(clientOrderId: string): Promise<BrokerOrderRecord | null>;
+  account(deadlineAtMs?: number): Promise<AccountView>;
+  positions(deadlineAtMs?: number): Promise<readonly BrokerPosition[]>;
+  openOrders(deadlineAtMs?: number): Promise<readonly BrokerOrderRecord[]>;
+  orderByClientId(clientOrderId: string, deadlineAtMs?: number): Promise<BrokerOrderRecord | null>;
 }
 
 export type SubmitBehaviour =

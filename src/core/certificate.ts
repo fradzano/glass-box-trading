@@ -20,7 +20,7 @@ function isRecord(value: unknown): value is Raw {
 // Field classification (versioned; every known field has exactly one class)
 // ---------------------------------------------------------------------------
 
-export const CONFIG_FIELD_CLASSIFICATION_VERSION = 1;
+export const CONFIG_FIELD_CLASSIFICATION_VERSION = 2;
 
 export type ConfigFieldClass = "policy" | "identity" | "deployment";
 
@@ -63,6 +63,7 @@ export function configFieldClassification(): Readonly<Record<string, ConfigField
     CLOSE_ESCALATION_STEP_CENTS: "policy",
     RESIDUE_MAX_SESSIONS: "policy",
     ANALYST_TIMEOUT_MS: "policy",
+    ANALYST_MODEL: "policy",
     CYCLE_WALLTIME_BUDGET_MS: "policy",
     LOCK_TAKEOVER_BOUND_MS: "policy",
     ANALYST_MCP_CAPABILITY_MANIFEST: "policy",
@@ -178,7 +179,7 @@ function evidenceClauseShapes(): Readonly<Record<string, Readonly<Record<string,
     creditAcceptance: { clientOrderId: "string", exposureLifecycleId: "string", intentSeq: "integer", brokerOrderId: "string", acceptedStatus: "string", acceptedAt: "instant", terminalStatus: "string", terminalAt: "instant", outcomeSeq: "integer", harnessRequestedCancel: "boolean" },
     fill: { clientOrderId: "string", brokerOrderId: "string", filledQuantity: "integer", avgFillPriceCents: "integer", filledAt: "instant", outcomeSeq: "integer", reconciledSnapshotSeq: "integer" },
     fence: { httpStatus: "integer", haltSeq: "integer", unhaltSeq: "integer", workingOrdersAtFence: "strings", canceledAtFence: "strings" },
-    finalSnapshot: { at: "instant", accountId: "string", cashCents: "integer", equityCents: "integer", positionCount: "integer", nonTerminalOrderCount: "integer", orderPagesFetched: "integer", pagesComplete: "boolean" },
+    finalSnapshot: { at: "instant", accountId: "string", cashCents: "integer", equityCents: "integer", positionCount: "integer", nonTerminalOrderCount: "integer", orderPagesFetched: "integer", pagesComplete: "boolean", consistentReads: "integer" },
   };
 }
 
@@ -228,7 +229,7 @@ export function runtimeDigest(input: RuntimeDigestInput): DigestResult {
 // Certificate schema
 // ---------------------------------------------------------------------------
 
-export const CERTIFICATE_SCHEMA_VERSION = 1;
+export const CERTIFICATE_SCHEMA_VERSION = 2;
 
 export interface LiquidityInputEvidence {
   readonly contractId: string;
@@ -283,15 +284,16 @@ export interface FinalSnapshotEvidence {
   readonly nonTerminalOrderCount: number;
   readonly orderPagesFetched: number;
   readonly pagesComplete: boolean;
+  readonly consistentReads: number;
 }
 
-/** The digest a certificate carries over its own account, window, digests, inventory flag, and evidence: any later edit of the file breaks it. */
-export function certificateEvidenceDigest(certificate: Omit<PreArmCertificate, "evidenceDigest" | "verdict" | "failures">): string {
-  return sha256Text(canonicalJson({ schemaVersion: certificate.schemaVersion, role: certificate.role, accountId: certificate.accountId, tradingOrigin: certificate.tradingOrigin, window: certificate.window, runtimeDigest: certificate.runtimeDigest, policyDigest: certificate.policyDigest, fieldClassificationVersion: certificate.fieldClassificationVersion, mcpInventoryAccepted: certificate.mcpInventoryAccepted, evidence: certificate.evidence }));
+/** Integrity digest over the complete certificate body, including verdict and failures; any edit requires an explicit recomputation. */
+export function certificateEvidenceDigest(certificate: Omit<PreArmCertificate, "evidenceDigest">): string {
+  return sha256Text(canonicalJson(certificate));
 }
 
 export interface PreArmCertificate {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly verdict: "PASS" | "FAIL";
   readonly role: "dev";
   readonly accountId: string;
@@ -309,7 +311,7 @@ export interface PreArmCertificate {
     readonly finalSnapshot: FinalSnapshotEvidence | null;
   };
   readonly failures: readonly string[];
-  /** `certificateEvidenceDigest` of everything above except verdict and failures. */
+  /** `certificateEvidenceDigest` of every field above. This is integrity under the trusted-local-operator threat model, not an external signature. */
   readonly evidenceDigest: string;
 }
 
@@ -342,6 +344,7 @@ export interface FinalSnapshotObservation {
   readonly nonTerminalOrders: readonly string[];
   readonly orderPagesFetched: number;
   readonly pagesComplete: boolean;
+  readonly consistentReads: number;
 }
 
 export interface CertificateInputs {
@@ -461,6 +464,18 @@ function nonBlank(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function brokerOrderMatchesIntent(intent: JournalEntry, order: BrokerOrderRecord): boolean {
+  const intendedLegs = fullLegsOf(intent).map(leg => `${leg.contractId}|${leg.side}|${String(leg.ratio)}`).sort();
+  const observedLegs = order.legs.map(leg => `${leg.contractId}|${leg.side}|${String(leg.ratio)}`).sort();
+  const quantity = intent["quantity"];
+  const limit = intent["submittedLimit"];
+  return intendedLegs.length === observedLegs.length
+    && intendedLegs.every((leg, index) => leg === observedLegs[index])
+    && Number.isSafeInteger(quantity) && quantity === order.quantity
+    && isRecord(limit) && order.limit !== null
+    && limit["kind"] === order.limit.kind && limit["priceCents"] === order.limit.priceCents;
+}
+
 function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): CreditAcceptanceEvidence | null {
   const intents = inputs.journal.filter(entry => isEntryIntent(entry) && isRecord(entry["submittedLimit"]) && entry["submittedLimit"]["kind"] === "credit");
   if (intents.length === 0) {
@@ -479,6 +494,15 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
       return null;
     }
     const observations = inputs.orderObservations.filter(item => item.order.clientOrderId === clientOrderId);
+    if (observations.some(item => !brokerOrderMatchesIntent(intent, item.order))) {
+      failures.push(`credit lifecycle ${clientOrderId}: the broker order shape, quantity, or limit does not equal the journaled credit Mleg`);
+      return null;
+    }
+    const observedBrokerOrderIds = new Set(observations.map(item => item.order.brokerOrderId));
+    if (observedBrokerOrderIds.size > 1 || [...observedBrokerOrderIds].some(id => !nonBlank(id))) {
+      failures.push(`credit lifecycle ${clientOrderId}: the broker observations disagree on order identity`);
+      return null;
+    }
     const submittedInstants = new Set(observations.map(item => item.order.brokerTimestamps["submitted_at"]).filter((value): value is string => value !== undefined));
     if (submittedInstants.size > 1) {
       failures.push(`credit lifecycle ${clientOrderId}: the broker observations disagree on the submission instant`);
@@ -499,6 +523,10 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
       return null;
     }
     const brokerOrderId = typeof outcome["brokerOrderId"] === "string" ? outcome["brokerOrderId"] : accepted.order.brokerOrderId;
+    if (!nonBlank(brokerOrderId) || brokerOrderId !== accepted.order.brokerOrderId) {
+      failures.push(`credit lifecycle ${clientOrderId}: the accepted broker order identity does not equal the terminal OUTCOME`);
+      return null;
+    }
     const timestamps = isRecord(outcome["brokerTimestamps"]) ? outcome["brokerTimestamps"] : {};
     const terminalField = terminal === "filled" ? "filled_at" : "canceled_at";
     const terminalAt = typeof timestamps[terminalField] === "string" ? timestamps[terminalField] : null;
@@ -543,13 +571,25 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
     if (intent === undefined) continue;
     // The filled entry must itself be a defined-risk, G1-passed structure (G5-L2): an unrelated naked fill is no evidence.
     if (!definedRiskShape(intent) || !gatePassed(intent, "G1")) continue;
-    const legs = legsOf(intent);
+    const intentQuantity = intent["quantity"];
+    const filledQuantity = fill["filledQuantity"] as number;
+    // The supervised certificate deliberately proves the smallest real structure: exactly one complete lot.
+    if (intentQuantity !== 1 || filledQuantity !== 1) continue;
+    const legs = fullLegsOf(intent);
     if (legs.length === 0) continue;
-    // Reconciliation: a later snapshot-bearing entry whose broker positions carry every filled leg with the sign its side implies.
+    const expectedPositions = new Map<string, number>();
+    for (const leg of legs) expectedPositions.set(leg.contractId, (expectedPositions.get(leg.contractId) ?? 0) + (leg.side === "sell" ? -leg.ratio : leg.ratio) * filledQuantity);
+    // Reconciliation: after a flat start, the later broker snapshot must carry exactly the filled Mleg quantities,
+    // with no unrelated non-zero position able to masquerade as the tested minimal structure.
     const later = inputs.journal.filter(entry => entry.seq > fill.seq && snapshotOf(entry) !== null).find(entry => {
       const positions = snapshotOf(entry)?.["positions"];
       if (!Array.isArray(positions)) return false;
-      return legs.every(leg => positions.some(position => isRecord(position) && position["contractId"] === leg.contractId && typeof position["quantity"] === "number" && (leg.side === "sell" ? position["quantity"] < 0 : position["quantity"] > 0)));
+      const actual = new Map<string, number>();
+      for (const position of positions) {
+        if (!isRecord(position) || !nonBlank(position["contractId"]) || !Number.isSafeInteger(position["quantity"])) return false;
+        if ((position["quantity"] as number) !== 0) actual.set(position["contractId"], (actual.get(position["contractId"]) ?? 0) + (position["quantity"] as number));
+      }
+      return actual.size === expectedPositions.size && [...expectedPositions].every(([contractId, quantity]) => actual.get(contractId) === quantity);
     });
     if (later === undefined) continue;
     const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
@@ -576,6 +616,9 @@ function fenceFrom(inputs: CertificateInputs, failures: string[]): FenceDrillEvi
     return null;
   }
   if (inputs.fence.httpStatus !== 401 && inputs.fence.httpStatus !== 403) failures.push(`the fence drill observed HTTP ${String(inputs.fence.httpStatus)}, not a 401/403 credential rejection`);
+  const canceled = new Set(inputs.fence.canceledAtFence);
+  const unreconciled = [...new Set(inputs.fence.workingOrdersAtFence)].filter(clientOrderId => !canceled.has(clientOrderId));
+  if (unreconciled.length > 0) failures.push(`the fence drill left working order(s) without confirmed cancellation: ${unreconciled.join(",")}`);
   const halt = inputs.journal.find(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
   if (halt === undefined) {
     failures.push("no AUTH_FAILURE halt was journaled by the fence drill");
@@ -608,10 +651,12 @@ function finalSnapshotFrom(inputs: CertificateInputs, failures: string[]): Final
     nonTerminalOrderCount: snapshot.nonTerminalOrders.length,
     orderPagesFetched: snapshot.orderPagesFetched,
     pagesComplete: snapshot.pagesComplete,
+    consistentReads: snapshot.consistentReads,
   };
   if (snapshot.accountId !== inputs.accountId) failures.push("the final snapshot reports a different account than the certificate binds");
   if (outsideWindow(inputs.window, snapshot.at)) failures.push("the final snapshot lies outside the test window");
   if (!snapshot.pagesComplete) failures.push("the final order history pagination is incomplete");
+  if (!Number.isSafeInteger(snapshot.consistentReads) || snapshot.consistentReads < 2) failures.push("the final snapshot was not confirmed by two consecutive identical broker reads");
   if (evidence.positionCount !== 0) failures.push(`the final snapshot holds ${String(evidence.positionCount)} open position(s)`);
   if (evidence.nonTerminalOrderCount !== 0) failures.push(`the final snapshot holds ${String(evidence.nonTerminalOrderCount)} non-terminal order(s)`);
   return evidence;
@@ -628,27 +673,34 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   if (windowStart === null || windowEnd === null || !(windowStart < windowEnd)) failures.push("the test window is not a pair of ordered UTC instants");
   if (!isSha256(inputs.runtimeDigest)) failures.push("runtimeDigest is malformed");
   if (!isSha256(inputs.policyDigest)) failures.push("policyDigest is malformed");
-  for (const entry of inputs.journal) {
+  const windowJournal = windowStart === null || windowEnd === null
+    ? []
+    : inputs.journal.filter(entry => {
+      const at = instantOf(entry.at);
+      return at !== null && at >= windowStart && at <= windowEnd;
+    });
+  const windowInputs: CertificateInputs = { ...inputs, journal: windowJournal };
+  for (const entry of windowJournal) {
     if (entry.type === "OUTCOME" && entry["status"] === "rejected") failures.push(`OUTCOME seq ${String(entry.seq)} (${String(entry["clientOrderId"])}) is a broker rejection`);
   }
 
-  const creditAcceptance = creditAcceptanceFrom(inputs, failures);
-  const fill = fillFrom(inputs, failures);
-  const intentForLiquidity = creditAcceptance === null ? undefined : inputs.journal.find(entry => entry.seq === creditAcceptance.intentSeq);
-  const liquidity = intentForLiquidity === undefined ? [] : liquidityFor(intentForLiquidity, inputs.journal);
+  const creditAcceptance = creditAcceptanceFrom(windowInputs, failures);
+  const fill = fillFrom(windowInputs, failures);
+  const intentForLiquidity = creditAcceptance === null ? undefined : windowJournal.find(entry => entry.seq === creditAcceptance.intentSeq);
+  const liquidity = intentForLiquidity === undefined ? [] : liquidityFor(intentForLiquidity, windowJournal);
   if (intentForLiquidity !== undefined) {
     if (!gatePassed(intentForLiquidity, "G5")) failures.push("the credit INTENT does not carry a passed G5 liquidity verdict");
-    const snapshotEntry = liquidity[0] === undefined ? undefined : inputs.journal.find(entry => entry.seq === liquidity[0]?.snapshotSeq);
+    const snapshotEntry = liquidity[0] === undefined ? undefined : windowJournal.find(entry => entry.seq === liquidity[0]?.snapshotSeq);
     if (snapshotEntry !== undefined && outsideWindow(inputs.window, snapshotEntry.at)) failures.push("the snapshot consumed by the liquidity gate lies outside the test window");
     if (liquidity.some(item => outsideWindow(inputs.window, item.quotedAt, brokerInstantToIso(item.brokerQuotedAt) ?? undefined))) failures.push("a liquidity quote sample carries a timestamp outside the test window");
     if (liquidity.some(item => brokerInstantToIso(item.brokerQuotedAt) !== item.quotedAt)) failures.push("a liquidity quote sample's recorded instant does not equal its broker timestamp");
     const legIds = new Set(legsOf(intentForLiquidity).map(leg => leg.contractId));
     if ([...legIds].some(id => !liquidity.some(item => item.contractId === id))) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   }
-  const fence = fenceFrom(inputs, failures);
+  const fence = fenceFrom(windowInputs, failures);
   const finalSnapshot = finalSnapshotFrom(inputs, failures);
   const body = {
-    schemaVersion: CERTIFICATE_SCHEMA_VERSION as 1,
+    schemaVersion: CERTIFICATE_SCHEMA_VERSION as 2,
     role: "dev" as const,
     accountId: inputs.accountId,
     tradingOrigin: inputs.tradingOrigin,
@@ -659,7 +711,8 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
     mcpInventoryAccepted: inputs.mcpInventoryAccepted,
     evidence: { liquidity, creditAcceptance, fill, fence, finalSnapshot },
   };
-  return { ...body, verdict: failures.length === 0 ? "PASS" : "FAIL", failures, evidenceDigest: certificateEvidenceDigest(body) };
+  const unsigned = { ...body, verdict: failures.length === 0 ? "PASS" as const : "FAIL" as const, failures };
+  return { ...unsigned, evidenceDigest: certificateEvidenceDigest(unsigned) };
 }
 
 // ---------------------------------------------------------------------------
@@ -710,11 +763,15 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
     else for (const item of liquidity) violations.push(...clauseViolations("liquidity", item, shapes["liquidity"] ?? {}, windowMs));
     for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) violations.push(...clauseViolations(clause, evidence[clause], shapes[clause] ?? {}, windowMs));
     const finalSnapshot = evidence["finalSnapshot"];
-    if (isRecord(finalSnapshot) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true)) violations.push("certificate final snapshot is not flat and fully paginated");
+    if (isRecord(finalSnapshot) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true || !(Number.isSafeInteger(finalSnapshot["consistentReads"]) && (finalSnapshot["consistentReads"] as number) >= 2))) violations.push("certificate final snapshot is not flat, stable, and fully paginated");
     if (isRecord(finalSnapshot) && (finalSnapshot["accountId"] !== raw["accountId"] || !(Number.isSafeInteger(finalSnapshot["orderPagesFetched"]) && (finalSnapshot["orderPagesFetched"] as number) >= 1))) violations.push("certificate final snapshot is not on the certificate's account or was not paginated");
     const fence = evidence["fence"];
     if (isRecord(fence) && fence["httpStatus"] !== 401 && fence["httpStatus"] !== 403) violations.push("certificate fence evidence is not a credential rejection");
     if (isRecord(fence) && !(Number.isSafeInteger(fence["haltSeq"]) && Number.isSafeInteger(fence["unhaltSeq"]) && (fence["haltSeq"] as number) > 0 && (fence["haltSeq"] as number) < (fence["unhaltSeq"] as number))) violations.push("certificate fence sequence is not ordered");
+    if (isRecord(fence) && Array.isArray(fence["workingOrdersAtFence"]) && Array.isArray(fence["canceledAtFence"])) {
+      const canceled = new Set(fence["canceledAtFence"] as readonly unknown[]);
+      if ((fence["workingOrdersAtFence"] as readonly unknown[]).some(item => !canceled.has(item))) violations.push("certificate fence left a working order without confirmed cancellation");
+    }
     const credit = evidence["creditAcceptance"];
     if (isRecord(credit)) {
       if (!positiveAcceptanceStatuses().includes(String(credit["acceptedStatus"])) || (credit["terminalStatus"] !== "filled" && credit["terminalStatus"] !== "canceled")) violations.push("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
@@ -739,10 +796,10 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
       }
     }
   }
-  // The self-digest: every field above except verdict and failures must hash to the recorded value.
-  if (typeof raw["evidenceDigest"] !== "string" || containsNonCanonical(raw["evidence"]) || containsNonCanonical(raw["window"])) violations.push("certificate evidence digest is absent or the material is not canonical");
+  // The self-digest covers the complete body, including the verdict and failures.
+  if (typeof raw["evidenceDigest"] !== "string" || containsNonCanonical(raw["evidence"]) || containsNonCanonical(raw["window"]) || containsNonCanonical(raw["failures"])) violations.push("certificate evidence digest is absent or the material is not canonical");
   else {
-    const recomputed = sha256Text(canonicalJson({ schemaVersion: raw["schemaVersion"], role: raw["role"], accountId: raw["accountId"], tradingOrigin: raw["tradingOrigin"], window: raw["window"], runtimeDigest: raw["runtimeDigest"], policyDigest: raw["policyDigest"], fieldClassificationVersion: raw["fieldClassificationVersion"], mcpInventoryAccepted: raw["mcpInventoryAccepted"], evidence: raw["evidence"] }));
+    const recomputed = sha256Text(canonicalJson({ schemaVersion: raw["schemaVersion"], verdict: raw["verdict"], role: raw["role"], accountId: raw["accountId"], tradingOrigin: raw["tradingOrigin"], window: raw["window"], runtimeDigest: raw["runtimeDigest"], policyDigest: raw["policyDigest"], fieldClassificationVersion: raw["fieldClassificationVersion"], mcpInventoryAccepted: raw["mcpInventoryAccepted"], evidence: raw["evidence"], failures: raw["failures"] }));
     if (recomputed !== raw["evidenceDigest"]) violations.push("certificate evidence digest mismatch: the certificate was edited after it was produced");
   }
   if (violations.length > 0 || endedAt === null) return { ok: false, violations };

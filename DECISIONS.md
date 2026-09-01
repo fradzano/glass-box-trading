@@ -1214,3 +1214,37 @@ small, no ADR split).
   certificate exists; P8 (kickoff release: real git/Vercel ports, Scheduled
   Task, competition-arming wiring of `validateArmingCertificate` into
   `runStartup`) starts from the accepted P7.
+- **2026-09-01 — P7 launch hardening after pre-live adversarial review.**
+  The active broker account is now observed before authority and re-observed
+  before every broker mutation; configured identity alone is never accepted as
+  binding evidence. The certificate fence clears only the exact newly-created
+  `AUTH_FAILURE` halt after every working order is observed canceled and a
+  stable flat snapshot is reconciled; the human approval is compare-and-set on
+  halt sequence and reason, so it cannot clear a pre-existing or replacement
+  halt. Full broker snapshots require two consecutive identical complete reads,
+  and all broker/health calls have finite timeouts. The certificate's
+  `evidenceDigest` now covers verdict and failures as well as observations, and
+  the MCP launch artifact digest binds every importable installed dependency
+  byte. We retain the earlier trusted-local-operator decision: this digest
+  detects file edits and supports deterministic semantic validation, but is not
+  an external signature against an operator who modifies the verifier or
+  deliberately regenerates synthetic evidence. Documentation must state that
+  boundary and must not claim independent live-run attestation.
+- **2026-09-01 — P7 R3 hardening after the launch Go/No-Go cold read.**
+  A post-config, pre-runtime broker identity refusal uses a brokerless local
+  gateway solely to persist `AUTH_FAILURE` or `ACCOUNT_BINDING_MISMATCH`, send
+  the fail ping, and release its holder; it never gains an order port. The
+  certificate now binds every acceptance observation to the INTENT's exact
+  broker identity, leg sides/ratios, one-lot quantity, and limit kind/price,
+  and the fill clause requires the later position quantities to equal that
+  exact one-lot fill with no unrelated non-zero position. A sign-only match is
+  not reconciliation. The cycle walltime is an aggregate shell deadline:
+  phase-boundary heartbeats run in production, gateway appends and mutations
+  inherit the absolute deadline, Alpaca requests cap themselves to the time
+  remaining, and the transport timeout covers response-body consumption as
+  well as headers. The caller regains control at the hard budget, while a
+  background continuation cannot append or begin/complete a broker mutation
+  past the propagated deadline. R3's red counterexamples and the complete
+  repository gate pass with 296 tests; a first otherwise-green gate attempt
+  hit a transient Windows `EPERM` during the unchanged atomic dashboard rename
+  and the immediate complete rerun passed.

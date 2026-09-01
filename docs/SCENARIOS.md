@@ -329,11 +329,15 @@ arming.
 **59. A smoke test is called a successful dev live test**
 Actors: owner, dev account, arming gate. Trigger: accept/cancel worked once, but
 credit acceptance, a real fill/outcome path, or the liquidity inputs were never
-observed. A hand-entered timestamp still unlocks the competition account. What
-must hold: `successful_dev_live_test_at` is derived only from a machine-readable
-certificate tied to the runtime and role-neutral policy digests, with broker evidence for
-all named market-hours checks and a flat terminal dev account. Any code/config
-change invalidates the certificate.
+observed. A hand-entered timestamp is offered as proof. What must hold:
+`successful_dev_live_test_at` is derived only from a complete, semantically
+valid machine-readable certificate tied to the runtime and role-neutral policy
+digests, with broker evidence for all named market-hours checks and a stable,
+flat terminal dev account. Acceptance must describe the exact intended one-lot
+credit Mleg, and the reconciled positions must equal its filled leg quantities.
+Any code/config change invalidates the certificate.
+The integrity digest detects edits but, under the declared trusted-local-operator
+boundary, is not an external attestation against deliberate local forgery.
 
 **60. The watchdog inherits a mixed intact-and-residue book**
 Actors: stalled agent, watchdog, broker. Trigger: after fencing, reconciliation

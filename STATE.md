@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 ~05:00 CEST (P6 merged; P7 built, probed 16/16, five blind gate calls with sixteen closed findings, verified off-hours on `p7/dev-live-certificate`; the market-hours run is the next action — see the P7 paragraph under "Next")
+**Last updated:** 2026-09-01 ~13:10 CEST (P7 pre-live R2/R3 hardening committed on the phase branch; full repository gate green with 296 tests; isolated R3 fix-verification remains before the market-hours run)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — implemented at `9777c05`, closing code commit `7423fe8` after the gate rounds (`npm run verify` exit 0, 278 tests), preflight and two off-hours smoke cycles green against the dev account; **next action:** the market-hours certificate run (`npm run certificate`, from 15:30 CEST, owner go given 2026-09-01 ~02:10 CEST), then the mutation probe and the blind gate, then the P7 closing state
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; the pre-live Go/No-Go review exposed account/fence/snapshot/provenance and later exact-evidence/walltime gaps, all closed red-first and committed at the current branch HEAD (`npm run verify` exit 0, 296 tests). **Next action:** isolated fix-verification, Felix's explicit O5 freeze, then the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 
@@ -340,8 +340,8 @@ One phase per session; every session ends with the handoff protocol in
   live market data are wired at P7's dev certificate), the Windows
   event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
   validation (P7; WIN-7/WIN-10/WIN-17 remainders).
-- **P7 — supervised dev live certificate — implemented (2026-09-01, branch
-  `p7/dev-live-certificate` from the P6 merge `bce890a`; implementation `9777c05`, closing code commit `7423fe8` after five gate rounds — DECISIONS.md "P7 verification").**
+- **P7 — supervised dev live certificate — implemented and pre-live hardened (2026-09-01, branch
+  `p7/dev-live-certificate` from the P6 merge `bce890a`; prior clean base `256dc2d`, R2/R3 hardening committed at current branch HEAD).**
   Pure core: `src/core/certificate.ts` (versioned field classification with
   the new `deployment` class, `policyDigest`, `runtimeDigest`, evidence
   extraction from the journal plus broker observations, PASS/FAIL
@@ -359,8 +359,9 @@ One phase per session; every session ends with the handoff protocol in
   scheduled cycle), config assembly and `.env` loading, the healthchecks
   ping port, digests. `config/policy.json` holds the proposed O5 values
   (owner freeze pending — DECISIONS.md P7 scope notes). `npm run verify`
-  exit 0 (272 tests; 22 new: `tests/arm01-certificate.spec.ts`,
-  `tests/alpaca-mapping.spec.ts`; 278 at `7423fe8`); the sandbox gate executes the
+  exit 0 (296 tests after R3; new hardening coverage in
+  `tests/p7-launch-hardening.spec.ts` plus the extended certificate, runner,
+  halt, fencing, and MCP suites); the sandbox gate executes the
   certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17 closed.
   Verified against the dev account off-hours (02:51–02:54 CEST): the
   preflight passes every S-CYC-11 check (the first attempt caught a CRLF
@@ -369,9 +370,11 @@ One phase per session; every session ends with the handoff protocol in
   by G5/G6 as it must be outside the session. The dev STATE_DIR
   (`glass-box-state/dev` under the user profile) carries that smoke
   journal (2 entries, epoch 3); the live run will open with an S-CYC-08 GAP
-  cycle. **Next action:** `npm run certificate` inside the session (from
-  15:30 CEST; owner go given), then the P7 mutation probe and blind gate,
-  then the closing state. Not P7: the Scheduled Task installer, the real
+  cycle. The R2 blind Go/No-Go returned NO-GO; its account/auth persistence,
+  exact broker-order/fill proof, aggregate walltime, map/state, and coherent-tree
+  findings are closed in R3 and await isolated fix-verification. **Next action:**
+  fix-gate and closing commit, explicit O5 freeze, then `npm run certificate`
+  inside the session (from 15:30 CEST). Not P7: the Scheduled Task installer, the real
   git/Vercel ports, the competition-arming wiring of the certificate into
   `runStartup` (P8 release session; `validateArmingCertificate` is ready).
 - Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after

@@ -16,9 +16,11 @@ import { validateAnalystManifest, validateRuntimeLock } from "../core/startup.js
 import type { ValidatedStartup } from "../core/startup.js";
 import { createAlpacaBroker } from "./alpaca-broker.js";
 import type { AlpacaBroker, MarketWindow } from "./alpaca-broker.js";
+import { createAccountBoundBrokerPort, verifyActiveAccount } from "./account-bound-broker.js";
 import { createClaudeAnalyst } from "./analyst-claude.js";
 import { launchVerifiedAnalystChild } from "./analyst-mcp-launcher.js";
 import { runCycle } from "./cycle-runner.js";
+import { runWithinCycleWalltime } from "./cycle-walltime.js";
 import type { AnalystInput, CycleReport, LifecycleDeps, PingPort } from "./cycle-runner.js";
 import { createFileDiagnosticSink } from "./diagnostic-sink.js";
 import { computePolicyDigest, computeRuntimeDigest, sha256File } from "./digests.js";
@@ -27,10 +29,12 @@ import { expiriesWithin, newYorkDate, nextTradingDay, remainingSessions, session
 import type { CalendarDay } from "./market-calendar.js";
 import { analystOsAllowlist, analystOsEnv, createEnvironmentPorts, environmentExists } from "./mcp-environment.js";
 import type { VerifiedChildHandle } from "./mcp-environment.js";
-import { removeHolder } from "./epoch-store.js";
+import { releaseHolder } from "./epoch-store.js";
 import { createMutationGateway } from "./mutation-gateway.js";
 import type { MutationGateway } from "./mutation-gateway.js";
 import { createPingPort } from "./ping-healthchecks.js";
+import { recordStartupBrokerFence } from "./startup-broker-fence.js";
+import { httpStatusOf } from "./broker-errors.js";
 import { analystEnvironmentPaths, loadEnvironment, loadPolicy, rawStartupConfig, roleCredentials, secretValues } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
 import type { StatePaths } from "./state-dir.js";
@@ -79,7 +83,7 @@ export interface AgentRuntime {
 
 export type RuntimeBuild =
   | { readonly ok: true; readonly runtime: AgentRuntime }
-  | { readonly ok: false; readonly stage: "startup" | "credentials" | "calendar" | "authority" | "analyst" | "digest"; readonly reason: string; readonly startup: StartupOutcome | null };
+  | { readonly ok: false; readonly stage: "startup" | "credentials" | "account_binding" | "calendar" | "authority" | "analyst" | "digest"; readonly reason: string; readonly startup: StartupOutcome | null };
 
 function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
@@ -96,7 +100,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     rawConfig: raw,
     openSink: name => createFileDiagnosticSink(name),
     failPing: async code => {
-      const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock });
+      const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock, timeoutMs: 10_000 });
       await ping.fail([code]);
     },
     journal: {
@@ -117,10 +121,30 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const paths = startup.paths;
   const credentials = roleCredentials(env, config.profile);
   if (credentials.keyId.length === 0 || credentials.secretKey.length === 0) return { ok: false, stage: "credentials", reason: `no credentials for the ${config.profile} role`, startup };
-  const expectedAccountId = config.binding.expectedAccountId;
-  if (expectedAccountId === undefined || expectedAccountId.length === 0) return { ok: false, stage: "credentials", reason: "EXPECTED_ACCOUNT_ID is absent after validation", startup };
-  const binding: AccountBinding = { profile: config.profile, tradingOrigin: config.binding.canonicalTradingOrigin, accountId: expectedAccountId };
-  const broker = createAlpacaBroker({ credentials: { keyId: credentials.keyId, secretKey: credentials.secretKey }, tradingOrigin: config.binding.canonicalTradingOrigin, dataOrigin: MARKET_DATA_ORIGIN, clock });
+  const broker = createAlpacaBroker({ credentials: { keyId: credentials.keyId, secretKey: credentials.secretKey }, tradingOrigin: config.binding.canonicalTradingOrigin, dataOrigin: MARKET_DATA_ORIGIN, clock, requestTimeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 30_000) });
+  const bindingObservation = {
+    profile: config.profile,
+    requestedOrigin: config.binding.canonicalTradingOrigin,
+    observedOrigin: config.binding.canonicalTradingOrigin,
+    config: config.binding,
+    brokerReportedAccountId: async (deadlineAtMs?: number): Promise<string | undefined> => (await broker.read.account(deadlineAtMs)).accountId,
+  };
+  const startupBrokerPing = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
+  let verifiedBinding: Awaited<ReturnType<typeof verifyActiveAccount>>;
+  try {
+    verifiedBinding = await verifyActiveAccount(bindingObservation);
+  } catch (error) {
+    const status = httpStatusOf(error);
+    if (status === 401 || status === 403) {
+      await recordStartupBrokerFence({ paths, secrets, clock, instanceId: `${options.instanceId}-account-refusal`, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, reason: "AUTH_FAILURE", detail: `active credentials were rejected while observing broker account identity (HTTP ${String(status)})`, ping: startupBrokerPing });
+    }
+    return { ok: false, stage: "account_binding", reason: `broker account identity could not be observed: ${error instanceof Error ? error.message : String(error)}`, startup };
+  }
+  if (!verifiedBinding.ok) {
+    await recordStartupBrokerFence({ paths, secrets, clock, instanceId: `${options.instanceId}-account-refusal`, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, reason: "ACCOUNT_BINDING_MISMATCH", detail: verifiedBinding.reason, ping: startupBrokerPing });
+    return { ok: false, stage: "account_binding", reason: verifiedBinding.reason, startup };
+  }
+  const binding: AccountBinding = verifiedBinding.binding;
 
   // ---- calendar (S-G6-03): the session and the expiry window come from the exchange calendar ----
   const now = clock();
@@ -133,7 +157,8 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const window: MarketWindow = { underlyings: config.decision.underlyingUniverse, expiries, strikeWindowBps: Math.min(config.decision.maxStrikeDistanceBps, 300) };
 
   // ---- writer authority through the P2 gateway with the real mutation port ----
-  const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: broker.port, instanceId: options.instanceId, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, binding });
+  const boundBrokerPort = createAccountBoundBrokerPort({ ...bindingObservation, expectedBinding: binding, delegate: broker.port, clock });
+  const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: boundBrokerPort, instanceId: options.instanceId, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, binding });
   const [positions, openOrders] = await Promise.all([broker.read.positions(), broker.read.openOrders()]);
   const virgin = positions.every(position => position.quantity === 0) && openOrders.length === 0;
   const acquired = await gateway.acquireAuthority({ account: virgin ? "virgin" : "non_virgin" });
@@ -145,14 +170,22 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   async function haltForAnalyst(detail: string): Promise<void> {
     const draft: JournalDraft = haltDraft({ atIso: epochMsToUtcIso(clock()), epoch }, "CONFIG_INVALID", detail);
     await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "journal_append", entry: draft } });
-    removeHolder(paths);
+    await releaseHolder(paths, options.instanceId);
   }
 
   // ---- the analyst boundary: pinned build/launch verification, exact inventory, then the Claude session over the proxied child ----
   const manifestPath = path.join(repoRoot, config.manifestPath);
   const lockPath = path.join(repoRoot, config.runtimeLockPath);
-  const manifest = validateAnalystManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
-  const lock = validateRuntimeLock(JSON.parse(readFileSync(lockPath, "utf8")));
+  let manifest: ReturnType<typeof validateAnalystManifest>;
+  let lock: ReturnType<typeof validateRuntimeLock>;
+  try {
+    manifest = validateAnalystManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
+    lock = validateRuntimeLock(JSON.parse(readFileSync(lockPath, "utf8")));
+  } catch (error) {
+    const detail = `analyst manifest or runtime lock could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    await haltForAnalyst(detail);
+    return { ok: false, stage: "analyst", reason: detail, startup };
+  }
   if (!manifest.ok || !lock.ok) {
     await haltForAnalyst("analyst manifest or runtime lock invalid");
     return { ok: false, stage: "analyst", reason: [...(manifest.ok ? [] : manifest.issues), ...(lock.ok ? [] : lock.issues)].join("; "), startup };
@@ -164,15 +197,22 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   }
   const devCredentials = roleCredentials(env, "dev");
   const ports = createEnvironmentPorts(environment);
-  const launch = await launchVerifiedAnalystChild({
-    lock: lock.value,
-    manifest: manifest.value,
-    credentials: { devKeyId: devCredentials.keyId, devSecretKey: devCredentials.secretKey },
-    osEnvAllowlist: analystOsAllowlist(),
-    osEnv: analystOsEnv(options.processEnv, environment),
-    evidence: ports.evidence,
-    child: ports.child,
-  });
+  let launch: Awaited<ReturnType<typeof launchVerifiedAnalystChild>>;
+  try {
+    launch = await launchVerifiedAnalystChild({
+      lock: lock.value,
+      manifest: manifest.value,
+      credentials: { devKeyId: devCredentials.keyId, devSecretKey: devCredentials.secretKey },
+      osEnvAllowlist: analystOsAllowlist(),
+      osEnv: analystOsEnv(options.processEnv, environment),
+      evidence: ports.evidence,
+      child: ports.child,
+    });
+  } catch (error) {
+    const detail = `analyst launch failed exceptionally: ${error instanceof Error ? error.message : String(error)}`;
+    await haltForAnalyst(detail);
+    return { ok: false, stage: "analyst", reason: detail, startup };
+  }
   if (!launch.ok) {
     const detail = `analyst launch refused at ${launch.stage}: ${[...launch.violations.map(item => `${item.code}: ${item.detail}`), ...launch.issues].join("; ")}`;
     await haltForAnalyst(detail);
@@ -183,7 +223,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const extra = ports.extra();
   if (observation === null) {
     await child.stop();
-    removeHolder(paths);
+    await releaseHolder(paths, options.instanceId);
     return { ok: false, stage: "digest", reason: "no launch observation was recorded", startup };
   }
   const runtime = computeRuntimeDigest(repoRoot, {
@@ -200,7 +240,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const policy = computePolicyDigest(raw, CANONICAL_PAPER_TRADING_ORIGIN);
   if (!runtime.ok || !policy.ok) {
     await child.stop();
-    removeHolder(paths);
+    await releaseHolder(paths, options.instanceId);
     return { ok: false, stage: "digest", reason: `${runtime.ok ? "" : runtime.reason} ${policy.ok ? "" : policy.reason}`.trim(), startup };
   }
   log(`runtimeDigest ${runtime.digest} policyDigest ${policy.digest}; analyst inventory ${String(launch.inventory.length)} tools`);
@@ -208,7 +248,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const oauthToken = env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "";
   if (oauthToken.length === 0) {
     await child.stop();
-    removeHolder(paths);
+    await releaseHolder(paths, options.instanceId);
     return { ok: false, stage: "analyst", reason: "CLAUDE_CODE_OAUTH_TOKEN is not set", startup };
   }
   const analystDirectory = path.join(paths.root, "analyst");
@@ -216,7 +256,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const analyst = createClaudeAnalyst({
     child,
     oauthToken,
-    model: env["ANALYST_MODEL"] ?? "claude-sonnet-5",
+    model: config.analystModel,
     decisionConfig: config.decision,
     workingDirectory: analystDirectory,
     maxTurns: 16,
@@ -226,7 +266,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     sessionsUntil: expiry => (days.some(day => day.date === expiry) ? remainingSessions(days, tradingDay, expiry) : null),
     log,
   });
-  const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock });
+  const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
 
   const lifecycle = (overrides: CycleOverrides): LifecycleDeps => ({
     flattenDate: overrides.flattenDate ?? config.flattenDate,
@@ -246,28 +286,29 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
       config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
       mcpInventory: launch.inventory, runtimeDigest: runtime.digest, policyDigest: policy.digest, secrets, ping,
       market: () => broker.market(window),
-      cycle: (cycleIndex, overrides = {}) => runCycle({
-        gateway,
-        epoch,
-        paths,
-        binding,
-        broker: overrides.broker ?? broker.read,
-        market: () => broker.market(window),
-        analyst: overrides.analyst ?? analyst,
-        analystTimeoutMs: config.analystTimeoutMs,
-        clock,
-        calendar: session,
-        tradingDay,
-        cycleIndex,
-        profile: config.profile,
-        decisionConfig: config.decision,
-        executionConfig: config.execution,
-        lifecycle: lifecycle(overrides),
-        ping,
-      }),
+      cycle: (cycleIndex, overrides = {}) => runWithinCycleWalltime(config.scheduling.cycleWalltimeBudgetMs, clock, cycleDeadlineMs => runCycle({
+          gateway,
+          epoch,
+          paths,
+          binding,
+          broker: overrides.broker ?? broker.read,
+          market: deadlineAtMs => broker.market(window, deadlineAtMs),
+          analyst: overrides.analyst ?? analyst,
+          analystTimeoutMs: config.analystTimeoutMs,
+          clock,
+          cycleDeadlineMs,
+          calendar: session,
+          tradingDay,
+          cycleIndex,
+          profile: config.profile,
+          decisionConfig: config.decision,
+          executionConfig: config.execution,
+          lifecycle: lifecycle(overrides),
+          ping,
+        })),
       shutdown: async () => {
         await child.stop();
-        removeHolder(paths);
+        await releaseHolder(paths, options.instanceId);
       },
     },
   };

@@ -157,6 +157,7 @@ function knownFields(): readonly string[] {
   "CLOSE_ESCALATION_STEP_CENTS",
   "RESIDUE_MAX_SESSIONS",
   "ANALYST_TIMEOUT_MS",
+  "ANALYST_MODEL",
   "CYCLE_WALLTIME_BUDGET_MS",
   "LOCK_TAKEOVER_BOUND_MS",
   "ANALYST_MCP_CAPABILITY_MANIFEST",
@@ -221,6 +222,7 @@ export interface ValidatedStartup {
   readonly scheduling: SchedulingBounds;
   readonly alertDeliveryBudgetMs: number;
   readonly analystTimeoutMs: number;
+  readonly analystModel: string;
   readonly closeEscalationStepCents: number;
   readonly residueMaxSessions: number;
   readonly qualification: QualificationConfig;
@@ -289,6 +291,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   const closeEscalationStepCents = readInteger(raw, "CLOSE_ESCALATION_STEP_CENTS", violations, { min: 1 });
   const residueMaxSessions = readInteger(raw, "RESIDUE_MAX_SESSIONS", violations, { min: 1 });
   const analystTimeoutMs = readInteger(raw, "ANALYST_TIMEOUT_MS", violations, { min: 1 });
+  const analystModel = readString(raw, "ANALYST_MODEL", violations);
   const cycleWalltimeBudgetMs = readInteger(raw, "CYCLE_WALLTIME_BUDGET_MS", violations, { min: 1 });
   const lockTakeoverBoundMs = readInteger(raw, "LOCK_TAKEOVER_BOUND_MS", violations, { min: 1 });
   const manifestPath = readString(raw, "ANALYST_MCP_CAPABILITY_MANIFEST", violations);
@@ -394,7 +397,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   // Every read above either succeeded or recorded a violation, so the non-null assertions below are guarded by the return.
   if (
     profile === null || expectedAccountId === null || origin === null || stateDir === null || diagnosticSink === null ||
-    decision === null || execution === null || scheduling === null || alertDeliveryBudgetMs === null || analystTimeoutMs === null ||
+    decision === null || execution === null || scheduling === null || alertDeliveryBudgetMs === null || analystTimeoutMs === null || analystModel === null ||
     closeEscalationStepCents === null || residueMaxSessions === null || checkpointMs === null || windowEndMs === null ||
     qualificationMaxLossCents === null || competitionStartMs === null || flattenDate === null ||
     manifestPath === null || runtimeLockPath === null || analystProfile !== "dev"
@@ -413,6 +416,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
       scheduling,
       alertDeliveryBudgetMs,
       analystTimeoutMs,
+      analystModel,
       closeEscalationStepCents,
       residueMaxSessions,
       qualification: { checkpointIso: raw["QUALIFYING_ACTIVITY_CHECKPOINT"] as string, windowEndIso: raw["QUALIFICATION_WINDOW_END"] as string, maxLossCents: qualificationMaxLossCents },

@@ -30,5 +30,6 @@
 - `tests/j7-j8-publication.spec.ts`
 - `tests/j7-j9-golden-path.spec.ts`
 - `tests/j9-projection.spec.ts`
+- `tests/p7-launch-hardening.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`

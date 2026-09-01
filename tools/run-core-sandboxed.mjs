@@ -297,6 +297,7 @@ async function exerciseCore() {
     EXPIRY_MIN_SESSIONS: 2, EXPIRY_MAX_SESSIONS: 10, MAX_STRIKE_DISTANCE_BPS: 1_000, MAX_CANDIDATE_QTY: 5,
     LIMIT_TOLERANCE_CENTS: 5, CLOSE_ESCALATION_STEP_CENTS: 2, RESIDUE_MAX_SESSIONS: 1,
     ANALYST_TIMEOUT_MS: 240_000, CYCLE_WALLTIME_BUDGET_MS: 300_000, LOCK_TAKEOVER_BOUND_MS: 400_000,
+    ANALYST_MODEL: "claude-sonnet-5",
     ANALYST_MCP_CAPABILITY_MANIFEST: "config/analyst-mcp-readonly.json", ANALYST_MCP_RUNTIME_LOCK: "config/analyst-runtime-lock.json",
     ANALYST_ALPACA_PROFILE: "dev", QUALIFYING_ACTIVITY_CHECKPOINT: "2026-09-01T20:00:00Z",
     QUALIFICATION_WINDOW_END: "2026-09-02T20:00:00Z", QUALIFICATION_MAX_LOSS_CENTS: 50_000,
@@ -427,7 +428,7 @@ async function exerciseCore() {
   const alpaca = await loadModuleGraph(context, path.join(DIST, "core", "alpaca-mapping.js"));
   const sha = await loadModuleGraph(context, path.join(DIST, "core", "sha256.js"));
   if (sha.sha256Text("abc") !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") throw new Error("sandboxed sha256 is wrong");
-  const rawConfig = { ALPACA_PROFILE: "dev", EXPECTED_ACCOUNT_ID: "TEST_ONLY_SANDBOX", STATE_DIR: "C:/state", BOOTSTRAP_DIAGNOSTIC_SINK: "C:/sink", ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets", MAX_CANDIDATE_QTY: 5 };
+  const rawConfig = { ALPACA_PROFILE: "dev", EXPECTED_ACCOUNT_ID: "TEST_ONLY_SANDBOX", STATE_DIR: "C:/state", BOOTSTRAP_DIAGNOSTIC_SINK: "C:/sink", ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets", MAX_CANDIDATE_QTY: 5, ANALYST_MODEL: "claude-sonnet-5" };
   const devDigest = certificate.policyDigest(rawConfig, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
   const competitionDigest = certificate.policyDigest({ ...rawConfig, ALPACA_PROFILE: "competition", EXPECTED_ACCOUNT_ID: "PA_OTHER", STATE_DIR: "D:/other" }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
   const changedDigest = certificate.policyDigest({ ...rawConfig, MAX_CANDIDATE_QTY: 6 }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });

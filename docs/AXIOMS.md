@@ -310,13 +310,18 @@ this file.
   Mandatory policy bounds and the analyst's observed read-only capability
   inventory validate fail-closed. `successful_dev_live_test_at` is derived only
   from a machine-readable dev-account certificate tied to the deployed runtime
-  `runtimeDigest` and role-neutral `policyDigest`. It proves credit-mleg acceptance, a broker fill through
-  OUTCOME/reconciliation, fresh quote-size/liquidity inputs, and a terminal dev
+  `runtimeDigest` and role-neutral `policyDigest`. It proves exact one-lot
+  credit-mleg acceptance (broker identity, legs, quantity, and limit all equal
+  the INTENT), a quantitatively exact broker fill through OUTCOME/reconciliation,
+  fresh quote-size/liquidity inputs, and a terminal dev
   account with zero positions and non-terminal orders. Missing, partial, stale,
-  or mismatched evidence blocks competition arming. Only the closed
-  profile/account/credential identity set changes from dev proof to competition
-  arm and is verified separately; the paper origin stays policy and unknown
-  config fields fail closed. (#57 #58 #59 #62 #69 #71)
+  unstable, or mismatched evidence blocks competition arming. The certificate
+  is integrity-checked under the trusted-local-operator threat model; it is not
+  an independent signature against a malicious local forger. Only the closed
+  profile/account/credential identity set and the closed host-local deployment
+  locations change from dev proof to competition arm and are verified
+  separately; the paper origin stays policy and unknown config fields fail
+  closed. (#57 #58 #59 #62 #69 #71)
 
 ---
 

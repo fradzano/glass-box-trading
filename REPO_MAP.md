@@ -45,6 +45,7 @@
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
 - `src/fixtures/p6-golden.ts` — The P6 golden-path fixture contract: the expectations, the qualification
+- `src/shell/account-bound-broker.ts` — S-J-06 at the real mutation boundary: the configured account identity and
 - `src/shell/agent-cli.ts` — One scheduled invocation of the agent: `node dist/shell/agent-cli.js`.
 - `src/shell/agent-runtime.ts` — The composition root for a real run (P7): validate the configuration
 - `src/shell/alpaca-broker.ts` — The real Alpaca adapter (P7): the read side the runner fetches from, the
@@ -52,8 +53,10 @@
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/certificate-cli.ts` — The S-ARM-01 entry point: `node dist/shell/certificate-cli.js --owner-go`.
+- `src/shell/certificate-command-guard.ts` — Pure admission rule for the externally stateful certificate CLI. Runtime
 - `src/shell/certificate-run.ts` — The supervised dev live-test driver (P7, S-ARM-01). It runs the exact
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/cycle-walltime.ts` — Aggregate shell deadline for one cycle. The runner propagates the absolute
 - `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
@@ -74,6 +77,7 @@
 - `src/shell/render-fixture.ts`
 - `src/shell/render-golden-dashboard.ts` — Local golden-path render (SUB-02 first working version, P6): builds
 - `src/shell/runtime-config.ts` — Configuration assembly for a real run (P7). The role-neutral policy is a
+- `src/shell/startup-broker-fence.ts` — Durable refusal after configuration validation but before the real broker
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
@@ -119,6 +123,7 @@
 - `tests/j9-projection.spec.ts` — S-J-09 — the judge-facing performance projection is a pure fold over one
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
+- `tests/p7-launch-hardening.spec.ts`
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy

@@ -143,11 +143,13 @@ export interface CycleDependencies {
   readonly paths: StatePaths;
   readonly binding: AccountBinding;
   readonly broker: BrokerReadPort;
-  readonly market: () => Promise<MarketObservation>;
+  readonly market: (deadlineAtMs?: number) => Promise<MarketObservation>;
   /** Returns the analyst's raw text; may throw or hang — it is invoked at most once per cycle (S-CYC-01). */
   readonly analyst: (input: AnalystInput) => Promise<string>;
   readonly analystTimeoutMs: number;
   readonly clock: () => number;
+  /** Absolute shell wall-clock deadline. Every gateway action and real broker request inherits it. */
+  readonly cycleDeadlineMs?: number;
   readonly calendar: DecisionSnapshot["calendar"];
   readonly tradingDay: string;
   readonly cycleIndex: number;
@@ -275,8 +277,15 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   let declaredHolds: readonly string[] = [];
   const appended = { durable: false };
 
+  async function heartbeatBoundary(phase: string): Promise<void> {
+    if (deps.cycleDeadlineMs === undefined) return;
+    if (deps.clock() >= deps.cycleDeadlineMs) throw new Error(`CYCLE_WALLTIME_EXCEEDED before ${phase}`);
+    if (!await gateway.heartbeat()) throw new Error(`WRITER_HEARTBEAT_FAILED at ${phase}`);
+  }
+
   /** Every exit funnels here: the ping decision is pure and fires exactly once per invocation (S-G14-03). */
   async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
+    await heartbeatBoundary("phase 5");
     const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions });
     if (deps.ping !== null) {
       try {
@@ -290,7 +299,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   async function append(draft: JournalDraft): Promise<boolean> {
-    const result = await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "journal_append", entry: draft } });
+    const result = await gateway.dispatch({ class: "authoritative", epoch, ...(deps.cycleDeadlineMs === undefined ? {} : { deadlineAtMs: deps.cycleDeadlineMs }), action: { kind: "journal_append", entry: draft } });
     if (result.ok) {
       appended.durable = true;
       return true;
@@ -306,11 +315,14 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   async function mutate(mutation: BrokerMutation): Promise<DispatchResult> {
-    return gateway.dispatch({ class: "authoritative", epoch, action: { kind: "broker_mutation", mutation } });
+    const boundedMutation = deps.cycleDeadlineMs === undefined ? mutation : { ...mutation, notAfterMs: deps.cycleDeadlineMs };
+    const result = await gateway.dispatch({ class: "authoritative", epoch, ...(deps.cycleDeadlineMs === undefined ? {} : { deadlineAtMs: deps.cycleDeadlineMs }), action: { kind: "broker_mutation", mutation: boundedMutation } });
+    if (!result.ok && classifyBrokerFailure(result.httpStatus ?? null) === "AUTH_FAILURE") await haltForAuthFailure(result.reason);
+    return result;
   }
 
   async function fetchBook(): Promise<Fetched<BrokerBook> & { readonly partial?: boolean }> {
-    const [account, positions, openOrders] = await Promise.all([fetched(() => deps.broker.account()), fetched(() => deps.broker.positions()), fetched(() => deps.broker.openOrders())]);
+    const [account, positions, openOrders] = await Promise.all([fetched(() => deps.broker.account(deps.cycleDeadlineMs)), fetched(() => deps.broker.positions(deps.cycleDeadlineMs)), fetched(() => deps.broker.openOrders(deps.cycleDeadlineMs))]);
     if (!account.ok || !positions.ok || !openOrders.ok) {
       const failed = [account, positions, openOrders].flatMap(result => (result.ok ? [] : [result]));
       const authStatus = failed.map(result => result.httpStatus).find(status => classifyBrokerFailure(status) === "AUTH_FAILURE") ?? null;
@@ -320,6 +332,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 0: reconcile our own lifecycles against broker truth before any new order (S-CYC-04) ----
+  await heartbeatBoundary("phase 0");
   const opened = await gateway.openJournal();
   let entries: readonly JournalEntry[] = opened.entries;
   const firstFold = assembleFold(entries);
@@ -329,7 +342,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // Every lifecycle without a terminal status is re-read from the broker: an unsubmitted INTENT, a lost
     // acknowledgement (S-CYC-04), and a resting order whose asynchronous fate arrived meanwhile (S-X-04).
     if (record.state !== "intent" && record.state !== "confirmation_unclear" && record.state !== "fillable") continue;
-    const lookup = await fetched(() => deps.broker.orderByClientId(record.clientOrderId));
+    const lookup = await fetched(() => deps.broker.orderByClientId(record.clientOrderId, deps.cycleDeadlineMs));
     if (!lookup.ok) {
       if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
       entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
@@ -362,7 +375,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       const journaledGenerations = firstFold.closes.filter(close => close.closeLifecycleId === lifecycleId).map(close => close.generation);
       const nextGeneration = journaledGenerations.length === 0 ? 0 : Math.max(...journaledGenerations) + 1;
       const attemptId = closeAttemptId(lifecycleId, integerUnit(nextGeneration, "Quantity"));
-      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId));
+      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId, deps.cycleDeadlineMs));
       if (!lookup.ok || lookup.value === null) continue;
       const order = lookup.value;
       const item = {
@@ -395,7 +408,8 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   if (journalDownSincePhaseZero) entriesBlocked.push("JOURNAL_UNAVAILABLE");
 
   // ---- phase 1: one snapshot; a half-answer is an abstention (S-CYC-02) ----
-  const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market())]);
+  await heartbeatBoundary("phase 1");
+  const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market(deps.cycleDeadlineMs))]);
   if (!bookFetch.ok || !marketFetch.ok) {
     // S-G12-06: a broker 401/403 is a credential fence — a distinguishable AUTH_FAILURE that halts, never generic
     // world unavailability. Market-data failures stay in the S-CYC-02 world classes; only the broker port fences.
@@ -508,6 +522,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 2: the analyst, at most once, bounded, never retried in-process (S-CYC-01) ----
+  await heartbeatBoundary("phase 2");
   let analystSkip: string | null = null;
   let batch = parseAnalystOutput("{\"candidates\":[]}");
   const managementOnly = halt.halted || entriesBlocked.length > 0 || gapCycle;
@@ -526,7 +541,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         qualification: structuredClone(qualificationBrief(qualification, qualificationConfig)),
         // A deep copy: the analyst boundary must not be able to reach the snapshot the gates judge (gate finding G1-F6, P7).
         market: structuredClone({ contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying }),
-      }), deps.analystTimeoutMs);
+      }), deps.cycleDeadlineMs === undefined ? deps.analystTimeoutMs : Math.max(1, Math.min(deps.analystTimeoutMs, deps.cycleDeadlineMs - deps.clock())));
       batch = parseAnalystOutput(raw);
     } catch (error) {
       analystSkip = messageOf(error);
@@ -534,6 +549,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 3: price from the decision's own quotes, then decide ----
+  await heartbeatBoundary("phase 3");
   const decision: PricedDecision = priceAndDecide(snapshot, batch, deps.decisionConfig, deps.executionConfig, deps.clock());
 
   // ---- P5 lifecycle entry vetoes: EXPIRY (S-G9-01) and DEADLINE (S-G11-01/02), after the gate vector ----
@@ -581,6 +597,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 4: execute every approved action through INTENT → revalidation → gateway → OUTCOME ----
+  await heartbeatBoundary("phase 4");
   for (const plan of approvedActions) {
     if (entriesBlocked.length > 0 || journalFailure() !== null) {
       actions.push({ clientOrderId: plan.clientOrderId, result: "NOT_SENT", status: null, detail: entriesBlocked.length > 0 ? entriesBlocked.join(",") : journalFailure() });
@@ -639,7 +656,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     let derived = outcomeFromSubmit(outcomeContext, observation);
     if (derived === null) {
       // Post-submit status check (S-X-04): an asynchronous rejection or fill that arrived meanwhile is picked up now.
-      const later = await fetched(() => deps.broker.orderByClientId(plan.clientOrderId));
+      const later = await fetched(() => deps.broker.orderByClientId(plan.clientOrderId, deps.cycleDeadlineMs));
       if (later.ok && later.value !== null) derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
     }
     if (derived !== null) await append(derived.draft);
@@ -689,7 +706,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
 
   async function submitObservation(dispatched: DispatchResult, clientOrderId: string): Promise<SubmitObservation | null> {
     const lookup = async (): Promise<BrokerOrderRecord | null> => {
-      const found = await fetched(() => deps.broker.orderByClientId(clientOrderId));
+      const found = await fetched(() => deps.broker.orderByClientId(clientOrderId, deps.cycleDeadlineMs));
       return found.ok ? found.value : null;
     };
     if (dispatched.ok) {
@@ -717,7 +734,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     for (let generation = 0; generation <= highest + 1; generation += 1) {
       const attemptId = closeAttemptId(lifecycleId, integerUnit(generation, "Quantity"));
       const known = journaledCloses.find(close => close.attemptId === attemptId);
-      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId));
+      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId, deps.cycleDeadlineMs));
       const order = lookup.ok ? lookup.value : null;
       if (known === undefined && order === null) continue;
       attempts.push({
@@ -778,7 +795,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     if (plan.kind === "ADOPT") {
       const restingId = plan.attemptId;
       await mutate({ kind: "cancel_order", clientOrderId: restingId, binding });
-      const after = await fetched(() => deps.broker.orderByClientId(restingId));
+      const after = await fetched(() => deps.broker.orderByClientId(restingId, deps.cycleDeadlineMs));
       const record = after.ok ? after.value : null;
       const reconciliation = reconcileCancel(record);
       if (record !== null) {
@@ -849,7 +866,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       for (const order of book.openOrders) {
         if (!isWorkingBrokerStatus(order.status) || classifyWorkingOrder(order, book.positions) !== "risk_increasing") continue;
         await mutate({ kind: "cancel_order", clientOrderId: order.clientOrderId, binding });
-        const after = await fetched(() => deps.broker.orderByClientId(order.clientOrderId));
+        const after = await fetched(() => deps.broker.orderByClientId(order.clientOrderId, deps.cycleDeadlineMs));
         const record = after.ok ? after.value : null;
         const entryRecord = lifecyclesNow.find(item => item.clientOrderId === order.clientOrderId);
         if (record !== null && entryRecord !== undefined) {
@@ -939,7 +956,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // that can journal the kill. Only the emergency close may follow below.
     for (const clientOrderId of journalAvailable ? plan.cancel : []) {
       const dispatched = await mutate({ kind: "cancel_order", clientOrderId, binding });
-      const after = await fetched(() => deps.broker.orderByClientId(clientOrderId));
+      const after = await fetched(() => deps.broker.orderByClientId(clientOrderId, deps.cycleDeadlineMs));
       const reconciliation = reconcileCancel(after.ok ? after.value : null);
       cancelRaces[clientOrderId] = reconciliation;
       if (reconciliation === "CANCELED") canceled.push(clientOrderId);

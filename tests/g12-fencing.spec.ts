@@ -448,9 +448,12 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(importers).toEqual(["mutation-gateway.ts"]);
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
     // watchdog.ts (P5) constructs its own gateway like gateway-cli; it never calls the port directly.
-    // agent-runtime.ts (P7) is the composition root: it constructs the gateway with the real Alpaca port exactly like
-    // gateway-cli constructs it with the fake; it never calls the port itself.
-    expect(brokerUsers.sort()).toEqual(["agent-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "watchdog.ts"]);
+    // agent-runtime.ts (P7) is the composition root: it constructs the gateway with the account-bound real Alpaca
+    // port exactly like gateway-cli constructs it with the fake; it never calls the port itself.
+    // account-bound-broker.ts is the gateway's final delegate wrapper: it independently re-observes account identity
+    // immediately before forwarding a mutation and has no other caller.
+    // startup-broker-fence.ts constructs a brokerless gateway only to journal a pre-runtime refusal.
+    expect(brokerUsers.sort()).toEqual(["account-bound-broker.ts", "agent-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "startup-broker-fence.ts", "watchdog.ts"]);
     for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts", "agent-runtime.ts", "certificate-run.ts", "certificate-cli.ts", "agent-cli.ts"]) {
       expect(readFileSync(path.join(shellDirectory, name), "utf8")).not.toMatch(/\.mutate\(/u);
     }

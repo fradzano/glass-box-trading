@@ -94,7 +94,7 @@ function inputs(overrides: Partial<CertificateInputs> = {}): CertificateInputs {
     orderObservations: observations(),
     harnessCancels: [],
     fence: { httpStatus: 401, workingOrdersAtFence: [], canceledAtFence: [] },
-    finalSnapshot: { at: "2026-09-01T15:09:00.000Z", accountId: ACCOUNT, cashCents: 10_000_100, equityCents: 10_000_100, positions: [], nonTerminalOrders: [], orderPagesFetched: 1, pagesComplete: true },
+    finalSnapshot: { at: "2026-09-01T15:09:00.000Z", accountId: ACCOUNT, cashCents: 10_000_100, equityCents: 10_000_100, positions: [], nonTerminalOrders: [], orderPagesFetched: 1, pagesComplete: true, consistentReads: 2 },
     ...overrides,
   };
 }
@@ -109,7 +109,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(certificate.evidence.creditAcceptance).toMatchObject({ clientOrderId: "entry:credit", acceptedStatus: "accepted", terminalStatus: "filled", intentSeq: 3, outcomeSeq: 4, brokerOrderId: "broker-1", harnessRequestedCancel: false });
     expect(certificate.evidence.fill).toMatchObject({ clientOrderId: "entry:credit", filledQuantity: 1, avgFillPriceCents: 19, outcomeSeq: 4, reconciledSnapshotSeq: 5, filledAt: "2026-09-01T14:03:05.000Z" });
     expect(certificate.evidence.fence).toEqual({ httpStatus: 401, haltSeq: 6, unhaltSeq: 7, workingOrdersAtFence: [], canceledAtFence: [] });
-    expect(certificate.evidence.finalSnapshot).toMatchObject({ positionCount: 0, nonTerminalOrderCount: 0, pagesComplete: true, accountId: ACCOUNT });
+    expect(certificate.evidence.finalSnapshot).toMatchObject({ positionCount: 0, nonTerminalOrderCount: 0, pagesComplete: true, consistentReads: 2, accountId: ACCOUNT });
     expect(successfulDevLiveTestAt(certificate)).toBe("2026-09-01T15:10:00.000Z");
     expect(certificate.fieldClassificationVersion).toBe(CONFIG_FIELD_CLASSIFICATION_VERSION);
   });
@@ -119,6 +119,32 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(certificate.verdict).toBe("PASS");
     expect(certificate.evidence.creditAcceptance).toMatchObject({ acceptedStatus: "filled", terminalStatus: "filled" });
     expect(buildCertificate(inputs({ orderObservations: [] })).failures).toContain("no credit entry lifecycle reached a positive broker acceptance followed by a filled or harness-canceled OUTCOME");
+  });
+
+  it("binds acceptance to the exact intended broker Mleg, quantity, limit, and terminal broker identity", () => {
+    const wrongShape = observations().map(item => ({ ...item, order: { ...item.order, quantity: 5, limit: { kind: "debit" as const, priceCents: 99 }, legs: [item.order.legs[0]!] } }));
+    const shapeCertificate = buildCertificate(inputs({ orderObservations: wrongShape }));
+    expect(shapeCertificate.verdict).toBe("FAIL");
+    expect(shapeCertificate.failures.some(item => item.includes("does not equal the journaled credit Mleg"))).toBe(true);
+
+    const foreignOutcomeIdentity = passingJournal().map(item => item.seq === 4 ? { ...item, brokerOrderId: "broker-other" } : item);
+    const identityCertificate = buildCertificate(inputs({ journal: foreignOutcomeIdentity }));
+    expect(identityCertificate.verdict).toBe("FAIL");
+    expect(identityCertificate.failures.some(item => item.includes("does not equal the terminal OUTCOME"))).toBe(true);
+  });
+
+  it("requires an exact one-lot quantitative reconciliation, not merely matching position signs", () => {
+    const oversizedPositions = passingJournal().map(item => item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: -100 }, { contractId: LONG, quantity: 100 }]) } : item);
+    expect(buildCertificate(inputs({ journal: oversizedPositions })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+
+    const fiveLotJournal = passingJournal().map(item => {
+      if (item.seq === 3) return { ...item, quantity: 5 };
+      if (item.seq === 4) return { ...item, filledQuantity: 5 };
+      if (item.seq === 5) return { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: -5 }, { contractId: LONG, quantity: 5 }]) };
+      return item;
+    });
+    const fiveLotObservations = observations().map(item => ({ ...item, order: { ...item.order, quantity: 5, filledQuantity: item.order.status === "filled" ? 5 : 0 } }));
+    expect(buildCertificate(inputs({ journal: fiveLotJournal, orderObservations: fiveLotObservations })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
   });
 
   it("a harness-canceled credit still counts as acceptance evidence, but a fill from another entry is still required", () => {
@@ -243,6 +269,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
     expect(buildCertificate(inputs({ journal: passingJournal({ fence: false }) })).failures).toContain("no AUTH_FAILURE halt was journaled by the fence drill");
     expect(buildCertificate(inputs({ journal: passingJournal({ unhalt: false }) })).failures.some(item => item.includes("was not cleared"))).toBe(true);
+    expect(buildCertificate(inputs({ fence: { httpStatus: 401, workingOrdersAtFence: ["resting"], canceledAtFence: [] } })).failures).toContain("the fence drill left working order(s) without confirmed cancellation: resting");
   });
 
   it("the final snapshot must be flat, fully paginated, and on the bound account; the inventory must have been accepted; the window ordered", () => {
@@ -252,12 +279,20 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ finalSnapshot: { ...final, positions: [{ contractId: SHORT, quantity: -1, avgEntryPriceCents: 0 }] } })).failures).toContain("the final snapshot holds 1 open position(s)");
     expect(buildCertificate(inputs({ finalSnapshot: { ...final, nonTerminalOrders: ["x"] } })).failures).toContain("the final snapshot holds 1 non-terminal order(s)");
     expect(buildCertificate(inputs({ finalSnapshot: { ...final, pagesComplete: false } })).failures).toContain("the final order history pagination is incomplete");
+    expect(buildCertificate(inputs({ finalSnapshot: { ...final, consistentReads: 1 } })).failures).toContain("the final snapshot was not confirmed by two consecutive identical broker reads");
     expect(buildCertificate(inputs({ finalSnapshot: { ...final, accountId: "PA000000" } })).failures).toContain("the final snapshot reports a different account than the certificate binds");
     expect(buildCertificate(inputs({ finalSnapshot: null })).failures).toContain("no final fully paginated dev snapshot was taken");
     expect(buildCertificate(inputs({ mcpInventoryAccepted: false })).failures).toContain("the pinned MCP runtime/inventory verification did not pass");
     expect(buildCertificate(inputs({ window: { startedAt: "2026-09-01T16:00:00.000Z", endedAt: "2026-09-01T15:00:00.000Z" } })).failures).toContain("the test window is not a pair of ordered UTC instants");
     expect(buildCertificate(inputs({ tradingOrigin: "https://api.alpaca.markets" })).failures).toContain("the trading origin is not the canonical paper origin");
     expect(successfulDevLiveTestAt(buildCertificate(inputs({ finalSnapshot: null })))).toBeNull();
+  });
+
+  it("a retry judges only journal facts inside its own certificate window", () => {
+    const historicalReject = { ...entry(0, "OUTCOME", { clientOrderId: "old", status: "rejected", brokerOrderId: "old", brokerTimestamps: {}, filledQuantity: 0, avgFillPriceCents: null, reasonCodes: [], binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT }, brokerReason: "old" }), at: "2026-08-31T14:00:00.000Z" } as JournalEntry;
+    const certificate = buildCertificate(inputs({ journal: [historicalReject, ...passingJournal()] }));
+    expect(certificate.verdict).toBe("PASS");
+    expect(certificate.failures).toEqual([]);
   });
 });
 
@@ -281,7 +316,7 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     if (!dev.ok) return;
     expect(dev.material).not.toContain(ACCOUNT);
     expect(dev.material).not.toContain("C:\\\\state");
-    expect(dev.material).toContain("\"fieldClassificationVersion\":1");
+    expect(dev.material).toContain(`"fieldClassificationVersion":${String(CONFIG_FIELD_CLASSIFICATION_VERSION)}`);
     expect(dev.digest).toBe(createHash("sha256").update(dev.material, "utf8").digest("hex"));
   });
 
@@ -289,6 +324,8 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     const base = policyDigest(raw, { canonicalTradingOrigin: ORIGIN });
     const changed = policyDigest({ ...raw, MAX_CANDIDATE_QTY: 6 }, { canonicalTradingOrigin: ORIGIN });
     expect(base.ok && changed.ok && base.digest !== changed.digest).toBe(true);
+    const changedModel = policyDigest({ ...raw, ANALYST_MODEL: "claude-opus-5" }, { canonicalTradingOrigin: ORIGIN });
+    expect(base.ok && changedModel.ok && base.digest !== changedModel.digest).toBe(true);
     expect(policyDigest({ ...raw, EXTRA: true }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
     // Gate finding G1-F3: undefined never collides with null.
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: undefined }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
@@ -354,8 +391,10 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(violationsOf(serialized, { ...expectations, policyDigest: DIGEST_A })).toContain("policyDigest mismatch: a role-neutral policy change invalidates the certificate");
     expect(violationsOf({ ...serialized, verdict: "FAIL" })).toContain("certificate verdict is not PASS");
     expect(violationsOf({ ...serialized, failures: ["x"] })).toContain("certificate carries failures");
+    expect(violationsOf({ ...serialized, verdict: "FAIL" })).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
+    expect(violationsOf({ ...serialized, failures: ["x"] })).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
     expect(violationsOf({ ...serialized, manual: true })).toContain("certificate schema mismatch: unexpected or missing fields");
-    expect(violationsOf({ ...serialized, fieldClassificationVersion: 2 })).toContain("certificate field-classification version differs from this build");
+    expect(violationsOf({ ...serialized, fieldClassificationVersion: CONFIG_FIELD_CLASSIFICATION_VERSION + 1 })).toContain("certificate field-classification version differs from this build");
     expect(violationsOf({ ...serialized, tradingOrigin: "https://api.alpaca.markets" })).toContain("certificate origin is not the canonical paper origin");
     expect(violationsOf({ ...serialized, role: "competition" })).toContain("certificate role is not the dev role");
     expect(violationsOf(buildCertificate(inputs({ finalSnapshot: null })))).toContain("certificate verdict is not PASS");
@@ -371,7 +410,7 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(violationsOf({ ...serialized, window: { startedAt: "2026-02-30T13:35:00.000Z", endedAt: "2026-02-30T15:10:00.000Z" } })).toContain("certificate window is malformed");
     expect(violationsOf({ ...serialized, evidence: { liquidity: [{}], creditAcceptance: {}, fill: {}, fence: {}, finalSnapshot: {} } })).toContain("certificate fill evidence is absent or malformed");
     const evidence = serialized["evidence"] as Record<string, unknown>;
-    expect(violationsOf({ ...serialized, evidence: { ...evidence, finalSnapshot: { ...(evidence["finalSnapshot"] as Record<string, unknown>), positionCount: 1 } } })).toContain("certificate final snapshot is not flat and fully paginated");
+    expect(violationsOf({ ...serialized, evidence: { ...evidence, finalSnapshot: { ...(evidence["finalSnapshot"] as Record<string, unknown>), positionCount: 1 } } })).toContain("certificate final snapshot is not flat, stable, and fully paginated");
     expect(violationsOf({ ...serialized, evidence: { ...evidence, fence: { ...(evidence["fence"] as Record<string, unknown>), httpStatus: 500 } } })).toContain("certificate fence evidence is not a credential rejection");
     // G3-N2: clause fields are typed, and every evidence instant must lie inside the certificate window.
     expect(violationsOf({ ...serialized, evidence: { ...evidence, fill: { ...(evidence["fill"] as Record<string, unknown>), filledQuantity: "1" } } })).toContain("certificate fill.filledQuantity has the wrong type");

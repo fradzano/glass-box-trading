@@ -171,9 +171,8 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
       clearTimeout(timer);
     }
     if (failure !== null) throw new Error(`analyst session ended without a result: ${failure}`);
-    // The JSON object is the whole answer; a fenced or prefixed reply is trimmed to its outermost braces, nothing else is repaired.
-    const start = finalText.indexOf("{");
-    const end = finalText.lastIndexOf("}");
-    return start >= 0 && end > start ? finalText.slice(start, end + 1) : finalText;
+    // The JSON object must be the whole answer. Prefixes, fences and suffixes stay present so the core's
+    // structural parser rejects them; the shell never repairs an analyst protocol violation.
+    return finalText;
   };
 }

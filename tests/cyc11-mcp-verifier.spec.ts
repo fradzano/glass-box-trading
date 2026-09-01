@@ -159,11 +159,11 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   const lock = trackedLock();
   const manifest = trackedManifest();
 
-  function fakePorts(options: { readonly observation?: Partial<McpLaunchObservation>; readonly offeredTools?: readonly string[]; readonly surviving?: readonly string[] }): { readonly ports: McpLaunchPorts; readonly calls: readonly string[]; readonly stopped: { count: number } } {
+  function fakePorts(options: { readonly observation?: Partial<McpLaunchObservation>; readonly offeredTools?: readonly string[]; readonly surviving?: readonly string[]; readonly inventoryError?: Error }): { readonly ports: McpLaunchPorts; readonly calls: readonly string[]; readonly stopped: { count: number } } {
     const calls: string[] = [];
     const stopped = { count: 0 };
     const child: McpChildHandle = {
-      listTools: () => { calls.push("listTools"); return Promise.resolve(options.offeredTools ?? manifest.allowedTools); },
+      listTools: () => { calls.push("listTools"); return options.inventoryError === undefined ? Promise.resolve(options.offeredTools ?? manifest.allowedTools) : Promise.reject(options.inventoryError); },
       stop: () => { stopped.count += 1; return Promise.resolve(); },
     };
     const ports: McpLaunchPorts = {
@@ -219,6 +219,12 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
     if (result.ok) return;
     expect(result.stage).toBe("inventory");
     expect(result.violations.map(item => item.code)).toContain("EXTRA_TOOL");
+    expect(stopped.count).toBe(1);
+  });
+
+  it("stops the spawned child when inventory transport fails exceptionally", async () => {
+    const { ports, stopped } = fakePorts({ inventoryError: new Error("inventory transport lost") });
+    await expect(launchVerifiedAnalystChild(ports)).rejects.toThrow("inventory transport lost");
     expect(stopped.count).toBe(1);
   });
 

@@ -67,7 +67,13 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   if (!preSpawn.ok) return { ok: false, stage: "pre_spawn", violations: preSpawn.violations, issues: [] };
 
   const child = await ports.child.spawn(childEnvironment);
-  const inventory = await child.listTools();
+  let inventory: readonly string[];
+  try {
+    inventory = await child.listTools();
+  } catch (error) {
+    await child.stop();
+    throw error;
+  }
   const accepted = verifyMcpInventory(ports.manifest, inventory);
   if (!accepted.ok) {
     await child.stop();

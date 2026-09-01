@@ -27,7 +27,7 @@ function walk(root: string, directory: string, predicate: (relative: string) => 
     const absolute = path.join(directory, entry.name);
     const relative = path.relative(root, absolute).split(path.sep).join("/");
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git" || entry.name === ".tmp" || entry.name === "artifacts") continue;
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".tmp" || entry.name === "artifacts") continue;
       walk(root, absolute, predicate, out);
     } else if (predicate(relative)) {
       out.push(relative);
@@ -35,11 +35,12 @@ function walk(root: string, directory: string, predicate: (relative: string) => 
   }
 }
 
-/** Executable code, schemas, and locks: `src/**`, `config/*.json`, the package manifest and lock, the compiler configs, and `tools/`. */
+/** Executable code, built Node artifacts, schemas, and locks. The digest binds both reviewed source and every built JavaScript byte Node executes. */
 export function enumerateRuntimeFiles(repoRoot: string): readonly { readonly path: string; readonly sha256: string }[] {
   const files: string[] = [];
   walk(repoRoot, repoRoot, relative =>
     (relative.startsWith("src/") && relative.endsWith(".ts"))
+    || (relative.startsWith("dist/") && relative.endsWith(".js"))
     || (relative.startsWith("config/") && relative.endsWith(".json"))
     || (relative.startsWith("tools/") && (relative.endsWith(".mjs") || relative.endsWith(".py")))
     || relative === "package.json" || relative === "package-lock.json" || relative === "tsconfig.json" || relative === "tsconfig.build.json",

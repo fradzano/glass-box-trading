@@ -12,6 +12,14 @@ export class BrokerHttpError extends Error {
   }
 }
 
+/** Active credentials reported an account other than the separately configured role identity. */
+export class AccountBindingError extends Error {
+  constructor(readonly reason: string) {
+    super(`ACCOUNT_BINDING_MISMATCH:${reason}`);
+    this.name = "AccountBindingError";
+  }
+}
+
 export function httpStatusOf(error: unknown): number | null {
   return error instanceof BrokerHttpError ? error.status : null;
 }

@@ -13,12 +13,15 @@ import { readHaltState, writeHaltState } from "./halt-state.js";
 import { appendJournalLine, quarantineTornTail, readJournalFile } from "./journal-store.js";
 import type { JournalFile } from "./journal-store.js";
 import type { StatePaths } from "./state-dir.js";
+import { AccountBindingError, httpStatusOf } from "./broker-errors.js";
 
 export interface BrokerMutation {
   readonly kind: "submit_order" | "cancel_order" | "close_position";
   readonly clientOrderId: string;
   readonly binding: AccountBinding;
   readonly payload?: unknown;
+  /** Absolute wall-clock deadline inherited from the cycle; the adapter must not mutate after it. */
+  readonly notAfterMs?: number;
 }
 
 export type BrokerMutationResult = { readonly ok: true; readonly brokerOrderId: string } | { readonly ok: false; readonly reason: string };
@@ -37,7 +40,7 @@ export type GatewayAction =
   | { readonly kind: "broker_mutation"; readonly mutation: BrokerMutation };
 
 export type MutationRequest =
-  | { readonly class: "authoritative"; readonly epoch: number | null; readonly action: GatewayAction }
+  | { readonly class: "authoritative"; readonly epoch: number | null; readonly deadlineAtMs?: number; readonly action: GatewayAction }
   | { readonly class: "witness"; readonly action: GatewayAction };
 
 export type DispatchResult =
@@ -49,6 +52,8 @@ export type DispatchResult =
     readonly lockHeld: boolean;
     /** Present when the broker port itself answered or threw; absent when the gateway refused before the port. */
     readonly source?: "broker_port";
+    /** Preserved from a typed broker transport error so 401/403 cannot be downgraded to an ordinary rejection. */
+    readonly httpStatus?: number;
   };
 
 export type AcquisitionResult =
@@ -82,7 +87,7 @@ export interface MutationGateway {
   heartbeat(): Promise<boolean>;
   dispatch(request: MutationRequest): Promise<DispatchResult>;
   /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04. */
-  dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string }): Promise<DispatchResult>;
+  dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string; readonly expectedHaltSeq?: number; readonly expectedHaltReason?: string }): Promise<DispatchResult>;
 }
 
 function utcIso(ms: number): string {
@@ -137,6 +142,9 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
   }
 
   async function dispatchUnderLock(request: MutationRequest): Promise<DispatchResult> {
+    if (request.class === "authoritative" && request.deadlineAtMs !== undefined && clock() >= request.deadlineAtMs) {
+      return { ok: false, reason: "CYCLE_WALLTIME_EXCEEDED", lockHeld: true };
+    }
     const store = readEpochStore(paths);
     const entryType = request.action.kind === "journal_append" ? String((request.action.entry as { readonly type?: unknown }).type) : "";
     const authorization = authorizeMutation(
@@ -182,8 +190,13 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         const broker = await options.brokerPort.mutate(request.action.mutation);
         return broker.ok ? { ok: true, broker } : { ok: false, reason: redact(broker.reason), lockHeld: true, source: "broker_port" };
       } catch (error) {
+        if (error instanceof AccountBindingError) {
+          haltForBindingMismatch(entries, epoch, error.message);
+          return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true, source: "broker_port" };
+        }
         // The port threw after the gateway authorized: the order may or may not exist at the broker (S-CYC-04).
-        return { ok: false, reason: `PORT_ERROR:${redact(messageOf(error))}`, lockHeld: true, source: "broker_port" };
+        const httpStatus = httpStatusOf(error);
+        return { ok: false, reason: `PORT_ERROR:${redact(messageOf(error))}`, lockHeld: true, source: "broker_port", ...(httpStatus === null ? {} : { httpStatus }) };
       }
     }
 
@@ -321,6 +334,14 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         const current = haltStateFrom(entries);
         if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
         if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };
+        if (action.expectedHaltSeq !== undefined || action.expectedHaltReason !== undefined) {
+          const transition = [...entries].reverse().find(entry => entry.type === "HALT" || entry.type === "UNHALT");
+          if (transition === undefined || transition.type !== "HALT"
+            || (action.expectedHaltSeq !== undefined && transition.seq !== action.expectedHaltSeq)
+            || (action.expectedHaltReason !== undefined && transition["reason"] !== action.expectedHaltReason)) {
+            return { ok: false, reason: "HALT_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
+          }
+        }
         const appended = appendUnderLock(entries, { at: utcIso(clock()), epoch: store.epoch, type: "UNHALT", operator: action.operator, reason: action.reason, actor: "human" });
         if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
         return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
