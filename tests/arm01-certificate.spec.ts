@@ -145,6 +145,14 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ journal: noSamples })).failures).toContain("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   });
 
+  it("gate findings G1-F1/G1-F2: a duplicate sample for one leg does not cover the other, and acceptance must precede the terminal instant", () => {
+    const duplicated = passingJournal().map(item => (item.seq === 2 ? { ...item, snapshot: { ...snapshot([]), quoteSamples: { SPY: { [SHORT]: sample(50, 52) }, QQQ: { [SHORT]: sample(50, 52) } } } } : item));
+    expect(buildCertificate(inputs({ journal: duplicated })).failures).toContain("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
+    const late = buildCertificate(inputs({ orderObservations: [{ observedAt: "2026-09-01T16:00:00.000Z", order: { ...order("accepted", false), brokerTimestamps: { submitted_at: "2026-09-01T16:00:00.000Z" } } }] }));
+    expect(late.verdict).toBe("FAIL");
+    expect(late.failures.some(item => item.includes("does not precede the terminal instant"))).toBe(true);
+  });
+
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
     expect(buildCertificate(inputs({ fence: null })).failures).toContain("the credential-fence drill was not performed");
     expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
@@ -197,6 +205,11 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     const changed = policyDigest({ ...raw, MAX_CANDIDATE_QTY: 6 }, { canonicalTradingOrigin: ORIGIN });
     expect(base.ok && changed.ok && base.digest !== changed.digest).toBe(true);
     expect(policyDigest({ ...raw, EXTRA: true }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    // Gate finding G1-F3: undefined never collides with null.
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: undefined }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    const withNull = policyDigest({ ...raw, MAX_CANDIDATE_QTY: null }, { canonicalTradingOrigin: ORIGIN });
+    expect(withNull.ok && base.ok && withNull.digest !== base.digest).toBe(true);
+    expect(() => canonicalJson({ a: undefined })).toThrow(RangeError);
     expect(policyDigest({ ...raw, ALPACA_TRADING_ORIGIN: "https://api.alpaca.markets" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
   });
 
@@ -213,6 +226,8 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     expect(runtimeDigest({ files: [], analystRuntime }).ok).toBe(false);
     expect(runtimeDigest({ files: [files[0] as { path: string; sha256: string }, files[0] as { path: string; sha256: string }], analystRuntime }).ok).toBe(false);
     expect(runtimeDigest({ files, analystRuntime: { ...analystRuntime, launchArtifactsSha256: "short" } }).ok).toBe(false);
+    expect(runtimeDigest({ files, analystRuntime: { ...analystRuntime, sourceRepository: undefined as unknown as string } }).ok).toBe(false);
+    expect(runtimeDigest({ files, analystRuntime: { ...analystRuntime, sourceRepository: "" } }).ok).toBe(false);
   });
 
   it("the core's SHA-256 and canonical JSON agree with node:crypto on the vectors the digests depend on", () => {
@@ -245,5 +260,12 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(violationsOf({ ...serialized, role: "competition" })).toContain("certificate role is not the dev role");
     expect(violationsOf(buildCertificate(inputs({ finalSnapshot: null })))).toContain("certificate verdict is not PASS");
     expect(violationsOf("not an object")).toEqual(["certificate is not an object"]);
+    // Gate finding G1-F4: the nested structure is validated, not only the top-level keys.
+    expect(violationsOf({ ...serialized, evidence: null })).toContain("certificate evidence is malformed");
+    expect(violationsOf({ ...serialized, evidence: { ...(serialized["evidence"] as Record<string, unknown>), fill: null } })).toContain("certificate fill evidence is absent");
+    expect(violationsOf({ ...serialized, accountId: "" })).toContain("certificate account ID is malformed");
+    expect(violationsOf({ ...serialized, window: { startedAt: "2026-09-01T13:35:00.000Z", endedAt: "not-an-iso" } })).toContain("certificate window is malformed");
+    expect(violationsOf({ ...serialized, window: { startedAt: "2026-09-01T16:00:00.000Z", endedAt: "2026-09-01T15:10:00.000Z" } })).toContain("certificate window is malformed");
+    expect(violationsOf({ ...serialized, failures: { "0": "failure", length: 1 } })).toContain("certificate failures is not an array");
   });
 });

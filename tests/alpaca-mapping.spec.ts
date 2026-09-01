@@ -46,6 +46,8 @@ describe("money and timestamps", () => {
     expect(dollarsToCents("0.0400")).toBe(4);
     expect(dollarsToCents("1.235")).toBeNull();
     expect(dollarsToCents("abc")).toBeNull();
+    expect(Object.is(dollarsToCents("-0.00"), 0)).toBe(true);
+    expect(Object.is(dollarsToCentsRounded("-0.001"), 0)).toBe(true);
     expect(dollarsToCentsRounded("1.235")).toBe(124);
     expect(dollarsToCentsRounded("1.234")).toBe(123);
     expect(dollarsToCentsRounded("-1.235")).toBe(-124);
@@ -58,6 +60,10 @@ describe("money and timestamps", () => {
     expect(normalizeBrokerIso("2026-08-31T20:29:24.230427647-04:00")).toBe("2026-09-01T00:29:24.230Z");
     expect(normalizeBrokerIso("2026-03-08T01:30:00+05:30")).toBe("2026-03-07T20:00:00.000Z");
     expect(normalizeBrokerIso("yesterday")).toBeNull();
+    // Gate finding G1-F5: a 60-minute offset component is malformed, not arithmetic.
+    expect(normalizeBrokerIso("2026-01-01T00:00:00+00:60")).toBeNull();
+    expect(normalizeBrokerIso("2026-01-01T00:00:00+15:00")).toBeNull();
+    expect(normalizeBrokerIso("2026-12-31T23:59:59.9999+00:30")).toBe("2026-12-31T23:29:59.999Z");
   });
 });
 
@@ -83,6 +89,10 @@ describe("documents", () => {
     expect(mapped?.avgFillPriceCents).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, legs: [{ symbol: "X", side: "hold" }] })).toBeNull();
     expect(mapOrder({ ...RECORDED_ORDER, limit_price: "0.005" })).toBeNull();
+    // Gate finding G1-F5: non-positive quantities and impossible fills are malformed records.
+    expect(mapOrder({ ...RECORDED_ORDER, qty: "0" })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, qty: "-1" })).toBeNull();
+    expect(mapOrder({ ...RECORDED_ORDER, qty: "1", filled_qty: "2" })).toBeNull();
   });
 
   it("maps a filled debit single-leg order with a rounded average fill", () => {

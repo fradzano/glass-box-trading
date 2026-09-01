@@ -27,7 +27,8 @@ export function dollarsToCents(value: unknown): number | null {
   const fraction = (match[3] ?? "").replace(/0+$/, "");
   if (fraction.length > 2) return null;
   const cents = Number(whole) * 100 + Number((fraction + "00").slice(0, 2));
-  return Number.isSafeInteger(cents) ? sign * cents : null;
+  if (!Number.isSafeInteger(cents)) return null;
+  return cents === 0 ? 0 : sign * cents;
 }
 
 /** Decimal text to cents rounded half away from zero — only for broker-reported average fill prices. */
@@ -43,7 +44,8 @@ export function dollarsToCentsRounded(value: unknown): number | null {
   const rest = fraction.slice(2);
   const roundUp = rest.length > 0 && Number(rest[0]) >= 5;
   const cents = Number(whole) * 100 + twoDigits + (roundUp ? 1 : 0);
-  return Number.isSafeInteger(cents) ? sign * cents : null;
+  if (!Number.isSafeInteger(cents)) return null;
+  return cents === 0 ? 0 : sign * cents;
 }
 
 export function centsToDollars(cents: number): string {
@@ -72,7 +74,10 @@ export function normalizeBrokerIso(value: unknown): string | null {
   const base = utcIsoToEpochMs(local);
   if (base === null) return null;
   const sign = zone.startsWith("-") ? -1 : 1;
-  const offsetMinutes = sign * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(4, 6)));
+  const offsetHours = Number(zone.slice(1, 3));
+  const offsetMinutePart = Number(zone.slice(4, 6));
+  if (offsetHours > 14 || offsetMinutePart > 59) return null;
+  const offsetMinutes = sign * (offsetHours * 60 + offsetMinutePart);
   return epochMsToIso(base - offsetMinutes * 60_000);
 }
 
@@ -146,6 +151,8 @@ export function mapOrder(raw: unknown): BrokerOrderRecord | null {
   const quantity = integerText(raw["qty"]);
   const filledQuantity = integerText(raw["filled_qty"] ?? "0");
   if (typeof brokerOrderId !== "string" || typeof clientOrderId !== "string" || typeof status !== "string" || quantity === null || filledQuantity === null) return null;
+  // A broker order record with a non-positive quantity, a negative fill, or a fill beyond the order is malformed, not partial.
+  if (quantity < 1 || filledQuantity < 0 || filledQuantity > quantity) return null;
   const legsRaw = raw["legs"];
   let legs: BrokerOrderLeg[];
   if (Array.isArray(legsRaw) && legsRaw.length > 0) {

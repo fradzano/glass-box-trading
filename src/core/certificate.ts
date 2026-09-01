@@ -98,14 +98,22 @@ export function classifyConfig(raw: Raw): ClassifiedConfig {
   return { ok: true, policy, identity, deployment };
 }
 
-/** Canonical JSON: object keys sorted recursively, arrays in order, no whitespace. */
+/** True when a value tree contains `undefined` anywhere: such material has no canonical form and is refused, never coerced to null. */
+export function containsUndefined(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (Array.isArray(value)) return value.some(containsUndefined);
+  if (isRecord(value)) return Object.values(value).some(containsUndefined);
+  return false;
+}
+
+/** Canonical JSON: object keys sorted recursively, arrays in order, no whitespace. Throws on `undefined` (callers refuse first). */
 export function canonicalJson(value: unknown): string {
+  if (value === undefined) throw new RangeError("undefined has no canonical JSON form");
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (isRecord(value)) {
     const keys = Object.keys(value).sort();
     return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
-  if (value === undefined) return "null";
   return JSON.stringify(value);
 }
 
@@ -117,6 +125,7 @@ export function policyDigest(raw: Raw, expectations: { readonly canonicalTrading
   if (!classified.ok) return { ok: false, reason: `unknown configuration field(s): ${classified.unknownFields.join(", ")}` };
   const origin = classified.policy["ALPACA_TRADING_ORIGIN"];
   if (origin !== expectations.canonicalTradingOrigin) return { ok: false, reason: "the policy origin is not the canonical paper trading origin" };
+  if (containsUndefined(classified.policy)) return { ok: false, reason: "a policy field has no value; undefined never enters the digest" };
   const material = canonicalJson({ fieldClassificationVersion: CONFIG_FIELD_CLASSIFICATION_VERSION, policy: classified.policy });
   return { ok: true, digest: sha256Text(material), material };
 }
@@ -138,6 +147,10 @@ export interface RuntimeDigestInput {
   };
 }
 
+function isUtcIso(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(value);
+}
+
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
@@ -155,6 +168,7 @@ export function runtimeDigest(input: RuntimeDigestInput): DigestResult {
   for (const [name, value] of Object.entries(digests)) {
     if (!isSha256(value)) return { ok: false, reason: `malformed analyst runtime digest: ${name}` };
   }
+  if (containsUndefined(runtime) || Object.values(runtime).some(value => typeof value !== "string" || value.length === 0)) return { ok: false, reason: "every analyst runtime identity field must be a non-empty string" };
   const files = [...input.files].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   const material = canonicalJson({ version: 1, files, analystRuntime: runtime });
   return { ok: true, digest: sha256Text(material), material };
@@ -325,14 +339,17 @@ function liquidityFor(entry: JournalEntry, journal: readonly JournalEntry[]): re
   const samples = snapshotOf(preceding)?.["quoteSamples"];
   if (!isRecord(samples)) return [];
   const out: LiquidityInputEvidence[] = [];
+  const covered = new Set<string>();
   for (const leg of legsOf(entry)) {
+    if (covered.has(leg.contractId)) continue;
     for (const byContract of Object.values(samples)) {
-      if (!isRecord(byContract)) continue;
+      if (!isRecord(byContract) || covered.has(leg.contractId)) continue;
       const sample = byContract[leg.contractId];
       if (!isRecord(sample)) continue;
       const { bidCents, askCents, bidSize, askSize, quotedAt, brokerQuotedAt } = sample;
       if (typeof bidCents === "number" && typeof askCents === "number" && typeof bidSize === "number" && typeof askSize === "number" && typeof quotedAt === "string" && typeof brokerQuotedAt === "string") {
         out.push({ contractId: leg.contractId, bidCents, askCents, bidSize, askSize, quotedAt, brokerQuotedAt, snapshotSeq: preceding.seq });
+        covered.add(leg.contractId);
       }
     }
   }
@@ -367,13 +384,18 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const timestamps = isRecord(outcome["brokerTimestamps"]) ? outcome["brokerTimestamps"] : {};
     const terminalField = terminal === "filled" ? "filled_at" : "canceled_at";
     const terminalAt = typeof timestamps[terminalField] === "string" ? timestamps[terminalField] : outcome.at;
+    const acceptedAt = accepted.order.brokerTimestamps["submitted_at"] ?? accepted.observedAt;
+    if (!(acceptedAt <= terminalAt)) {
+      failures.push(`credit lifecycle ${clientOrderId}: the acceptance instant ${acceptedAt} does not precede the terminal instant ${terminalAt}`);
+      return null;
+    }
     return {
       clientOrderId,
       exposureLifecycleId: typeof intent["exposureLifecycleId"] === "string" ? intent["exposureLifecycleId"] : "",
       intentSeq: intent.seq,
       brokerOrderId,
       acceptedStatus: accepted.order.status,
-      acceptedAt: accepted.order.brokerTimestamps["submitted_at"] ?? accepted.observedAt,
+      acceptedAt,
       terminalStatus: terminal,
       terminalAt,
       outcomeSeq: outcome.seq,
@@ -476,7 +498,8 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   const liquidity = intentForLiquidity === undefined ? [] : liquidityFor(intentForLiquidity, inputs.journal);
   if (intentForLiquidity !== undefined) {
     if (!gatePassed(intentForLiquidity, "G5")) failures.push("the credit INTENT does not carry a passed G5 liquidity verdict");
-    if (liquidity.length < legsOf(intentForLiquidity).length) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
+    const legIds = new Set(legsOf(intentForLiquidity).map(leg => leg.contractId));
+    if ([...legIds].some(id => !liquidity.some(item => item.contractId === id))) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   }
   const fence = fenceFrom(inputs, failures);
   const finalSnapshot = finalSnapshotFrom(inputs, failures);
@@ -527,10 +550,19 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
   if (raw["mcpInventoryAccepted"] !== true) violations.push("certificate does not record an accepted MCP inventory");
   if (raw["runtimeDigest"] !== expectations.runtimeDigest) violations.push("runtimeDigest mismatch: a covered runtime change invalidates the certificate");
   if (raw["policyDigest"] !== expectations.policyDigest) violations.push("policyDigest mismatch: a role-neutral policy change invalidates the certificate");
+  if (typeof raw["accountId"] !== "string" || raw["accountId"].length === 0) violations.push("certificate account ID is malformed");
   const window = raw["window"];
-  const endedAt = isRecord(window) && typeof window["endedAt"] === "string" ? window["endedAt"] : null;
-  if (endedAt === null) violations.push("certificate window is malformed");
-  if (Array.isArray(raw["failures"]) && raw["failures"].length > 0) violations.push("certificate carries failures");
+  const startedAt = isRecord(window) && isUtcIso(window["startedAt"]) ? window["startedAt"] : null;
+  const endedAt = isRecord(window) && isUtcIso(window["endedAt"]) ? window["endedAt"] : null;
+  if (startedAt === null || endedAt === null || !(startedAt < endedAt) || (isRecord(window) && Object.keys(window).length !== 2)) violations.push("certificate window is malformed");
+  if (!Array.isArray(raw["failures"])) violations.push("certificate failures is not an array");
+  else if (raw["failures"].length > 0) violations.push("certificate carries failures");
+  const evidence = raw["evidence"];
+  if (!isRecord(evidence) || Object.keys(evidence).sort().join(",") !== "creditAcceptance,fence,fill,finalSnapshot,liquidity") violations.push("certificate evidence is malformed");
+  else {
+    if (!Array.isArray(evidence["liquidity"]) || evidence["liquidity"].length === 0 || !evidence["liquidity"].every(isRecord)) violations.push("certificate liquidity evidence is absent");
+    for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) if (!isRecord(evidence[clause])) violations.push(`certificate ${clause} evidence is absent`);
+  }
   if (violations.length > 0 || endedAt === null) return { ok: false, violations };
   return { ok: true, successfulDevLiveTestAt: endedAt };
 }

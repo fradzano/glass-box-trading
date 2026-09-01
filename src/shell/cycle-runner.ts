@@ -523,7 +523,8 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         cycleIndex: deps.cycleIndex,
         underlyings: deps.decisionConfig.underlyingUniverse,
         qualification: qualificationBrief(qualification, qualificationConfig),
-        market: { contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying },
+        // A deep copy: the analyst boundary must not be able to reach the snapshot the gates judge (gate finding G1-F6, P7).
+        market: structuredClone({ contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying }),
       }), deps.analystTimeoutMs);
       batch = parseAnalystOutput(raw);
     } catch (error) {
