@@ -46,6 +46,12 @@ function entryIntentIds(entries: readonly JournalEntry[]): readonly string[] {
   return entries.filter(entry => entry.type === "INTENT" && (entry["action"] === "entry" || entry["action"] === undefined) && typeof entry["clientOrderId"] === "string").map(entry => entry["clientOrderId"] as string);
 }
 
+/** An entry lifecycle without a terminal OUTCOME: while one rests, the supervised run proposes nothing new (one structure at a time). */
+function unresolvedEntryExists(entries: readonly JournalEntry[]): boolean {
+  const terminal = new Set(entries.filter(entry => entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string" && ["filled", "rejected", "canceled", "expired"].includes(String(entry["status"]))).map(entry => entry["clientOrderId"] as string));
+  return entryIntentIds(entries).some(id => !terminal.has(id));
+}
+
 function filledEntryExists(entries: readonly JournalEntry[]): boolean {
   const intents = new Set(entryIntentIds(entries));
   return entries.some(entry => entry.type === "OUTCOME" && entry["status"] === "filled" && typeof entry["clientOrderId"] === "string" && intents.has(entry["clientOrderId"]));
@@ -75,7 +81,9 @@ export async function runCertificate(options: CertificateRunOptions): Promise<Ce
   const restingSince = new Map<string, number>();
   for (let attempt = 0; attempt < options.maxEntryCycles; attempt += 1) {
     cycleIndex += 1;
-    const report = await runtime.cycle(cycleIndex);
+    const holdProposals = unresolvedEntryExists((await runtime.gateway.openJournal()).entries);
+    if (holdProposals) log("an entry lifecycle is unresolved; the analyst is handed an empty batch this cycle");
+    const report = await runtime.cycle(cycleIndex, holdProposals ? { analyst: () => Promise.resolve("{\"candidates\":[]}") } : {});
     cycles.push(report);
     log(`cycle ${String(cycleIndex)}: primary=${String(report.primary)} actions=${report.actions.map(action => `${action.clientOrderId}:${action.result}:${String(action.status)}`).join(" ")} vetoes=${report.lifecycleVetoes.map(v => v.code).join(",")} skip=${String(report.analystSkip)} blocked=${report.entriesBlocked.join(",")}`);
     await observeOrders();

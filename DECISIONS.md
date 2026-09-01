@@ -1151,3 +1151,15 @@ small, no ADR split).
   walltime 300 s, takeover 400 s) — **the owner's freeze is still pending**;
   because `policyDigest` binds them, a later change invalidates the
   certificate and requires a new market-hours run.
+- **2026-09-01 — P7 design: a filled record proves acceptance; the
+  supervised run holds proposals while an entry rests.** The driver observes
+  order records after each cycle; a fast fill can precede the first
+  observation, so no `new`/`accepted` state would ever be seen for it. The
+  certificate core therefore counts `filled` and `partially_filled` records
+  as positive acceptance (the broker cannot fill what it did not accept;
+  the `submitted_at` timestamp is the acceptance instant) — a rejection
+  still FAILs, and an unrequested cancel still FAILs. Separately, while an
+  entry lifecycle has no terminal OUTCOME, the certificate driver hands the
+  analyst an empty batch (a harness decision for the supervised run, not a
+  gate): the live test exercises exactly one structure at a time, and the
+  runner's own vetoes stay untouched.

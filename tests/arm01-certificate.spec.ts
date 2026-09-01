@@ -113,6 +113,13 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(certificate.fieldClassificationVersion).toBe(CONFIG_FIELD_CLASSIFICATION_VERSION);
   });
 
+  it("a fill that outran the first observation still proves acceptance: the filled record is a positive broker state", () => {
+    const certificate = buildCertificate(inputs({ orderObservations: [{ observedAt: "2026-09-01T14:03:06.000Z", order: order("filled", true) }] }));
+    expect(certificate.verdict).toBe("PASS");
+    expect(certificate.evidence.creditAcceptance).toMatchObject({ acceptedStatus: "filled", terminalStatus: "filled" });
+    expect(buildCertificate(inputs({ orderObservations: [] })).failures).toContain("no credit entry lifecycle reached a positive broker acceptance followed by a filled or harness-canceled OUTCOME");
+  });
+
   it("a harness-canceled credit still counts as acceptance evidence, but a fill from another entry is still required", () => {
     const journal = passingJournal({ outcomeStatus: "canceled", reconciled: false });
     const canceled = buildCertificate(inputs({ journal, harnessCancels: ["entry:credit"], orderObservations: [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: order("canceled", false) }] }));

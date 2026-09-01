@@ -288,8 +288,13 @@ export interface CertificateInputs {
   readonly finalSnapshot: FinalSnapshotObservation | null;
 }
 
+/**
+ * The broker states that prove acceptance. A `filled` or `partially_filled`
+ * record proves it too: the broker cannot fill what it did not accept, and a
+ * fast fill can precede the driver's first observation (DECISIONS.md P7).
+ */
 function positiveAcceptanceStatuses(): readonly string[] {
-  return ["new", "accepted", "open", "partially_filled", "pending_new"];
+  return ["new", "accepted", "open", "pending_new", "partially_filled", "filled"];
 }
 
 function legsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string }[] {
