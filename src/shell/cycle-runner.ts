@@ -111,8 +111,8 @@ export interface AnalystInput {
 
 /** The dead-man check's two endpoints (S-G14-03). The runner decides which to hit through the pure `planPing`. */
 export interface PingPort {
-  success(): Promise<void>;
-  fail(conditions: readonly string[]): Promise<void>;
+  success(deadlineAtMs?: number): Promise<void>;
+  fail(conditions: readonly string[], deadlineAtMs?: number): Promise<void>;
 }
 
 export interface LifecycleDeps {
@@ -164,6 +164,8 @@ export interface CycleDependencies {
    */
   readonly lifecycle: LifecycleDeps | null;
   readonly ping: PingPort | null;
+  /** Production defers delivery until the aggregate cycle work has won its deadline race. */
+  readonly deferPingDelivery?: boolean;
 }
 
 export interface ActionReport {
@@ -287,10 +289,14 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
     await heartbeatBoundary("phase 5");
     const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions });
-    if (deps.ping !== null) {
+    // A cycle under an aggregate deadline only computes the ping plan here.
+    // Its composition root delivers after the work Promise wins the outer
+    // deadline race; a losing background continuation can therefore never
+    // emit liveness. Deadline-free test/watchdog compositions deliver here.
+    if (deps.ping !== null && deps.cycleDeadlineMs === undefined && deps.deferPingDelivery !== true) {
       try {
-        if (plan.kind === "success") await deps.ping.success();
-        if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
+        if (plan.kind === "success") await deps.ping.success(deps.cycleDeadlineMs);
+        if (plan.kind === "fail") await deps.ping.fail(plan.conditions, deps.cycleDeadlineMs);
       } catch {
         // The check is best-effort delivery; a failed ping never blocks the cycle result.
       }

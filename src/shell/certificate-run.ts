@@ -6,7 +6,9 @@
 // is flat; the S-G12-06 credential-fence drill (a 401 read port, the
 // journaled AUTH_FAILURE halt, the working-order check, the manual un-halt);
 // a final fully paginated snapshot. The pure core turns the journal and these
-// observations into the certificate; this driver only sequences and records.
+// observations into the certificate; this driver sequences and records, and
+// any exceptional exit runs the same gateway-bound flatten regime before it
+// returns the failure.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { buildCertificate } from "../core/certificate.js";
@@ -59,7 +61,7 @@ function filledEntryExists(entries: readonly JournalEntry[]): boolean {
   return entries.some(entry => entry.type === "OUTCOME" && entry["status"] === "filled" && typeof entry["clientOrderId"] === "string" && intents.has(entry["clientOrderId"]));
 }
 
-export async function runCertificate(options: CertificateRunOptions): Promise<CertificateRunResult> {
+async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
   const { runtime, clock, log } = options;
   const startedAt = epochMsToUtcIso(clock());
   const observations: OrderObservation[] = [];
@@ -228,4 +230,55 @@ export async function runCertificate(options: CertificateRunOptions): Promise<Ce
   writeFileSync(file, `${JSON.stringify(certificate, null, 2)}\n`, "utf8");
   log(`certificate ${certificate.verdict} written to ${file}${certificate.failures.length > 0 ? `: ${certificate.failures.join(" | ")}` : ""}`);
   return { certificate, file, cycles };
+}
+
+/**
+ * A certificate is allowed to fail, but not to abandon its disposable-account
+ * exposure. Retry broker truth and drive the existing S-G11 flatten regime;
+ * every close still passes through the normal authority/account/halt gateway.
+ */
+export async function recoverCertificateAfterFailure(options: CertificateRunOptions): Promise<boolean> {
+  const { runtime, log } = options;
+  try {
+    await runtime.ping.fail(["CERTIFICATE_ABORTED"]);
+  } catch {
+    // Recovery continues even when the external alarm cannot be delivered.
+  }
+  for (let attempt = 0; attempt < options.maxFlattenCycles; attempt += 1) {
+    try {
+      const snapshot = await runtime.broker.fullSnapshot();
+      if (snapshot.account.accountId === runtime.binding.accountId
+        && snapshot.pagesComplete && snapshot.consistentReads >= 2
+        && snapshot.positions.every(position => position.quantity === 0)
+        && snapshot.nonTerminalOrders.length === 0) return true;
+    } catch (error) {
+      log("certificate recovery snapshot " + String(attempt + 1) + " failed: " + (error instanceof Error ? error.message : String(error)));
+    }
+    try {
+      if (!await runtime.gateway.heartbeat()) throw new Error("certificate recovery lost writer authority");
+      const entries = (await runtime.gateway.openJournal()).entries;
+      const cycleIndex = entries.filter(entry => entry.type === "CYCLE" || entry.type === "BOOTSTRAP" || entry.type === "GAP" || entry.type === "SKIP").length + 1;
+      await runtime.cycle(cycleIndex, { flattenDate: runtime.tradingDay, finalCycleOfSession: false, analyst: () => Promise.resolve("{\"candidates\":[]}") });
+      if (!await runtime.gateway.heartbeat()) throw new Error("certificate recovery lost writer authority after flatten cycle");
+    } catch (error) {
+      log("certificate recovery flatten " + String(attempt + 1) + " failed: " + (error instanceof Error ? error.message : String(error)));
+    }
+    if (attempt + 1 < options.maxFlattenCycles) await options.sleep(options.flattenIntervalMs);
+  }
+  try {
+    await runtime.ping.fail(["CERTIFICATE_EXPOSURE_UNRESOLVED"]);
+  } catch {
+    // The caller still receives the failed recovery result.
+  }
+  return false;
+}
+
+export async function runCertificate(options: CertificateRunOptions): Promise<CertificateRunResult> {
+  try {
+    return await runCertificateAttempt(options);
+  } catch (error) {
+    const recovered = await recoverCertificateAfterFailure(options);
+    if (!recovered) throw new AggregateError([error, new Error("certificate recovery could not prove a flat account")], "certificate aborted and exposure recovery failed", { cause: error });
+    throw error;
+  }
 }

@@ -1,7 +1,7 @@
 // The composition root for a real run (P7): validate the configuration
 // fail-closed (S-CYC-11), bind the role's credentials, build the Alpaca
-// adapter, the calendar, the P2 gateway with the real mutation port, acquire
-// writer authority, launch the verified analyst child, compute both S-ARM-01
+// adapter without calling it, acquire writer authority before broker truth,
+// then bind the account, read the calendar, launch the verified analyst child, compute both S-ARM-01
 // digests, and expose one `cycle()` that runs the P3–P6 cycle runner over the
 // real world. Nothing here decides; every choice is a parameter handed to the
 // core or to a shell module that already carries its tests against fakes.
@@ -33,7 +33,6 @@ import { releaseHolder } from "./epoch-store.js";
 import { createMutationGateway } from "./mutation-gateway.js";
 import type { MutationGateway } from "./mutation-gateway.js";
 import { createPingPort } from "./ping-healthchecks.js";
-import { recordStartupBrokerFence } from "./startup-broker-fence.js";
 import { httpStatusOf } from "./broker-errors.js";
 import { analystEnvironmentPaths, loadEnvironment, loadPolicy, rawStartupConfig, roleCredentials, secretValues } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
@@ -83,7 +82,7 @@ export interface AgentRuntime {
 
 export type RuntimeBuild =
   | { readonly ok: true; readonly runtime: AgentRuntime }
-  | { readonly ok: false; readonly stage: "startup" | "credentials" | "account_binding" | "calendar" | "authority" | "analyst" | "digest"; readonly reason: string; readonly startup: StartupOutcome | null };
+  | { readonly ok: false; readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest"; readonly reason: string; readonly startup: StartupOutcome | null };
 
 function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
@@ -105,11 +104,16 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     },
     journal: {
       async append(paths, draft): Promise<boolean> {
-        const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "STARTUP_HAS_NO_BROKER" }) }, instanceId: `${options.instanceId}-startup`, lockTakeoverBoundMs: 60_000 });
-        const acquired = await gateway.acquireAuthority({ account: "unknown" });
-        if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") return false;
-        const result = await gateway.dispatch({ class: "authoritative", epoch: acquired.epoch, action: { kind: "journal_append", entry: draft({ atIso: epochMsToUtcIso(clock()), epoch: acquired.epoch }) } });
-        return result.ok;
+        const startupInstanceId = `${options.instanceId}-startup`;
+        const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "STARTUP_HAS_NO_BROKER" }) }, instanceId: startupInstanceId, lockTakeoverBoundMs: 60_000 });
+        try {
+          const acquired = await gateway.acquireAuthority({ account: "unknown" });
+          if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") return false;
+          const result = await gateway.dispatch({ class: "authoritative", epoch: acquired.epoch, action: { kind: "journal_append", entry: draft({ atIso: epochMsToUtcIso(clock()), epoch: acquired.epoch }) } });
+          return result.ok;
+        } finally {
+          await releaseHolder(paths, startupInstanceId);
+        }
       },
     },
     clock,
@@ -119,9 +123,12 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   }
   const config = startup.config;
   const paths = startup.paths;
+  const expectedAccountId = config.binding.expectedAccountId;
+  if (expectedAccountId === undefined || expectedAccountId.trim().length === 0) return { ok: false, stage: "startup", reason: "validated startup omitted EXPECTED_ACCOUNT_ID", startup };
   const credentials = roleCredentials(env, config.profile);
   if (credentials.keyId.length === 0 || credentials.secretKey.length === 0) return { ok: false, stage: "credentials", reason: `no credentials for the ${config.profile} role`, startup };
   const broker = createAlpacaBroker({ credentials: { keyId: credentials.keyId, secretKey: credentials.secretKey }, tradingOrigin: config.binding.canonicalTradingOrigin, dataOrigin: MARKET_DATA_ORIGIN, clock, requestTimeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 30_000) });
+  const expectedBinding: AccountBinding = { profile: config.profile, tradingOrigin: config.binding.canonicalTradingOrigin, accountId: expectedAccountId };
   const bindingObservation = {
     profile: config.profile,
     requestedOrigin: config.binding.canonicalTradingOrigin,
@@ -130,40 +137,71 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     brokerReportedAccountId: async (deadlineAtMs?: number): Promise<string | undefined> => (await broker.read.account(deadlineAtMs)).accountId,
   };
   const startupBrokerPing = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
+  const boundBrokerPort = createAccountBoundBrokerPort({ ...bindingObservation, expectedBinding, delegate: broker.port, clock });
+  const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: boundBrokerPort, instanceId: options.instanceId, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, binding: expectedBinding });
+
+  // Fence before broker truth: a live rival suppresses this invocation before
+  // account, calendar, position, or order I/O (S-G12-01). A reset/absent store
+  // takes the fail-closed GAP_HALT path because virginity cannot be learned
+  // before authority without violating the same invariant.
+  const acquired = await gateway.acquireAuthority({ account: "unknown" });
+  if (acquired.kind === "SUPPRESSED" || acquired.kind === "LOST") {
+    const holderId = acquired.kind === "SUPPRESSED" ? acquired.holderId : "epoch-changed";
+    const reason = acquired.kind === "SUPPRESSED" ? acquired.reason : "EPOCH_CHANGED" as const;
+    const witnessed = await gateway.dispatch({
+      class: "witness",
+      action: { kind: "journal_append", entry: { at: epochMsToUtcIso(clock()), epoch: null, type: "SUPPRESSED", instanceId: options.instanceId, holderId, reason } },
+    });
+    if (!witnessed.ok) return { ok: false, stage: "authority", reason: `suppression witness failed before broker I/O: ${witnessed.reason}`, startup };
+    return { ok: false, stage: "suppressed", reason: `authority suppressed before broker I/O: ${JSON.stringify(acquired)}`, startup };
+  }
+  if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") return { ok: false, stage: "authority", reason: `authority not acquired: ${JSON.stringify(acquired)}`, startup };
+  const epoch = acquired.epoch;
+
+  const releaseAndRefuse = async (stage: "account_binding" | "calendar", reason: string): Promise<RuntimeBuild> => {
+    await releaseHolder(paths, options.instanceId);
+    return { ok: false, stage, reason, startup };
+  };
+  const persistBrokerFence = async (reason: "AUTH_FAILURE" | "ACCOUNT_BINDING_MISMATCH", detail: string): Promise<void> => {
+    await gateway.dispatchSafetyHalt({ reason, detail });
+    try {
+      await startupBrokerPing.fail([reason]);
+    } catch {
+      // The durable halt is the authority; alert delivery is best effort.
+    }
+  };
+
   let verifiedBinding: Awaited<ReturnType<typeof verifyActiveAccount>>;
   try {
     verifiedBinding = await verifyActiveAccount(bindingObservation);
   } catch (error) {
     const status = httpStatusOf(error);
     if (status === 401 || status === 403) {
-      await recordStartupBrokerFence({ paths, secrets, clock, instanceId: `${options.instanceId}-account-refusal`, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, reason: "AUTH_FAILURE", detail: `active credentials were rejected while observing broker account identity (HTTP ${String(status)})`, ping: startupBrokerPing });
+      await persistBrokerFence("AUTH_FAILURE", `active credentials were rejected while observing broker account identity (HTTP ${String(status)})`);
     }
-    return { ok: false, stage: "account_binding", reason: `broker account identity could not be observed: ${error instanceof Error ? error.message : String(error)}`, startup };
+    return releaseAndRefuse("account_binding", `broker account identity could not be observed: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!verifiedBinding.ok) {
-    await recordStartupBrokerFence({ paths, secrets, clock, instanceId: `${options.instanceId}-account-refusal`, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, reason: "ACCOUNT_BINDING_MISMATCH", detail: verifiedBinding.reason, ping: startupBrokerPing });
-    return { ok: false, stage: "account_binding", reason: verifiedBinding.reason, startup };
+    await persistBrokerFence("ACCOUNT_BINDING_MISMATCH", verifiedBinding.reason);
+    return releaseAndRefuse("account_binding", verifiedBinding.reason);
   }
   const binding: AccountBinding = verifiedBinding.binding;
 
   // ---- calendar (S-G6-03): the session and the expiry window come from the exchange calendar ----
   const now = clock();
-  const days = await broker.calendar(isoDate(now, -7), isoDate(now, 60));
+  let days: readonly CalendarDay[];
+  try {
+    days = await broker.calendar(isoDate(now, -7), isoDate(now, 60));
+  } catch (error) {
+    return releaseAndRefuse("calendar", `broker calendar could not be observed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const tradingDay = newYorkDate(now);
   const session = sessionFor(days, tradingDay);
   const next = nextTradingDay(days, tradingDay);
-  if (next === null) return { ok: false, stage: "calendar", reason: "no next trading day in the calendar window", startup };
+  if (next === null) return releaseAndRefuse("calendar", "no next trading day in the calendar window");
   const expiries = expiriesWithin(days, tradingDay, config.decision.expiryMinSessions, config.decision.expiryMaxSessions).slice(0, 3);
   const window: MarketWindow = { underlyings: config.decision.underlyingUniverse, expiries, strikeWindowBps: Math.min(config.decision.maxStrikeDistanceBps, 300) };
 
-  // ---- writer authority through the P2 gateway with the real mutation port ----
-  const boundBrokerPort = createAccountBoundBrokerPort({ ...bindingObservation, expectedBinding: binding, delegate: broker.port, clock });
-  const gateway = createMutationGateway({ paths, secrets, clock, brokerPort: boundBrokerPort, instanceId: options.instanceId, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, binding });
-  const [positions, openOrders] = await Promise.all([broker.read.positions(), broker.read.openOrders()]);
-  const virgin = positions.every(position => position.quantity === 0) && openOrders.length === 0;
-  const acquired = await gateway.acquireAuthority({ account: virgin ? "virgin" : "non_virgin" });
-  if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") return { ok: false, stage: "authority", reason: `authority not acquired: ${JSON.stringify(acquired)}`, startup };
-  const epoch = acquired.epoch;
   log(`authority epoch ${String(epoch)} (${acquired.kind}); trading day ${tradingDay}; expiries ${expiries.join(",")}`);
 
   /** A refusal after acquisition journals the reason and releases the holder record; a crash leaves it to age out (S-G12-01). */
@@ -286,7 +324,11 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
       config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
       mcpInventory: launch.inventory, runtimeDigest: runtime.digest, policyDigest: policy.digest, secrets, ping,
       market: () => broker.market(window),
-      cycle: (cycleIndex, overrides = {}) => runWithinCycleWalltime(config.scheduling.cycleWalltimeBudgetMs, clock, cycleDeadlineMs => runCycle({
+      cycle: async (cycleIndex, overrides = {}) => {
+        let deadlineAtMs = 0;
+        const report = await runWithinCycleWalltime(config.scheduling.cycleWalltimeBudgetMs, clock, cycleDeadlineMs => {
+          deadlineAtMs = cycleDeadlineMs;
+          return runCycle({
           gateway,
           epoch,
           paths,
@@ -305,7 +347,20 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
           executionConfig: config.execution,
           lifecycle: lifecycle(overrides),
           ping,
-        })),
+          deferPingDelivery: true,
+          });
+        });
+        // A timed-out cycle never reaches this point, so its background
+        // continuation cannot emit a late success. The concrete adapter caps
+        // delivery to the remaining absolute deadline as well.
+        try {
+          if (report.ping === "success") await ping.success(deadlineAtMs);
+          if (report.ping === "fail") await ping.fail(report.alarmConditions, deadlineAtMs);
+        } catch {
+          // Delivery is best effort; a missed success is visible to the dead-man check.
+        }
+        return report;
+      },
       shutdown: async () => {
         await child.stop();
         await releaseHolder(paths, options.instanceId);

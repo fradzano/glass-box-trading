@@ -135,7 +135,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
 
   it("requires an exact one-lot quantitative reconciliation, not merely matching position signs", () => {
     const oversizedPositions = passingJournal().map(item => item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: -100 }, { contractId: LONG, quantity: 100 }]) } : item);
-    expect(buildCertificate(inputs({ journal: oversizedPositions })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    expect(buildCertificate(inputs({ journal: oversizedPositions })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
 
     const fiveLotJournal = passingJournal().map(item => {
       if (item.seq === 3) return { ...item, quantity: 5 };
@@ -144,17 +144,30 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
       return item;
     });
     const fiveLotObservations = observations().map(item => ({ ...item, order: { ...item.order, quantity: 5, filledQuantity: item.order.status === "filled" ? 5 : 0 } }));
-    expect(buildCertificate(inputs({ journal: fiveLotJournal, orderObservations: fiveLotObservations })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    expect(buildCertificate(inputs({ journal: fiveLotJournal, orderObservations: fiveLotObservations })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
   });
 
-  it("a harness-canceled credit still counts as acceptance evidence, but a fill from another entry is still required", () => {
+  it("a harness-canceled credit still counts as acceptance evidence, but only that accepted credit lifecycle can supply the fill", () => {
     const journal = passingJournal({ outcomeStatus: "canceled", reconciled: false });
     const canceled = buildCertificate(inputs({ journal, harnessCancels: ["entry:credit"], orderObservations: [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: order("canceled", false) }] }));
     expect(canceled.evidence.creditAcceptance).toMatchObject({ terminalStatus: "canceled", harnessRequestedCancel: true });
     expect(canceled.verdict).toBe("FAIL");
-    expect(canceled.failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    expect(canceled.failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
     const unrequested = buildCertificate(inputs({ journal, harnessCancels: [], orderObservations: [{ observedAt: "t", order: order("accepted", false) }] }));
     expect(unrequested.failures).toContain("credit lifecycle entry:credit was canceled without a harness request");
+
+    const unrelatedDebit = [
+      ...journal.filter(item => item.seq <= 5),
+      entry(6, "INTENT", { action: "entry", clientOrderId: "entry:debit", exposureLifecycleId: "exposure:debit", sleeve: "tactical", structureType: "vertical_debit", legs: LEGS, quantity: 1, submittedLimit: { kind: "debit", priceCents: 20 }, reservedMaxLossCents: 2_000, gateVector: gateVector(true), rationale: { paidFrom: "tactical", snapshotReferences: ["x"], text: "SPY vertical_debit" }, binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT } }),
+      entry(7, "OUTCOME", { clientOrderId: "entry:debit", status: "filled", brokerOrderId: "broker-debit", brokerTimestamps: { submitted_at: "2026-09-01T14:06:00.000Z", filled_at: "2026-09-01T14:06:05.000Z" }, filledQuantity: 1, avgFillPriceCents: 20, reasonCodes: [], binding: { profile: "dev", tradingOrigin: ORIGIN, accountId: ACCOUNT }, brokerReason: null }),
+      entry(8, "CYCLE", { cycleIndex: 3, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([{ contractId: SHORT, quantity: -1 }, { contractId: LONG, quantity: 1 }]), batchVerdicts: [], candidateVerdicts: [] }),
+      entry(9, "HALT", { reason: "AUTH_FAILURE", detail: "x", sticky: false }),
+      entry(10, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "x" }),
+    ];
+    const unrelated = buildCertificate(inputs({ journal: unrelatedDebit, harnessCancels: ["entry:credit"], orderObservations: [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: { ...order("canceled", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", canceled_at: "2026-09-01T14:03:05.000Z" } } }] }));
+    expect(unrelated.verdict).toBe("FAIL");
+    expect(unrelated.evidence.creditAcceptance).toMatchObject({ clientOrderId: "entry:credit" });
+    expect(unrelated.evidence.fill).toBeNull();
   });
 
   it("any broker rejection — synchronous or asynchronous — makes the certificate FAIL (WIN-7)", () => {
@@ -166,7 +179,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
   });
 
   it("a fill that no later snapshot reconciles, a credit without a passed G5 verdict, or a missing quote sample all FAIL", () => {
-    expect(buildCertificate(inputs({ journal: passingJournal({ reconciled: false }) })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    expect(buildCertificate(inputs({ journal: passingJournal({ reconciled: false }) })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
     expect(buildCertificate(inputs({ journal: passingJournal({ g5: false }) })).failures).toContain("the credit INTENT does not carry a passed G5 liquidity verdict");
     const noSamples = passingJournal().map(item => (item.seq === 2 ? { ...item, snapshot: { ...snapshot([]), quoteSamples: {} } } : item));
     expect(buildCertificate(inputs({ journal: noSamples })).failures).toContain("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
@@ -198,7 +211,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ journal: swapped })).verdict).toBe("FAIL");
     // G2-F4d: the reconciled position must carry the sign the leg side implies.
     const wrongSign = passingJournal().map(item => (item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: 1 }, { contractId: LONG, quantity: 1 }]) } : item));
-    expect(buildCertificate(inputs({ journal: wrongSign })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    expect(buildCertificate(inputs({ journal: wrongSign })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
     // A window that is textually well-formed but not a real instant is malformed.
     expect(buildCertificate(inputs({ window: { startedAt: "2026-02-30T13:35:00.000Z", endedAt: "2026-02-30T15:10:00.000Z" } })).failures).toContain("the test window is not a pair of ordered UTC instants");
   });
@@ -422,6 +435,8 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(withEdit("finalSnapshot", { accountId: "DIFFERENT-ACCOUNT" })).toContain("certificate final snapshot is not on the certificate's account or was not paginated");
     expect(withEdit("creditAcceptance", { terminalStatus: "forged-terminal" })).toContain("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
     expect(withEdit("creditAcceptance", { intentSeq: 9 })).toContain("certificate credit acceptance sequence is not ordered");
+    expect(withEdit("fill", { clientOrderId: "entry:other" })).toContain("certificate fill is not the accepted credit lifecycle and broker order");
+    expect(withEdit("fill", { brokerOrderId: "broker-other" })).toContain("certificate fill is not the accepted credit lifecycle and broker order");
     expect(withEdit("fence", { unhaltSeq: 1 })).toContain("certificate fence sequence is not ordered");
     expect(withEdit("fill", { filledQuantity: -1 })).toContain("certificate evidence digest mismatch: the certificate was edited after it was produced");
   });

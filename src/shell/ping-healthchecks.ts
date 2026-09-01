@@ -1,6 +1,7 @@
 // The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 // decides through the pure `planPing` whether a success or a failure ping is
-// due; this port only delivers. The URL is a secret (redacted from the
+// due; this port only delivers, rejects non-2xx responses, and respects an
+// inherited absolute cycle deadline. The URL is a secret (redacted from the
 // journal). Without a configured URL the port records locally so a dev run
 // keeps its evidence.
 import { appendFileSync } from "node:fs";
@@ -23,7 +24,9 @@ export function createPingPort(options: PingOptions): PingPort {
     if (options.recordFile === null) return;
     appendFileSync(options.recordFile, `${new Date(options.clock()).toISOString()} ${line}\n`, "utf8");
   };
-  const send = async (url: string, init: RequestInit): Promise<void> => {
+  const send = async (url: string, init: RequestInit, deadlineAtMs?: number): Promise<void> => {
+    const remainingMs = deadlineAtMs === undefined ? timeoutMs : Math.min(timeoutMs, deadlineAtMs - options.clock());
+    if (remainingMs <= 0) throw new Error("PING_DEADLINE_EXCEEDED");
     const controller = new AbortController();
     let rejectTimeout: (reason: Error) => void = () => undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -31,24 +34,33 @@ export function createPingPort(options: PingOptions): PingPort {
     });
     const timer = setTimeout(() => {
         controller.abort();
-        rejectTimeout(new Error(`PING_TIMEOUT after ${String(timeoutMs)} ms`));
-    }, timeoutMs);
+        rejectTimeout(new Error(`PING_TIMEOUT after ${String(remainingMs)} ms`));
+    }, remainingMs);
     try {
-      await Promise.race([fetchImpl(url, { ...init, signal: controller.signal }), timeout]);
+      const response = await Promise.race([fetchImpl(url, { ...init, signal: controller.signal }), timeout]);
+      if (!response.ok) throw new Error(`PING_HTTP_${String(response.status)}`);
     } finally {
       clearTimeout(timer);
     }
   };
   return {
-    async success(): Promise<void> {
+    async success(deadlineAtMs?: number): Promise<void> {
+      if (options.url === null) {
+        if (deadlineAtMs !== undefined && options.clock() >= deadlineAtMs) throw new Error("PING_DEADLINE_EXCEEDED");
+        record("success");
+        return;
+      }
+      await send(options.url, { method: "GET" }, deadlineAtMs);
       record("success");
-      if (options.url === null) return;
-      await send(options.url, { method: "GET" });
     },
-    async fail(conditions: readonly string[]): Promise<void> {
+    async fail(conditions: readonly string[], deadlineAtMs?: number): Promise<void> {
+      if (options.url === null) {
+        if (deadlineAtMs !== undefined && options.clock() >= deadlineAtMs) throw new Error("PING_DEADLINE_EXCEEDED");
+        record(`fail ${conditions.join(",")}`);
+        return;
+      }
+      await send(`${options.url}/fail`, { method: "POST", body: conditions.join("\n"), headers: { "Content-Type": "text/plain" } }, deadlineAtMs);
       record(`fail ${conditions.join(",")}`);
-      if (options.url === null) return;
-      await send(`${options.url}/fail`, { method: "POST", body: conditions.join("\n"), headers: { "Content-Type": "text/plain" } });
     },
   };
 }

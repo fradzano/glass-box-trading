@@ -1,7 +1,7 @@
 // Durable refusal after configuration validation but before the real broker
-// gateway exists. This gateway has no broker capability: it acquires local
-// journal authority solely to record the broker-identity/auth fence, then
-// releases its holder while leaving the halt flag active.
+// gateway exists. This gateway has no broker capability. It first uses the
+// monotonic safety interlock so a fresh rival holder cannot suppress the halt;
+// only an absent store needs authority acquisition to establish an epoch.
 import type { HaltReason, JournalDraft } from "../core/journal.js";
 import { epochMsToUtcIso } from "../core/execution.js";
 import { releaseHolder } from "./epoch-store.js";
@@ -29,16 +29,23 @@ export async function recordStartupBrokerFence(options: StartupBrokerFenceOption
     instanceId: options.instanceId,
     lockTakeoverBoundMs: options.lockTakeoverBoundMs,
   });
-  let journaled = false;
-  const acquired = await gateway.acquireAuthority({ account: "unknown" });
-  if (acquired.kind === "WON" || acquired.kind === "GAP_HALT") {
-    const entry: JournalDraft = { at: epochMsToUtcIso(options.clock()), epoch: acquired.epoch, type: "HALT", reason: options.reason, detail: options.detail, sticky: false };
-    const appended = await gateway.dispatch({
-      class: "authoritative",
-      epoch: acquired.epoch,
-      action: { kind: "journal_append", entry },
-    });
-    journaled = appended.ok;
+  const safetyAction = { reason: options.reason, detail: options.detail } as const;
+  let journaled = (await gateway.dispatchSafetyHalt(safetyAction)).ok;
+  if (!journaled) {
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    if (acquired.kind === "WON" || acquired.kind === "GAP_HALT") {
+      const entry: JournalDraft = { at: epochMsToUtcIso(options.clock()), epoch: acquired.epoch, type: "HALT", reason: options.reason, detail: options.detail, sticky: false };
+      const appended = await gateway.dispatch({
+        class: "authoritative",
+        epoch: acquired.epoch,
+        action: { kind: "journal_append", entry },
+      });
+      journaled = appended.ok;
+    } else {
+      // The store may have appeared or changed between the first interlock
+      // attempt and acquisition. Retry without disturbing the winning holder.
+      journaled = (await gateway.dispatchSafetyHalt(safetyAction)).ok;
+    }
   }
   try {
     await options.ping.fail([options.reason]);

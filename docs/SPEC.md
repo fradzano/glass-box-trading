@@ -132,13 +132,21 @@ IDs/timestamps proving:
    the INTENT's client/broker identity, complete leg ratios and sides, one-lot
    quantity, credit limit kind, and price; any synchronous or asynchronous
    `rejected` state or shape disagreement makes the certificate FAIL;
-3. exactly one lot of that defined-risk mleg followed a real fill through
-   broker reconciliation and journal `OUTCOME` rather than accept/cancel
-   alone; the later broker snapshot must contain exactly the signed filled
-   leg quantities, not merely positions with compatible signs;
+3. exactly one lot of that same accepted credit lifecycle and broker order
+   followed a real fill through broker reconciliation and journal `OUTCOME`
+   rather than accept/cancel alone; acceptance and fill may never be assembled
+   from different client or broker order IDs, and the later bound-account
+   broker snapshot must contain exactly the signed filled leg quantities, not
+   merely positions with compatible signs;
 4. the credential-fence drill required by S-G12-06 passed; and
 5. the final fully paginated dev snapshot contains zero positions and zero
    non-terminal orders.
+
+After the first live cycle, an exceptional certificate exit is itself a
+failure signal and enters the same gateway-bound S-G11 flatten regime before
+the error returns. Broker reads and flatten cycles are retried to the configured
+certificate bound; failure to prove a flat bound account is reported as
+unresolved exposure, never a quiet process exit.
 
 `runtimeDigest` canonically covers executable core/shell code, schemas,
 dependency locks, the MCP capability manifest, the pinned MCP runtime lock, and
@@ -634,7 +642,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   a success ping (S-G14-03) — a dead or hanging holder can never be kept
   looking alive by its own suppressed successors. Journal appends from any
   instance reach the JSONL only serialized (single writer path / file
-  lock), never interleaved. (#23, #40; owner ruling GV-2, 2026-08-25)
+  lock), never interleaved. Runtime composition therefore acquires or is
+  suppressed before the first account, calendar, position, order, or market
+  broker read; the scheduled suppressed process exits 0 after its witness.
+  (#23, #40; owner ruling GV-2, 2026-08-25)
 - **S-G12-02** Time alone NEVER grants writer authority (owner ruling GV-2,
   2026-08-25). A heartbeat older than `LOCK_TAKEOVER_BOUND` is only the
   *trigger* to attempt a takeover; the takeover itself proceeds exclusively
@@ -678,7 +689,16 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   and a fenced writer's own `FENCED_OUT` demise notice) carry NO
   authority, may mutate nothing at the broker, are staleness-neutral
   (S-G14-02), never trigger a success ping, and reach the JSONL only
-  through the same serialized append path. Epoch acquisition is a single
+  through the same serialized append path. One purpose-specific monotonic
+  safety interlock is narrower than either request class: a startup process
+  that independently observes `AUTH_FAILURE` or `ACCOUNT_BINDING_MISMATCH`
+  may append only that `HALT`, stamped with the current persisted epoch under
+  the gateway mutex. It cannot reach the broker, acquire or release another
+  holder, append any other type, or clear a halt. This prevents a fresh rival
+  holder from suppressing a required broker-identity fence. The same mutex
+  protects a final persisted-halt read immediately before broker I/O, so an
+  already-authorized but stale entry is vetoed; cancel and explicit close
+  remain available under S-G12-03. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the
@@ -753,7 +773,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   same check also carries ACTIVE alarms. The append precondition applies only
   to success pings: an active failure ping is failure-only and may be sent
   before any journal exists, specifically for S-CYC-11 bootstrap/config errors;
-  it can never refresh liveness. The set of alarm-worthy
+  it can never refresh liveness. A cycle governed by
+  `CYCLE_WALLTIME_BUDGET` computes its ping plan inside the cycle but delivers
+  only after the aggregate work wins its deadline race; a losing background
+  continuation cannot emit success. Delivery inherits the remaining absolute
+  deadline, and any non-2xx HTTP response is failure. The set of alarm-worthy
   conditions has ONE source, not a second list here: every case whose own
   text prescribes an "active fail-signal" or "fail-ping" (currently
   S-G9-02, S-G10-02, S-CYC-11, S-G11-01, S-G11-04, S-X-05, S-X-06; the

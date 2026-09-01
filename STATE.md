@@ -372,8 +372,18 @@ One phase per session; every session ends with the handoff protocol in
   journal (2 entries, epoch 3); the live run will open with an S-CYC-08 GAP
   cycle. The R2 blind Go/No-Go returned NO-GO; its account/auth persistence,
   exact broker-order/fill proof, aggregate walltime, map/state, and coherent-tree
-  findings are closed in R3 and await isolated fix-verification. **Next action:**
-  fix-gate and closing commit, explicit O5 freeze, then `npm run certificate`
+  findings were closed in R3. Its isolated fix-gate then found a fresh-holder
+  overlap in the pre-runtime safety fence plus an adjacent A/B set. R4/R5 add:
+  the denial-only safety interlock and final entry halt veto; same-credit-
+  lifecycle acceptance/fill proof on the bound account; authority before every
+  broker read with witness/exit-0 suppression; holder-safe `CONFIG_INVALID`;
+  deadline-deferred, HTTP-checked pings; and fail-signaled flatten recovery on
+  exceptional certificate exits. The targeted 8-file/107-test closure suite is
+  green; the final full `npm run verify` is also green (33 files / 305 tests,
+  all build, architecture, sandbox, dashboard, and phase gates). A clean commit
+  and fresh isolated fix-gate remain. **Next action:** close that gate, obtain
+  the explicit O5 freeze, then
+  `npm run certificate`
   inside the session (from 15:30 CEST). Not P7: the Scheduled Task installer, the real
   git/Vercel ports, the competition-arming wiring of the certificate into
   `runStartup` (P8 release session; `validateArmingCertificate` is ready).

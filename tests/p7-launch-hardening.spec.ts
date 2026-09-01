@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAccountBoundBrokerPort } from "../src/shell/account-bound-broker.js";
 import { parseJournalText } from "../src/core/journal.js";
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
+import { buildRuntime } from "../src/shell/agent-runtime.js";
+import type { AgentRuntime } from "../src/shell/agent-runtime.js";
 import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
 import { enumerateRuntimeFiles } from "../src/shell/digests.js";
@@ -12,8 +14,10 @@ import { readHolder, releaseHolder, writeHolder } from "../src/shell/epoch-store
 import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import type { BrokerMutation, BrokerMutationPort } from "../src/shell/mutation-gateway.js";
 import { readHaltState } from "../src/shell/halt-state.js";
+import { createPingPort } from "../src/shell/ping-healthchecks.js";
 import { resolveStateDir } from "../src/shell/state-dir.js";
 import { recordStartupBrokerFence } from "../src/shell/startup-broker-fence.js";
+import { recoverCertificateAfterFailure } from "../src/shell/certificate-run.js";
 
 const ORIGIN = "https://paper-api.alpaca.markets";
 const EXPECTED = "PA_EXPECTED";
@@ -59,6 +63,68 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("P7 launch hardening — independent account identity", () => {
+  it("suppresses a rival runtime before every broker read and appends one witness", async () => {
+    const stateRoot = temporaryDirectory("gbt-p7-runtime-suppressed-");
+    const resolved = resolveStateDir(stateRoot);
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "active-cycle", acquiredAt: new Date(now).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    writeHolder(resolved.value, { holderId: "active-cycle", heartbeatAt: now });
+    let brokerCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => { brokerCalls += 1; return Promise.reject(new Error("broker must not be called")); };
+    try {
+      const built = await buildRuntime({
+        repoRoot: process.cwd(),
+        processEnv: {
+          ALPACA_PROFILE: "dev",
+          ALPACA_DEV_KEY_ID: "dummy-key",
+          ALPACA_DEV_SECRET_KEY: "dummy-secret",
+          ALPACA_DEV_ACCOUNT_ID: EXPECTED,
+          STATE_DIR: stateRoot,
+          BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+          ANALYST_MODEL: "claude-sonnet-5",
+        },
+        clock: () => now + 1_000,
+        objective: "certificate",
+        instanceId: "suppressed-cycle",
+        log: () => undefined,
+      });
+      expect(built).toMatchObject({ ok: false, stage: "suppressed" });
+      expect(brokerCalls).toBe(0);
+      expect(parseJournalText(readFileSync(resolved.value.journal, "utf8")).entries).toMatchObject([{ type: "SUPPRESSED", instanceId: "suppressed-cycle", holderId: "active-cycle", reason: "LOCK_HELD" }]);
+      expect(readHolder(resolved.value)).toEqual({ holderId: "active-cycle", heartbeatAt: now });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("releases the temporary startup holder after journaling CONFIG_INVALID", async () => {
+    const stateRoot = temporaryDirectory("gbt-p7-config-holder-");
+    const resolved = resolveStateDir(stateRoot);
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+
+    const built = await buildRuntime({
+      repoRoot: process.cwd(),
+      processEnv: {
+        ALPACA_PROFILE: "invalid-profile",
+        ALPACA_DEV_ACCOUNT_ID: EXPECTED,
+        STATE_DIR: stateRoot,
+        BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+      },
+      clock: () => now,
+      objective: "certificate",
+      instanceId: "config-probe",
+      log: () => undefined,
+    });
+
+    expect(built).toMatchObject({ ok: false, stage: "startup" });
+    expect(parseJournalText(readFileSync(resolved.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", reason: "CONFIG_INVALID" });
+    expect(readHolder(resolved.value)).toBeNull();
+  });
+
   it.each(["ACCOUNT_BINDING_MISMATCH", "AUTH_FAILURE"] as const)("persists and pings an early %s refusal before the real broker gateway exists", async reason => {
     const resolved = resolveStateDir(temporaryDirectory("gbt-p7-startup-fence-"));
     if (!resolved.ok) throw new Error(resolved.detail);
@@ -79,6 +145,86 @@ describe("P7 launch hardening — independent account identity", () => {
     expect(readHaltState(resolved.value)).toMatchObject({ halted: true, reason });
     expect(readHolder(resolved.value)).toBeNull();
     expect(pings).toEqual([[reason]]);
+  });
+
+  it.each(["ACCOUNT_BINDING_MISMATCH", "AUTH_FAILURE"] as const)("persists %s while preserving a fresh rival holder", async reason => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-overlap-fence-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "active-cycle", acquiredAt: new Date(now).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    writeHolder(resolved.value, { holderId: "active-cycle", heartbeatAt: now });
+    const pings: string[][] = [];
+
+    const journaled = await recordStartupBrokerFence({
+      paths: resolved.value,
+      secrets: [],
+      clock: () => now + 1_000,
+      instanceId: "startup-contender",
+      lockTakeoverBoundMs: 60_000,
+      reason,
+      detail: "startup contender observed a broker safety failure",
+      ping: { success: () => Promise.resolve(), fail: conditions => { pings.push([...conditions]); return Promise.resolve(); } },
+    });
+
+    expect(journaled).toBe(true);
+    expect(parseJournalText(readFileSync(resolved.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", epoch: 7, reason });
+    expect(readHaltState(resolved.value)).toMatchObject({ halted: true, reason });
+    expect(readHolder(resolved.value)).toEqual({ holderId: "active-cycle", heartbeatAt: now });
+    expect(pings).toEqual([[reason]]);
+  });
+
+  it("vetoes a stale entry after the overlap halt but still permits cancel and explicit close", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-overlap-veto-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const calls: BrokerMutation[] = [];
+    const gateway = createMutationGateway({
+      paths: resolved.value,
+      secrets: [],
+      clock: () => now,
+      brokerPort: { mutate: mutation => { calls.push(mutation); return Promise.resolve({ ok: true, brokerOrderId: `broker-${String(calls.length)}` }); } },
+      instanceId: "active-cycle",
+      lockTakeoverBoundMs: 60_000,
+      binding: BINDING,
+    });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 8 });
+
+    const contender = createMutationGateway({
+      paths: resolved.value,
+      secrets: [],
+      clock: () => now + 1,
+      brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "MUST_NOT_RUN" }) },
+      instanceId: "startup-contender",
+      lockTakeoverBoundMs: 60_000,
+    });
+    expect(await contender.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "credential check failed during an active cycle" })).toMatchObject({ ok: true });
+
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } })).toMatchObject({ ok: false, reason: "HALT" });
+    expect(calls).toEqual([]);
+
+    const cancel: BrokerMutation = { kind: "cancel_order", clientOrderId: "entry:test", binding: BINDING };
+    const close: BrokerMutation = {
+      ...submitMutation(),
+      clientOrderId: "close:test",
+      payload: { ...(submitMutation().payload as Record<string, unknown>), intent: "close" },
+    };
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: cancel } })).toMatchObject({ ok: true });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: close } })).toMatchObject({ ok: true });
+    expect(calls.map(call => call.clientOrderId)).toEqual(["entry:test", "close:test"]);
+  });
+
+  it("keeps the monotonic interlock runtime-closed to the two broker safety reasons", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-safety-reason-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 4, holderId: "active", acquiredAt: "2026-09-01T12:00:00.000Z", seedPending: false, resetPending: false }), "utf8");
+    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => Date.parse("2026-09-01T12:00:01.000Z"), brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "MUST_NOT_RUN" }) }, instanceId: "contender", lockTakeoverBoundMs: 60_000 });
+
+    const result = await gateway.dispatchSafetyHalt({ reason: "MANUAL", detail: "not an allowed interlock reason" } as never);
+
+    expect(result).toMatchObject({ ok: false, reason: "SAFETY_HALT_REASON_NOT_ALLOWED" });
+    expect(readHaltState(resolved.value)).toEqual({ halted: false, reason: null, sticky: false });
+    expect(() => readFileSync(resolved.value.journal, "utf8")).toThrow();
   });
 
   it("refuses a mutation before the delegate when active credentials report a foreign account", async () => {
@@ -139,7 +285,66 @@ describe("P7 launch hardening — independent account identity", () => {
   });
 });
 
+describe("P7 launch hardening — certificate failure recovery", () => {
+  it("retries after the first post-fill broker read throws and drives the account flat", async () => {
+    let snapshotReads = 0;
+    let exposed = true;
+    let flattenCycles = 0;
+    const failures: string[][] = [];
+    const runtime = {
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      broker: {
+        fullSnapshot: () => {
+          snapshotReads += 1;
+          if (snapshotReads === 1) return Promise.reject(new Error("transient post-fill read failure"));
+          return Promise.resolve({ account: { accountId: EXPECTED }, positions: exposed ? [{ contractId: "SPY260904C00500000", quantity: 1 }] : [], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 });
+        },
+      },
+      gateway: {
+        heartbeat: () => Promise.resolve(true),
+        openJournal: () => Promise.resolve({ entries: [], quarantined: [], halt: { halted: false, reason: null, sticky: false } }),
+      },
+      cycle: () => { flattenCycles += 1; exposed = false; return Promise.resolve({}); },
+      ping: { success: () => Promise.resolve(), fail: (conditions: readonly string[]) => { failures.push([...conditions]); return Promise.resolve(); } },
+    } as unknown as AgentRuntime;
+
+    const recovered = await recoverCertificateAfterFailure({
+      runtime,
+      repoRoot: process.cwd(),
+      clock: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => undefined,
+      maxEntryCycles: 1,
+      entryIntervalMs: 1,
+      patienceCycles: 1,
+      maxFlattenCycles: 3,
+      flattenIntervalMs: 1,
+      approveFenceUnhalt: () => Promise.resolve(null),
+    });
+
+    expect(recovered).toBe(true);
+    expect(flattenCycles).toBe(1);
+    expect(snapshotReads).toBe(2);
+    expect(failures).toEqual([["CERTIFICATE_ABORTED"]]);
+  });
+});
+
 describe("P7 launch hardening — real broker transport", () => {
+  it("treats a non-2xx health response as failed delivery", async () => {
+    let calls = 0;
+    const ping = createPingPort({ url: "https://health.example/check", recordFile: null, clock: () => 0, timeoutMs: 100, fetchImpl: () => { calls += 1; return Promise.resolve(new Response(null, { status: 503 })); } });
+    await expect(ping.success()).rejects.toThrow("PING_HTTP_503");
+    expect(calls).toBe(1);
+  });
+
+  it("does not start a health request after the inherited cycle deadline", async () => {
+    let calls = 0;
+    const ping = createPingPort({ url: "https://health.example/check", recordFile: null, clock: () => 10, timeoutMs: 100, fetchImpl: () => { calls += 1; return Promise.resolve(new Response(null, { status: 200 })); } });
+    await expect(ping.success(10)).rejects.toThrow("PING_DEADLINE_EXCEEDED");
+    expect(calls).toBe(0);
+  });
+
   it("preserves a mutation HTTP 403 as a typed credential failure", async () => {
     const fetchImpl = (() => Promise.resolve(jsonResponse(403, { message: "credential scope revoked" }))) as typeof fetch;
     const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => 0, fetchImpl, requestTimeoutMs: 100 });

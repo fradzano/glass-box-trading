@@ -10,8 +10,9 @@ const log = (line: string): void => { process.stdout.write(`${new Date().toISOSt
 const clock = (): number => Date.now();
 const built = await buildRuntime({ repoRoot: process.cwd(), processEnv: process.env, clock, objective: "competition", instanceId: `agent-${String(process.pid)}`, log });
 if (!built.ok) {
-  process.stderr.write(`refused at ${built.stage}: ${built.reason}\n`);
-  process.exit(1);
+  const suppressed = built.stage === "suppressed";
+  (suppressed ? process.stdout : process.stderr).write(`${suppressed ? "suppressed" : "refused"} at ${built.stage}: ${built.reason}\n`);
+  process.exit(suppressed ? 0 : 1);
 }
 const runtime = built.runtime;
 try {

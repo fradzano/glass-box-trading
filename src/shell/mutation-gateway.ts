@@ -2,12 +2,14 @@
 // every journal append passes here. The shell part is thin — take the local
 // mutex, read the epoch store and the journal tail, hand the facts to the
 // pure core (`authorizeMutation`, `planAppend`, `haltStateAfter`), and apply
-// the result. Holding or reacquiring the mutex grants nothing; the epoch does,
-// and only for the gateway instance that acquired it in this process.
+// the result. Holding or reacquiring the mutex grants no broker authority; the
+// epoch does, and only for the gateway instance that acquired it in this
+// process. The sole non-authoritative safety exception is a denial-only halt
+// interlock for startup auth/account failures; it can never reach the broker.
 import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, resetPairPresent, shouldAttemptTakeover } from "../core/authority.js";
 import type { AccountVirginity, EpochStoreState } from "../core/authority.js";
 import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
-import type { AccountBinding, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
+import type { AccountBinding, HaltReason, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
 import { readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
 import { readHaltState, writeHaltState } from "./halt-state.js";
 import { appendJournalLine, quarantineTornTail, readJournalFile } from "./journal-store.js";
@@ -86,6 +88,12 @@ export interface MutationGateway {
   acquireAuthority(evidence: { readonly account: AccountVirginity }): Promise<AcquisitionResult>;
   heartbeat(): Promise<boolean>;
   dispatch(request: MutationRequest): Promise<DispatchResult>;
+  /**
+   * Monotonic startup interlock: it can only add one of the two broker-identity
+   * safety halts. It never acquires authority, changes the holder, reaches the
+   * broker, or clears a halt.
+   */
+  dispatchSafetyHalt(action: { readonly reason: Extract<HaltReason, "AUTH_FAILURE" | "ACCOUNT_BINDING_MISMATCH">; readonly detail: string }): Promise<DispatchResult>;
   /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04. */
   dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string; readonly expectedHaltSeq?: number; readonly expectedHaltReason?: string }): Promise<DispatchResult>;
 }
@@ -131,6 +139,12 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     const current = readHaltState(paths);
     if (current.halted && current.reason === "ACCOUNT_BINDING_MISMATCH") return;
     appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
+  }
+
+  function isRiskIncreasingEntry(mutation: BrokerMutation): boolean {
+    if (mutation.kind !== "submit_order") return false;
+    if (typeof mutation.payload !== "object" || mutation.payload === null || Array.isArray(mutation.payload)) return true;
+    return (mutation.payload as { readonly intent?: unknown }).intent !== "close";
   }
 
   /** Suppression check at acquisition: a live rival holder (fresh heartbeat) suppresses; a stale one may be fenced. */
@@ -185,6 +199,14 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       if (!bindingsEqual(options.binding, request.action.mutation.binding)) {
         haltForBindingMismatch(entries, epoch, `broker mutation ${request.action.mutation.kind} carried a foreign binding`);
         return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
+      }
+      // The snapshot's halt bit can become stale after phase 0. Re-read the
+      // persisted projection while holding the final gateway mutex so a
+      // concurrent monotonic safety halt vetoes an entry before broker I/O.
+      // Explicit close submissions, cancels and close_position remain usable
+      // for reconciliation and flattening under S-G12-03.
+      if (isRiskIncreasingEntry(request.action.mutation) && readHaltState(paths).halted) {
+        return { ok: false, reason: "HALT", lockHeld: true };
       }
       try {
         const broker = await options.brokerPort.mutate(request.action.mutation);
@@ -314,6 +336,46 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     async dispatch(request) {
       try {
         return await withMutex(paths, () => dispatchUnderLock(request));
+      } catch (error) {
+        return { ok: false, reason: redact(messageOf(error)), lockHeld: false };
+      }
+    },
+
+    async dispatchSafetyHalt(action) {
+      // Keep the runtime boundary closed too; TypeScript types are not an
+      // authorization mechanism for CLI/imported JavaScript callers.
+      const reason: unknown = (action as { readonly reason: unknown }).reason;
+      if (reason !== "AUTH_FAILURE" && reason !== "ACCOUNT_BINDING_MISMATCH") {
+        return { ok: false, reason: "SAFETY_HALT_REASON_NOT_ALLOWED", lockHeld: false };
+      }
+      try {
+        return await withMutex(paths, () => {
+          const store = readEpochStore(paths);
+          if (store.kind !== "present") {
+            return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
+          }
+          const loaded = loadJournal();
+          if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
+          const entries = loaded.file.parsed.entries;
+          const current = haltStateFrom(entries);
+          const transition = [...entries].reverse().find(entry => entry.type === "HALT" || entry.type === "UNHALT");
+          if (current.halted && current.reason === reason && transition?.type === "HALT") {
+            // Repair a missing/stale projection without weakening the journal state.
+            writeHaltState(paths, current);
+            return { ok: true, seq: transition.seq, stalenessNeutral: false };
+          }
+          const appended = appendUnderLock(entries, {
+            at: utcIso(clock()),
+            epoch: store.epoch,
+            type: "HALT",
+            reason,
+            detail: redact(action.detail),
+            sticky: false,
+          });
+          return appended.ok
+            ? { ok: true, seq: appended.entry.seq, stalenessNeutral: false }
+            : { ok: false, reason: appended.reason, lockHeld: true };
+        });
       } catch (error) {
         return { ok: false, reason: redact(messageOf(error)), lockHeld: false };
       }

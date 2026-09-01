@@ -477,42 +477,48 @@ function brokerOrderMatchesIntent(intent: JournalEntry, order: BrokerOrderRecord
 }
 
 function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): CreditAcceptanceEvidence | null {
-  const intents = inputs.journal.filter(entry => isEntryIntent(entry) && isRecord(entry["submittedLimit"]) && entry["submittedLimit"]["kind"] === "credit");
+  const terminalStatus = (intent: JournalEntry): unknown => inputs.journal.find(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === intent["clientOrderId"])?.["status"];
+  // Prefer a filled credit lifecycle over an earlier harness-canceled attempt:
+  // the fill clause must bind to the same exact lifecycle as acceptance.
+  const intents = inputs.journal
+    .filter(entry => isEntryIntent(entry) && isRecord(entry["submittedLimit"]) && entry["submittedLimit"]["kind"] === "credit")
+    .sort((left, right) => Number(terminalStatus(right) === "filled") - Number(terminalStatus(left) === "filled"));
   if (intents.length === 0) {
     failures.push("no credit entry INTENT was journaled");
     return null;
   }
+  let selected: CreditAcceptanceEvidence | null = null;
   for (const intent of intents) {
     const clientOrderId = intent["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
     if (!definedRiskShape(intent)) {
       failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg on the same underlying and expiry, one per sold leg, is not defined-risk`);
-      return null;
+      continue;
     }
     if (!gatePassed(intent, "G1")) {
       failures.push(`credit lifecycle ${clientOrderId}: the INTENT does not carry a passed G1 defined-risk verdict`);
-      return null;
+      continue;
     }
     const observations = inputs.orderObservations.filter(item => item.order.clientOrderId === clientOrderId);
     if (observations.some(item => !brokerOrderMatchesIntent(intent, item.order))) {
       failures.push(`credit lifecycle ${clientOrderId}: the broker order shape, quantity, or limit does not equal the journaled credit Mleg`);
-      return null;
+      continue;
     }
     const observedBrokerOrderIds = new Set(observations.map(item => item.order.brokerOrderId));
     if (observedBrokerOrderIds.size > 1 || [...observedBrokerOrderIds].some(id => !nonBlank(id))) {
       failures.push(`credit lifecycle ${clientOrderId}: the broker observations disagree on order identity`);
-      return null;
+      continue;
     }
     const submittedInstants = new Set(observations.map(item => item.order.brokerTimestamps["submitted_at"]).filter((value): value is string => value !== undefined));
     if (submittedInstants.size > 1) {
       failures.push(`credit lifecycle ${clientOrderId}: the broker observations disagree on the submission instant`);
-      return null;
+      continue;
     }
     const accepted = observations.find(item => positiveAcceptanceStatuses().includes(item.order.status));
     const outcome = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === clientOrderId).sort((a, b) => b.seq - a.seq)[0];
     if (outcome !== undefined && outcome["status"] === "rejected") {
       failures.push(`credit lifecycle ${clientOrderId} was rejected by the broker`);
-      return null;
+      continue;
     }
     if (accepted === undefined || outcome === undefined) continue;
     const terminal = outcome["status"];
@@ -520,12 +526,12 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const harnessRequestedCancel = inputs.harnessCancels.includes(clientOrderId);
     if (terminal === "canceled" && !harnessRequestedCancel) {
       failures.push(`credit lifecycle ${clientOrderId} was canceled without a harness request`);
-      return null;
+      continue;
     }
     const brokerOrderId = typeof outcome["brokerOrderId"] === "string" ? outcome["brokerOrderId"] : accepted.order.brokerOrderId;
     if (!nonBlank(brokerOrderId) || brokerOrderId !== accepted.order.brokerOrderId) {
       failures.push(`credit lifecycle ${clientOrderId}: the accepted broker order identity does not equal the terminal OUTCOME`);
-      return null;
+      continue;
     }
     const timestamps = isRecord(outcome["brokerTimestamps"]) ? outcome["brokerTimestamps"] : {};
     const terminalField = terminal === "filled" ? "filled_at" : "canceled_at";
@@ -533,19 +539,19 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const acceptedAt = accepted.order.brokerTimestamps["submitted_at"] ?? null;
     if (terminalAt === null || acceptedAt === null) {
       failures.push(`credit lifecycle ${clientOrderId}: the broker's submission and terminal timestamps are required evidence; local times do not substitute`);
-      return null;
+      continue;
     }
     const acceptedMs = instantOf(acceptedAt);
     const terminalMs = instantOf(terminalAt);
     if (acceptedMs === null || terminalMs === null || acceptedMs > terminalMs) {
       failures.push(`credit lifecycle ${clientOrderId}: the acceptance instant ${acceptedAt} does not precede the terminal instant ${terminalAt}`);
-      return null;
+      continue;
     }
     if (outsideWindow(inputs.window, intent.at, outcome.at, acceptedAt, terminalAt)) {
       failures.push(`credit lifecycle ${clientOrderId}: its instants lie outside the test window`);
       return null;
     }
-    return {
+    selected ??= {
       clientOrderId,
       exposureLifecycleId: typeof intent["exposureLifecycleId"] === "string" ? intent["exposureLifecycleId"] : "",
       intentSeq: intent.seq,
@@ -558,12 +564,17 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
       harnessRequestedCancel,
     };
   }
+  if (selected !== null) return selected;
   failures.push("no credit entry lifecycle reached a positive broker acceptance followed by a filled or harness-canceled OUTCOME");
   return null;
 }
 
-function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence | null {
-  const fills = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry["status"] === "filled" && typeof entry["filledQuantity"] === "number" && entry["filledQuantity"] > 0 && typeof entry["avgFillPriceCents"] === "number");
+function fillFrom(inputs: CertificateInputs, creditAcceptance: CreditAcceptanceEvidence | null, failures: string[]): FillEvidence | null {
+  if (creditAcceptance === null) {
+    failures.push("no fill can be bound to an accepted credit lifecycle");
+    return null;
+  }
+  const fills = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry["clientOrderId"] === creditAcceptance.clientOrderId && entry["status"] === "filled" && typeof entry["filledQuantity"] === "number" && entry["filledQuantity"] > 0 && typeof entry["avgFillPriceCents"] === "number");
   for (const fill of fills) {
     const clientOrderId = fill["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
@@ -589,7 +600,9 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
         if (!isRecord(position) || !nonBlank(position["contractId"]) || !Number.isSafeInteger(position["quantity"])) return false;
         if ((position["quantity"] as number) !== 0) actual.set(position["contractId"], (actual.get(position["contractId"]) ?? 0) + (position["quantity"] as number));
       }
-      return actual.size === expectedPositions.size && [...expectedPositions].every(([contractId, quantity]) => actual.get(contractId) === quantity);
+      return snapshotOf(entry)?.["accountId"] === inputs.accountId
+        && actual.size === expectedPositions.size
+        && [...expectedPositions].every(([contractId, quantity]) => actual.get(contractId) === quantity);
     });
     if (later === undefined) continue;
     const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
@@ -606,7 +619,7 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
       reconciledSnapshotSeq: later.seq,
     };
   }
-  failures.push("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+  failures.push(`accepted credit lifecycle ${creditAcceptance.clientOrderId} was not filled as exactly one lot and reconciled through a later bound-account broker snapshot`);
   return null;
 }
 
@@ -685,7 +698,7 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   }
 
   const creditAcceptance = creditAcceptanceFrom(windowInputs, failures);
-  const fill = fillFrom(windowInputs, failures);
+  const fill = fillFrom(windowInputs, creditAcceptance, failures);
   const intentForLiquidity = creditAcceptance === null ? undefined : windowJournal.find(entry => entry.seq === creditAcceptance.intentSeq);
   const liquidity = intentForLiquidity === undefined ? [] : liquidityFor(intentForLiquidity, windowJournal);
   if (intentForLiquidity !== undefined) {
@@ -773,6 +786,7 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
       if ((fence["workingOrdersAtFence"] as readonly unknown[]).some(item => !canceled.has(item))) violations.push("certificate fence left a working order without confirmed cancellation");
     }
     const credit = evidence["creditAcceptance"];
+    const fill = evidence["fill"];
     if (isRecord(credit)) {
       if (!positiveAcceptanceStatuses().includes(String(credit["acceptedStatus"])) || (credit["terminalStatus"] !== "filled" && credit["terminalStatus"] !== "canceled")) violations.push("certificate credit acceptance states are not the positive/terminal states S-ARM-01 names");
       if (credit["terminalStatus"] === "canceled" && credit["harnessRequestedCancel"] !== true) violations.push("certificate credit acceptance ended in a cancel the harness did not request");
@@ -780,7 +794,7 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
       if ((instantOf(credit["acceptedAt"]) ?? 0) > (instantOf(credit["terminalAt"]) ?? 0)) violations.push("certificate credit acceptance does not precede its terminal instant");
       if (!nonBlank(credit["clientOrderId"]) || !nonBlank(credit["brokerOrderId"]) || !nonBlank(credit["exposureLifecycleId"])) violations.push("certificate credit acceptance lacks order identities");
     }
-    const fill = evidence["fill"];
+    if (isRecord(credit) && isRecord(fill) && (credit["clientOrderId"] !== fill["clientOrderId"] || credit["brokerOrderId"] !== fill["brokerOrderId"])) violations.push("certificate fill is not the accepted credit lifecycle and broker order");
     if (isRecord(fill)) {
       if (!(Number.isSafeInteger(fill["filledQuantity"]) && (fill["filledQuantity"] as number) >= 1) || !(Number.isSafeInteger(fill["avgFillPriceCents"]) && (fill["avgFillPriceCents"] as number) >= 0)) violations.push("certificate fill quantity or price is not a real fill");
       if (!(Number.isSafeInteger(fill["outcomeSeq"]) && Number.isSafeInteger(fill["reconciledSnapshotSeq"]) && (fill["outcomeSeq"] as number) > 0 && (fill["outcomeSeq"] as number) < (fill["reconciledSnapshotSeq"] as number))) violations.push("certificate fill reconciliation sequence is not ordered");

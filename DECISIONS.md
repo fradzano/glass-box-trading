@@ -1248,3 +1248,26 @@ small, no ADR split).
   repository gate pass with 296 tests; a first otherwise-green gate attempt
   hit a transient Windows `EPERM` during the unchanged atomic dashboard rename
   and the immediate complete rerun passed.
+- **2026-09-01 — P7 R4 closes the suppressed-startup halt race.** A startup
+  broker-identity/auth refusal is safety-relevant even when another process
+  owns a fresh lease. The gateway therefore exposes one narrow monotonic
+  interlock: under its existing mutex it may append only `AUTH_FAILURE` or
+  `ACCOUNT_BINDING_MISMATCH`, using the current persisted epoch, without a
+  broker port, authority acquisition, holder change, or un-halt capability.
+  A final persisted-halt read at the broker boundary rejects a stale entry
+  after such an interlock lands, while cancel and explicit-close mutations
+  remain available for reconciliation. This is not a general third mutation
+  class; it is a denial-only safety fuse for the two mandatory startup fences.
+- **2026-09-01 — P7 R5 closes the adjacent cold-scan findings.** Certificate
+  acceptance and fill are now one identity: the builder prefers a filled
+  credit lifecycle, requires its exact client and broker order IDs for the
+  one-lot fill, and reconciles signed quantities only on the bound account;
+  arming validates the same cross-clause identity. Runtime authority is
+  acquired before the first broker read. A fresh rival therefore produces one
+  staleness-neutral `SUPPRESSED` witness and exit 0 in the scheduled CLI with
+  no account/calendar/position/order call. Temporary `CONFIG_INVALID`
+  authority is released in `finally`. Deadline cycles defer their ping plan
+  until aggregate work wins the outer race; the concrete adapter refuses
+  expired delivery and non-2xx HTTP. Finally, any exceptional certificate exit
+  sends a failure signal and repeatedly invokes the ordinary S-G11 flatten
+  cycle until broker truth is flat or recovery is explicitly unresolved.
