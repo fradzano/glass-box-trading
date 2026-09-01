@@ -71,7 +71,8 @@ function walkDirectories(directory: string, out: string[]): void {
 }
 
 function matchesPattern(relative: string, pattern: string): boolean {
-  // The lock's patterns are `**/__pycache__/**` and `**/*.pyc`: a directory-name match or a suffix match.
+  // Directory-removal patterns such as `**/__pycache__/**`, plus suffix
+  // patterns such as `**/*.pyc`. The exact site/bin scope is handled apart.
   if (pattern.endsWith("/**")) {
     const name = pattern.slice(0, -3).replace(/^\*\*\//, "");
     return relative.split("/").includes(name);
@@ -108,6 +109,27 @@ function lockedPackages(uvLock: string): ReadonlyMap<string, string> {
   return out;
 }
 
+const INSTALLER_METADATA = new Set(["INSTALLER", "RECORD", "REQUESTED", "direct_url.json"]);
+const SITE_BIN_PATTERN = "site/bin/**";
+
+/** Canonical importable dependency bytes; project files have the stronger git-blob check. */
+export function dependencySiteSha256(site: string, packageModuleDir = "alpaca_mcp_server"): string {
+  const files: string[] = [];
+  walkFiles(site, files);
+  const projectPrefix = `${packageModuleDir.toLowerCase()}-`;
+  const lines = files.flatMap(file => {
+    const relative = path.relative(site, file).split(path.sep).join("/");
+    const parts = relative.split("/");
+    const first = (parts[0] ?? "").toLowerCase();
+    if (relative === ".lock" || first === "bin") return [];
+    if (parts.includes("__pycache__") || relative.endsWith(".pyc")) return [];
+    if (first === packageModuleDir.toLowerCase() || (first.startsWith(projectPrefix) && first.endsWith(".dist-info"))) return [];
+    if ((parts.at(-2) ?? "").endsWith(".dist-info") && INSTALLER_METADATA.has(parts.at(-1) ?? "")) return [];
+    return [`${relative} ${sha256Of(file)}`];
+  });
+  return createHash("sha256").update(lines.sort().join("\n")).digest("hex");
+}
+
 export type LaunchObservation = Omit<McpLaunchObservation, "childEnvironment">;
 
 export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageModuleDir = "alpaca_mcp_server"): { readonly evidence: McpEvidencePort; readonly child: McpChildPort; readonly extra: () => EnvironmentEvidence; readonly lastObservation: () => LaunchObservation | null } {
@@ -124,6 +146,7 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
       const pinnedLock = git(paths.source, ["show", `${lock.source.commit}:${lock.source.dependencyLockAtCommit}`]);
       const locked = lockedPackages(pinnedLock);
       const dependencyLockMatchesPin = installed.every(item => item.name === project?.name || locked.get(item.name) === item.version);
+      const dependencyContentMatchesPin = dependencySiteSha256(paths.site, packageModuleDir) === lock.source.dependencySiteSha256;
       // Immutable package files: every tracked file of the package at the pinned commit must be byte-identical in the installed copy, and nothing else may be there.
       const treeRoot = `src/${packageModuleDir}`;
       const tree = git(paths.source, ["ls-tree", "-r", lock.source.commit, "--", treeRoot]);
@@ -162,6 +185,7 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
         packageName: project?.name ?? "",
         packageVersion: project?.version ?? "",
         dependencyLockMatchesPin,
+        dependencyContentMatchesPin,
         interpreterLauncherSha256: sha256Of(paths.launcher),
         interpreterRuntimeSha256: sha256Of(paths.runtime),
         hashProvenance: "runtime_lock",
@@ -174,12 +198,24 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
     },
     removeBytecode(patterns: readonly string[]): Promise<readonly string[]> {
       const removed: string[] = [];
+      if (patterns.includes(SITE_BIN_PATTERN)) {
+        const siteBin = path.join(paths.site, "bin");
+        try {
+          if (statSync(siteBin).isDirectory()) {
+            rmSync(siteBin, { recursive: true, force: true });
+            removed.push(siteBin);
+          }
+        } catch {
+          // Exact site/bin is already absent.
+        }
+      }
+      const recursivePatterns = patterns.filter(pattern => pattern !== SITE_BIN_PATTERN);
       for (const root of [paths.site, paths.source]) {
         const directories: string[] = [];
         walkDirectories(root, directories);
         for (const directory of directories) {
           const relative = path.relative(root, directory).split(path.sep).join("/");
-          if (patterns.some(pattern => pattern.endsWith("/**") && matchesPattern(`${relative}/x`, pattern))) {
+          if (recursivePatterns.some(pattern => pattern.endsWith("/**") && matchesPattern(`${relative}/x`, pattern))) {
             rmSync(directory, { recursive: true, force: true });
             removed.push(directory);
           }
@@ -192,7 +228,7 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
         }
         for (const file of files) {
           const relative = path.relative(root, file).split(path.sep).join("/");
-          if (patterns.some(pattern => !pattern.endsWith("/**") && matchesPattern(relative, pattern))) {
+          if (recursivePatterns.some(pattern => !pattern.endsWith("/**") && matchesPattern(relative, pattern))) {
             rmSync(file, { force: true });
             removed.push(file);
           }
@@ -202,12 +238,21 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
     },
     scanBytecode(patterns: readonly string[]): Promise<readonly string[]> {
       const surviving: string[] = [];
+      if (patterns.includes(SITE_BIN_PATTERN)) {
+        const siteBin = path.join(paths.site, "bin");
+        try {
+          if (statSync(siteBin).isDirectory()) surviving.push(siteBin);
+        } catch {
+          // Exact site/bin is absent as required.
+        }
+      }
+      const recursivePatterns = patterns.filter(pattern => pattern !== SITE_BIN_PATTERN);
       for (const root of [paths.site, paths.source]) {
         const files: string[] = [];
         walkFiles(root, files);
         for (const file of files) {
           const relative = path.relative(root, file).split(path.sep).join("/");
-          if (patterns.some(pattern => matchesPattern(relative, pattern))) surviving.push(file);
+          if (recursivePatterns.some(pattern => matchesPattern(relative, pattern))) surviving.push(file);
         }
       }
       return Promise.resolve(surviving);

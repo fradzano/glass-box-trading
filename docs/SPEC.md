@@ -353,15 +353,24 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   `ANALYST_ALPACA_PROFILE=dev`, generate `ALPACA_TOOLSETS` from the single
   positive capability manifest, and validate the manifest schema/policy. The
   tracked runtime lock must independently name an immutable official upstream
-  commit, its dependency lock, and expected interpreter/content digests; hashes
-  may never be learned from the currently installed environment. The server is
+  commit, its dependency lock, expected interpreter/content digests, and the
+  canonical dependency-site digest derived from that pinned Git object's
+  production dependency graph by a clean rebuild from its SHA-256-authenticated
+  wheels, with wheel identity/hash rechecked and importable payload extracted
+  without installer execution; every selected wheel tag must match the pinned
+  interpreter/platform identity, and unsupported dependency markers fail closed.
+  Hashes may never be learned from the currently
+  installed environment. The server is
   built in a dedicated environment from that pinned source/dependency lock.
   Before spawn, the same launcher first removes every `__pycache__` directory
   and `.pyc` file from the dedicated environment and verifies their recursive
-  absence. No generated executable file is exempt from comparison or allowed
-  to survive into the launch. Still before executing any child code, the
+  absence. It likewise removes the installer-created `site/bin` tree and
+  verifies its recursive absence, because Python could otherwise resolve its
+  scripts as namespace-package modules even when the directory is absent from
+  `PATH`. Still before executing any child code, the
   launcher verifies the exact interpreter/runtime bytes, immutable source/
-  package files, package name/version, and launch environment against the
+  package files, package name/version, the complete importable dependency tree
+  against that independently tracked digest, and launch environment against the
   independently expected values; all verified identities enter `runtimeDigest`.
   Only after every check passes may it start the child with Python bytecode
   writes disabled. Because the pinned stdio SDK injects a fixed OS default set,

@@ -312,9 +312,9 @@ async function exerciseCore() {
   if (armed.value.decision.cycleIntervalMs !== 900_000 || armed.value.execution.killEquityThresholdCents !== 9_000_000) throw new Error("sandboxed startup bundle is wrong");
   const sandboxLock = {
     schemaVersion: 1,
-    source: { repository: "https://example.invalid/repo.git", commit: "a".repeat(40), package: "alpaca-mcp-server", version: "2.3.0", dependencyLockAtCommit: "uv.lock" },
-    interpreter: { implementation: "CPython", version: "3.14.1", launcherSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) },
-    installPolicy: { dedicatedEnvironment: true, buildFromPinnedCommit: true, frozenDependencyLock: true, learnHashesFromInstalledEnvironment: false, verifyImmutableSourceAndPackageFilesBeforeSpawn: true, removeBeforeSpawn: ["**/*.pyc"], requireRemovedFilesAbsentBeforeSpawn: true, disableBytecodeWritesInChild: true },
+    source: { repository: "https://example.invalid/repo.git", commit: "a".repeat(40), package: "alpaca-mcp-server", version: "2.3.0", dependencyLockAtCommit: "uv.lock", dependencySiteSha256: "d".repeat(64) },
+    interpreter: { implementation: "CPython", version: "3.14.1", wheelPlatformTag: "win_amd64", launcherSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) },
+    installPolicy: { dedicatedEnvironment: true, buildFromPinnedCommit: true, frozenDependencyLock: true, learnHashesFromInstalledEnvironment: false, verifyImmutableSourceAndPackageFilesBeforeSpawn: true, removeBeforeSpawn: ["**/__pycache__/**", "**/*.pyc", "site/bin/**"], requireRemovedFilesAbsentBeforeSpawn: true, disableBytecodeWritesInChild: true },
   };
   const sandboxManifest = { schemaVersion: 1, server: { package: "alpaca-mcp-server", version: "2.3.0", runtimeLock: "lock.json" }, analystProfile: "dev", inventoryPolicy: "exact", alpacaToolsets: ["assets"], allowedTools: ["get_asset", "get_clock"] };
   const lockOk = startup.validateRuntimeLock(sandboxLock);
@@ -323,7 +323,7 @@ async function exerciseCore() {
   const env = startup.buildAnalystChildEnv(manifestOk.value, { devKeyId: "k", devSecretKey: "s" });
   const observation = {
     sourceRepository: sandboxLock.source.repository, sourceCommit: sandboxLock.source.commit, packageName: "alpaca-mcp-server", packageVersion: "2.3.0",
-    dependencyLockMatchesPin: true, interpreterLauncherSha256: sandboxLock.interpreter.launcherSha256, interpreterRuntimeSha256: sandboxLock.interpreter.runtimeSha256,
+    dependencyLockMatchesPin: true, dependencyContentMatchesPin: true, interpreterLauncherSha256: sandboxLock.interpreter.launcherSha256, interpreterRuntimeSha256: sandboxLock.interpreter.runtimeSha256,
     hashProvenance: "runtime_lock", immutableFileMismatches: [], bytecodeArtifactsPresent: [], bytecodeWritesDisabled: true, childEnvironment: env,
   };
   const launchOk = startup.verifyMcpLaunch(lockOk.value, observation, []);

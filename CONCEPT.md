@@ -97,9 +97,9 @@ Role boundaries, enforced structurally:
 - **Executor** performs only core-approved actions. The LLM has no code path to an
   order.
 
-Auth for the analyst: Claude subscription via Agent SDK preferred; `ANTHROPIC_API_KEY`
-as configured fallback if unattended plan-auth token refresh proves brittle
-(open point O2).
+Auth for the analyst: Claude subscription via Agent SDK setup-token OAuth. P7
+requires `CLAUDE_CODE_OAUTH_TOKEN`; the earlier `ANTHROPIC_API_KEY` fallback
+idea (O2) was not implemented and is superseded by the fail-closed runtime.
 
 ## 4. Risk gate catalog (second cut after cold read — final list frozen before go-live Aug 31)
 

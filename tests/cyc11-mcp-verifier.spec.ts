@@ -3,7 +3,8 @@
 // artifacts are validated as shipped; the launch variants run against fake
 // evidence/child ports and must fail BEFORE spawn (pre-spawn violations) or
 // before any analyst release (inventory violations).
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -18,7 +19,7 @@ import {
 import type { AnalystManifest, McpLaunchObservation, RuntimeLock } from "../src/core/startup.js";
 import { launchVerifiedAnalystChild } from "../src/shell/analyst-mcp-launcher.js";
 import type { McpChildHandle, McpLaunchPorts } from "../src/shell/analyst-mcp-launcher.js";
-import { isolatedMcpTransportEnvironment, mcpPythonBootstrap } from "../src/shell/mcp-environment.js";
+import { createEnvironmentPorts, dependencySiteSha256, isolatedMcpTransportEnvironment, mcpPythonBootstrap } from "../src/shell/mcp-environment.js";
 
 const ROOT = process.cwd();
 
@@ -43,6 +44,7 @@ function matchingObservation(lock: RuntimeLock, manifest: AnalystManifest, overr
     packageName: lock.source.package,
     packageVersion: lock.source.version,
     dependencyLockMatchesPin: true,
+    dependencyContentMatchesPin: true,
     interpreterLauncherSha256: lock.interpreter.launcherSha256,
     interpreterRuntimeSha256: lock.interpreter.runtimeSha256,
     hashProvenance: "runtime_lock",
@@ -66,12 +68,61 @@ describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree
     expect(() => mcpPythonBootstrap("bad;import host", {})).toThrow("invalid MCP package module name");
   });
 
+  it("binds dependency bytes while excluding project and installer-only files", () => {
+    const site = mkdtempSync(path.join(tmpdir(), "gbt-mcp-site-digest-"));
+    try {
+      mkdirSync(path.join(site, "dependency"));
+      mkdirSync(path.join(site, "alpaca_mcp_server"));
+      mkdirSync(path.join(site, "dependency-1.0.dist-info"));
+      mkdirSync(path.join(site, "bin"));
+      writeFileSync(path.join(site, "dependency", "module.py"), "trusted\n", "utf8");
+      writeFileSync(path.join(site, "alpaca_mcp_server", "server.py"), "project-a\n", "utf8");
+      writeFileSync(path.join(site, "dependency-1.0.dist-info", "RECORD"), "installer-a\n", "utf8");
+      writeFileSync(path.join(site, "bin", "tool.exe"), "installer-a\n", "utf8");
+      writeFileSync(path.join(site, ".lock"), "installer-a\n", "utf8");
+      const expected = dependencySiteSha256(site);
+      writeFileSync(path.join(site, "alpaca_mcp_server", "server.py"), "project-b\n", "utf8");
+      writeFileSync(path.join(site, "dependency-1.0.dist-info", "RECORD"), "installer-b\n", "utf8");
+      writeFileSync(path.join(site, "bin", "tool.exe"), "installer-b\n", "utf8");
+      expect(dependencySiteSha256(site)).toBe(expected);
+      writeFileSync(path.join(site, "dependency", "module.py"), "patched\n", "utf8");
+      expect(dependencySiteSha256(site)).not.toBe(expected);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the installer bin tree before Python can import its scripts", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gbt-mcp-bin-removal-"));
+    const site = path.join(root, "site");
+    const source = path.join(root, "source");
+    try {
+      mkdirSync(path.join(site, "bin"), { recursive: true });
+      mkdirSync(path.join(site, "dependency", "bin"), { recursive: true });
+      mkdirSync(path.join(source, "bin"), { recursive: true });
+      writeFileSync(path.join(site, "bin", "helper.py"), "raise RuntimeError('must not import')\n", "utf8");
+      writeFileSync(path.join(site, "kept.py"), "VALUE = 1\n", "utf8");
+      writeFileSync(path.join(site, "dependency", "bin", "module.py"), "VALUE = 2\n", "utf8");
+      writeFileSync(path.join(source, "bin", "tracked.py"), "VALUE = 3\n", "utf8");
+      const ports = createEnvironmentPorts({ root, site, source, runtime: path.join(root, "python.exe"), launcher: path.join(root, "launcher.exe") });
+      await ports.evidence.removeBytecode(["site/bin/**"]);
+      expect(existsSync(path.join(site, "bin"))).toBe(false);
+      expect(existsSync(path.join(site, "kept.py"))).toBe(true);
+      expect(existsSync(path.join(site, "dependency", "bin", "module.py"))).toBe(true);
+      expect(existsSync(path.join(source, "bin", "tracked.py"))).toBe(true);
+      await expect(ports.evidence.scanBytecode(["site/bin/**"])).resolves.toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("the shipped config artifacts pass their schemas and name the same server identity", () => {
     const manifest = trackedManifest();
     const lock = trackedLock();
     expect(manifest.allowedTools).toHaveLength(32);
     expect(manifest.inventoryPolicy).toBe("exact");
     expect(lock.installPolicy.learnHashesFromInstalledEnvironment).toBe(false);
+    expect(lock.installPolicy.removeBeforeSpawn).toContain("site/bin/**");
     expect(verifyManifestLockAgreement(manifest, lock)).toEqual({ ok: true });
   });
 
@@ -89,7 +140,10 @@ describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, learnHashesFromInstalledEnvironment: true } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, disableBytecodeWritesInChild: false } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, requireRemovedFilesAbsentBeforeSpawn: false } }).ok).toBe(false);
+    const interpreter = raw["interpreter"] as Record<string, unknown>;
+    expect(validateRuntimeLock({ ...raw, interpreter: { ...interpreter, wheelPlatformTag: "win-amd64;linux" } }).ok).toBe(false);
     const source = raw["source"] as Record<string, unknown>;
+    expect(validateRuntimeLock({ ...raw, source: { ...source, dependencySiteSha256: "self-learned" } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, source: { ...source, commit: "872abbf" } }).ok).toBe(false);
   });
 
@@ -128,6 +182,7 @@ describe("S-CYC-11 pre-spawn gate — every identity drift fails before any chil
 
   it("WIN-19: unpinned dependencies, patched immutable files, surviving bytecode, enabled bytecode writes, and self-learned hashes all fail", () => {
     expect(violationCodes({ dependencyLockMatchesPin: false })).toContain("DEPENDENCY_LOCK_DRIFT");
+    expect(violationCodes({ dependencyContentMatchesPin: false })).toContain("DEPENDENCY_CONTENT_MISMATCH");
     expect(violationCodes({ immutableFileMismatches: ["src/alpaca_mcp_server/server.py"] })).toContain("IMMUTABLE_CONTENT_MISMATCH");
     expect(violationCodes({ bytecodeArtifactsPresent: ["src/__pycache__/server.cpython-314.pyc"] })).toContain("BYTECODE_PRESENT");
     expect(violationCodes({ bytecodeWritesDisabled: false })).toContain("BYTECODE_WRITES_ENABLED");

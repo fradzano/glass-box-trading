@@ -1338,3 +1338,27 @@ small, no ADR split).
   lost acknowledgement outranks an earlier harness-canceled attempt. README and
   STATE now name the real dev-paper reachability, the owner/O5/P8 boundaries,
   the current verification count, and the same R13–R15 decision sequence.
+- **2026-09-01 — P7 R16 closes the certificate end instant and independently
+  anchors MCP dependency bytes.** The certificate window ends immediately
+  after the stable broker snapshot and before its final atomic writer/journal
+  read; every halt through that historical end is therefore observed, while a
+  later halt is outside the claim. `dependencySiteSha256` was derived by
+  `tools/derive_mcp_dependency_digest.py` from a clean CPython 3.14 Windows
+  install of the 69-package production graph read with `git show` from the
+  exact official upstream commit, using only SHA-256-authenticated wheels named
+  by that pinned `uv.lock`; the tool rejects origin/HEAD/worktree or installed-
+  closure drift, independently verifies every downloaded wheel identity/hash,
+  requires its signed compatibility tags to match the tracked `win_amd64`
+  CPython target, evaluates the supported marker set fail-closed without an
+  external marker library, and extracts importable payload itself rather than
+  trusting installer output.
+  The resulting 3,985 canonical importable files
+  byte-matched the deployment site. The tracked digest is
+  `05697dac3f1cdf3e3d96d0da6879c4b1ffef96d2b4f345de4278e65c58abc6e4` and
+  is enforced before child spawn. Installer metadata is excluded because it is
+  not executable content; the installer-created `site/bin` tree is excluded
+  from this digest only because pre-spawn cleanup removes it recursively and
+  verifies its absence before Python can resolve its scripts as modules. The
+  canonical paper origin remains solely in `config/policy.json`; stale
+  `ALPACA_*_BASE_URL` examples were removed. P7 auth is OAuth-only and
+  fail-closed; the unimplemented API-key fallback decision is superseded.

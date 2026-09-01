@@ -261,12 +261,15 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     throw new Error("refusing final snapshot: writer authority or exact fence un-halt transition changed");
   }
   const snapshot = await runtime.broker.fullSnapshot();
+  // End the historical claim before the final atomic writer read. That read
+  // catches every halt through endedAt; a later transition is outside the
+  // certificate window instead of being silently included without evidence.
+  const endedAt = epochMsToUtcIso(clock());
   const afterFinal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
   if (afterFinal === null || afterFinal.halt.halted || terminalHaltTransitionSeq(afterFinal.entries) !== unhaltSeq) {
     throw new Error("refusing certificate: writer authority or halt transition changed during the final snapshot");
   }
   const journal = afterFinal.entries;
-  const endedAt = epochMsToUtcIso(clock());
   const certificate = buildCertificate({
     accountId: runtime.binding.accountId,
     tradingOrigin: runtime.binding.tradingOrigin,
