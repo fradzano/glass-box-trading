@@ -81,7 +81,7 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(staleApproval).toMatchObject({ ok: false, reason: "HALT_CHANGED_SINCE_RECONCILIATION" });
     expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "MANUAL", sticky: false });
 
-    const unhalted = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed positions, resuming", clock: () => TEST_ONLY_AT_MS + 2_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "MANUAL" });
+    const unhalted = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed positions, resuming", clock: () => TEST_ONLY_AT_MS + 2_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "MANUAL", expectedEpoch: 2, expectedHolderId: "writer-a", expectedJournalSeq: 2 });
     expect(unhalted).toMatchObject({ ok: true });
     expect(readHaltState(paths.value)).toEqual(NOT_HALTED);
     const entries = parseJournalText(readFileSync(paths.value.journal, "utf8")).entries;
@@ -104,6 +104,27 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     if (!seedPaths.ok) throw new Error(seedPaths.reason);
     writeFileSync(seedPaths.value.epoch, JSON.stringify({ epoch: 1, holderId: "seeder", acquiredAt: TEST_ONLY_AT, seedPending: true, resetPending: false }), "utf8");
     expect(await manualUnhalt({ paths: seedPaths.value, operator: "felix", reason: "probe", clock: () => TEST_ONLY_AT_MS + 5_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
+  });
+
+  it("refuses a certificate un-halt after a successor has taken the writer epoch", async () => {
+    const paths = resolveStateDir(temporaryStateDir());
+    if (!paths.ok) throw new Error(paths.reason);
+    let now = TEST_ONLY_AT_MS;
+    const first = createMutationGateway({ paths: paths.value, secrets: [], clock: () => now, brokerPort: NO_BROKER_PORT, instanceId: "certificate-a", lockTakeoverBoundMs: 1_000 });
+    expect(await first.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "GAP_HALT", epoch: 1 });
+    const reconciled = await first.openJournalAsWriter(1);
+    expect(reconciled).not.toBeNull();
+    const haltSeq = reconciled?.entries.at(-1)?.seq;
+    expect(haltSeq).toBe(2);
+
+    now += 1_001;
+    const successor = createMutationGateway({ paths: paths.value, secrets: [], clock: () => now, brokerPort: NO_BROKER_PORT, instanceId: "certificate-b", lockTakeoverBoundMs: 1_000 });
+    expect(await successor.acquireAuthority({ account: "non_virgin" })).toMatchObject({ kind: "WON", epoch: 2 });
+
+    const stale = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "stale approval", clock: () => now, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 1_000, expectedHaltSeq: 2, expectedHaltReason: "EPOCH_STORE_RESET", expectedEpoch: 1, expectedHolderId: "certificate-a", expectedJournalSeq: 2 });
+    expect(stale).toMatchObject({ ok: false, reason: "WRITER_CHANGED_SINCE_RECONCILIATION" });
+    expect((await successor.openJournal()).halt).toEqual({ halted: true, reason: "EPOCH_STORE_RESET", sticky: false });
+    expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.at(-1)?.type).toBe("HALT");
   });
 
   it("S-G12-04 no shell module besides the manual tool and the gateway's refusal mentions UNHALT", () => {

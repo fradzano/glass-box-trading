@@ -37,7 +37,7 @@ export interface CertificateRunOptions {
   readonly maxFlattenCycles: number;
   readonly flattenIntervalMs: number;
   /** Human checkpoint after halted reconciliation. Returning null leaves the AUTH_FAILURE halt in place and aborts. */
-  readonly approveFenceUnhalt: (facts: { readonly haltSeq: number; readonly httpStatus: number; readonly workingOrders: readonly string[]; readonly canceledOrders: readonly string[] }) => Promise<{ readonly operator: string; readonly reason: string } | null>;
+  readonly approveFenceUnhalt: (facts: { readonly haltSeq: number; readonly httpStatus: number; readonly workingOrders: readonly string[]; readonly canceledOrders: readonly string[] }, signal: AbortSignal) => Promise<{ readonly operator: string; readonly reason: string } | null>;
 }
 
 export interface CertificateRunResult {
@@ -100,6 +100,34 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
 
   const inCurrentWindow = (entries: readonly JournalEntry[]): readonly JournalEntry[] => entries.filter(entry => entry.at >= startedAt);
 
+  function operationDeadlineMs(): number {
+    const budget = Math.min(runtime.config.scheduling.cycleWalltimeBudgetMs, runtime.config.scheduling.lockTakeoverBoundMs - 1);
+    if (!Number.isSafeInteger(budget) || budget < 1) throw new Error("certificate operation deadline is not below the writer takeover bound");
+    return clock() + budget;
+  }
+
+  async function awaitHumanApproval<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (!await runtime.gateway.heartbeat()) throw new Error("certificate lost writer authority before human checkpoint");
+    const controller = new AbortController();
+    const pending = operation(controller.signal).then(
+      value => ({ kind: "done" as const, value }),
+      (error: unknown) => ({ kind: "error" as const, error }),
+    );
+    const interval = Math.min(60_000, Math.max(1, Math.floor(runtime.config.scheduling.lockTakeoverBoundMs / 3)));
+    for (;;) {
+      const outcome = await Promise.race([pending, options.sleep(interval).then(() => ({ kind: "tick" as const }))]);
+      if (outcome.kind === "done") {
+        if (!await runtime.gateway.heartbeat()) throw new Error("certificate lost writer authority as the human checkpoint completed");
+        return outcome.value;
+      }
+      if (outcome.kind === "error") throw outcome.error;
+      if (!await runtime.gateway.heartbeat()) {
+        controller.abort();
+        throw new Error("certificate lost writer authority during human checkpoint");
+      }
+    }
+  }
+
   async function keepAliveSleep(ms: number): Promise<void> {
     let remaining = ms;
     const interval = Math.min(60_000, Math.max(1, Math.floor(runtime.config.scheduling.lockTakeoverBoundMs / 3)));
@@ -120,9 +148,10 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
 
   async function observeOrders(): Promise<void> {
     const entries = inCurrentWindow((await runtime.gateway.openJournal()).entries);
+    const deadlineAtMs = operationDeadlineMs();
     for (const clientOrderId of new Set(entryIntentIds(entries))) {
       try {
-        const order = await runtime.broker.read.orderByClientId(clientOrderId);
+        const order = await runtime.broker.read.orderByClientId(clientOrderId, deadlineAtMs);
         if (order !== null) observations.push({ observedAt: epochMsToUtcIso(clock()), order });
       } catch (error) {
         log(`observation of ${clientOrderId} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -160,7 +189,8 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     for (const [id, since] of restingSince) {
       if (cycleIndex - since >= options.patienceCycles && !harnessCancels.includes(id)) {
         log(`harness cancel of resting entry ${id}`);
-        const dispatched = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: id, binding: runtime.binding } } });
+        const deadlineAtMs = operationDeadlineMs();
+        const dispatched = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, deadlineAtMs, action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: id, binding: runtime.binding, notAfterMs: deadlineAtMs } } });
         if (dispatched.ok) harnessCancels.push(id);
       }
     }
@@ -169,7 +199,8 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
 
   // ---- phase B: flatten through the S-G11 deadline regime (FLATTEN_DATE = today for this supervised run) ----
   for (let attempt = 0; attempt < options.maxFlattenCycles; attempt += 1) {
-    const [positions, openOrders] = await Promise.all([runtime.broker.read.positions(), runtime.broker.read.openOrders()]);
+    const deadlineAtMs = operationDeadlineMs();
+    const [positions, openOrders] = await Promise.all([runtime.broker.read.positions(deadlineAtMs), runtime.broker.read.openOrders(deadlineAtMs)]);
     if (positions.every(position => position.quantity === 0) && openOrders.every(order => !isWorkingBrokerStatus(order.status))) break;
     cycleIndex += 1;
     const report = await runLiveCycle({ flattenDate: runtime.tradingDay, finalCycleOfSession: false, analyst: () => Promise.resolve("{\"candidates\":[]}") });
@@ -184,7 +215,7 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
   const unresolvedBeforeFence = unresolvedEntryLifecycleIds(beforeFenceBarrier.entries);
   if (unresolvedBeforeFence.length > 0) throw new Error(`refusing fence drill: unresolved entry lifecycle(s): ${unresolvedBeforeFence.join(",")}`);
   const beforeFenceBarrierSeq = terminalJournalSeq(beforeFenceBarrier.entries);
-  const beforeFenceSnapshot = await runtime.broker.fullSnapshot();
+  const beforeFenceSnapshot = await runtime.broker.fullSnapshot(operationDeadlineMs());
   if (!beforeFenceSnapshot.pagesComplete || beforeFenceSnapshot.consistentReads < 2 || beforeFenceSnapshot.account.accountId !== runtime.binding.accountId
     || beforeFenceSnapshot.positions.some(position => position.quantity !== 0) || beforeFenceSnapshot.nonTerminalOrders.length > 0) {
     throw new Error("refusing fence drill: account is not stably flat after the flatten phase");
@@ -201,7 +232,7 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
   const badBroker = createAlpacaBroker({ credentials: { keyId: runtime.env["ALPACA_DEV_KEY_ID"] ?? "", secretKey: "INVALID-SECRET-FOR-FENCE-DRILL" }, tradingOrigin: runtime.config.binding.canonicalTradingOrigin, dataOrigin: MARKET_DATA_ORIGIN, clock, requestTimeoutMs: Math.min(runtime.config.scheduling.cycleWalltimeBudgetMs, 30_000) });
   let fenceStatus = 0;
   try {
-    await badBroker.read.account();
+    await badBroker.read.account(operationDeadlineMs());
   } catch (error) {
     fenceStatus = httpStatusOf(error) ?? 0;
   }
@@ -210,14 +241,15 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
   cycles.push(fenceCycle);
   log(`fence cycle ${String(cycleIndex)}: http=${String(fenceStatus)} reasons=${fenceCycle.reasonCodes.join(",")} blocked=${fenceCycle.entriesBlocked.join(",")}`);
   // The runbook fact: a key rotation does not cancel working orders — the fence procedure ends with a working-order check/cancel.
-  const working = (await runtime.broker.read.openOrders()).filter(order => isWorkingBrokerStatus(order.status)).map(order => order.clientOrderId);
+  const fenceOrderDeadlineMs = operationDeadlineMs();
+  const working = (await runtime.broker.read.openOrders(fenceOrderDeadlineMs)).filter(order => isWorkingBrokerStatus(order.status)).map(order => order.clientOrderId);
   const canceledAtFence: string[] = [];
   for (const id of working) {
-    const dispatched = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: id, binding: runtime.binding } } });
+    const dispatched = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, deadlineAtMs: fenceOrderDeadlineMs, action: { kind: "broker_mutation", mutation: { kind: "cancel_order", clientOrderId: id, binding: runtime.binding, notAfterMs: fenceOrderDeadlineMs } } });
     if (!dispatched.ok) throw new Error(`fence cancel of ${id} failed: ${dispatched.reason}`);
     let confirmed = false;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const observed = await runtime.broker.read.orderByClientId(id);
+      const observed = await runtime.broker.read.orderByClientId(id, fenceOrderDeadlineMs);
       if (observed?.status === "canceled") {
         confirmed = true;
         break;
@@ -229,17 +261,38 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     canceledAtFence.push(id);
   }
   if (fenceStatus !== 401 && fenceStatus !== 403) throw new Error(`fence drill did not observe 401/403 (got ${String(fenceStatus)})`);
-  const halted = await runtime.gateway.openJournal();
-  const authHalt = [...halted.entries].reverse().find(entry => entry.seq > beforeFenceSeq && entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
-  if (authHalt === undefined || !halted.halt.halted || halted.halt.reason !== "AUTH_FAILURE") throw new Error("fence drill did not create its own active AUTH_FAILURE halt");
-  const reconciledWhileHalted = await runtime.broker.fullSnapshot();
+  const haltedBeforeReconciliation = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  const authHalt = [...(haltedBeforeReconciliation?.entries ?? [])].reverse().find(entry => entry.seq > beforeFenceSeq && entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
+  if (haltedBeforeReconciliation === null || authHalt === undefined || !haltedBeforeReconciliation.halt.halted || haltedBeforeReconciliation.halt.reason !== "AUTH_FAILURE") throw new Error("fence drill did not create its own active AUTH_FAILURE halt under writer authority");
+  const reconciliationJournalSeq = terminalJournalSeq(haltedBeforeReconciliation.entries);
+  const reconciledWhileHalted = await runtime.broker.fullSnapshot(operationDeadlineMs());
   if (!reconciledWhileHalted.pagesComplete || reconciledWhileHalted.consistentReads < 2 || reconciledWhileHalted.account.accountId !== runtime.binding.accountId
     || reconciledWhileHalted.positions.some(position => position.quantity !== 0) || reconciledWhileHalted.nonTerminalOrders.length > 0) {
     throw new Error("fence reconciliation is not stably flat; AUTH_FAILURE halt remains active");
   }
-  const approval = await options.approveFenceUnhalt({ haltSeq: authHalt.seq, httpStatus: fenceStatus, workingOrders: working, canceledOrders: canceledAtFence });
+  const haltedAfterReconciliation = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (haltedAfterReconciliation === null || !haltedAfterReconciliation.halt.halted || haltedAfterReconciliation.halt.reason !== "AUTH_FAILURE"
+    || terminalHaltTransitionSeq(haltedAfterReconciliation.entries) !== authHalt.seq || terminalJournalSeq(haltedAfterReconciliation.entries) !== reconciliationJournalSeq) {
+    throw new Error("fence journal or writer authority changed during stable-flat reconciliation");
+  }
+  const approval = await awaitHumanApproval(signal => options.approveFenceUnhalt({ haltSeq: authHalt.seq, httpStatus: fenceStatus, workingOrders: working, canceledOrders: canceledAtFence }, signal));
   if (approval === null) throw new Error("human fence un-halt approval was not provided; AUTH_FAILURE halt remains active");
-  const unhalt = await manualUnhalt({ paths: runtime.paths, operator: approval.operator, reason: approval.reason, clock, secrets: runtime.secrets, instanceId: "certificate-unhalt", lockTakeoverBoundMs: runtime.config.scheduling.lockTakeoverBoundMs, expectedHaltSeq: authHalt.seq, expectedHaltReason: "AUTH_FAILURE" });
+  const approvedJournalBeforeSnapshot = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (approvedJournalBeforeSnapshot === null || !approvedJournalBeforeSnapshot.halt.halted || approvedJournalBeforeSnapshot.halt.reason !== "AUTH_FAILURE"
+    || terminalHaltTransitionSeq(approvedJournalBeforeSnapshot.entries) !== authHalt.seq || terminalJournalSeq(approvedJournalBeforeSnapshot.entries) !== reconciliationJournalSeq) {
+    throw new Error("fence journal or writer authority changed before manual un-halt");
+  }
+  const approvedSnapshot = await runtime.broker.fullSnapshot(operationDeadlineMs());
+  if (!approvedSnapshot.pagesComplete || approvedSnapshot.consistentReads < 2 || approvedSnapshot.account.accountId !== runtime.binding.accountId
+    || approvedSnapshot.positions.some(position => position.quantity !== 0) || approvedSnapshot.nonTerminalOrders.length > 0) {
+    throw new Error("fence reconciliation is no longer stably flat after human approval; AUTH_FAILURE halt remains active");
+  }
+  const approvedJournal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (approvedJournal === null || !approvedJournal.halt.halted || approvedJournal.halt.reason !== "AUTH_FAILURE"
+    || terminalHaltTransitionSeq(approvedJournal.entries) !== authHalt.seq || terminalJournalSeq(approvedJournal.entries) !== reconciliationJournalSeq) {
+    throw new Error("fence journal or writer authority changed during the post-approval stable-flat proof");
+  }
+  const unhalt = await manualUnhalt({ paths: runtime.paths, operator: approval.operator, reason: approval.reason, clock, secrets: runtime.secrets, instanceId: "certificate-unhalt", lockTakeoverBoundMs: runtime.config.scheduling.lockTakeoverBoundMs, expectedHaltSeq: authHalt.seq, expectedHaltReason: "AUTH_FAILURE", expectedEpoch: runtime.epoch, expectedHolderId: runtime.instanceId, expectedJournalSeq: reconciliationJournalSeq });
   log(`manual un-halt: ${unhalt.ok ? "ok" : unhalt.reason}`);
   if (!unhalt.ok) throw new Error(`manual fence un-halt refused: ${unhalt.reason}`);
   if (!("seq" in unhalt)) throw new Error("manual fence un-halt returned no journal sequence");
@@ -252,7 +305,7 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     throw new Error("refusing final snapshot: writer authority, exact fence un-halt transition, or entry-lifecycle terminality changed");
   }
   const beforeFinalSeq = terminalJournalSeq(beforeFinal.entries);
-  const snapshot = await runtime.broker.fullSnapshot();
+  const snapshot = await runtime.broker.fullSnapshot(operationDeadlineMs());
   // End the historical claim before the final atomic writer read. That read
   // catches every halt through endedAt; a later transition is outside the
   // certificate window instead of being silently included without evidence.
@@ -291,6 +344,11 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
  */
 export async function recoverCertificateAfterFailure(options: CertificateRunOptions): Promise<boolean> {
   const { runtime, log } = options;
+  const operationDeadlineMs = (): number => {
+    const budget = Math.min(runtime.config.scheduling.cycleWalltimeBudgetMs, runtime.config.scheduling.lockTakeoverBoundMs - 1);
+    if (!Number.isSafeInteger(budget) || budget < 1) throw new Error("certificate recovery deadline is not below the writer takeover bound");
+    return options.clock() + budget;
+  };
   try {
     await runtime.ping.fail(["CERTIFICATE_ABORTED"]);
   } catch {
@@ -327,7 +385,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
     }
     try {
       if (quiescent) {
-        const snapshot = await runtime.broker.fullSnapshot();
+        const snapshot = await runtime.broker.fullSnapshot(operationDeadlineMs());
         if (snapshot.account.accountId === runtime.binding.accountId
           && snapshot.pagesComplete && snapshot.consistentReads >= 2
           && snapshot.positions.every(position => position.quantity === 0)

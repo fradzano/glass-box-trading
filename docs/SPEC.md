@@ -174,6 +174,15 @@ snapshot. The final bracket must also name the fence run's same `UNHALT` as
 the terminal halt transition. A journal change, replacement halt, or un-halt
 invalidates the certificate run.
 
+Every certificate/recovery full snapshot carries one absolute deadline through
+all account, position, stability, and paginated order reads; that deadline is
+strictly below the writer takeover bound. While the operator checkpoint is
+open, the driver refreshes its writer heartbeat and aborts the prompt on lost
+authority. After approval it repeats the stable-flat snapshot bracket. The
+manual `UNHALT` is then one kernel-mutex CAS over the exact expected epoch,
+holder, `AUTH_FAILURE` HALT sequence, and terminal journal sequence; any drift
+leaves the halt active.
+
 The supervised certificate driver's entry/flatten attempt counts and intervals
 are positive constants in the executable runtime identity. Ambient environment
 variables cannot reduce or disable the abort fence/recovery path; changing a

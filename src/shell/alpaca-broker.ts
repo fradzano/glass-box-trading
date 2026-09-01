@@ -69,8 +69,8 @@ export interface AlpacaBroker {
   readonly market: (window: MarketWindow, deadlineAtMs?: number) => Promise<MarketObservation>;
   readonly calendar: (startDate: string, endDate: string) => Promise<readonly CalendarDay[]>;
   readonly clockIsOpen: () => Promise<boolean>;
-  readonly ordersByStatus: (status: "open" | "closed" | "all") => Promise<{ readonly orders: readonly BrokerOrderRecord[]; readonly pages: number; readonly complete: boolean }>;
-  readonly fullSnapshot: () => Promise<FullSnapshot>;
+  readonly ordersByStatus: (status: "open" | "closed" | "all", deadlineAtMs?: number) => Promise<{ readonly orders: readonly BrokerOrderRecord[]; readonly pages: number; readonly complete: boolean }>;
+  readonly fullSnapshot: (deadlineAtMs?: number) => Promise<FullSnapshot>;
 }
 
 const ORDER_PAGE_LIMIT = 500;
@@ -86,11 +86,15 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1) throw new RangeError("requestTimeoutMs must be a positive integer");
   const headers = { "APCA-API-KEY-ID": options.credentials.keyId, "APCA-API-SECRET-KEY": options.credentials.secretKey, "Content-Type": "application/json", Accept: "application/json" };
 
+  function assertBeforeDeadline(deadlineAtMs?: number): void {
+    if (deadlineAtMs !== undefined && options.clock() >= deadlineAtMs) throw new Error("CYCLE_WALLTIME_EXCEEDED");
+  }
+
   async function request(origin: string, path: string, init: { readonly method?: string; readonly body?: unknown; readonly deadlineAtMs?: number } = {}): Promise<{ readonly status: number; readonly json: unknown }> {
     const remainingMs = init.deadlineAtMs === undefined ? requestTimeoutMs : Math.min(requestTimeoutMs, init.deadlineAtMs - options.clock());
     if (remainingMs <= 0) throw new Error("CYCLE_WALLTIME_EXCEEDED");
     const controller = new AbortController();
-    const fetchPromise = fetchImpl(`${origin}${path}`, { method: init.method ?? "GET", headers, body: init.body === undefined ? null : JSON.stringify(init.body), redirect: "error", signal: controller.signal });
+    const fetchPromise = Promise.resolve().then(() => fetchImpl(`${origin}${path}`, { method: init.method ?? "GET", headers, body: init.body === undefined ? null : JSON.stringify(init.body), redirect: "error", signal: controller.signal }));
     let rejectTimeout: (reason: Error) => void = () => undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       rejectTimeout = reject;
@@ -116,6 +120,7 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
         json = { message: text };
       }
     }
+    assertBeforeDeadline(init.deadlineAtMs);
     return { status: response.status, json };
   }
 
@@ -130,11 +135,13 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     if (after !== null) query.set("after", after);
     const json = await get(options.tradingOrigin, `/v2/orders?${query.toString()}`, deadlineAtMs);
     if (!Array.isArray(json)) throw new Error("ORDERS_DOCUMENT_INVALID");
-    return json.map(item => {
+    const mapped = json.map(item => {
       const mapped = mapOrder(item);
       if (mapped === null) throw new Error("ORDER_DOCUMENT_INVALID");
       return mapped;
     });
+    assertBeforeDeadline(deadlineAtMs);
+    return mapped;
   }
 
   async function ordersByStatus(status: "open" | "closed" | "all", deadlineAtMs?: number): Promise<{ readonly orders: readonly BrokerOrderRecord[]; readonly pages: number; readonly complete: boolean }> {
@@ -150,6 +157,7 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
         seen.add(order.brokerOrderId);
         orders.push(order);
       }
+      assertBeforeDeadline(deadlineAtMs);
       const next = nextOrderPageAfter(page, ORDER_PAGE_LIMIT);
       if (next.kind === "end") return { orders, pages, complete: true };
       if (next.kind === "unpageable" || next.after === after || pages > 200) return { orders, pages, complete: false };
@@ -160,6 +168,7 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
   async function accountDocument(deadlineAtMs?: number): Promise<AccountDocument> {
     const mapped = mapAccount(await get(options.tradingOrigin, "/v2/account", deadlineAtMs));
     if (mapped === null) throw new Error("ACCOUNT_DOCUMENT_INVALID");
+    assertBeforeDeadline(deadlineAtMs);
     return mapped;
   }
 
@@ -171,11 +180,13 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     async positions(deadlineAtMs?: number): Promise<readonly BrokerPosition[]> {
       const json = await get(options.tradingOrigin, "/v2/positions", deadlineAtMs);
       if (!Array.isArray(json)) throw new Error("POSITIONS_DOCUMENT_INVALID");
-      return json.map(item => {
+      const mapped = json.map(item => {
         const mapped = mapPosition(item);
         if (mapped === null) throw new Error("POSITION_DOCUMENT_INVALID");
         return mapped;
       });
+      assertBeforeDeadline(deadlineAtMs);
+      return mapped;
     },
     async openOrders(deadlineAtMs?: number): Promise<readonly BrokerOrderRecord[]> {
       const result = await ordersByStatus("open", deadlineAtMs);
@@ -300,9 +311,9 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     return JSON.stringify({ account: snapshot.account, positions, orders, pagesComplete: snapshot.pagesComplete });
   }
 
-  async function readFullSnapshotOnce(): Promise<Omit<FullSnapshot, "consistentReads">> {
-    const [account, positions, all] = await Promise.all([accountDocument(), read.positions(), ordersByStatus("all")]);
-    return {
+  async function readFullSnapshotOnce(deadlineAtMs?: number): Promise<Omit<FullSnapshot, "consistentReads">> {
+    const [account, positions, all] = await Promise.all([accountDocument(deadlineAtMs), read.positions(deadlineAtMs), ordersByStatus("all", deadlineAtMs)]);
+    const snapshot = {
       at: new Date(options.clock()).toISOString(),
       account,
       positions,
@@ -311,13 +322,18 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
       orderPagesFetched: all.pages,
       pagesComplete: all.complete,
     };
+    assertBeforeDeadline(deadlineAtMs);
+    return snapshot;
   }
 
-  async function fullSnapshot(): Promise<FullSnapshot> {
-    let previous = await readFullSnapshotOnce();
+  async function fullSnapshot(deadlineAtMs?: number): Promise<FullSnapshot> {
+    let previous = await readFullSnapshotOnce(deadlineAtMs);
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const current = await readFullSnapshotOnce();
-      if (snapshotFingerprint(previous) === snapshotFingerprint(current)) return { ...current, consistentReads: 2 };
+      assertBeforeDeadline(deadlineAtMs);
+      const current = await readFullSnapshotOnce(deadlineAtMs);
+      const stable = snapshotFingerprint(previous) === snapshotFingerprint(current);
+      assertBeforeDeadline(deadlineAtMs);
+      if (stable) return { ...current, consistentReads: 2 };
       previous = current;
     }
     throw new Error("FULL_SNAPSHOT_UNSTABLE");

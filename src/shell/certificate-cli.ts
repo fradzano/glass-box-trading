@@ -65,12 +65,12 @@ try {
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     log,
     ...CERTIFICATE_RUN_LIMITS,
-    approveFenceUnhalt: async facts => {
+    approveFenceUnhalt: async (facts, signal) => {
       const token = `CLEAR-HALT ${String(facts.haltSeq)}`;
       process.stdout.write(`Fence reconciliation is stably flat after HTTP ${String(facts.httpStatus)}. Working orders: ${facts.workingOrders.join(",") || "none"}; confirmed canceled: ${facts.canceledOrders.join(",") || "none"}.\n`);
       const readline = createInterface({ input: process.stdin, output: process.stdout });
       try {
-        const answer = await readline.question(`Human checkpoint: type exactly '${token}' to clear this AUTH_FAILURE halt: `);
+        const answer = await readline.question(`Human checkpoint: type exactly '${token}' to clear this AUTH_FAILURE halt: `, { signal });
         if (answer.trim() !== token) return null;
         return { operator: process.env["USERNAME"] ?? "owner", reason: `human confirmed stable flat fence reconciliation for AUTH_FAILURE halt seq ${String(facts.haltSeq)}` };
       } finally {

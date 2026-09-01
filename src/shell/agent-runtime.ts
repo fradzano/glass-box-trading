@@ -58,6 +58,7 @@ export interface CycleOverrides {
 }
 
 export interface AgentRuntime {
+  readonly instanceId: string;
   readonly config: ValidatedStartup;
   readonly raw: Readonly<Record<string, unknown>>;
   readonly env: EnvRecord;
@@ -350,7 +351,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
       return {
     ok: true,
     runtime: {
-      config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
+      instanceId: options.instanceId, config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
       mcpInventory: launch.inventory, runtimeDigest: runtime.digest, policyDigest: policy.digest, secrets, ping,
       market: () => broker.market(window),
       cycle: async (cycleIndex, overrides = {}) => {

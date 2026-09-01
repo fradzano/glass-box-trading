@@ -97,7 +97,7 @@ export interface MutationGateway {
    */
   dispatchSafetyHalt(action: { readonly reason: Extract<HaltReason, "AUTH_FAILURE" | "ACCOUNT_BINDING_MISMATCH">; readonly detail: string }): Promise<DispatchResult>;
   /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04. */
-  dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string; readonly expectedHaltSeq?: number; readonly expectedHaltReason?: string }): Promise<DispatchResult>;
+  dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string; readonly expectedHaltSeq?: number; readonly expectedHaltReason?: string; readonly expectedEpoch?: number; readonly expectedHolderId?: string; readonly expectedJournalSeq?: number }): Promise<DispatchResult>;
 }
 
 function utcIso(ms: number): string {
@@ -435,9 +435,19 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         // terminal for recovery; under an unjournaled seed nothing authoritative but the BOOTSTRAP may land.
         if (store.resetPending) return { ok: false, reason: "RESET_PENDING", lockHeld: true };
         if (store.seedPending) return { ok: false, reason: "SEED_NOT_JOURNALED", lockHeld: true };
+        if ((action.expectedEpoch !== undefined && store.epoch !== action.expectedEpoch)
+          || (action.expectedHolderId !== undefined && store.holderId !== action.expectedHolderId)) {
+          return { ok: false, reason: "WRITER_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
+        }
+        if (action.expectedHolderId !== undefined && readHolder(paths)?.holderId !== action.expectedHolderId) {
+          return { ok: false, reason: "WRITER_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
+        }
         const loaded = loadJournal();
         if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
         const entries = loaded.file.parsed.entries;
+        if (action.expectedJournalSeq !== undefined && (entries.at(-1)?.seq ?? 0) !== action.expectedJournalSeq) {
+          return { ok: false, reason: "JOURNAL_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
+        }
         const current = reconcileHaltProjection(entries);
         if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
         if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };

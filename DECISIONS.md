@@ -1431,3 +1431,11 @@ small, no ADR split).
   deltas classify each new fill increment against the submitted limit. Filled
   risk uses the conservative edge of the cent-rounding interval. Terminal
   remainder resolution must retain the filled quantity.
+- **2026-09-02 — P7 R24 binds long certificate operations to writer
+  authority.** A full snapshot has one absolute deadline, inherited by every
+  stability read and order-history page, below the takeover bound. The human
+  fence checkpoint refreshes the holder heartbeat and is aborted if authority
+  is lost. Approval is followed by a new writer-bracketed stable-flat proof;
+  manual UNHALT then atomically requires the same epoch, holder, AUTH_FAILURE
+  HALT, and journal tail. A successor takeover or any intervening journal
+  transition therefore preserves the halt instead of applying stale approval.

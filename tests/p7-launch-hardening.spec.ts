@@ -23,6 +23,7 @@ import { nextCertificateCycleIndex, recoverCertificateAfterFailure, unresolvedRe
 const ORIGIN = "https://paper-api.alpaca.markets";
 const EXPECTED = "PA_EXPECTED";
 const BINDING = { profile: "dev", tradingOrigin: ORIGIN, accountId: EXPECTED } as const;
+const CERTIFICATE_TEST_CONFIG = { scheduling: { cycleWalltimeBudgetMs: 100, lockTakeoverBoundMs: 1_000 } } as const;
 const temporaryDirectories: string[] = [];
 
 describe("certificate command admission", () => {
@@ -463,6 +464,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const failures: string[][] = [];
     const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
       binding: BINDING,
       tradingDay: "2026-09-01",
       broker: {
@@ -518,6 +520,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     const halt = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const filled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled", brokerOrderId: "broker-late", filledQuantity: 1, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" } as unknown as JournalEntry;
     const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
       binding: BINDING,
       tradingDay: "2026-09-01",
       broker: {
@@ -572,6 +575,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     let writerReads = 0;
     const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
       binding: BINDING,
       tradingDay: "2026-09-01",
       epoch: 1,
@@ -609,6 +613,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     const replacement = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "replacement", sticky: false } as unknown as JournalEntry;
     let opens = 0;
     const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
       binding: BINDING,
       tradingDay: "2026-09-01",
       epoch: 1,
@@ -636,6 +641,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     const lateFill = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled", brokerOrderId: "broker-late", filledQuantity: 1, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" } as unknown as JournalEntry;
     let opens = 0;
     const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
       binding: BINDING,
       tradingDay: "2026-09-01",
       epoch: 1,
@@ -735,6 +741,68 @@ describe("P7 launch hardening — real broker transport", () => {
     expect(orderReads).toBe(3);
     expect(snapshot.consistentReads).toBe(2);
     expect(snapshot.orders[0]).toMatchObject({ avgFillPriceCents: 103, avgFillPriceRaw: "1.034" });
+  });
+
+  it("carries one absolute deadline through every page of a full broker snapshot", async () => {
+    let now = 0;
+    let orderRequests = 0;
+    const page = Array.from({ length: 500 }, (_, index) => ({ id: `broker-${String(index)}`, client_order_id: `entry:${String(index)}`, symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "0", filled_avg_price: null, limit_price: "1.00", status: "accepted", submitted_at: `2026-09-01T14:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z` }));
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      now += 20;
+      if (url.endsWith("/v2/account")) return Promise.resolve(jsonResponse(200, { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" }));
+      if (url.endsWith("/v2/positions")) return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/v2/orders?")) { orderRequests += 1; return Promise.resolve(jsonResponse(200, page)); }
+      return Promise.resolve(jsonResponse(404, { message: "unexpected" }));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => now, fetchImpl, requestTimeoutMs: 100 });
+    await expect(broker.fullSnapshot(50)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
+    expect(orderRequests).toBe(1);
+  });
+
+  it("refuses a stable snapshot when synchronous response work crosses its absolute deadline", async () => {
+    let now = 0;
+    let orderRequests = 0;
+    const account = { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" };
+    const order = { id: "broker-sync", client_order_id: "entry:sync", symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "0", filled_avg_price: null, limit_price: "1.00", status: "accepted" };
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/v2/account")) return Promise.resolve(jsonResponse(200, account));
+      if (url.endsWith("/v2/positions")) return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/v2/orders?")) {
+        orderRequests += 1;
+        now += orderRequests === 1 ? 40 : 70;
+        return Promise.resolve(jsonResponse(200, [order]));
+      }
+      return Promise.resolve(jsonResponse(404, { message: "unexpected" }));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => now, fetchImpl, requestTimeoutMs: 100 });
+    await expect(broker.fullSnapshot(100)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
+    expect(orderRequests).toBe(2);
+    expect(now).toBe(110);
+  });
+
+  it("does not return a late snapshot when synchronous broker work blocks the real wall clock", async () => {
+    let orderRequests = 0;
+    const account = { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" };
+    const order = { id: "broker-wallclock", client_order_id: "entry:wallclock", symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "0", filled_avg_price: null, limit_price: "1.00", status: "accepted" };
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/v2/account")) return Promise.resolve(jsonResponse(200, account));
+      if (url.endsWith("/v2/positions")) return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/v2/orders?")) {
+        orderRequests += 1;
+        if (orderRequests === 2) {
+          const releaseAt = Date.now() + 60;
+          while (Date.now() < releaseAt) { /* executable synchronous-stall probe */ }
+        }
+        return Promise.resolve(jsonResponse(200, [order]));
+      }
+      return Promise.resolve(jsonResponse(404, { message: "unexpected" }));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => Date.now(), fetchImpl, requestTimeoutMs: 200 });
+    await expect(broker.fullSnapshot(Date.now() + 30)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
+    expect(orderRequests).toBe(2);
   });
 });
 
