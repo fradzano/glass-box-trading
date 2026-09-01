@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 ~13:10 CEST (P7 pre-live R2/R3 hardening committed on the phase branch; full repository gate green with 296 tests; isolated R3 fix-verification remains before the market-hours run)
+**Last updated:** 2026-09-01 (P7 R6 halt-projection crash-consistency repair in verification; the supervised market-hours run remains gated)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; the pre-live Go/No-Go review exposed account/fence/snapshot/provenance and later exact-evidence/walltime gaps, all closed red-first and committed at the current branch HEAD (`npm run verify` exit 0, 296 tests). **Next action:** isolated fix-verification, Felix's explicit O5 freeze, then the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R6. R2–R5 fixes are committed through `bba7d49`; R6 repairs the remaining journal/halt-projection crash split and is being verified. **Next action:** complete repository verification and an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 

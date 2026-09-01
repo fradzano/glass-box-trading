@@ -214,6 +214,69 @@ describe("P7 launch hardening — independent account identity", () => {
     expect(calls.map(call => call.clientOrderId)).toEqual(["entry:test", "close:test"]);
   });
 
+  it.each(["missing", "stale-false"] as const)("repairs a %s halt projection from the durable journal before reads and broker entry", async variant => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-halt-recovery-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const calls: BrokerMutation[] = [];
+    const gateway = createMutationGateway({
+      paths: resolved.value,
+      secrets: [],
+      clock: () => now,
+      brokerPort: { mutate: mutation => { calls.push(mutation); return Promise.resolve({ ok: true, brokerOrderId: "must-not-run" }); } },
+      instanceId: "active-cycle",
+      lockTakeoverBoundMs: 60_000,
+      binding: BINDING,
+    });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 8 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "journal_append", entry: { at: new Date(now).toISOString(), epoch: 8, type: "HALT", reason: "AUTH_FAILURE", detail: "durable before projection", sticky: false } } })).toMatchObject({ ok: true });
+
+    const breakProjection = (): void => {
+      if (variant === "missing") rmSync(resolved.value.halt);
+      else writeFileSync(resolved.value.halt, JSON.stringify({ halted: false, reason: null, sticky: false }), "utf8");
+    };
+    breakProjection();
+    expect((await gateway.openJournal()).halt).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+    expect(readHaltState(resolved.value)).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+
+    breakProjection();
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } })).toMatchObject({ ok: false, reason: "HALT" });
+    expect(calls).toEqual([]);
+    expect(readHaltState(resolved.value)).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+  });
+
+  it("repairs a stale halted projection after a durable human unhalt", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-unhalt-recovery-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const calls: BrokerMutation[] = [];
+    const gateway = createMutationGateway({
+      paths: resolved.value,
+      secrets: [],
+      clock: () => now,
+      brokerPort: { mutate: mutation => { calls.push(mutation); return Promise.resolve({ ok: true, brokerOrderId: "broker-entry" }); } },
+      instanceId: "active-cycle",
+      lockTakeoverBoundMs: 60_000,
+      binding: BINDING,
+    });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 8 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "journal_append", entry: { at: new Date(now).toISOString(), epoch: 8, type: "HALT", reason: "AUTH_FAILURE", detail: "operator will reconcile", sticky: false } } })).toMatchObject({ ok: true, seq: 1 });
+    expect(await gateway.dispatchManualUnhalt({ operator: "felix", reason: "broker reconciled", expectedHaltSeq: 1, expectedHaltReason: "AUTH_FAILURE" })).toMatchObject({ ok: true, seq: 2 });
+
+    const staleHalt = { halted: true, reason: "AUTH_FAILURE", sticky: false };
+    writeFileSync(resolved.value.halt, JSON.stringify(staleHalt), "utf8");
+    expect((await gateway.openJournal()).halt).toEqual({ halted: false, reason: null, sticky: false });
+    expect(readHaltState(resolved.value)).toEqual({ halted: false, reason: null, sticky: false });
+
+    writeFileSync(resolved.value.halt, JSON.stringify(staleHalt), "utf8");
+    expect(await gateway.dispatchManualUnhalt({ operator: "felix", reason: "retry after crash" })).toMatchObject({ ok: false, reason: "NOT_HALTED" });
+    expect(readHaltState(resolved.value)).toEqual({ halted: false, reason: null, sticky: false });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } })).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+  });
+
   it("keeps the monotonic interlock runtime-closed to the two broker safety reasons", async () => {
     const resolved = resolveStateDir(temporaryDirectory("gbt-p7-safety-reason-"));
     if (!resolved.ok) throw new Error(resolved.detail);

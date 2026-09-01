@@ -1271,3 +1271,11 @@ small, no ADR split).
   expired delivery and non-2xx HTTP. Finally, any exceptional certificate exit
   sends a failure signal and repeatedly invokes the ordinary S-G11 flatten
   cycle until broker truth is flat or recovery is explicitly unresolved.
+- **2026-09-01 — P7 R6 makes the journal authoritative across halt-projection
+  crashes.** `halt.json` remains the snapshot-friendly projection, but every
+  gateway read and final risk-increasing broker boundary now folds the valid
+  journal's latest `HALT`/human `UNHALT` transition under the gateway mutex and
+  repairs a missing, stale, or unreadable projection before continuing. Thus a
+  crash after the fsynced journal line can neither bypass a durable halt nor
+  strand a durable human un-halt. If the journal contains no halt transition,
+  an unreadable projection remains fail-closed.

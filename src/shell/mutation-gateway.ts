@@ -135,8 +135,27 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     return { ok: true, entry: planned.entry };
   }
 
+  /**
+   * The JSONL transition is authoritative; halt.json is only its atomic-read
+   * projection. A crash may land between those two durable writes. Whenever
+   * the journal contains a halt transition, repair any missing, stale, or
+   * unreadable projection from that transition while the gateway mutex is
+   * held. With no journal transition, retain the persisted fail-closed state
+   * so an unreadable flag can never be silently cleared.
+   */
+  function reconcileHaltProjection(entries: readonly JournalEntry[]): HaltState {
+    const persisted = readHaltState(paths);
+    const hasJournalTransition = entries.some(entry => entry.type === "HALT" || entry.type === "UNHALT");
+    if (!hasJournalTransition) return persisted;
+    const authoritative = haltStateFrom(entries);
+    if (persisted.halted !== authoritative.halted || persisted.reason !== authoritative.reason || persisted.sticky !== authoritative.sticky) {
+      writeHaltState(paths, authoritative);
+    }
+    return authoritative;
+  }
+
   function haltForBindingMismatch(entries: readonly JournalEntry[], epoch: number, detail: string): void {
-    const current = readHaltState(paths);
+    const current = reconcileHaltProjection(entries);
     if (current.halted && current.reason === "ACCOUNT_BINDING_MISMATCH") return;
     appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
   }
@@ -200,12 +219,13 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         haltForBindingMismatch(entries, epoch, `broker mutation ${request.action.mutation.kind} carried a foreign binding`);
         return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
       }
-      // The snapshot's halt bit can become stale after phase 0. Re-read the
-      // persisted projection while holding the final gateway mutex so a
-      // concurrent monotonic safety halt vetoes an entry before broker I/O.
+      // The snapshot's halt bit can become stale after phase 0. Reconcile the
+      // journal-authoritative state and its persisted projection while holding
+      // the final gateway mutex so a concurrent monotonic safety halt vetoes
+      // an entry before broker I/O, including after a projection-write crash.
       // Explicit close submissions, cancels and close_position remain usable
       // for reconciliation and flattening under S-G12-03.
-      if (isRiskIncreasingEntry(request.action.mutation) && readHaltState(paths).halted) {
+      if (isRiskIncreasingEntry(request.action.mutation) && reconcileHaltProjection(entries).halted) {
         return { ok: false, reason: "HALT", lockHeld: true };
       }
       try {
@@ -310,7 +330,8 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       return withMutex(paths, () => {
         const loaded = loadJournal();
         if ("corrupt" in loaded) throw new Error(loaded.corrupt);
-        return { entries: loaded.file.parsed.entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: readHaltState(paths) };
+        const entries = loaded.file.parsed.entries;
+        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: reconcileHaltProjection(entries) };
       });
     },
 
@@ -393,7 +414,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         const loaded = loadJournal();
         if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
         const entries = loaded.file.parsed.entries;
-        const current = haltStateFrom(entries);
+        const current = reconcileHaltProjection(entries);
         if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
         if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };
         if (action.expectedHaltSeq !== undefined || action.expectedHaltReason !== undefined) {

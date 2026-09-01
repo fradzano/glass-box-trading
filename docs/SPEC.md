@@ -696,9 +696,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   the gateway mutex. It cannot reach the broker, acquire or release another
   holder, append any other type, or clear a halt. This prevents a fresh rival
   holder from suppressing a required broker-identity fence. The same mutex
-  protects a final persisted-halt read immediately before broker I/O, so an
-  already-authorized but stale entry is vetoed; cancel and explicit close
-  remain available under S-G12-03. Epoch acquisition is a single
+  reconciles the halt projection from the authoritative journal and protects
+  a final halt read immediately before broker I/O. A crash after the durable
+  `HALT`/`UNHALT` line but before its projection write is therefore repaired
+  before the state is exposed or an entry is admitted; an already-authorized
+  but stale entry is vetoed. Cancel and explicit close remain available under
+  S-G12-03. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the
