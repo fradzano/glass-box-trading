@@ -85,6 +85,8 @@ export interface OpenedJournal {
 
 export interface MutationGateway {
   openJournal(): Promise<OpenedJournal>;
+  /** Atomically proves this process still owns `epoch`, refreshes its heartbeat, and opens journal truth under the same mutex. */
+  openJournalAsWriter(epoch: number): Promise<OpenedJournal | null>;
   acquireAuthority(evidence: { readonly account: AccountVirginity }): Promise<AcquisitionResult>;
   heartbeat(): Promise<boolean>;
   dispatch(request: MutationRequest): Promise<DispatchResult>;
@@ -340,6 +342,18 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       return withMutex(paths, () => {
         const loaded = loadJournal();
         if ("corrupt" in loaded) throw new Error(loaded.corrupt);
+        const entries = loaded.file.parsed.entries;
+        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: reconcileHaltProjection(entries) };
+      });
+    },
+
+    async openJournalAsWriter(epoch) {
+      return withMutex(paths, () => {
+        const store = readEpochStore(paths);
+        if (store.kind !== "present" || store.epoch !== epoch || store.holderId !== instanceId || ownEpoch !== epoch || store.seedPending || store.resetPending) return null;
+        const loaded = loadJournal();
+        if ("corrupt" in loaded) throw new Error(loaded.corrupt);
+        writeHolder(paths, { holderId: instanceId, heartbeatAt: clock() });
         const entries = loaded.file.parsed.entries;
         return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: reconcileHaltProjection(entries) };
       });

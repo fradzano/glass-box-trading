@@ -11,14 +11,14 @@ import type { AgentRuntime } from "../src/shell/agent-runtime.js";
 import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
 import { enumerateRuntimeFiles } from "../src/shell/digests.js";
-import { readHolder, releaseHolder, writeHolder } from "../src/shell/epoch-store.js";
+import { readHolder, releaseHolder, withMutex, writeHolder } from "../src/shell/epoch-store.js";
 import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import type { BrokerMutation, BrokerMutationPort } from "../src/shell/mutation-gateway.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { createPingPort } from "../src/shell/ping-healthchecks.js";
 import { resolveStateDir } from "../src/shell/state-dir.js";
 import { recordStartupBrokerFence } from "../src/shell/startup-broker-fence.js";
-import { nextCertificateCycleIndex, recoverCertificateAfterFailure } from "../src/shell/certificate-run.js";
+import { nextCertificateCycleIndex, recoverCertificateAfterFailure, unresolvedRecoveryEntryIds } from "../src/shell/certificate-run.js";
 
 const ORIGIN = "https://paper-api.alpaca.markets";
 const EXPECTED = "PA_EXPECTED";
@@ -64,6 +64,29 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("P7 launch hardening — independent account identity", () => {
+  it.runIf(process.platform === "win32")("canonicalizes Windows aliases before deriving the kernel mutex identity", async () => {
+    const directory = temporaryDirectory("gbt-p7-state-alias-");
+    const ordinary = resolveStateDir(directory);
+    const extended = resolveStateDir(`\\\\?\\${directory}`);
+    if (!ordinary.ok || !extended.ok) throw new Error("state alias did not resolve");
+    expect(extended.value.root).toBe(ordinary.value.root);
+
+    let releaseFirst: (() => void) | undefined;
+    let firstEntered: (() => void) | undefined;
+    const entered = new Promise<void>(resolve => { firstEntered = resolve; });
+    const release = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const first = withMutex(ordinary.value, async () => { firstEntered?.(); await release; });
+    await entered;
+    let secondEntered = false;
+    const second = withMutex(extended.value, () => { secondEntered = true; });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    const enteredBeforeRelease = secondEntered;
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(enteredBeforeRelease).toBe(false);
+    expect(secondEntered).toBe(true);
+  });
+
   it("suppresses a rival runtime before every broker read and appends one witness", async () => {
     const stateRoot = temporaryDirectory("gbt-p7-runtime-suppressed-");
     const resolved = resolveStateDir(stateRoot);
@@ -419,10 +442,22 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     expect(nextCertificateCycleIndex([])).toBe(1);
   });
 
+  it("keeps lost acknowledgements unresolved until exact broker-terminal evidence exists", () => {
+    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:unclear" } as unknown as JournalEntry;
+    const notAtBroker = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "RECONCILIATION", reasonCodes: ["NOT_SUBMITTED"], items: [{ kind: "entry_order", clientOrderId: "entry:unclear", classification: "NOT_AT_BROKER" }] } as unknown as JournalEntry;
+    const unclear = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "confirmation_unclear" } as unknown as JournalEntry;
+    const canceled = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "canceled" } as unknown as JournalEntry;
+    const partialTerminal = { ...canceled, status: "partially_filled", filledQuantity: 1 } as unknown as JournalEntry;
+    expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear])).toEqual(["entry:unclear"]);
+    expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear, canceled])).toEqual([]);
+    expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear, partialTerminal])).toEqual([]);
+  });
+
   it("retries after the first post-fill broker read throws and drives the account flat", async () => {
     let snapshotReads = 0;
     let exposed = true;
     let flattenCycles = 0;
+    let halted = false;
     const failures: string[][] = [];
     const runtime = {
       binding: BINDING,
@@ -436,7 +471,9 @@ describe("P7 launch hardening — certificate failure recovery", () => {
       },
       gateway: {
         heartbeat: () => Promise.resolve(true),
-        openJournal: () => Promise.resolve({ entries: [], quarantined: [], halt: { halted: false, reason: null, sticky: false } }),
+        openJournal: () => Promise.resolve({ entries: [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        openJournalAsWriter: () => Promise.resolve({ entries: [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        dispatch: () => { halted = true; return Promise.resolve({ ok: true, seq: 1, stalenessNeutral: false }); },
       },
       cycle: () => { flattenCycles += 1; exposed = false; return Promise.resolve({}); },
       ping: { success: () => Promise.resolve(), fail: (conditions: readonly string[]) => { failures.push([...conditions]); return Promise.resolve(); } },
@@ -460,6 +497,105 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     expect(flattenCycles).toBe(1);
     expect(snapshotReads).toBe(2);
     expect(failures).toEqual([["CERTIFICATE_ABORTED"]]);
+  });
+
+  it("waits for an already-admitted broker mutation before accepting a flat recovery snapshot", async () => {
+    let releaseBarrier: (() => void) | undefined;
+    let enterBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });
+    const barrierEntered = new Promise<void>(resolve => { enterBarrier = resolve; });
+    let barrierReads = 0;
+    let snapshotReads = 0;
+    let exposed = false;
+    let flattenCycles = 0;
+    let halted = false;
+    let terminal = false;
+    let haltRequests = 0;
+    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late" } as unknown as JournalEntry;
+    const filled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled" } as unknown as JournalEntry;
+    const runtime = {
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      broker: {
+        fullSnapshot: () => {
+          snapshotReads += 1;
+          return Promise.resolve({ account: { accountId: EXPECTED }, positions: exposed ? [{ contractId: "SPY260904C00500000", quantity: 1 }] : [], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 });
+        },
+      },
+      gateway: {
+        heartbeat: () => Promise.resolve(true),
+        openJournal: () => Promise.resolve({ entries: terminal ? [intent, filled] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        openJournalAsWriter: async () => {
+          barrierReads += 1;
+          if (barrierReads === 1) {
+            enterBarrier?.();
+            await barrier;
+          }
+          return { entries: terminal ? [intent, filled] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } };
+        },
+        dispatch: () => { haltRequests += 1; halted = true; return Promise.resolve({ ok: true, seq: 2, stalenessNeutral: false }); },
+      },
+      epoch: 1,
+      cycle: () => { flattenCycles += 1; exposed = false; terminal = true; return Promise.resolve({}); },
+      ping: { success: () => Promise.resolve(), fail: () => Promise.resolve() },
+    } as unknown as AgentRuntime;
+
+    const recovery = recoverCertificateAfterFailure({
+      runtime,
+      repoRoot: process.cwd(),
+      clock: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => undefined,
+      maxEntryCycles: 1,
+      entryIntervalMs: 1,
+      patienceCycles: 1,
+      maxFlattenCycles: 2,
+      flattenIntervalMs: 1,
+      approveFenceUnhalt: () => Promise.resolve(null),
+    });
+    await barrierEntered;
+    expect(snapshotReads).toBe(0);
+    exposed = true;
+    releaseBarrier?.();
+
+    await expect(recovery).resolves.toBe(true);
+    expect(snapshotReads).toBe(1);
+    expect(flattenCycles).toBe(1);
+    expect(haltRequests).toBe(1);
+  });
+
+  it("refuses a flat recovery snapshot when writer authority changes during the broker read", async () => {
+    let writerReads = 0;
+    const runtime = {
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      epoch: 1,
+      broker: { fullSnapshot: () => Promise.resolve({ account: { accountId: EXPECTED }, positions: [], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 }) },
+      gateway: {
+        heartbeat: () => Promise.resolve(false),
+        openJournalAsWriter: () => {
+          writerReads += 1;
+          return Promise.resolve(writerReads === 1 ? { entries: [], quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } } : null);
+        },
+      },
+      cycle: () => Promise.resolve({}),
+      ping: { success: () => Promise.resolve(), fail: () => Promise.resolve() },
+    } as unknown as AgentRuntime;
+
+    await expect(recoverCertificateAfterFailure({
+      runtime,
+      repoRoot: process.cwd(),
+      clock: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => undefined,
+      maxEntryCycles: 1,
+      entryIntervalMs: 1,
+      patienceCycles: 1,
+      maxFlattenCycles: 1,
+      flattenIntervalMs: 1,
+      approveFenceUnhalt: () => Promise.resolve(null),
+    })).resolves.toBe(false);
+    expect(writerReads).toBe(2);
   });
 });
 

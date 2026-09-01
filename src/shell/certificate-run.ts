@@ -67,6 +67,37 @@ export function nextCertificateCycleIndex(entries: readonly JournalEntry[]): num
   return (indices.length === 0 ? 0 : Math.max(...indices)) + 1;
 }
 
+/**
+ * Recovery may release an entry reservation only on broker-authoritative
+ * terminal evidence. A `NOT_AT_BROKER` observation is not terminal after a
+ * lost acknowledgement: the original request can still appear remotely.
+ */
+export function unresolvedRecoveryEntryIds(entries: readonly JournalEntry[]): readonly string[] {
+  const unresolved = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
+      unresolved.add(entry["clientOrderId"]);
+      continue;
+    }
+    if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
+      const status = entry["status"];
+      // OUTCOME `partially_filled` is emitted only from a broker-terminal
+      // canceled/expired order: its remainder cannot fill, while the filled
+      // portion still has to disappear from the final flat snapshot.
+      if (status === "filled" || status === "partially_filled" || status === "rejected" || status === "canceled" || status === "expired") unresolved.delete(entry["clientOrderId"]);
+      else if (status === "confirmation_unclear") unresolved.add(entry["clientOrderId"]);
+      continue;
+    }
+    if (entry.type !== "RECONCILIATION" || !Array.isArray(entry["items"])) continue;
+    for (const item of entry["items"]) {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+      const record = item as Readonly<Record<string, unknown>>;
+      if (record["kind"] === "entry_order" && record["classification"] === "REVALIDATION_VOID" && typeof record["clientOrderId"] === "string") unresolved.delete(record["clientOrderId"]);
+    }
+  }
+  return [...unresolved].sort();
+}
+
 async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
   const { runtime, clock, log } = options;
   const startedAt = epochMsToUtcIso(clock());
@@ -251,12 +282,41 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
     // Recovery continues even when the external alarm cannot be delivered.
   }
   for (let attempt = 0; attempt < options.maxFlattenCycles; attempt += 1) {
+    let quiescent = false;
+    let opened: Awaited<ReturnType<AgentRuntime["gateway"]["openJournal"]>>;
     try {
-      const snapshot = await runtime.broker.fullSnapshot();
-      if (snapshot.account.accountId === runtime.binding.accountId
-        && snapshot.pagesComplete && snapshot.consistentReads >= 2
-        && snapshot.positions.every(position => position.quantity === 0)
-        && snapshot.nonTerminalOrders.length === 0) return true;
+      // Fence every exceptional run before attempting to prove flatness. The
+      // HALT is journal-authoritative and remains for a human to clear before
+      // another certificate attempt; close/cancel recovery remains available.
+      const authoritative = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+      if (authoritative === null) throw new Error("certificate recovery lost writer authority before flat proof");
+      opened = authoritative;
+      if (!opened.halt.halted) {
+        const halted = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, action: { kind: "journal_append", entry: { at: epochMsToUtcIso(options.clock()), epoch: runtime.epoch, type: "HALT", reason: "MANUAL", detail: "certificate aborted; reconcile every uncertain lifecycle and prove the bound account flat before human un-halt", sticky: false } } });
+        if (!halted.ok) throw new Error(`certificate recovery halt failed: ${halted.reason}`);
+        const haltedJournal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+        if (haltedJournal === null) throw new Error("certificate recovery lost writer authority after halt");
+        opened = haltedJournal;
+      }
+      if (!opened.halt.halted) throw new Error("certificate recovery halt is not durable");
+      const unresolved = unresolvedRecoveryEntryIds(opened.entries);
+      if (unresolved.length > 0) log(`certificate recovery unresolved entries ${String(attempt + 1)}: ${unresolved.join(",")}`);
+      quiescent = unresolved.length === 0;
+    } catch (error) {
+      log("certificate recovery barrier " + String(attempt + 1) + " failed: " + (error instanceof Error ? error.message : String(error)));
+    }
+    try {
+      if (quiescent) {
+        const snapshot = await runtime.broker.fullSnapshot();
+        if (snapshot.account.accountId === runtime.binding.accountId
+          && snapshot.pagesComplete && snapshot.consistentReads >= 2
+          && snapshot.positions.every(position => position.quantity === 0)
+          && snapshot.nonTerminalOrders.length === 0) {
+          const after = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+          if (after === null) throw new Error("certificate recovery lost writer authority after flat snapshot");
+          if (after.halt.halted && unresolvedRecoveryEntryIds(after.entries).length === 0) return true;
+        }
+      }
     } catch (error) {
       log("certificate recovery snapshot " + String(attempt + 1) + " failed: " + (error instanceof Error ? error.message : String(error)));
     }

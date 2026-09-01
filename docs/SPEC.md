@@ -146,7 +146,18 @@ After the first live cycle, an exceptional certificate exit is itself a
 failure signal and enters the same gateway-bound S-G11 flatten regime before
 the error returns. Broker reads and flatten cycles are retried to the configured
 certificate bound; failure to prove a flat bound account is reported as
-unresolved exposure, never a quiet process exit.
+unresolved exposure, never a quiet process exit. Recovery first ensures a
+journal-authoritative halt, adding a non-sticky abort `HALT` only when no halt
+already exists (an existing stronger halt is never replaced), and exact client-order-ID
+reconciliation must bring every pre-abort risk-increasing lifecycle to
+broker-authoritative terminal evidence: reject, cancel, expiry, fill, or the
+terminal partially-filled representation of a canceled/expired remainder; every
+filled portion must then be flattened. `NOT_AT_BROKER` and `confirmation_unclear` are not finality after
+a lost acknowledgement, regardless of flat observations. A candidate stable
+snapshot is bracketed before and after by one atomic gateway operation that
+proves writer epoch, refreshes its heartbeat, and reads journal truth under the
+same mutex; changed authority, cleared halt, or a still-uncertain
+lifecycle makes recovery unresolved.
 
 `runtimeDigest` canonically covers executable core/shell code, schemas,
 dependency locks, the MCP capability manifest, the pinned MCP runtime lock, and
@@ -702,13 +713,14 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   before the state is exposed or an entry is admitted; an already-authorized
   but stale entry is vetoed. Cancel and explicit close remain available under
   S-G12-03. The mutex is a kernel-owned Windows named pipe (Linux: abstract
-  socket), exclusive while its process lives and automatically released on
+  socket), derived from the OS-canonical physical `STATE_DIR` so aliases of one
+  directory converge, exclusive while its process lives and automatically released on
   close or crash. It has no stale-file cleanup, age takeover, or waiting
   timeout. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the
-  configured absolute `STATE_DIR` (§0; validated at S-CYC-11 — a relative
+  configured absolute, OS-canonical `STATE_DIR` (§0; validated at S-CYC-11 — a relative
   or unresolvable path never arms), so every instance on the host —
   agent, watchdog, manual run — validates against the SAME store by
   construction, and it follows the S-CYC-09 rule: an absent/reset epoch

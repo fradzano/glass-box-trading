@@ -3,7 +3,7 @@
 // All durable P2 state lives here: the journal, the halt flag, the epoch
 // store, the writer holder record, and the quarantine. The kernel mutex is
 // named from `root` but is deliberately not a durable file.
-import { accessSync, constants, mkdirSync, statSync } from "node:fs";
+import { accessSync, constants, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export interface StatePaths {
@@ -21,9 +21,12 @@ export function resolveStateDir(raw: string): StateDirResolution {
   if (typeof raw !== "string" || raw.trim().length === 0 || !path.isAbsolute(raw)) {
     return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR must be an absolute path literal" };
   }
-  const root = path.resolve(raw);
+  const resolved = path.resolve(raw);
   try {
-    if (!statSync(root).isDirectory()) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR is not a directory" };
+    if (!statSync(resolved).isDirectory()) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR is not a directory" };
+    // Durable paths and the mutex use physical filesystem identity, not an
+    // accepted alias spelling (for example C:\x versus \\?\C:\x).
+    const root = realpathSync.native(resolved);
     accessSync(root, constants.W_OK | constants.R_OK);
     const quarantineDir = path.join(root, "quarantine");
     mkdirSync(quarantineDir, { recursive: true });

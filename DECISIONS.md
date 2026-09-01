@@ -1297,3 +1297,21 @@ small, no ADR split).
   one. All post-launch runtime construction is failure-cleaned: exceptional
   digest or adapter construction stops the verified child and releases only
   the caller's holder.
+- **2026-09-01 — P7 R11 closes recovery quiescence and state-path identity.**
+  Exceptional certificate recovery crosses the live gateway mutex and proves
+  continued writer authority before any flat snapshot can succeed; an order
+  request admitted before an aggregate timeout must therefore settle before
+  the recovery observes broker truth. `STATE_DIR` is canonicalized with the
+  host filesystem before any durable child path or kernel mutex name is
+  derived, so Windows extended-path aliases of the same directory cannot open
+  independent serialization domains.
+- **2026-09-01 — P7 R12 treats lost acknowledgement as a protocol state, not
+  a timing delay.** A local mutex drain cannot prove that an aborted HTTP
+  request will not appear later at the broker. Exceptional certificate recovery
+  now ensures a durable halt (without replacing an existing stronger halt) and refuses `recovered: true` until
+  every pre-abort entry identity has broker-terminal evidence; a not-found read
+  or `confirmation_unclear` remains unresolved, while the journal's
+  `partially_filled` OUTCOME is terminal by construction and its filled portion
+  must still vanish from the flat snapshot. Atomic writer-epoch/heartbeat/
+  journal checks bracket the stable flat snapshot, so a takeover or human
+  halt change during the read also prevents a false proof.
