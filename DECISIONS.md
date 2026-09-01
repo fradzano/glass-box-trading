@@ -1370,3 +1370,13 @@ small, no ADR split).
   reused in the journal. The builder therefore refuses the same contradictions
   that the arming validator checks instead of writing an internally invalid
   PASS artifact.
+- **2026-09-01 — P7 R18 makes lifecycle finality part of every flat proof.**
+  A successful credit lifecycle cannot hide a sibling risk-increasing INTENT
+  whose broker result remains `NOT_AT_BROKER` or `confirmation_unclear`.
+  Certificate construction now rejects every such lifecycle in the test
+  window, and the supervised driver requires broker-authoritative terminal
+  truth for all entries before the fence and final snapshots. Atomic writer
+  reads also require the complete terminal journal sequence to remain
+  unchanged across each stable broker snapshot, including exceptional
+  recovery, so a late lifecycle transition cannot be certified against an
+  earlier flat view.

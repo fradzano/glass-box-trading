@@ -628,6 +628,33 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     await expect(recoverCertificateAfterFailure({ runtime, repoRoot: process.cwd(), clock: () => 0, sleep: () => Promise.resolve(), log: () => undefined, maxEntryCycles: 1, entryIntervalMs: 1, patienceCycles: 1, maxFlattenCycles: 1, flattenIntervalMs: 1, approveFenceUnhalt: () => Promise.resolve(null) })).resolves.toBe(false);
     expect(opens).toBe(2);
   });
+
+  it("invalidates a flat recovery proof when lifecycle journal truth changes during the snapshot", async () => {
+    const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "abort", sticky: false } as unknown as JournalEntry;
+    const intent = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late" } as unknown as JournalEntry;
+    const canceled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "canceled" } as unknown as JournalEntry;
+    const lateFill = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled" } as unknown as JournalEntry;
+    let opens = 0;
+    const runtime = {
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      epoch: 1,
+      broker: { fullSnapshot: () => Promise.resolve({ account: { accountId: EXPECTED }, positions: [], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 }) },
+      gateway: {
+        heartbeat: () => Promise.resolve(false),
+        openJournalAsWriter: () => {
+          opens += 1;
+          const entries = opens === 1 ? [halt, intent, canceled] : [halt, intent, canceled, lateFill];
+          return Promise.resolve({ entries, quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } });
+        },
+      },
+      cycle: () => Promise.resolve({}),
+      ping: { success: () => Promise.resolve(), fail: () => Promise.resolve() },
+    } as unknown as AgentRuntime;
+
+    await expect(recoverCertificateAfterFailure({ runtime, repoRoot: process.cwd(), clock: () => 0, sleep: () => Promise.resolve(), log: () => undefined, maxEntryCycles: 1, entryIntervalMs: 1, patienceCycles: 1, maxFlattenCycles: 1, flattenIntervalMs: 1, approveFenceUnhalt: () => Promise.resolve(null) })).resolves.toBe(false);
+    expect(opens).toBe(2);
+  });
 });
 
 describe("P7 launch hardening — real broker transport", () => {

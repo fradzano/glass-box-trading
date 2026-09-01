@@ -507,6 +507,32 @@ function isOutcomeStatus(value: unknown): value is OutcomeStatus {
   return value === "filled" || value === "partially_filled" || value === "rejected" || value === "canceled" || value === "expired" || value === "confirmation_unclear";
 }
 
+/**
+ * Risk-increasing entry lifecycles that still lack broker-authoritative
+ * terminal truth. NOT_AT_BROKER is deliberately not terminal after a lost
+ * acknowledgement; only a pre-submit REVALIDATION_VOID can release that case.
+ */
+export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): readonly string[] {
+  const unresolved = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
+      unresolved.add(entry["clientOrderId"]);
+      continue;
+    }
+    if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
+      const status = entry["status"];
+      if (status === "filled" || status === "partially_filled" || status === "rejected" || status === "canceled" || status === "expired") unresolved.delete(entry["clientOrderId"]);
+      else if (status === "confirmation_unclear") unresolved.add(entry["clientOrderId"]);
+      continue;
+    }
+    if (entry.type !== "RECONCILIATION" || !Array.isArray(entry["items"])) continue;
+    for (const item of entry["items"]) {
+      if (isRecord(item) && item["kind"] === "entry_order" && item["classification"] === "REVALIDATION_VOID" && typeof item["clientOrderId"] === "string") unresolved.delete(item["clientOrderId"]);
+    }
+  }
+  return [...unresolved].sort();
+}
+
 function applyOutcomeToEntry(record: EntryLifecycleRecord, entry: JournalEntry): EntryLifecycleRecord | null {
   const status = entry["status"];
   const filled = entry["filledQuantity"];

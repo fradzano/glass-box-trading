@@ -5,7 +5,7 @@
 // certificate against the deployment's digests. Everything is a decision over
 // data the shell hands in; the shell reads files, hashes nothing itself, and
 // writes the certificate the core produced.
-import { utcIsoToEpochMs } from "./execution.js";
+import { unresolvedEntryLifecycleIds, utcIsoToEpochMs } from "./execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "./execution.js";
 import type { JournalEntry } from "./journal.js";
 import { sha256Text } from "./sha256.js";
@@ -715,6 +715,8 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   for (const entry of windowJournal) {
     if (entry.type === "OUTCOME" && entry["status"] === "rejected") failures.push(`OUTCOME seq ${String(entry.seq)} (${String(entry["clientOrderId"])}) is a broker rejection`);
   }
+  const unresolvedEntries = unresolvedEntryLifecycleIds(windowJournal);
+  if (unresolvedEntries.length > 0) failures.push(`risk-increasing entry lifecycle(s) lack broker-authoritative terminal truth: ${unresolvedEntries.join(",")}`);
 
   const creditAcceptance = creditAcceptanceFrom(windowInputs, failures);
   const fill = fillFrom(windowInputs, creditAcceptance, failures);

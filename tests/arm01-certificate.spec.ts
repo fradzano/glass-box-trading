@@ -224,6 +224,42 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(canceled.evidence.fill).toBeNull();
   });
 
+  it("refuses PASS while any risk-increasing entry lifecycle lacks terminal broker truth", () => {
+    const base = passingJournal();
+    const originalIntent = base.find(item => item.seq === 3);
+    if (originalIntent === undefined) throw new Error("fixture");
+    const unresolvedIntent = {
+      ...originalIntent,
+      seq: 6,
+      at: "2026-09-01T14:06:00.000Z",
+      clientOrderId: "entry:unclear",
+      exposureLifecycleId: "exposure:unclear",
+    } as JournalEntry;
+    const journal = [
+      ...base.filter(item => item.seq <= 5),
+      unresolvedIntent,
+      entry(7, "OUTCOME", {
+        clientOrderId: "entry:unclear",
+        status: "confirmation_unclear",
+        brokerOrderId: null,
+        brokerTimestamps: { submitted_at: "2026-09-01T14:06:00.000Z" },
+        filledQuantity: 0,
+        avgFillPriceCents: null,
+      }),
+      entry(8, "HALT", { reason: "AUTH_FAILURE", detail: "broker credential rejected (401)", sticky: false }),
+      entry(9, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "fence drill complete" }),
+    ];
+    const certificate = buildCertificate(inputs({
+      journal,
+      fence: { httpStatus: 401, haltSeq: 8, unhaltSeq: 9, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+
+    expect(certificate.evidence.creditAcceptance?.clientOrderId).toBe("entry:credit");
+    expect(certificate.evidence.fill?.clientOrderId).toBe("entry:credit");
+    expect(certificate.verdict).toBe("FAIL");
+    expect(certificate.failures).toContain("risk-increasing entry lifecycle(s) lack broker-authoritative terminal truth: entry:unclear");
+  });
+
   it("requires an exact one-lot quantitative reconciliation, not merely matching position signs", () => {
     const oversizedPositions = passingJournal().map(item => item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: -100 }, { contractId: LONG, quantity: 100 }]) } : item);
     expect(buildCertificate(inputs({ journal: oversizedPositions })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);

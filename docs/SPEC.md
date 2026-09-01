@@ -163,9 +163,15 @@ lifecycle makes recovery unresolved.
 The normal PASS path applies the corresponding open-state proof after the
 credential fence: the certificate binds the exact `AUTH_FAILURE` `HALT` and
 human `UNHALT` sequences produced by that run, and two atomic writer reads
-bracket the final stable broker snapshot. Both reads must retain authority,
-show no active halt, and name that same `UNHALT` as the terminal halt
-transition. A replacement halt or un-halt invalidates the certificate run.
+bracket both the pre-fence and final stable broker snapshots. Before either
+snapshot, every risk-increasing entry lifecycle must already have
+broker-authoritative terminal truth; `NOT_AT_BROKER` and
+`confirmation_unclear` remain unresolved. Both reads must retain authority,
+show no active halt where the phase requires an open state, and observe the
+same terminal journal sequence, so no lifecycle transition can race a flat
+snapshot. The final bracket must also name the fence run's same `UNHALT` as
+the terminal halt transition. A journal change, replacement halt, or un-halt
+invalidates the certificate run.
 
 The supervised certificate driver's entry/flatten attempt counts and intervals
 are positive constants in the executable runtime identity. Ambient environment

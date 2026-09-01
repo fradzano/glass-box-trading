@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { buildCertificate } from "../core/certificate.js";
 import type { FenceObservation, OrderObservation, PreArmCertificate } from "../core/certificate.js";
-import { epochMsToUtcIso, isWorkingBrokerStatus } from "../core/execution.js";
+import { epochMsToUtcIso, isWorkingBrokerStatus, unresolvedEntryLifecycleIds } from "../core/execution.js";
 import type { JournalEntry } from "../core/journal.js";
 import type { AgentRuntime } from "./agent-runtime.js";
 import { createAlpacaBroker } from "./alpaca-broker.js";
@@ -73,29 +73,7 @@ export function nextCertificateCycleIndex(entries: readonly JournalEntry[]): num
  * lost acknowledgement: the original request can still appear remotely.
  */
 export function unresolvedRecoveryEntryIds(entries: readonly JournalEntry[]): readonly string[] {
-  const unresolved = new Set<string>();
-  for (const entry of entries) {
-    if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
-      unresolved.add(entry["clientOrderId"]);
-      continue;
-    }
-    if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
-      const status = entry["status"];
-      // OUTCOME `partially_filled` is emitted only from a broker-terminal
-      // canceled/expired order: its remainder cannot fill, while the filled
-      // portion still has to disappear from the final flat snapshot.
-      if (status === "filled" || status === "partially_filled" || status === "rejected" || status === "canceled" || status === "expired") unresolved.delete(entry["clientOrderId"]);
-      else if (status === "confirmation_unclear") unresolved.add(entry["clientOrderId"]);
-      continue;
-    }
-    if (entry.type !== "RECONCILIATION" || !Array.isArray(entry["items"])) continue;
-    for (const item of entry["items"]) {
-      if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
-      const record = item as Readonly<Record<string, unknown>>;
-      if (record["kind"] === "entry_order" && record["classification"] === "REVALIDATION_VOID" && typeof record["clientOrderId"] === "string") unresolved.delete(record["clientOrderId"]);
-    }
-  }
-  return [...unresolved].sort();
+  return unresolvedEntryLifecycleIds(entries);
 }
 
 function latestHaltSeq(entries: readonly JournalEntry[]): number | null {
@@ -106,6 +84,10 @@ function latestHaltSeq(entries: readonly JournalEntry[]): number | null {
 
 function terminalHaltTransitionSeq(entries: readonly JournalEntry[]): number | null {
   return [...entries].reverse().find(entry => entry.type === "HALT" || entry["actor"] === "human")?.seq ?? null;
+}
+
+function terminalJournalSeq(entries: readonly JournalEntry[]): number {
+  return entries.at(-1)?.seq ?? 0;
 }
 
 async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
@@ -197,12 +179,21 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
     await keepAliveSleep(options.flattenIntervalMs);
   }
 
+  const beforeFenceBarrier = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (beforeFenceBarrier === null) throw new Error("refusing fence drill: writer authority was lost before the stable-flat proof");
+  const unresolvedBeforeFence = unresolvedEntryLifecycleIds(beforeFenceBarrier.entries);
+  if (unresolvedBeforeFence.length > 0) throw new Error(`refusing fence drill: unresolved entry lifecycle(s): ${unresolvedBeforeFence.join(",")}`);
+  const beforeFenceBarrierSeq = terminalJournalSeq(beforeFenceBarrier.entries);
   const beforeFenceSnapshot = await runtime.broker.fullSnapshot();
   if (!beforeFenceSnapshot.pagesComplete || beforeFenceSnapshot.consistentReads < 2 || beforeFenceSnapshot.account.accountId !== runtime.binding.accountId
     || beforeFenceSnapshot.positions.some(position => position.quantity !== 0) || beforeFenceSnapshot.nonTerminalOrders.length > 0) {
     throw new Error("refusing fence drill: account is not stably flat after the flatten phase");
   }
-  const beforeFenceJournal = await runtime.gateway.openJournal();
+  const beforeFenceJournal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
+  if (beforeFenceJournal === null) throw new Error("refusing fence drill: writer authority was lost after the stable-flat proof");
+  const unresolvedAfterFlat = unresolvedEntryLifecycleIds(beforeFenceJournal.entries);
+  if (unresolvedAfterFlat.length > 0) throw new Error(`refusing fence drill: entry lifecycle changed during the stable-flat proof: ${unresolvedAfterFlat.join(",")}`);
+  if (terminalJournalSeq(beforeFenceJournal.entries) !== beforeFenceBarrierSeq) throw new Error("refusing fence drill: journal truth changed during the stable-flat proof");
   if (beforeFenceJournal.halt.halted) throw new Error(`refusing fence drill: a pre-existing halt is active (${String(beforeFenceJournal.halt.reason)})`);
   const beforeFenceSeq = beforeFenceJournal.entries.at(-1)?.seq ?? 0;
 
@@ -257,17 +248,18 @@ async function runCertificateAttempt(options: CertificateRunOptions): Promise<Ce
 
   // ---- phase D: the final fully paginated snapshot and the certificate ----
   const beforeFinal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
-  if (beforeFinal === null || beforeFinal.halt.halted || terminalHaltTransitionSeq(beforeFinal.entries) !== unhaltSeq) {
-    throw new Error("refusing final snapshot: writer authority or exact fence un-halt transition changed");
+  if (beforeFinal === null || beforeFinal.halt.halted || terminalHaltTransitionSeq(beforeFinal.entries) !== unhaltSeq || unresolvedEntryLifecycleIds(beforeFinal.entries).length > 0) {
+    throw new Error("refusing final snapshot: writer authority, exact fence un-halt transition, or entry-lifecycle terminality changed");
   }
+  const beforeFinalSeq = terminalJournalSeq(beforeFinal.entries);
   const snapshot = await runtime.broker.fullSnapshot();
   // End the historical claim before the final atomic writer read. That read
   // catches every halt through endedAt; a later transition is outside the
   // certificate window instead of being silently included without evidence.
   const endedAt = epochMsToUtcIso(clock());
   const afterFinal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
-  if (afterFinal === null || afterFinal.halt.halted || terminalHaltTransitionSeq(afterFinal.entries) !== unhaltSeq) {
-    throw new Error("refusing certificate: writer authority or halt transition changed during the final snapshot");
+  if (afterFinal === null || afterFinal.halt.halted || terminalHaltTransitionSeq(afterFinal.entries) !== unhaltSeq || unresolvedEntryLifecycleIds(afterFinal.entries).length > 0 || terminalJournalSeq(afterFinal.entries) !== beforeFinalSeq) {
+    throw new Error("refusing certificate: writer authority, halt transition, journal truth, or entry-lifecycle terminality changed during the final snapshot");
   }
   const journal = afterFinal.entries;
   const certificate = buildCertificate({
@@ -307,6 +299,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
   for (let attempt = 0; attempt < options.maxFlattenCycles; attempt += 1) {
     let quiescent = false;
     let bracketHaltSeq: number | null = null;
+    let bracketJournalSeq: number | null = null;
     let opened: Awaited<ReturnType<AgentRuntime["gateway"]["openJournal"]>>;
     try {
       // Fence every exceptional run before attempting to prove flatness. The
@@ -325,6 +318,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
       if (!opened.halt.halted) throw new Error("certificate recovery halt is not durable");
       bracketHaltSeq = latestHaltSeq(opened.entries);
       if (bracketHaltSeq === null) throw new Error("certificate recovery halt has no journal transition");
+      bracketJournalSeq = terminalJournalSeq(opened.entries);
       const unresolved = unresolvedRecoveryEntryIds(opened.entries);
       if (unresolved.length > 0) log(`certificate recovery unresolved entries ${String(attempt + 1)}: ${unresolved.join(",")}`);
       quiescent = unresolved.length === 0;
@@ -340,7 +334,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
           && snapshot.nonTerminalOrders.length === 0) {
           const after = await runtime.gateway.openJournalAsWriter(runtime.epoch);
           if (after === null) throw new Error("certificate recovery lost writer authority after flat snapshot");
-          if (after.halt.halted && latestHaltSeq(after.entries) === bracketHaltSeq && unresolvedRecoveryEntryIds(after.entries).length === 0) return true;
+          if (after.halt.halted && latestHaltSeq(after.entries) === bracketHaltSeq && terminalJournalSeq(after.entries) === bracketJournalSeq && unresolvedRecoveryEntryIds(after.entries).length === 0) return true;
         }
       }
     } catch (error) {
