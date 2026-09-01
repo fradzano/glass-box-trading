@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 ~02:00 CEST (P6 built and verified on `p6/public-evidence`; merge awaits the owner word — see the P6 paragraph under "Next")
-**Branch:** `p6/public-evidence` from the P5 merge `4e20de8` on local `main`; no GitHub remote yet
-**Last accepted phase artifact:** P5 — merge commit `4e20de8` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (216 tests).
+**Last updated:** 2026-09-01 ~03:15 CEST (P6 merged; P7 built and verified off-hours on `p7/dev-live-certificate`; the market-hours run is the next action — see the P7 paragraph under "Next")
+**Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
+**Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P6 — public evidence pipeline
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p6--public-evidence-pipeline)) — implemented at `10a8e66`, `npm run verify` exit 0 (250 tests), mutation probe 17/17, blind gate CONFIRMED at `802b335`; **next action is Felix's:** merge `p6/public-evidence` into local `main` (`--no-ff`), or not; P7 then branches from the merge
+**Current implementation phase:** P7 — supervised dev live certificate
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — implemented at `9777c05`, `npm run verify` exit 0 (272 tests), preflight and two off-hours smoke cycles green against the dev account; **next action:** the market-hours certificate run (`npm run certificate`, from 15:30 CEST, owner go given 2026-09-01 ~02:10 CEST), then the mutation probe and the blind gate, then the P7 closing state
 
 ## Done
 
@@ -340,6 +340,40 @@ One phase per session; every session ends with the handoff protocol in
   live market data are wired at P7's dev certificate), the Windows
   event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
   validation (P7; WIN-7/WIN-10/WIN-17 remainders).
+- **P7 — supervised dev live certificate — implemented (2026-09-01, branch
+  `p7/dev-live-certificate` from the P6 merge `bce890a`; code at `9777c05`).**
+  Pure core: `src/core/certificate.ts` (versioned field classification with
+  the new `deployment` class, `policyDigest`, `runtimeDigest`, evidence
+  extraction from the journal plus broker observations, PASS/FAIL
+  evaluation, `validateArmingCertificate`), `src/core/alpaca-mapping.ts`
+  (exact-cent money, nanosecond truncation, credit = negative net limit,
+  order request bodies, pagination), `src/core/sha256.ts`. Shell: the real
+  Alpaca adapter (`alpaca-broker.ts`), the exchange calendar
+  (`market-calendar.ts`), the dedicated MCP environment ports
+  (`mcp-environment.ts`: git-blob comparison of the installed package, lock
+  coverage, interpreter digests, bytecode removal/scan, stdio child), the
+  Agent SDK analyst over an in-process proxy of the verified child
+  (`analyst-claude.ts`), the composition root (`agent-runtime.ts`), the
+  certificate driver (`certificate-run.ts`), the CLIs (`certificate-cli.ts`
+  with `--preflight` / `--smoke-cycle` / `--owner-go`, `agent-cli.ts` = one
+  scheduled cycle), config assembly and `.env` loading, the healthchecks
+  ping port, digests. `config/policy.json` holds the proposed O5 values
+  (owner freeze pending — DECISIONS.md P7 scope notes). `npm run verify`
+  exit 0 (272 tests; 22 new: `tests/arm01-certificate.spec.ts`,
+  `tests/alpaca-mapping.spec.ts`); the sandbox gate executes the
+  certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17 closed.
+  Verified against the dev account off-hours (02:51–02:54 CEST): the
+  preflight passes every S-CYC-11 check (the first attempt caught a CRLF
+  clone and a name-normalization defect, both fixed), two smoke cycles
+  produced BOOTSTRAP + CYCLE with a schema-valid analyst candidate vetoed
+  by G5/G6 as it must be outside the session. The dev STATE_DIR
+  (`glass-box-state/dev` under the user profile) carries that smoke
+  journal (2 entries, epoch 3); the live run will open with an S-CYC-08 GAP
+  cycle. **Next action:** `npm run certificate` inside the session (from
+  15:30 CEST; owner go given), then the P7 mutation probe and blind gate,
+  then the closing state. Not P7: the Scheduled Task installer, the real
+  git/Vercel ports, the competition-arming wiring of the certificate into
+  `runStartup` (P8 release session; `validateArmingCertificate` is ready).
 - Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.

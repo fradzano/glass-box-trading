@@ -1027,3 +1027,127 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p6-public-evidence/LEDGER.md`.
   Merge into local `main` only on Felix's word; P7 (dev live certificate)
   starts from the accepted P6 on its own branch.
+- **2026-09-01 — P6 accepted and merged (`bce890a`); P7 starts on
+  `p7/dev-live-certificate`.** Felix's word on the P6 merge and the P7 go
+  came in the same session. The merge exposed an erratum in the P6 ledger:
+  `npm run verify` could not have been exit 0 at `10a8e66` for the lint step
+  (`tests/j7-j8-publication.spec.ts` bound an unused rest-omit variable,
+  `no-unused-vars`); the file, the eslint config, and the lockfile were
+  unchanged since that commit. Fixed on the P7 branch at `3c82d89` (the
+  first commit after the merge, because `main` is not committed to without
+  the owner's word); the P6 ledger line stays as written and this entry is
+  the erratum. Two clean `verify` runs on the merge plus the fix (exit 0,
+  250 tests) are the merged baseline.
+- **2026-09-01 — P7 design: the configuration field classification has a
+  third class, `deployment`, outside the policy digest.** S-ARM-01 named
+  the identity fields and the credentials as the digest's only exclusions.
+  `STATE_DIR` cannot be role-neutral policy: S-CYC-09's competition
+  bootstrap requires an empty journal, so the competition deployment must
+  use a different STATE_DIR than the dev run by construction, and a digest
+  that included it would invalidate every dev certificate at the role
+  switch — the exact failure scenario 69 describes. `STATE_DIR`,
+  `BOOTSTRAP_DIAGNOSTIC_SINK`, and `PRE_ARM_CERTIFICATE` are therefore
+  classified `deployment` (versioned classification, version 1, in
+  `src/core/certificate.ts`); SPEC S-ARM-01 is amended in the same commit.
+  Everything else in the closed field set is policy; unknown fields are
+  rejected, never assigned.
+- **2026-09-01 — P7 design: the dedicated MCP environment is a
+  target-directory install run by the pinned runtime with `-S`, not a
+  venv.** The tracked runtime lock names two interpreter digests: the
+  install manager's launcher shim (`bin/python.exe`) and the CPython 3.14.1
+  runtime (`python.exe`). A venv's `python.exe` is a third binary the lock
+  does not name, so the environment is built as `uv pip install --target
+  <root>/site` from the frozen `uv.lock` of the pinned upstream commit
+  (clone at `<root>/src`, `core.autocrlf=false` — the immutable-file check
+  compares installed bytes against the commit's git blobs, and a CRLF
+  checkout fails it, as the first preflight showed), and the child is
+  spawned as `<runtime> -S -c "from alpaca_mcp_server.cli import main;
+  main()" --transport stdio` with `PYTHONPATH` naming the target directory
+  and the pywin32 subdirectories its `.pth` would add (`-S` processes no
+  `.pth`). `PYTHONPATH` is on the child's OS allowlist as an interpreter
+  necessity; the base installation's site-packages are never importable.
+  The dependency-lock check compares every installed distribution (PEP 503
+  normalized) against the lock content read from git objects, never from
+  the working tree. The launcher shim is verified but not exercised: the
+  child runs the runtime directly, which is the more deterministic of the
+  two.
+- **2026-09-01 — P7 design: `runtimeDigest` and `policyDigest` are
+  computed by a pure core with its own SHA-256.** The shell enumerates and
+  hashes the bytes that run (`src/**/*.ts`, `config/*.json`, `package.json`,
+  `package-lock.json`, `tsconfig*.json`, `tools/*`; LF-normalized so a
+  checkout's line endings cannot change the identity) and gathers the
+  analyst runtime identity (lock and manifest digests, upstream repository
+  and commit, package name and version, both interpreter digests, a digest
+  over the installed launch artifacts); the core canonicalizes (sorted
+  keys, sorted paths) and hashes with `src/core/sha256.ts`, checked against
+  `node:crypto` on multi-byte vectors in tests and in the sandbox gate. A
+  certificate is validated for arming only against digests the same core
+  computed for the deployment at hand; nothing is learned from the
+  certificate.
+- **2026-09-01 — P7 observation: a negative net `limit_price` is a credit
+  on Alpaca mleg orders.** Probed on the disposable dev account before the
+  session with two throwaway 1-lot credit verticals (`limit_price` -0.01
+  and +0.01, both accepted, both canceled within seconds; they are dev
+  history, not competition activity). `buildOrderRequest` therefore sends
+  the negated net for a credit and the net for a debit; `mapOrder` reads
+  the sign back into the limit kind. Money is exact cents from decimal
+  strings; the only rounding is half away from zero on broker average fill
+  prices; nanosecond broker timestamps are truncated to milliseconds,
+  never rounded.
+- **2026-09-01 — P7 design: the analyst is an Agent SDK session over an
+  in-process proxy of the verified child.** The session gets `tools: []`
+  (no file, shell, or web tool), one MCP server whose tools forward every
+  call to the exact child the launcher accepted (so the model can never
+  reach a second spawn), `settingSources: []`, a constructed environment
+  (the subscription token and the OS necessities, no broker key), a
+  scratch working directory under STATE_DIR, and a hard abort at
+  `ANALYST_TIMEOUT` minus five seconds. Its answer is text; the core's
+  `parseAnalystOutput` is the only validator. `AnalystInput` gains
+  `market` — the very contracts, quotes, and spot the gates will judge —
+  an additive change to the P3/P5/P6 runner: a candidate outside that set
+  is vetoed for a missing quote (S-G5-03), so the analyst gains no gate
+  influence by seeing it. The certificate run adds a prompt-level
+  objective (one minimal, fillable SPY credit vertical) exactly like the
+  S-CYC-12 brief: a letter to the analyst, never a gate parameter. The
+  default model is `claude-sonnet-5` (a breadth role on a subscription
+  budget; `ANALYST_MODEL` overrides). Verified off-hours at 02:53 CEST: the
+  analyst returned a schema-valid SPY 766/764 put credit vertical, G1-G4
+  passed, G5/G6 vetoed it (stale quotes, closed session) — no order.
+- **2026-09-01 — P7 design: the observed market is a shell selection.** The
+  runner's market observation covers the universe's nearest three expiries
+  inside `[EXPIRY_MIN_SESSIONS, EXPIRY_MAX_SESSIONS]` and strikes within
+  `min(MAX_STRIKE_DISTANCE, 300 bps)` of spot, quoted from the indicative
+  options feed, plus the equity pseudo-contract per underlying (P5
+  decision) quoted from IEX; contracts without a quote are dropped. A cycle
+  currently records ~550 quote samples (~90 KB per entry); the window may
+  narrow in P9 if the public journal grows too heavy.
+- **2026-09-01 — P7 design: the certificate driver sequences four phases
+  and the pure core judges them.** Entry cycles every three minutes until a
+  defined-risk entry fills (S-G6-05 needs a prior sample, so the first
+  possible entry is cycle two; a resting credit is harness-canceled after
+  three cycles and recorded as such), one more cycle to reconcile the fill
+  through the snapshot; a flatten pass through the S-G11 deadline regime
+  with `FLATTEN_DATE` overridden to today for the supervised run (the same
+  ladder Thursday will use, exercised live, one-minute cadence); the
+  S-G12-06 fence drill (a read port with an invalid secret, the journaled
+  `AUTH_FAILURE` halt, the working-order check and cancel through the
+  gateway, the manual un-halt with the drill as reason); the final fully
+  paginated snapshot. `buildCertificate` derives every clause from the
+  journal plus the driver's broker observations (order records by client
+  ID), and any broker rejection in the window FAILs. The certificate is
+  written to `evidence/pre-arm/<endedAt>.json`. The CLI refuses without
+  `--owner-go`, outside the dev profile, and outside the session;
+  `--preflight` stops before the first order, `--smoke-cycle` runs one cycle
+  only outside the session.
+- **2026-09-01 — P7 scope notes.** The production entry is `agent-cli`
+  (one cycle per invocation); the Windows Scheduled Task installer and the
+  real git/Vercel ports belong to P8's release session. The composition
+  root releases the holder record on a clean shutdown (a crash still ages
+  out through `LOCK_TAKEOVER_BOUND`). The O5 values live in the tracked
+  `config/policy.json` as a proposal (per-position cap 25% of the sleeve,
+  underlying exposure $10,000, relative spread 20%, quote size 5, quote age
+  90 s, staleness 300 s, kill at $90,000, qualification cap $500, strike
+  distance 10%, quantity 5, tolerance and step 2 c, analyst timeout 180 s,
+  walltime 300 s, takeover 400 s) — **the owner's freeze is still pending**;
+  because `policyDigest` binds them, a later change invalidates the
+  certificate and requires a new market-hours run.

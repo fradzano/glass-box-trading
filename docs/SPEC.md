@@ -135,9 +135,13 @@ IDs/timestamps proving:
 dependency locks, the MCP capability manifest, the pinned MCP runtime lock, and
 the verified immutable launch artifacts. `policyDigest` canonically covers
 every role-independent behavior value and risk limit, including the normalized
-paper trading origin. Its sole closed exclusions are `ALPACA_PROFILE`,
-`EXPECTED_ACCOUNT_ID`, and dev/competition credentials; secrets are neither
-serialized nor hashed into public evidence. A versioned field-classification
+paper trading origin. Its closed exclusions are the identity fields
+`ALPACA_PROFILE` and `EXPECTED_ACCOUNT_ID`, dev/competition credentials, and
+the three host-local deployment locations `STATE_DIR`,
+`BOOTSTRAP_DIAGNOSTIC_SINK`, and `PRE_ARM_CERTIFICATE` (P7 decision,
+2026-09-01: the competition journal must not inherit the dev journal, so
+`STATE_DIR` differs per role by construction and cannot be role-neutral
+policy); secrets are neither serialized nor hashed into public evidence. A versioned field-classification
 schema rejects every unknown config field until it is assigned to policy or the
 closed identity/secret set. The competition role, account ID, credentials, and
 provenance are then checked separately by S-J-06/S-CYC-09; switching only those

@@ -129,6 +129,5 @@
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tsconfig.build.json`
 - `tsconfig.json`
-- `Usersfelixglass-box-statedev-sink.jsonl`
 - `video/README.md` — Video plan — SUB-04
 - `vitest.config.ts`
