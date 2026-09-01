@@ -136,7 +136,7 @@ describe("S-J-07 — the anonymous probe contract", () => {
   it("accepts an unauthenticated 200 with every self-description equal, and rejects a mismatch, a missing tag, an auth wall, a non-200, or a failure", () => {
     expect(verifyProbe(expectation, good)).toEqual({ ok: true });
     expect(verifyProbe(expectation, { ...good, meta: { ...good.meta, "glass-box-journal-revision": "rev-B" } })).toMatchObject({ ok: false, reasons: [expect.stringContaining("META_MISMATCH: glass-box-journal-revision")] });
-    const { "glass-box-last-seq": _dropped, ...withoutSeq } = good.meta;
+    const withoutSeq = Object.fromEntries(Object.entries(good.meta).filter(([name]) => name !== "glass-box-last-seq"));
     expect(verifyProbe(expectation, { ...good, meta: withoutSeq })).toMatchObject({ ok: false, reasons: ["META_MISSING: glass-box-last-seq"] });
     expect(verifyProbe(expectation, { ...good, authenticated: true })).toMatchObject({ ok: false, reasons: ["PROBE_REQUIRED_AUTHENTICATION"] });
     expect(verifyProbe(expectation, { ...good, httpStatus: 404 })).toMatchObject({ ok: false, reasons: ["PROBE_HTTP_404"] });
