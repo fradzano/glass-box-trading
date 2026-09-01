@@ -5,6 +5,7 @@
 // certificate against the deployment's digests. Everything is a decision over
 // data the shell hands in; the shell reads files, hashes nothing itself, and
 // writes the certificate the core produced.
+import { utcIsoToEpochMs } from "./execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "./execution.js";
 import type { JournalEntry } from "./journal.js";
 import { sha256Text } from "./sha256.js";
@@ -98,17 +99,18 @@ export function classifyConfig(raw: Raw): ClassifiedConfig {
   return { ok: true, policy, identity, deployment };
 }
 
-/** True when a value tree contains `undefined` anywhere: such material has no canonical form and is refused, never coerced to null. */
-export function containsUndefined(value: unknown): boolean {
+/** True when a value tree contains `undefined`, `NaN`, or an infinity: such material has no canonical form and is refused, never coerced to null. */
+export function containsNonCanonical(value: unknown): boolean {
   if (value === undefined) return true;
-  if (Array.isArray(value)) return value.some(containsUndefined);
-  if (isRecord(value)) return Object.values(value).some(containsUndefined);
+  if (typeof value === "number" && !Number.isFinite(value)) return true;
+  if (Array.isArray(value)) return value.some(containsNonCanonical);
+  if (isRecord(value)) return Object.values(value).some(containsNonCanonical);
   return false;
 }
 
 /** Canonical JSON: object keys sorted recursively, arrays in order, no whitespace. Throws on `undefined` (callers refuse first). */
 export function canonicalJson(value: unknown): string {
-  if (value === undefined) throw new RangeError("undefined has no canonical JSON form");
+  if (value === undefined || (typeof value === "number" && !Number.isFinite(value))) throw new RangeError("undefined and non-finite numbers have no canonical JSON form");
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (isRecord(value)) {
     const keys = Object.keys(value).sort();
@@ -125,7 +127,7 @@ export function policyDigest(raw: Raw, expectations: { readonly canonicalTrading
   if (!classified.ok) return { ok: false, reason: `unknown configuration field(s): ${classified.unknownFields.join(", ")}` };
   const origin = classified.policy["ALPACA_TRADING_ORIGIN"];
   if (origin !== expectations.canonicalTradingOrigin) return { ok: false, reason: "the policy origin is not the canonical paper trading origin" };
-  if (containsUndefined(classified.policy)) return { ok: false, reason: "a policy field has no value; undefined never enters the digest" };
+  if (containsNonCanonical(classified.policy)) return { ok: false, reason: "a policy field has no canonical value; undefined and non-finite numbers never enter the digest" };
   const material = canonicalJson({ fieldClassificationVersion: CONFIG_FIELD_CLASSIFICATION_VERSION, policy: classified.policy });
   return { ok: true, digest: sha256Text(material), material };
 }
@@ -148,7 +150,21 @@ export interface RuntimeDigestInput {
 }
 
 function isUtcIso(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(value);
+  return typeof value === "string" && utcIsoToEpochMs(value) !== null;
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): value is Raw {
+  return isRecord(value) && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+}
+
+function evidenceClauseKeys(): Readonly<Record<string, readonly string[]>> {
+  return {
+    liquidity: ["contractId", "bidCents", "askCents", "bidSize", "askSize", "quotedAt", "brokerQuotedAt", "snapshotSeq"],
+    creditAcceptance: ["clientOrderId", "exposureLifecycleId", "intentSeq", "brokerOrderId", "acceptedStatus", "acceptedAt", "terminalStatus", "terminalAt", "outcomeSeq", "harnessRequestedCancel"],
+    fill: ["clientOrderId", "brokerOrderId", "filledQuantity", "avgFillPriceCents", "filledAt", "outcomeSeq", "reconciledSnapshotSeq"],
+    fence: ["httpStatus", "haltSeq", "unhaltSeq", "workingOrdersAtFence", "canceledAtFence"],
+    finalSnapshot: ["at", "accountId", "cashCents", "equityCents", "positionCount", "nonTerminalOrderCount", "orderPagesFetched", "pagesComplete"],
+  };
 }
 
 function isSha256(value: unknown): value is string {
@@ -168,7 +184,7 @@ export function runtimeDigest(input: RuntimeDigestInput): DigestResult {
   for (const [name, value] of Object.entries(digests)) {
     if (!isSha256(value)) return { ok: false, reason: `malformed analyst runtime digest: ${name}` };
   }
-  if (containsUndefined(runtime) || Object.values(runtime).some(value => typeof value !== "string" || value.length === 0)) return { ok: false, reason: "every analyst runtime identity field must be a non-empty string" };
+  if (containsNonCanonical(runtime) || Object.values(runtime).some(value => typeof value !== "string" || value.length === 0)) return { ok: false, reason: "every analyst runtime identity field must be a non-empty string" };
   const files = [...input.files].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   const material = canonicalJson({ version: 1, files, analystRuntime: runtime });
   return { ok: true, digest: sha256Text(material), material };
@@ -328,6 +344,21 @@ function gatePassed(entry: JournalEntry, gate: string): boolean {
   return vector.some(item => isRecord(item) && item["gate"] === gate && item["passed"] === true);
 }
 
+function instantOf(value: unknown): number | null {
+  return typeof value === "string" ? utcIsoToEpochMs(value) : null;
+}
+
+/** Every evidence instant must lie inside the test window; an instant that cannot be parsed is outside by definition. */
+function outsideWindow(window: { readonly startedAt: string; readonly endedAt: string }, ...instants: readonly (string | undefined)[]): boolean {
+  const start = instantOf(window.startedAt);
+  const end = instantOf(window.endedAt);
+  if (start === null || end === null) return true;
+  return instants.some(instant => {
+    const ms = instantOf(instant);
+    return ms === null || ms < start || ms > end;
+  });
+}
+
 function isEntryIntent(entry: JournalEntry): boolean {
   return entry.type === "INTENT" && (entry["action"] === "entry" || entry["action"] === undefined);
 }
@@ -365,9 +396,18 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
   for (const intent of intents) {
     const clientOrderId = intent["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
+    const legs = legsOf(intent);
+    if (legs.length < 2 || !legs.some(leg => leg.side === "buy") || !legs.some(leg => leg.side === "sell")) {
+      failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg is not defined-risk`);
+      return null;
+    }
+    if (!gatePassed(intent, "G1")) {
+      failures.push(`credit lifecycle ${clientOrderId}: the INTENT does not carry a passed G1 defined-risk verdict`);
+      return null;
+    }
     const observations = inputs.orderObservations.filter(item => item.order.clientOrderId === clientOrderId);
     const accepted = observations.find(item => positiveAcceptanceStatuses().includes(item.order.status));
-    const outcome = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry["clientOrderId"] === clientOrderId).sort((a, b) => b.seq - a.seq)[0];
+    const outcome = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === clientOrderId).sort((a, b) => b.seq - a.seq)[0];
     if (outcome !== undefined && outcome["status"] === "rejected") {
       failures.push(`credit lifecycle ${clientOrderId} was rejected by the broker`);
       return null;
@@ -385,8 +425,14 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
     const terminalField = terminal === "filled" ? "filled_at" : "canceled_at";
     const terminalAt = typeof timestamps[terminalField] === "string" ? timestamps[terminalField] : outcome.at;
     const acceptedAt = accepted.order.brokerTimestamps["submitted_at"] ?? accepted.observedAt;
-    if (!(acceptedAt <= terminalAt)) {
+    const acceptedMs = instantOf(acceptedAt);
+    const terminalMs = instantOf(terminalAt);
+    if (acceptedMs === null || terminalMs === null || acceptedMs > terminalMs) {
       failures.push(`credit lifecycle ${clientOrderId}: the acceptance instant ${acceptedAt} does not precede the terminal instant ${terminalAt}`);
+      return null;
+    }
+    if (outsideWindow(inputs.window, intent.at, outcome.at, acceptedAt, terminalAt)) {
+      failures.push(`credit lifecycle ${clientOrderId}: its instants lie outside the test window`);
       return null;
     }
     return {
@@ -411,18 +457,20 @@ function fillFrom(inputs: CertificateInputs, failures: string[]): FillEvidence |
   for (const fill of fills) {
     const clientOrderId = fill["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
-    const intent = inputs.journal.find(entry => isEntryIntent(entry) && entry["clientOrderId"] === clientOrderId);
+    const intent = inputs.journal.find(entry => isEntryIntent(entry) && entry.seq < fill.seq && entry["clientOrderId"] === clientOrderId);
     if (intent === undefined) continue;
     const legs = legsOf(intent);
     if (legs.length === 0) continue;
-    // Reconciliation: a later snapshot-bearing entry whose broker positions carry every filled leg with a non-zero quantity.
+    // Reconciliation: a later snapshot-bearing entry whose broker positions carry every filled leg with the sign its side implies.
     const later = inputs.journal.filter(entry => entry.seq > fill.seq && snapshotOf(entry) !== null).find(entry => {
       const positions = snapshotOf(entry)?.["positions"];
       if (!Array.isArray(positions)) return false;
-      return legs.every(leg => positions.some(position => isRecord(position) && position["contractId"] === leg.contractId && typeof position["quantity"] === "number" && position["quantity"] !== 0));
+      return legs.every(leg => positions.some(position => isRecord(position) && position["contractId"] === leg.contractId && typeof position["quantity"] === "number" && (leg.side === "sell" ? position["quantity"] < 0 : position["quantity"] > 0)));
     });
     if (later === undefined) continue;
     const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
+    const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : fill.at;
+    if (outsideWindow(inputs.window, intent.at, fill.at, filledAtInstant, later.at)) continue;
     return {
       clientOrderId,
       brokerOrderId: typeof fill["brokerOrderId"] === "string" ? fill["brokerOrderId"] : "",
@@ -453,6 +501,10 @@ function fenceFrom(inputs: CertificateInputs, failures: string[]): FenceDrillEvi
     failures.push("the AUTH_FAILURE halt was not cleared by the documented fence procedure (manual un-halt after reconciliation)");
     return null;
   }
+  if (outsideWindow(inputs.window, halt.at, unhalt.at)) {
+    failures.push("the fence drill's halt and un-halt lie outside the test window");
+    return null;
+  }
   return { httpStatus: inputs.fence.httpStatus, haltSeq: halt.seq, unhaltSeq: unhalt.seq, workingOrdersAtFence: inputs.fence.workingOrdersAtFence, canceledAtFence: inputs.fence.canceledAtFence };
 }
 
@@ -473,6 +525,7 @@ function finalSnapshotFrom(inputs: CertificateInputs, failures: string[]): Final
     pagesComplete: snapshot.pagesComplete,
   };
   if (snapshot.accountId !== inputs.accountId) failures.push("the final snapshot reports a different account than the certificate binds");
+  if (outsideWindow(inputs.window, snapshot.at)) failures.push("the final snapshot lies outside the test window");
   if (!snapshot.pagesComplete) failures.push("the final order history pagination is incomplete");
   if (evidence.positionCount !== 0) failures.push(`the final snapshot holds ${String(evidence.positionCount)} open position(s)`);
   if (evidence.nonTerminalOrderCount !== 0) failures.push(`the final snapshot holds ${String(evidence.nonTerminalOrderCount)} non-terminal order(s)`);
@@ -485,7 +538,9 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   if (inputs.tradingOrigin !== inputs.canonicalTradingOrigin) failures.push("the trading origin is not the canonical paper origin");
   if (inputs.accountId.length === 0) failures.push("the dev account ID is empty");
   if (!inputs.mcpInventoryAccepted) failures.push("the pinned MCP runtime/inventory verification did not pass");
-  if (!(inputs.window.startedAt < inputs.window.endedAt)) failures.push("the test window is not ordered");
+  const windowStart = instantOf(inputs.window.startedAt);
+  const windowEnd = instantOf(inputs.window.endedAt);
+  if (windowStart === null || windowEnd === null || !(windowStart < windowEnd)) failures.push("the test window is not a pair of ordered UTC instants");
   if (!isSha256(inputs.runtimeDigest)) failures.push("runtimeDigest is malformed");
   if (!isSha256(inputs.policyDigest)) failures.push("policyDigest is malformed");
   for (const entry of inputs.journal) {
@@ -498,6 +553,8 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
   const liquidity = intentForLiquidity === undefined ? [] : liquidityFor(intentForLiquidity, inputs.journal);
   if (intentForLiquidity !== undefined) {
     if (!gatePassed(intentForLiquidity, "G5")) failures.push("the credit INTENT does not carry a passed G5 liquidity verdict");
+    const snapshotEntry = liquidity[0] === undefined ? undefined : inputs.journal.find(entry => entry.seq === liquidity[0]?.snapshotSeq);
+    if (snapshotEntry !== undefined && outsideWindow(inputs.window, snapshotEntry.at)) failures.push("the snapshot consumed by the liquidity gate lies outside the test window");
     const legIds = new Set(legsOf(intentForLiquidity).map(leg => leg.contractId));
     if ([...legIds].some(id => !liquidity.some(item => item.contractId === id))) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   }
@@ -554,14 +611,20 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
   const window = raw["window"];
   const startedAt = isRecord(window) && isUtcIso(window["startedAt"]) ? window["startedAt"] : null;
   const endedAt = isRecord(window) && isUtcIso(window["endedAt"]) ? window["endedAt"] : null;
-  if (startedAt === null || endedAt === null || !(startedAt < endedAt) || (isRecord(window) && Object.keys(window).length !== 2)) violations.push("certificate window is malformed");
+  if (startedAt === null || endedAt === null || !((utcIsoToEpochMs(startedAt) ?? 0) < (utcIsoToEpochMs(endedAt) ?? 0)) || !hasExactKeys(window, ["startedAt", "endedAt"])) violations.push("certificate window is malformed");
   if (!Array.isArray(raw["failures"])) violations.push("certificate failures is not an array");
   else if (raw["failures"].length > 0) violations.push("certificate carries failures");
   const evidence = raw["evidence"];
   if (!isRecord(evidence) || Object.keys(evidence).sort().join(",") !== "creditAcceptance,fence,fill,finalSnapshot,liquidity") violations.push("certificate evidence is malformed");
   else {
-    if (!Array.isArray(evidence["liquidity"]) || evidence["liquidity"].length === 0 || !evidence["liquidity"].every(isRecord)) violations.push("certificate liquidity evidence is absent");
-    for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) if (!isRecord(evidence[clause])) violations.push(`certificate ${clause} evidence is absent`);
+    const shapes = evidenceClauseKeys();
+    const liquidity = evidence["liquidity"];
+    if (!Array.isArray(liquidity) || liquidity.length === 0 || !liquidity.every(item => hasExactKeys(item, shapes["liquidity"] ?? []))) violations.push("certificate liquidity evidence is absent or malformed");
+    for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) if (!hasExactKeys(evidence[clause], shapes[clause] ?? [])) violations.push(`certificate ${clause} evidence is absent or malformed`);
+    const finalSnapshot = evidence["finalSnapshot"];
+    if (hasExactKeys(finalSnapshot, shapes["finalSnapshot"] ?? []) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true)) violations.push("certificate final snapshot is not flat and fully paginated");
+    const fence = evidence["fence"];
+    if (hasExactKeys(fence, shapes["fence"] ?? []) && (fence["httpStatus"] !== 401 && fence["httpStatus"] !== 403)) violations.push("certificate fence evidence is not a credential rejection");
   }
   if (violations.length > 0 || endedAt === null) return { ok: false, violations };
   return { ok: true, successfulDevLiveTestAt: endedAt };

@@ -239,7 +239,7 @@ export function mapOptionContract(raw: unknown): OptionContract | null {
   const expiry = raw["expiration_date"];
   const type = raw["type"];
   const strike = dollarsToCents(raw["strike_price"]);
-  if (typeof contractId !== "string" || typeof underlying !== "string" || typeof expiry !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(expiry) || (type !== "call" && type !== "put") || strike === null || strike <= 0) return null;
+  if (typeof contractId !== "string" || typeof underlying !== "string" || typeof expiry !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(expiry) || utcIsoToEpochMs(`${expiry}T00:00:00.000Z`) === null || (type !== "call" && type !== "put") || strike === null || strike <= 0) return null;
   const right: OptionRight = type;
   return { contractId, underlying, expiry, strikeCents: integerUnit(strike, "StrikeCents"), right };
 }
@@ -273,10 +273,15 @@ export function spotFromQuote(quote: RawQuoteObservation): StrikeCents {
   return integerUnit(Math.floor((quote.bidCents + quote.askCents) / 2), "StrikeCents");
 }
 
-/** Order pagination (`limit` per page, ascending by submission): the next page starts strictly after the last `submitted_at`. */
-export function nextOrderPageAfter(page: readonly BrokerOrderRecord[], pageLimit: number): string | null {
-  if (page.length < pageLimit) return null;
-  const last = page[page.length - 1];
-  const submittedAt = last?.brokerTimestamps["submitted_at"];
-  return submittedAt === undefined ? null : submittedAt;
+export type OrderPagePlan = { readonly kind: "end" } | { readonly kind: "after"; readonly after: string } | { readonly kind: "unpageable" };
+
+/**
+ * Order pagination (`limit` per page, ascending by submission): a short page ends the listing; a full page continues
+ * strictly after its last `submitted_at`; a full page whose last record carries no usable `submitted_at` cannot be
+ * paged and is reported as such — never as complete (gate finding G2-F5, P7).
+ */
+export function nextOrderPageAfter(page: readonly BrokerOrderRecord[], pageLimit: number): OrderPagePlan {
+  if (page.length < pageLimit) return { kind: "end" };
+  const submittedAt = page[page.length - 1]?.brokerTimestamps["submitted_at"];
+  return submittedAt === undefined ? { kind: "unpageable" } : { kind: "after", after: submittedAt };
 }

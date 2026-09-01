@@ -121,9 +121,9 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
       pages += 1;
       orders.push(...page);
       const next = nextOrderPageAfter(page, ORDER_PAGE_LIMIT);
-      if (next === null) return { orders, pages, complete: true };
-      if (next === after || pages > 200) return { orders, pages, complete: false };
-      after = next;
+      if (next.kind === "end") return { orders, pages, complete: true };
+      if (next.kind === "unpageable" || next.after === after || pages > 200) return { orders, pages, complete: false };
+      after = next.after;
     }
   }
 

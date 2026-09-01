@@ -521,8 +521,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       const raw = await withTimeout(deps.analyst({
         tradingDay: deps.tradingDay,
         cycleIndex: deps.cycleIndex,
-        underlyings: deps.decisionConfig.underlyingUniverse,
-        qualification: qualificationBrief(qualification, qualificationConfig),
+        // Copies, never aliases: the analyst boundary reaches no policy array and no gate input (gate findings G1-F6, G2-F7, P7).
+        underlyings: [...deps.decisionConfig.underlyingUniverse],
+        qualification: structuredClone(qualificationBrief(qualification, qualificationConfig)),
         // A deep copy: the analyst boundary must not be able to reach the snapshot the gates judge (gate finding G1-F6, P7).
         market: structuredClone({ contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying }),
       }), deps.analystTimeoutMs);

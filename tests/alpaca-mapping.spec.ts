@@ -103,6 +103,8 @@ describe("documents", () => {
   it("maps contracts and quotes; spot is the floored mid", () => {
     expect(mapOptionContract({ symbol: "SPY260903C00640000", underlying_symbol: "SPY", expiration_date: "2026-09-03", type: "call", strike_price: "640" })).toEqual({ contractId: "SPY260903C00640000", underlying: "SPY", expiry: "2026-09-03", strikeCents: 64_000, right: "call" });
     expect(mapOptionContract({ symbol: "X", underlying_symbol: "SPY", expiration_date: "2026-09-03", type: "swap", strike_price: "640" })).toBeNull();
+    // G2-F6: an impossible calendar date is not an expiry.
+    expect(mapOptionContract({ symbol: "X", underlying_symbol: "SPY", expiration_date: "2026-02-31", type: "call", strike_price: "640" })).toBeNull();
     const quote = mapLatestQuote({ ap: 125.91, as: 2, bp: 121.56, bs: 1, t: "2026-08-31T19:59:58.548252035Z" });
     expect(quote).toEqual({ bidCents: 12_156, askCents: 12_591, bidSize: 1, askSize: 2, quotedAtMs: Date.parse("2026-08-31T19:59:58.548Z"), brokerQuotedAt: "2026-08-31T19:59:58.548252035Z" });
     expect(spotFromQuote({ bidCents: 76_710, askCents: 76_724, bidSize: 1, askSize: 1, quotedAtMs: 0, brokerQuotedAt: "t" })).toBe(76_717);
@@ -122,7 +124,9 @@ describe("order requests and pagination", () => {
 
   it("pages ascending by submission time and stops on a short page", () => {
     const full = Array.from({ length: 3 }, (_, index) => ({ ...(mapOrder(RECORDED_ORDER) as NonNullable<ReturnType<typeof mapOrder>>), brokerTimestamps: { submitted_at: `2026-08-24T20:17:0${String(index)}.000Z` } }));
-    expect(nextOrderPageAfter(full, 3)).toBe("2026-08-24T20:17:02.000Z");
-    expect(nextOrderPageAfter(full, 500)).toBeNull();
+    expect(nextOrderPageAfter(full, 3)).toEqual({ kind: "after", after: "2026-08-24T20:17:02.000Z" });
+    expect(nextOrderPageAfter(full, 500)).toEqual({ kind: "end" });
+    // G2-F5: a full page without a usable cursor is unpageable, never complete.
+    expect(nextOrderPageAfter(full.map(item => ({ ...item, brokerTimestamps: {} })), 3)).toEqual({ kind: "unpageable" });
   });
 });

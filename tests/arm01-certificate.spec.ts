@@ -153,6 +153,29 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(late.failures.some(item => item.includes("does not precede the terminal instant"))).toBe(true);
   });
 
+  it("gate findings G2: instants are compared as instants, every clause lies inside the window, a credit needs a bought leg and G1, OUTCOME follows INTENT, reconciliation respects the leg sign", () => {
+    // G2-F1: one millisecond late is late, whatever the textual precision.
+    const lateByMs = buildCertificate(inputs({ orderObservations: [{ observedAt: "t", order: { ...order("accepted", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:05.001Z" } } }, ...observations()], journal: passingJournal().map(item => (item.seq === 4 ? { ...item, brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:03:05Z" } } : item)) }));
+    expect(lateByMs.failures.some(item => item.includes("does not precede the terminal instant"))).toBe(true);
+    // G2-F4a: evidence dated outside the window.
+    const future = buildCertificate(inputs({ window: { startedAt: "2030-01-01T13:35:00.000Z", endedAt: "2030-01-01T15:10:00.000Z" } }));
+    expect(future.verdict).toBe("FAIL");
+    expect(future.failures.some(item => item.includes("outside the test window"))).toBe(true);
+    // G2-F4b: a single-leg "credit" is not defined-risk.
+    const naked = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [LEGS[0]] } : item));
+    expect(buildCertificate(inputs({ journal: naked })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const noG1 = passingJournal().map(item => (item.seq === 3 ? { ...item, gateVector: gateVector(true).map(gate => (gate.gate === "G1" ? { ...gate, passed: false } : gate)) } : item));
+    expect(buildCertificate(inputs({ journal: noG1 })).failures.some(item => item.includes("passed G1"))).toBe(true);
+    // G2-F4c: an OUTCOME that precedes its INTENT in the journal is not that lifecycle's outcome.
+    const swapped = passingJournal().map(item => (item.seq === 3 ? { ...item, seq: 4 } : item.seq === 4 ? { ...item, seq: 3 } : item)).sort((a, b) => a.seq - b.seq);
+    expect(buildCertificate(inputs({ journal: swapped })).verdict).toBe("FAIL");
+    // G2-F4d: the reconciled position must carry the sign the leg side implies.
+    const wrongSign = passingJournal().map(item => (item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: 1 }, { contractId: LONG, quantity: 1 }]) } : item));
+    expect(buildCertificate(inputs({ journal: wrongSign })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
+    // A window that is textually well-formed but not a real instant is malformed.
+    expect(buildCertificate(inputs({ window: { startedAt: "2026-02-30T13:35:00.000Z", endedAt: "2026-02-30T15:10:00.000Z" } })).failures).toContain("the test window is not a pair of ordered UTC instants");
+  });
+
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
     expect(buildCertificate(inputs({ fence: null })).failures).toContain("the credential-fence drill was not performed");
     expect(buildCertificate(inputs({ fence: { httpStatus: 500, workingOrdersAtFence: [], canceledAtFence: [] } })).failures.some(item => item.includes("HTTP 500"))).toBe(true);
@@ -170,7 +193,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ finalSnapshot: { ...final, accountId: "PA000000" } })).failures).toContain("the final snapshot reports a different account than the certificate binds");
     expect(buildCertificate(inputs({ finalSnapshot: null })).failures).toContain("no final fully paginated dev snapshot was taken");
     expect(buildCertificate(inputs({ mcpInventoryAccepted: false })).failures).toContain("the pinned MCP runtime/inventory verification did not pass");
-    expect(buildCertificate(inputs({ window: { startedAt: "2026-09-01T16:00:00.000Z", endedAt: "2026-09-01T15:00:00.000Z" } })).failures).toContain("the test window is not ordered");
+    expect(buildCertificate(inputs({ window: { startedAt: "2026-09-01T16:00:00.000Z", endedAt: "2026-09-01T15:00:00.000Z" } })).failures).toContain("the test window is not a pair of ordered UTC instants");
     expect(buildCertificate(inputs({ tradingOrigin: "https://api.alpaca.markets" })).failures).toContain("the trading origin is not the canonical paper origin");
     expect(successfulDevLiveTestAt(buildCertificate(inputs({ finalSnapshot: null })))).toBeNull();
   });
@@ -210,6 +233,10 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     const withNull = policyDigest({ ...raw, MAX_CANDIDATE_QTY: null }, { canonicalTradingOrigin: ORIGIN });
     expect(withNull.ok && base.ok && withNull.digest !== base.digest).toBe(true);
     expect(() => canonicalJson({ a: undefined })).toThrow(RangeError);
+    // G2-F3: NaN and infinities never collide with null either.
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: Number.NaN }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: Number.POSITIVE_INFINITY }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(() => canonicalJson([Number.NaN])).toThrow(RangeError);
     expect(policyDigest({ ...raw, ALPACA_TRADING_ORIGIN: "https://api.alpaca.markets" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
   });
 
@@ -262,10 +289,16 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     expect(violationsOf("not an object")).toEqual(["certificate is not an object"]);
     // Gate finding G1-F4: the nested structure is validated, not only the top-level keys.
     expect(violationsOf({ ...serialized, evidence: null })).toContain("certificate evidence is malformed");
-    expect(violationsOf({ ...serialized, evidence: { ...(serialized["evidence"] as Record<string, unknown>), fill: null } })).toContain("certificate fill evidence is absent");
+    expect(violationsOf({ ...serialized, evidence: { ...(serialized["evidence"] as Record<string, unknown>), fill: null } })).toContain("certificate fill evidence is absent or malformed");
     expect(violationsOf({ ...serialized, accountId: "" })).toContain("certificate account ID is malformed");
     expect(violationsOf({ ...serialized, window: { startedAt: "2026-09-01T13:35:00.000Z", endedAt: "not-an-iso" } })).toContain("certificate window is malformed");
     expect(violationsOf({ ...serialized, window: { startedAt: "2026-09-01T16:00:00.000Z", endedAt: "2026-09-01T15:10:00.000Z" } })).toContain("certificate window is malformed");
     expect(violationsOf({ ...serialized, failures: { "0": "failure", length: 1 } })).toContain("certificate failures is not an array");
+    // G2-F2: the window must denote real instants; empty clause objects are not evidence; the final snapshot must be flat.
+    expect(violationsOf({ ...serialized, window: { startedAt: "2026-02-30T13:35:00.000Z", endedAt: "2026-02-30T15:10:00.000Z" } })).toContain("certificate window is malformed");
+    expect(violationsOf({ ...serialized, evidence: { liquidity: [{}], creditAcceptance: {}, fill: {}, fence: {}, finalSnapshot: {} } })).toContain("certificate fill evidence is absent or malformed");
+    const evidence = serialized["evidence"] as Record<string, unknown>;
+    expect(violationsOf({ ...serialized, evidence: { ...evidence, finalSnapshot: { ...(evidence["finalSnapshot"] as Record<string, unknown>), positionCount: 1 } } })).toContain("certificate final snapshot is not flat and fully paginated");
+    expect(violationsOf({ ...serialized, evidence: { ...evidence, fence: { ...(evidence["fence"] as Record<string, unknown>), httpStatus: 500 } } })).toContain("certificate fence evidence is not a credential rejection");
   });
 });
