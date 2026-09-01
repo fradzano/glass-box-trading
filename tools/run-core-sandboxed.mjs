@@ -82,18 +82,26 @@ function createTamedRealm() {
 }
 
 async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
+  // The cache holds the promise of a fully linked module, so a diamond in the
+  // import graph (two modules requesting the same dependency while its own
+  // link is in flight) waits for that link instead of receiving an unlinked
+  // module. The core has no import cycles (the static gate rejects nothing
+  // outside src/core, and the graph is layered), so the wait always resolves.
   const cache = new Map();
-  async function load(file) {
+  function load(file) {
     const cached = cache.get(file);
     if (cached !== undefined) return cached;
-    const source = inlineSources.get(file) ?? await readFile(file, "utf8");
-    const module = new vm.SourceTextModule(source, { context, identifier: file });
-    cache.set(file, module);
-    await module.link(specifier => {
-      if (!specifier.startsWith("./") && !specifier.startsWith("../")) throw new Error(`core imports a non-relative module: ${specifier}`);
-      return load(path.resolve(path.dirname(file), specifier));
-    });
-    return module;
+    const pending = (async () => {
+      const source = inlineSources.get(file) ?? await readFile(file, "utf8");
+      const module = new vm.SourceTextModule(source, { context, identifier: file });
+      await module.link(specifier => {
+        if (!specifier.startsWith("./") && !specifier.startsWith("../")) throw new Error(`core imports a non-relative module: ${specifier}`);
+        return load(path.resolve(path.dirname(file), specifier));
+      });
+      return module;
+    })();
+    cache.set(file, pending);
+    return pending;
   }
   const entry = await load(entryFile);
   await entry.evaluate();
@@ -136,7 +144,7 @@ async function loadModuleGraph(context, entryFile, inlineSources = new Map()) {
     Object.freeze(value);
     if (!Object.isFrozen(value)) throw new Error(`export hardening could not freeze a core-owned value ('${shape}')`);
   };
-  for (const module of cache.values()) for (const value of Object.values(module.namespace)) harden(value);
+  for (const module of await Promise.all(cache.values())) for (const value of Object.values(module.namespace)) harden(value);
   return entry.namespace;
 }
 
@@ -362,6 +370,59 @@ async function exerciseCore() {
   const reused = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-27T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityHistory: { complete: true, items: 0 } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
   if (!provenance.ok || reused.ok || !reused.reuseEvidence) throw new Error("sandboxed provenance proof is wrong");
   paths.push("deadlineRegime(normal/flatten/post), lifecycleEntryVeto(DEADLINE/EXPIRY/none), classifyBook(matched/residue/human/unclear), planPrimaryEntry(bootstrap/foreign/gap), escalateCloseLimit(step / AT cap 500) + marketableCloseLimit(312), evaluateExpiryHold(proof ok / nonzero bid refused), assessStaleness(stale/quiet) + planPing(fail-over-success), validateCompetitionProvenance(virgin ok / reuse flagged)");
+
+  // P6 public-evidence core: the performance projection at an explicit cutoff, the qualification state and its vetoes,
+  // the anonymous probe contract, promotion/rollback planning, the push-target check, and the push retry state.
+  const projection = await loadModuleGraph(context, path.join(DIST, "core", "projection.js"));
+  const qualification = await loadModuleGraph(context, path.join(DIST, "core", "qualification.js"));
+  const publish = await loadModuleGraph(context, path.join(DIST, "core", "publish.js"));
+  const bootstrapEntry = { seq: 1, at: "2026-08-31T13:30:00.000Z", epoch: 1, type: "BOOTSTRAP", epochSeeded: true, snapshot: { accountId: "TEST_ONLY_SANDBOX", snapshotAt: "2026-08-31T13:30:00.000Z", cashCents: 10_000_000, equityCents: 10_000_000, positions: [], openOrders: [], quoteSamples: {} } };
+  const laterCycle = { ...planned.entry, seq: 4, at: "2026-08-31T14:00:00.000Z", snapshot: { ...planned.entry.snapshot, snapshotAt: "2026-08-31T14:00:00.000Z", equityCents: 10_000_500, cashCents: 10_000_500, quoteSamples: { SPY: { SHORT: { bidCents: 300, askCents: 302, bidSize: 20, askSize: 20, quotedAt: "2026-08-31T14:00:00.000Z", brokerQuotedAt: "raw" }, LONG: { bidCents: 100, askCents: 102, bidSize: 20, askSize: 20, quotedAt: "2026-08-31T14:00:00.000Z", brokerQuotedAt: "raw" } } } } };
+  const journalForProjection = [bootstrapEntry, { ...planned.entry, seq: 2, at: "2026-08-31T13:31:00.000Z" }, { ...intentPlanned.entry, seq: 3, at: "2026-08-31T13:31:30.000Z" }, { ...outcomePlanned.entry, seq: 5, at: "2026-08-31T13:32:00.000Z" }, laterCycle];
+  const expectationsForProjection = { initialCapitalCents: 10_000_000, expectedAccountId: "TEST_ONLY_SANDBOX", flattenDate: "2026-09-03", profile: "dev", qualification: null };
+  const projected = projection.projectPerformance(journalForProjection, "rev-sandbox", { at: "2026-08-31T14:00:00.000Z", kind: "presentation" }, expectationsForProjection);
+  const cutEarly = projection.projectPerformance(journalForProjection, "rev-sandbox", { at: "2026-08-31T13:31:00.000Z", kind: "presentation" }, expectationsForProjection);
+  // The credit vertical filled at 1.98 and marks at 2.00 (mid 3.01 short leg, 1.01 long leg): unrealized -200, so the +500 equity delta leaves +700 unattributed.
+  if (projected.startEquityCents !== 10_000_000 || projected.pnlAbsoluteCents !== 500 || projected.realizedCents !== 0 || projected.unrealizedCents !== -200 || projected.unattributedCents !== 700 || projected.lifecycles.length !== 1 || projected.lifecycles[0].resolution !== "filled" || projected.flatState !== "flat") throw new Error("sandboxed performance projection is wrong");
+  if (cutEarly.entriesBeyondCutoff !== 3 || cutEarly.lifecycles.length !== 0 || cutEarly.milestones.firstTradeAt !== null || projected.milestones.firstTradeAt === null) throw new Error("sandboxed cutoff rejection is wrong");
+  const freshness = projection.assessFreshness("2026-08-31T14:00:00.000Z", execution.utcIsoToEpochMs("2026-08-31T14:10:00.000Z"), 900_000, 3_000_000);
+  const staleFreshness = projection.assessFreshness("2026-08-31T14:00:00.000Z", execution.utcIsoToEpochMs("2026-08-31T16:00:00.000Z"), 900_000, 3_000_000);
+  if (freshness.state !== "fresh" || staleFreshness.state !== "stale") throw new Error("sandboxed freshness assessment is wrong");
+  const qualificationConfig = { checkpointMs: execution.utcIsoToEpochMs("2026-09-01T20:00:00Z"), windowEndMs: execution.utcIsoToEpochMs("2026-09-02T20:00:00Z"), maxLossCents: 50_000 };
+  const notDue = qualification.projectQualification(journalForProjection, execution.utcIsoToEpochMs("2026-09-01T19:00:00Z"), qualificationConfig, "competition");
+  const atRisk = qualification.projectQualification(journalForProjection, execution.utcIsoToEpochMs("2026-09-01T20:00:00Z"), qualificationConfig, "competition");
+  const failed = qualification.projectQualification(journalForProjection, execution.utcIsoToEpochMs("2026-09-02T20:00:00Z"), qualificationConfig, "competition");
+  const competitionJournal = journalForProjection.map(entry => (entry.type === "INTENT" ? { ...entry, binding: { ...entry.binding, profile: "competition" } } : entry));
+  const qualified = qualification.projectQualification(competitionJournal, execution.utcIsoToEpochMs("2026-09-02T20:00:00Z"), qualificationConfig, "competition");
+  if (notDue.state !== "NOT_DUE" || atRisk.state !== "COMPETITIVENESS_AT_RISK" || !atRisk.windowOpen || failed.state !== "WINNING_ACCEPTANCE_FAILED" || qualified.state !== "QUALIFIED" || qualification.projectQualification(journalForProjection, 0, qualificationConfig, "dev").state !== "NOT_APPLICABLE") throw new Error("sandboxed qualification projection is wrong");
+  const capVeto = qualification.qualificationEntryVeto({ candidateId: "c", quantity: 1, reservedMaxLossCents: 50_001 }, atRisk, qualificationConfig, 0);
+  const lotVeto = qualification.qualificationEntryVeto({ candidateId: "c", quantity: 2, reservedMaxLossCents: 1 }, atRisk, qualificationConfig, 0);
+  const liveVeto = qualification.qualificationEntryVeto({ candidateId: "c", quantity: 1, reservedMaxLossCents: 1 }, atRisk, qualificationConfig, 1);
+  const noVetoAtCap = qualification.qualificationEntryVeto({ candidateId: "c", quantity: 1, reservedMaxLossCents: 50_000 }, atRisk, qualificationConfig, 0);
+  const closedWindow = qualification.qualificationEntryVeto({ candidateId: "c", quantity: 9, reservedMaxLossCents: 9_999_999 }, failed, qualificationConfig, 5);
+  if (capVeto?.code !== "QUALIFICATION_CAP" || lotVeto?.code !== "QUALIFICATION_ONE_LOT" || liveVeto?.code !== "QUALIFICATION_ONE_LIVE" || noVetoAtCap !== null || closedWindow !== null) throw new Error("sandboxed qualification vetoes are wrong");
+  if (JSON.stringify(qualification.qualificationReasonCodes(atRisk)) !== "[\"COMPETITIVENESS_AT_RISK\"]" || JSON.stringify(qualification.qualificationReasonCodes(failed)) !== "[\"WINNING_ACCEPTANCE_FAILED\"]" || qualification.qualificationReasonCodes(qualified).length !== 0) throw new Error("sandboxed qualification reason codes are wrong");
+  const expectation = { journalRevision: "rev-sandbox", cutoffAt: "2026-08-31T14:00:00.000Z", cutoffKind: "presentation", lastUpdatedAt: "2026-08-31T14:00:00.000Z", lastSeq: 4 };
+  const meta = publish.expectedMeta(expectation);
+  const probeOk = publish.verifyProbe(expectation, { ok: true, httpStatus: 200, meta, authenticated: false });
+  const probeMismatch = publish.verifyProbe(expectation, { ok: true, httpStatus: 200, meta: { ...meta, "glass-box-journal-revision": "rev-other" }, authenticated: false });
+  const probeAuth = publish.verifyProbe(expectation, { ok: true, httpStatus: 200, meta, authenticated: true });
+  const probeDown = publish.verifyProbe(expectation, { ok: false, error: "down" });
+  if (!probeOk.ok || probeMismatch.ok || probeAuth.ok || probeDown.ok) throw new Error("sandboxed probe contract is wrong");
+  const candidateDeployment = { expectation, candidateUrl: "https://c1.invalid/", deployedAt: "t", probedAt: "t" };
+  let deployment = publish.stateAfterPromotion(publish.emptyDeploymentState(), publish.planPromotion(candidateDeployment, probeMismatch, "t"));
+  if (deployment.stable !== null || deployment.receipts.length !== 1 || deployment.receipts[0].accepted) throw new Error("sandboxed rejection moved the alias");
+  deployment = publish.stateAfterPromotion(deployment, publish.planPromotion(candidateDeployment, probeOk, "t1"));
+  deployment = publish.stateAfterPromotion(deployment, publish.planPromotion({ ...candidateDeployment, candidateUrl: "https://c2.invalid/" }, probeOk, "t2"));
+  const rollback = publish.planStableVerification(deployment, probeMismatch);
+  const keep = publish.planStableVerification(deployment, probeOk);
+  if (rollback.kind !== "rollback" || rollback.to.candidateUrl !== "https://c1.invalid/" || keep.kind !== "keep" || publish.stateAfterStableVerification(deployment, rollback, "t3").stable.candidateUrl !== "https://c1.invalid/") throw new Error("sandboxed rollback planning is wrong");
+  if (publish.checkPushTarget("journal", "journal").ok !== true || publish.checkPushTarget("journal", "main").ok || publish.checkPushTarget("journal", "refs/heads/journal").ok || publish.checkPushTarget("", "journal").ok) throw new Error("sandboxed push-target check is wrong");
+  const pushed = publish.pushStateAfter(publish.emptyPushState(), { ok: false, error: "auth" }, "t");
+  const retried = publish.planPush(pushed, "rev-sandbox");
+  const settled = publish.pushStateAfter(pushed, { ok: true, revision: "rev-sandbox" }, "t2");
+  if (pushed.consecutiveFailures !== 1 || retried.kind !== "push" || settled.consecutiveFailures !== 0 || publish.planPush(settled, "rev-sandbox").kind !== "skip" || !publish.publishDegradation(pushed, "rev-sandbox").degraded || publish.publishDegradation(settled, "rev-sandbox").degraded) throw new Error("sandboxed push retry state is wrong");
+  paths.push("projectPerformance(reconciled +500 = -200 unrealized + 700 UNATTRIBUTED / cutoff rejects 3), assessFreshness(fresh/stale), projectQualification(not due / at risk / failed / qualified / n.a.) + qualificationEntryVeto(cap / one lot / one live / at cap ok / closed window none), verifyProbe(ok / mismatch / auth wall / down), planPromotion+planStableVerification(reject keeps alias / rollback to prior), checkPushTarget(exact ref only), planPush+pushStateAfter(retry after failure, skip when pushed)");
   return paths;
 }
 

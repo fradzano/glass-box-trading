@@ -80,6 +80,8 @@ import {
 } from "../core/lifecycle.js";
 import type { BookClassification, CloseCap, DeadlineRegime, PingPlan } from "../core/lifecycle.js";
 import { closeAttemptId, closeLifecycleId, planCloseLifecycle } from "../core/order-identity.js";
+import { liveEntryLifecycles, projectQualification, qualificationBrief, qualificationEntryVeto, qualificationReasonCodes } from "../core/qualification.js";
+import type { QualificationBrief, QualificationConfig } from "../core/qualification.js";
 import { classifyBrokerFailure } from "../core/startup.js";
 import { httpStatusOf } from "./broker-errors.js";
 import { readEpochStore } from "./epoch-store.js";
@@ -92,6 +94,8 @@ export interface AnalystInput {
   readonly tradingDay: string;
   readonly cycleIndex: number;
   readonly underlyings: readonly string[];
+  /** S-CYC-12: the qualification window's prioritisation hint and cap — never a gate parameter. */
+  readonly qualification: QualificationBrief;
 }
 
 /** The dead-man check's two endpoints (S-G14-03). The runner decides which to hit through the pure `planPing`. */
@@ -117,6 +121,8 @@ export interface LifecycleDeps {
   readonly initialCapitalCents?: number;
   /** S-X-06 expiry hold: broker-confirmed protection from automatic exercise for one contract. */
   readonly confirmExerciseProtection?: (contractId: string) => Promise<boolean>;
+  /** S-CYC-12: the qualifying checkpoint, window end, and loss cap (§0); absent on a dev wiring without the competition calendar. */
+  readonly qualification?: QualificationConfig;
 }
 
 export interface CycleDependencies {
@@ -494,9 +500,14 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   let analystSkip: string | null = null;
   let batch = parseAnalystOutput("{\"candidates\":[]}");
   const managementOnly = halt.halted || entriesBlocked.length > 0 || gapCycle;
+  // ---- S-CYC-12: the qualification state at this instant (pure), its analyst brief, and its reason codes ----
+  const qualificationConfig = lifecycleDeps?.qualification ?? null;
+  const qualification = projectQualification(entries, deps.clock(), qualificationConfig, deps.profile);
+  const qualificationCodes = qualificationReasonCodes(qualification);
+  if (qualification.state === "COMPETITIVENESS_AT_RISK" || qualification.state === "WINNING_ACCEPTANCE_FAILED") alarmConditions.push(qualification.state);
   if (!managementOnly) {
     try {
-      const raw = await withTimeout(deps.analyst({ tradingDay: deps.tradingDay, cycleIndex: deps.cycleIndex, underlyings: deps.decisionConfig.underlyingUniverse }), deps.analystTimeoutMs);
+      const raw = await withTimeout(deps.analyst({ tradingDay: deps.tradingDay, cycleIndex: deps.cycleIndex, underlyings: deps.decisionConfig.underlyingUniverse, qualification: qualificationBrief(qualification, qualificationConfig) }), deps.analystTimeoutMs);
       batch = parseAnalystOutput(raw);
     } catch (error) {
       analystSkip = messageOf(error);
@@ -523,11 +534,28 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     approvedActions = remaining;
   }
 
+  // ---- S-CYC-12 qualification window: one lot, at or below the cap, one live attempt — after the unchanged gates and lifecycle vetoes ----
+  if (qualification.windowOpen) {
+    const remaining: typeof approvedActions[number][] = [];
+    let live = liveEntryLifecycles(lifecycles).length;
+    for (const plan of approvedActions) {
+      const veto = qualificationEntryVeto({ candidateId: plan.candidateId, quantity: plan.quantity, reservedMaxLossCents: plan.reservedMaxLossCents }, qualification, qualificationConfig, live);
+      if (veto === null) {
+        remaining.push(plan);
+        live += 1;
+      } else {
+        lifecycleVetoes.push(veto);
+        actions.push({ clientOrderId: plan.clientOrderId, result: "NOT_SENT", status: null, detail: `${veto.code}: ${veto.reason}` });
+      }
+    }
+    approvedActions = remaining;
+  }
+
   // ---- primary entry first: the decision is recorded before any order exists (A5, A7) ----
   // A BOOTSTRAP or GAP invocation already carries its primary substitute (S-J-03: exactly one primary per invocation).
   const primaryOk = primaryType === "BOOTSTRAP" || gapCycle
     ? journalFailure() === null
-    : await append(cycleDraft(context(), { cycleIndex: deps.cycleIndex, tradingDay: deps.tradingDay, journalSnapshot, decision, analystSkip, reasonCodes: [], lifecycleVetoes }));
+    : await append(cycleDraft(context(), { cycleIndex: deps.cycleIndex, tradingDay: deps.tradingDay, journalSnapshot, decision, analystSkip, reasonCodes: qualificationCodes, lifecycleVetoes }));
   if (!primaryOk) {
     // S-CYC-06: no entry order this cycle. The only mutation that may follow is the emergency close inside kill management.
     return finish({ primary: null, reasonCodes: [], journalFailure: journalFailure(), entriesBlocked: [...entriesBlocked, "JOURNAL_UNAVAILABLE"], resolved, auditGaps, analystSkip, snapshotRejected: null, actions, kill });

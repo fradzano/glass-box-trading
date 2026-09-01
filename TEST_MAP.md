@@ -6,6 +6,7 @@
 - `tests/cyc05-g13-cyc06-core.spec.ts`
 - `tests/cyc11-mcp-verifier.spec.ts`
 - `tests/cyc11-startup-config.spec.ts`
+- `tests/cyc12-qualification.spec.ts`
 - `tests/fixture-view.spec.ts`
 - `tests/g1-defined-risk.spec.ts`
 - `tests/g10-reconciliation.spec.ts`
@@ -24,5 +25,8 @@
 - `tests/j1-j2-journal-format.spec.ts`
 - `tests/j3-j4-entry-schemas.spec.ts`
 - `tests/j5-j6-redaction-binding.spec.ts`
+- `tests/j7-j8-publication.spec.ts`
+- `tests/j7-j9-golden-path.spec.ts`
+- `tests/j9-projection.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`

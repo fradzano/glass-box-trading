@@ -2,6 +2,8 @@
 
 Glass Box Trading is a paper-only options agent whose deterministic core records why every candidate passed or failed each entry gate. P1 contains the pure TypeScript entry-decision core for `S-CORE-01..03` and G1–G8. P2 adds the durable journal and the single-writer mutation authority: an append-only JSONL journal with closed entry schemas, secret redaction, account binding, the persisted halt flag, the epoch store, and the one mutation gateway through which every journal append and every future broker mutation passes (`S-J-01..06`, `S-G12-01..05`, `S-G12-07`). P3 adds broker execution under fakes: limit pricing from the decision's own quotes, the typed pre-submit revalidation claimset, the drawdown kill-switch, the journal fold that rebuilds every order lifecycle, the validating `DecisionSnapshot` adapter, a deterministic fake broker, and the cycle runner (`S-CYC-01/02/04/05/06`, `S-G13-01..03`, `S-X-01..04`). The only broker implementations are `NO_BROKER_PORT` (refuses every mutation) and the in-memory fake behind the P2 gateway; nothing in the repository can reach Alpaca.
 
+P6 adds the public evidence pipeline: a pure performance projection over one committed journal revision at an explicit cutoff (`src/core/projection.ts`, S-J-09), the S-CYC-12 qualification state and its window vetoes (`src/core/qualification.ts`), the anonymous probe contract with promotion, rollback, push-retry, and branch-isolation rules (`src/core/publish.ts`, S-J-07/S-J-08/S-CYC-07), a static dashboard renderer, an atomic render-aside-then-swap site build with immutable revision routes, and a publisher that drives fake git/deploy ports (`src/shell/render-dashboard.ts`, `dashboard-build.ts`, `publisher.ts`). `npm run dashboard` builds `artifacts/dashboard/` from the recorded `fixtures/golden-journal.jsonl` — the deterministic golden path of `docs/SUBMISSION-SPEC.md` §3, navigable with markets closed. No GitHub or Vercel mutation exists in the repository; the real git and Vercel ports arrive with the kickoff release (P8).
+
 ## Prerequisites
 
 - Node `24.9.0`
@@ -17,7 +19,7 @@ npm.cmd ci --ignore-scripts
 npm.cmd run verify
 ```
 
-`verify` runs the typechecker, ESLint, the 61 allocated SPEC cases of P1, P2, and P3 (113 tests) plus the fixture acceptance test, the `src/core/**` architecture boundary (static provenance allow-list with self-test), a clean build, the local fixture render, the sandbox gate (the compiled core — decision, order identity, journal, authority, and execution — executed inside a `node:vm` realm with no clock, randomness, environment, locale, or code generation; `npm.cmd run sandbox` after a build), and the 90-case phase-partition check. The test run compiles `src/**` once into a scratch directory (`tests/global-setup.ts`) so that the fencing and append tests can race real OS processes through `src/shell/gateway-cli.ts` against one temporary `STATE_DIR`. On shells that do not block PowerShell script shims, `npm` is equivalent to `npm.cmd`.
+`verify` runs the typechecker, ESLint, the allocated SPEC cases of P1–P6 (250 tests) plus the fixture acceptance test, the `src/core/**` architecture boundary (static provenance allow-list with self-test), a clean build, the local fixture render, the golden-path dashboard render (`npm run dashboard`), the sandbox gate (the compiled core — decision, order identity, journal, authority, execution, startup, lifecycle, projection, qualification, and publication — executed inside a `node:vm` realm with no clock, randomness, environment, locale, or code generation; `npm.cmd run sandbox` after a build), and the 90-case phase-partition check. The test run compiles `src/**` once into a scratch directory (`tests/global-setup.ts`) so that the fencing and append tests can race real OS processes through `src/shell/gateway-cli.ts` against one temporary `STATE_DIR`. On shells that do not block PowerShell script shims, `npm` is equivalent to `npm.cmd`.
 
 The rendered local evidence is `artifacts/p1-decision-view.html`. It is generated from one pure `decide(...)` result containing a complete pass and a reasoned veto. The pass produces an `ENTRY_ACTION_PLAN`; in P3 only the cycle runner can turn it into an order, and only against the fake broker.
 
@@ -37,6 +39,7 @@ npm.cmd run lint
 npm.cmd test
 npm.cmd run architecture
 npm.cmd run fixture
+npm.cmd run dashboard
 npm.cmd run build
 python tools/check_implementation_phases.py
 ```

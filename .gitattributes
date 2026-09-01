@@ -1,0 +1,2 @@
+# The recorded golden journal is compared byte for byte and content-hashed as its revision (P6): its bytes never change on checkout.
+fixtures/*.jsonl text eol=lf

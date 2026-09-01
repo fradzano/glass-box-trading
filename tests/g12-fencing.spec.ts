@@ -433,10 +433,15 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     const files = readdirSync(shellDirectory).filter(name => name.endsWith(".ts"));
     const writers = files.filter(name => /appendFile|createWriteStream|writeSync|writeFile\(|truncateSync|"a"|'a'/u.test(readFileSync(path.join(shellDirectory, name), "utf8")) && name !== "render-fixture.ts");
     // diagnostic-sink.ts writes ONLY to the pre-armed OS sink outside STATE_DIR (S-CYC-11); it can reach
-    // neither the journal nor the broker and is never state authority.
-    expect(writers.sort()).toEqual(["diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts"]);
+    // neither the journal nor the broker and is never state authority. dashboard-build.ts (P6) writes ONLY
+    // rendered pages into the site output directory through its injected sink (S-J-07); it reads the journal
+    // through the pure projection and never touches STATE_DIR.
+    expect(writers.sort()).toEqual(["dashboard-build.ts", "diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts"]);
     const atomicWriters = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("writeJsonAtomically"));
-    expect(atomicWriters.sort()).toEqual(["epoch-store.ts", "halt-state.ts"]);
+    // publisher.ts (P6) writes the push state and the deployment receipts — sidecar files in STATE_DIR outside the
+    // journal, epoch, and halt flag (S-J-07: receipts never create a journal revision); its only journal append is
+    // the S-J-08 refusal, dispatched through the gateway.
+    expect(atomicWriters.sort()).toEqual(["epoch-store.ts", "halt-state.ts", "publisher.ts"]);
     const importers = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("./journal-store.js"));
     expect(importers).toEqual(["mutation-gateway.ts"]);
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
