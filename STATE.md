@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 ~03:15 CEST (P6 merged; P7 built and verified off-hours on `p7/dev-live-certificate`; the market-hours run is the next action — see the P7 paragraph under "Next")
+**Last updated:** 2026-09-01 ~05:00 CEST (P6 merged; P7 built, probed 16/16, five blind gate calls with sixteen closed findings, verified off-hours on `p7/dev-live-certificate`; the market-hours run is the next action — see the P7 paragraph under "Next")
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — implemented at `9777c05`, `npm run verify` exit 0 (272 tests), preflight and two off-hours smoke cycles green against the dev account; **next action:** the market-hours certificate run (`npm run certificate`, from 15:30 CEST, owner go given 2026-09-01 ~02:10 CEST), then the mutation probe and the blind gate, then the P7 closing state
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — implemented at `9777c05`, closing code commit `7423fe8` after the gate rounds (`npm run verify` exit 0, 278 tests), preflight and two off-hours smoke cycles green against the dev account; **next action:** the market-hours certificate run (`npm run certificate`, from 15:30 CEST, owner go given 2026-09-01 ~02:10 CEST), then the mutation probe and the blind gate, then the P7 closing state
 
 ## Done
 
@@ -341,7 +341,7 @@ One phase per session; every session ends with the handoff protocol in
   event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
   validation (P7; WIN-7/WIN-10/WIN-17 remainders).
 - **P7 — supervised dev live certificate — implemented (2026-09-01, branch
-  `p7/dev-live-certificate` from the P6 merge `bce890a`; code at `9777c05`).**
+  `p7/dev-live-certificate` from the P6 merge `bce890a`; implementation `9777c05`, closing code commit `7423fe8` after five gate rounds — DECISIONS.md "P7 verification").**
   Pure core: `src/core/certificate.ts` (versioned field classification with
   the new `deployment` class, `policyDigest`, `runtimeDigest`, evidence
   extraction from the journal plus broker observations, PASS/FAIL
@@ -360,7 +360,7 @@ One phase per session; every session ends with the handoff protocol in
   ping port, digests. `config/policy.json` holds the proposed O5 values
   (owner freeze pending — DECISIONS.md P7 scope notes). `npm run verify`
   exit 0 (272 tests; 22 new: `tests/arm01-certificate.spec.ts`,
-  `tests/alpaca-mapping.spec.ts`); the sandbox gate executes the
+  `tests/alpaca-mapping.spec.ts`; 278 at `7423fe8`); the sandbox gate executes the
   certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17 closed.
   Verified against the dev account off-hours (02:51–02:54 CEST): the
   preflight passes every S-CYC-11 check (the first attempt caught a CRLF

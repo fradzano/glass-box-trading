@@ -1163,3 +1163,54 @@ small, no ADR split).
   analyst an empty batch (a harness decision for the supervised run, not a
   gate): the live test exercises exactly one structure at a time, and the
   runner's own vetoes stay untouched.
+- **2026-09-01 — P7 verification: five blind gate calls, sixteen closed
+  findings, one structural change, a declared residual.** Mutation probe
+  16/16 caught at `9777c05` (certificate core, digests, Alpaca mapping,
+  SHA-256). The blind gate on the certificate evaluation, the digests, the
+  arming validation, and the Alpaca wire mapping ran five times (Codex jobs
+  `task-mthyknel-obafmc`, `task-mthz2vfj-ryn88r`, `task-mthztizi-me994z`,
+  `task-mti0hzjn-dgopi1`, `task-mti1bgu0-3edjmm`; every call executed its
+  counter-examples). Every closure held at its own counter-example on the
+  following call; each call then found adjacent cases, all of one
+  generator: the certificate accepted values that were well-typed but
+  semantically unchecked, and arming trusted the file's content beyond the
+  two digests. Closed in order (`23a1921`, `2f2639a`, `2cf27c0`, `2742393`,
+  `7423fe8`): per-leg liquidity coverage; acceptance before the terminal
+  instant, compared as instants; `undefined`, non-finite numbers, boxed and
+  keyless objects refused from digest material; every evidence instant
+  inside the test window, quote instants equal to the broker's; the
+  defined-risk shape (one underlying, one expiry, exact BigInt ratio sums,
+  per-right cover, G1 passed) on the credit INTENT and on the fill's INTENT;
+  OUTCOME after INTENT; signed reconciliation; broker timestamps required,
+  observations must agree on them; blank or empty identities absent;
+  `mapOrder`/`mapPosition` fail-closed on non-positive quantities, 60-minute
+  offsets, `mleg` without legs, unknown sides; order pagination re-reads
+  timestamp ties and reports a single-tie page unpageable; the runner hands
+  the analyst copies of the market, the universe, and the brief. **The
+  structural change:** the arming validator moved from ad-hoc checks to an
+  exact typed schema with window-checked instants and semantic re-checks,
+  and the certificate now carries `evidenceDigest` over its canonical body
+  (except verdict and failures) which arming recomputes — any post-hoc edit
+  of the file is refused independently of the enumerated rules. The
+  documented threat model: the certificate proves the honesty of the run,
+  not resistance to a forger who recomputes the digest. **Residual,
+  declared:** the G5 closures (`7423fe8`) are verified by their red-first
+  tests and the repository gates only — the fifth call was the last blind
+  call of this phase's reduced depth, capped before it ran so the loop
+  could not become the 32-round case; an offset (`+HH:MM`) broker quote
+  timestamp is refused fail-closed (the broker sends `Z`); sparse arrays
+  and circular objects are outside the JSON boundary of the digests.
+  Record: `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p7-dev-live-certificate/LEDGER.md`.
+- **2026-09-01 — P7 closing state on the branch: built, verified off-hours,
+  the market-hours run is the acceptance event.** Final code commit
+  `7423fe8` on `p7/dev-live-certificate` (`npm run verify` exit 0, 278
+  tests, sandbox gate executing the certificate core). Executed against the
+  dev account: preflight (S-CYC-11 through the verified MCP child and both
+  digests) and two off-hours cycles with a schema-valid analyst candidate
+  vetoed by G5/G6. Not yet executed: the market-hours certificate run
+  itself (`npm run certificate`, owner go given for 2026-09-01 from 15:30
+  CEST; O5 freeze of `config/policy.json` still pending — it binds
+  `policyDigest`). Merge into local `main` only on Felix's word, after the
+  certificate exists; P8 (kickoff release: real git/Vercel ports, Scheduled
+  Task, competition-arming wiring of `validateArmingCertificate` into
+  `runStartup`) starts from the accepted P7.
