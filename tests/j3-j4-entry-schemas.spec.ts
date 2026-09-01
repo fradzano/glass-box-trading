@@ -26,7 +26,7 @@ export function minimalEntry(type: JournalEntryType, seq = 1): JournalEntry {
     CYCLE: { cycleIndex: 7, tradingDay: "2026-08-31", reasonCodes: [], snapshot: journalSnapshot(), batchVerdicts: [], candidateVerdicts: [] },
     BOOTSTRAP: { snapshot: journalSnapshot(), epochSeeded: true },
     INTENT: intentEntry(seq),
-    OUTCOME: { clientOrderId: "entry:x", status: "filled", brokerOrderId: "b-1", brokerTimestamps: { filled_at: "2026-08-31T09:31:00.123456-04:00" }, filledQuantity: 1, avgFillPriceCents: 101, reasonCodes: [], binding },
+    OUTCOME: { clientOrderId: "entry:x", status: "filled", brokerOrderId: "b-1", brokerTimestamps: { filled_at: "2026-08-31T09:31:00.123456-04:00" }, filledQuantity: 1, avgFillPriceCents: 101, avgFillPriceRaw: "1.01", reasonCodes: [], binding },
     RECONCILIATION: { reasonCodes: ["WORLD_PARTIAL"], items: [{ kind: "order", brokerId: "b-1", classification: "MATCHED" }] },
     HUMAN_ACTION: { operator: "felix", description: "manual note" },
     GAP: { reasonCodes: [], snapshot: null, detail: "empty journal facing a non-empty account" },
@@ -79,8 +79,8 @@ describe("S-J-03 closed entry schemas", () => {
     const outcome = minimalEntry("OUTCOME") as unknown as Record<string, unknown>;
     expect(validateJournalEntry({ ...outcome, status: "executed" })).toMatchObject({ ok: false, reason: "UNKNOWN_OUTCOME_STATUS" });
     // Since P3 (S-X-03) a rejection must carry the broker's reason verbatim; a reasonless rejection is refused.
-    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, brokerReason: "insufficient options buying power" })).toMatchObject({ ok: true });
-    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null })).toMatchObject({ ok: false, reason: "REJECTION_WITHOUT_BROKER_REASON" });
+    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerReason: "insufficient options buying power" })).toMatchObject({ ok: true });
+    expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null })).toMatchObject({ ok: false, reason: "REJECTION_WITHOUT_BROKER_REASON" });
     expect(validateJournalEntry({ ...outcome, status: "rejected" })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
     expect(validateJournalEntry({ ...outcome, status: "rejected", filledQuantity: 0, avgFillPriceCents: 101 })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
     expect(validateJournalEntry({ ...outcome, status: "filled", filledQuantity: 0 })).toMatchObject({ ok: false });

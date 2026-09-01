@@ -16,10 +16,12 @@ import {
   buildClaimset,
   cancelReconciliationDraft,
   closeIntentDraft,
+  classifyBrokerFillPrice,
   classifyWorkingOrder,
   cycleDraft,
   emergencyCloseEligibility,
   entryAcknowledgementDraft,
+  entryFillTransitionBreachesLimit,
   entryResolutionDraft,
   epochMsToUtcIso,
   haltDraft,
@@ -365,15 +367,27 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     }
     const outcomeContext: OutcomeContext = { clientOrderId: record.clientOrderId, limit: record.candidate.entryLimit, binding, epoch, atIso: context().atIso };
     const derived = order === null ? null : outcomeFromOrder(outcomeContext, order);
-    if (derived === null && order !== null && record.state === "fillable") {
+    const observedTransitionBreach = record.priceBreach || (order !== null && entryFillTransitionBreachesLimit(record, order.filledQuantity, order.avgFillPriceCents, order.avgFillPriceRaw));
+    if (observedTransitionBreach) {
+      await haltForPriceBreach(record.clientOrderId);
+      if (!entriesBlocked.includes("BROKER_PRICE_BREACH")) entriesBlocked.push("BROKER_PRICE_BREACH");
+    }
+    const workingEvidenceChanged = order !== null && (order.brokerOrderId !== record.brokerOrderId
+      || order.filledQuantity !== record.filledQuantity
+      || order.avgFillPriceCents !== record.avgFillPriceCents
+      || order.avgFillPriceRaw !== (record.avgFillPriceRaw ?? null));
+    if (derived === null && order !== null && record.state === "fillable" && !workingEvidenceChanged) {
       resolved.push({ clientOrderId: record.clientOrderId, result: "STILL_WORKING" });
       continue;
     }
-    const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order) : derived.draft;
+    const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order, record.candidate.entryLimit) : derived.draft;
     if (!await append(draft)) break;
     resolved.push({ clientOrderId: record.clientOrderId, result: derived === null ? (order === null ? "NOT_AT_BROKER" : "MATCHED_WORKING") : `OUTCOME:${derived.status}` });
     if (derived === null && (order === null || record.state === "intent" || record.state === "confirmation_unclear")) entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
-    if (derived?.fill === "BROKER_PRICE_BREACH") await haltForPriceBreach(record.clientOrderId);
+    if (derived?.fill === "BROKER_PRICE_BREACH" || observedTransitionBreach) {
+      await haltForPriceBreach(record.clientOrderId);
+      if (!entriesBlocked.includes("BROKER_PRICE_BREACH")) entriesBlocked.push("BROKER_PRICE_BREACH");
+    }
   }
   // An emergency close the journal never saw (S-CYC-06): the next attempt ID of every filled lifecycle is probed at the broker.
   if (journalFailure() === null) {
@@ -662,19 +676,32 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       continue;
     }
     let derived = outcomeFromSubmit(outcomeContext, observation);
+    let workingOrder = observation.kind === "acknowledged" || (observation.kind === "duplicate" && observation.order !== null) ? observation.order : null;
     if (derived === null) {
       // Post-submit status check (S-X-04): an asynchronous rejection or fill that arrived meanwhile is picked up now.
       const later = await fetched(() => deps.broker.orderByClientId(plan.clientOrderId, deps.cycleDeadlineMs));
-      if (later.ok && later.value !== null) derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
+      if (later.ok && later.value !== null) {
+        derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
+        if (derived === null) workingOrder = later.value;
+      }
     }
     if (derived !== null) await append(derived.draft);
-    else if (observation.kind === "acknowledged") await append(entryAcknowledgementDraft(context(), plan.clientOrderId, observation.order));
+    else if (workingOrder !== null) {
+      const workingDraft = observation.kind === "acknowledged"
+        ? entryAcknowledgementDraft(context(), plan.clientOrderId, workingOrder, plan.submittedLimit)
+        : entryResolutionDraft(context(), plan.clientOrderId, workingOrder, plan.submittedLimit);
+      await append(workingDraft);
+    }
     actions.push({ clientOrderId: plan.clientOrderId, result: "SUBMITTED", status: derived?.status ?? null, detail: derived === null ? "working" : null });
     // S-CYC-04 applies inside the batch too. If the port answer cannot prove
     // whether this submit exists at the broker, no sibling plan may cross the
     // gateway until a later cycle's phase 0 reconciles this exact client ID.
     if (derived?.status === "confirmation_unclear" && !entriesBlocked.includes("CONFIRMATION_UNCLEAR")) entriesBlocked.push("CONFIRMATION_UNCLEAR");
-    if (derived?.fill === "BROKER_PRICE_BREACH") {
+    if (derived === null && observation.kind === "duplicate" && !entriesBlocked.includes("CONFIRMATION_UNCLEAR")) entriesBlocked.push("CONFIRMATION_UNCLEAR");
+    const workingFill = derived === null && workingOrder !== null && workingOrder.filledQuantity > 0 && workingOrder.avgFillPriceCents !== null
+      ? classifyBrokerFillPrice(plan.submittedLimit, workingOrder)
+      : null;
+    if (derived?.fill === "BROKER_PRICE_BREACH" || workingFill === "BROKER_PRICE_BREACH") {
       await haltForPriceBreach(plan.clientOrderId);
       entriesBlocked.push("BROKER_PRICE_BREACH");
     }

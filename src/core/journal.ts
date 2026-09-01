@@ -389,7 +389,7 @@ function schemaFor(type: JournalEntryType, body: Readonly<Record<string, unknown
       return {
         required: ["clientOrderId", "status", "brokerOrderId", "brokerTimestamps", "filledQuantity", "avgFillPriceCents", "reasonCodes", "binding"],
         // S-X-03: a rejection carries the broker's reason verbatim; other statuses may carry one or null.
-        optional: ["brokerReason"],
+        optional: ["brokerReason", "avgFillPriceRaw"],
         check: body => {
           if (!isNonEmptyString(body["clientOrderId"])) return "OUTCOME_IDENTITY_INVALID";
           const status = body["status"];
@@ -400,6 +400,10 @@ function schemaFor(type: JournalEntryType, body: Readonly<Record<string, unknown
           const filled = body["filledQuantity"];
           const price = body["avgFillPriceCents"];
           if (!isNonnegativeInteger(filled) || (price !== null && !isNonnegativeInteger(price))) return "OUTCOME_FILL_INVALID";
+          const rawPrice = body["avgFillPriceRaw"];
+          if (Object.hasOwn(body, "avgFillPriceRaw") && rawPrice !== null && (typeof rawPrice !== "string" || !/^-?\d+(?:\.\d+)?$/.test(rawPrice.trim()))) return "OUTCOME_FILL_INVALID";
+          if (price === null && rawPrice !== null && rawPrice !== undefined) return "OUTCOME_FILL_INVALID";
+          if (price !== null && typeof rawPrice !== "string") return "OUTCOME_FILL_INVALID";
           if (status === "rejected" && (filled !== 0 || price !== null)) return "REJECTION_CARRIES_FILL";
           if ((status === "filled" || status === "partially_filled") && filled === 0) return "OUTCOME_FILL_INVALID";
           const brokerReason = body["brokerReason"];

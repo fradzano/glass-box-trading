@@ -296,7 +296,7 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
 
   function snapshotFingerprint(snapshot: Omit<FullSnapshot, "consistentReads">): string {
     const positions = [...snapshot.positions].map(item => ({ contractId: item.contractId, quantity: item.quantity, avgEntryPriceCents: item.avgEntryPriceCents })).sort((a, b) => a.contractId.localeCompare(b.contractId));
-    const orders = [...snapshot.orders].map(item => ({ brokerOrderId: item.brokerOrderId, clientOrderId: item.clientOrderId, status: item.status, filledQuantity: item.filledQuantity, avgFillPriceCents: item.avgFillPriceCents })).sort((a, b) => a.brokerOrderId.localeCompare(b.brokerOrderId));
+    const orders = [...snapshot.orders].map(item => ({ brokerOrderId: item.brokerOrderId, clientOrderId: item.clientOrderId, status: item.status, filledQuantity: item.filledQuantity, avgFillPriceCents: item.avgFillPriceCents, avgFillPriceRaw: item.avgFillPriceRaw })).sort((a, b) => a.brokerOrderId.localeCompare(b.brokerOrderId));
     return JSON.stringify({ account: snapshot.account, positions, orders, pagesComplete: snapshot.pagesComplete });
   }
 

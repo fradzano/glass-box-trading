@@ -1409,3 +1409,25 @@ small, no ADR split).
   fill, rejection, cancel, or expiry is journaled; normally acknowledged
   working orders retain the ordinary fillable-risk behavior. S-ARM-01 now names
   the fast-fill acceptance states already required by the certificate decision.
+- **2026-09-01 — P7 R22 makes acknowledgement evidence state- and
+  identity-monotonic.** `ACKNOWLEDGED_WORKING` may establish `fillable` only
+  directly from a pristine `intent`, or repeat idempotently for the same broker
+  order already `fillable`. It cannot follow `confirmation_unclear` or any
+  terminal state, cannot name a terminal broker status, and cannot change an
+  already bound broker-order ID; violations invalidate lifecycle reconstruction
+  and therefore block all new entries.
+- **2026-09-01 — P7 R23 closes the complete entry-lifecycle transition
+  generator.** Duplicate entry INTENT IDs are invalid instead of resetting
+  state. Working, absence, void, and outcome evidence each enforce their source
+  state; broker-order identity never changes once known; terminal truth cannot
+  be weakened or overwritten. Filled/canceled/rejected evidence also carries a
+  status-consistent broker ID, quantity, and price shape. Runtime reconstruction
+  rejects a violation, while certificate/recovery terminality independently
+  keeps every malformed identity unresolved. Observed fill evidence is
+  monotonic too: later working or terminal evidence cannot erase or reduce a
+  partial fill, rewrite its price without a new fill, or imply a decreasing
+  cumulative fill value. The broker's exact decimal average is retained beside
+  its half-away rounded cent display, the pair must agree, and exact cumulative
+  deltas classify each new fill increment against the submitted limit. Filled
+  risk uses the conservative edge of the cent-rounding interval. Terminal
+  remainder resolution must retain the filled quantity.

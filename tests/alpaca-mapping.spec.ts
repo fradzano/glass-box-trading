@@ -109,7 +109,8 @@ describe("documents", () => {
 
   it("maps a filled debit single-leg order with a rounded average fill", () => {
     const mapped = mapOrder({ id: "o", client_order_id: "c", symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "1", filled_avg_price: "1.2350", limit_price: "1.25", status: "filled", filled_at: "2026-09-01T14:00:00.5Z" });
-    expect(mapped).toMatchObject({ status: "filled", filledQuantity: 1, avgFillPriceCents: 124, limit: { kind: "debit", priceCents: 125 }, legs: [{ contractId: "SPY260904C00645000", side: "buy", ratio: 1 }], brokerTimestamps: { filled_at: "2026-09-01T14:00:00.500Z" } });
+    expect(mapped).toMatchObject({ status: "filled", filledQuantity: 1, avgFillPriceCents: 124, avgFillPriceRaw: "1.2350", limit: { kind: "debit", priceCents: 125 }, legs: [{ contractId: "SPY260904C00645000", side: "buy", ratio: 1 }], brokerTimestamps: { filled_at: "2026-09-01T14:00:00.500Z" } });
+    expect(mapOrder({ id: "o", client_order_id: "c", symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "1", filled_avg_price: 1.235, limit_price: "1.25", status: "filled" })).toBeNull();
   });
 
   it("maps contracts and quotes; spot is the floored mid", () => {

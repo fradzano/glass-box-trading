@@ -445,11 +445,11 @@ describe("P7 launch hardening — certificate failure recovery", () => {
   });
 
   it("keeps lost acknowledgements unresolved until exact broker-terminal evidence exists", () => {
-    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:unclear" } as unknown as JournalEntry;
+    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:unclear", quantity: 2 } as unknown as JournalEntry;
     const notAtBroker = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "RECONCILIATION", reasonCodes: ["NOT_SUBMITTED"], items: [{ kind: "entry_order", clientOrderId: "entry:unclear", classification: "NOT_AT_BROKER" }] } as unknown as JournalEntry;
-    const unclear = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "confirmation_unclear" } as unknown as JournalEntry;
-    const canceled = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "canceled" } as unknown as JournalEntry;
-    const partialTerminal = { ...canceled, status: "partially_filled", filledQuantity: 1 } as unknown as JournalEntry;
+    const unclear = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "confirmation_unclear", brokerOrderId: null, filledQuantity: 0, avgFillPriceCents: null } as unknown as JournalEntry;
+    const canceled = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:unclear", status: "canceled", brokerOrderId: "broker-unclear", filledQuantity: 0, avgFillPriceCents: null } as unknown as JournalEntry;
+    const partialTerminal = { ...canceled, status: "partially_filled", filledQuantity: 1, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" } as unknown as JournalEntry;
     expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear])).toEqual(["entry:unclear"]);
     expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear, canceled])).toEqual([]);
     expect(unresolvedRecoveryEntryIds([intent, notAtBroker, unclear, partialTerminal])).toEqual([]);
@@ -514,9 +514,9 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     let halted = false;
     let terminal = false;
     let haltRequests = 0;
-    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late" } as unknown as JournalEntry;
+    const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late", quantity: 1 } as unknown as JournalEntry;
     const halt = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
-    const filled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled" } as unknown as JournalEntry;
+    const filled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled", brokerOrderId: "broker-late", filledQuantity: 1, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" } as unknown as JournalEntry;
     const runtime = {
       binding: BINDING,
       tradingDay: "2026-09-01",
@@ -631,9 +631,9 @@ describe("P7 launch hardening — certificate failure recovery", () => {
 
   it("invalidates a flat recovery proof when lifecycle journal truth changes during the snapshot", async () => {
     const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "abort", sticky: false } as unknown as JournalEntry;
-    const intent = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late" } as unknown as JournalEntry;
-    const canceled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "canceled" } as unknown as JournalEntry;
-    const lateFill = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled" } as unknown as JournalEntry;
+    const intent = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late", quantity: 1 } as unknown as JournalEntry;
+    const canceled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "canceled", brokerOrderId: "broker-late", filledQuantity: 0, avgFillPriceCents: null } as unknown as JournalEntry;
+    const lateFill = { seq: 4, at: "2026-09-01T12:00:03.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled", brokerOrderId: "broker-late", filledQuantity: 1, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" } as unknown as JournalEntry;
     let opens = 0;
     const runtime = {
       binding: BINDING,
@@ -714,6 +714,27 @@ describe("P7 launch hardening — real broker transport", () => {
     expect(positionReads).toBe(3);
     expect(snapshot.consistentReads).toBe(2);
     expect(snapshot.positions).toHaveLength(1);
+  });
+
+  it("does not call two order snapshots stable when only the exact raw fill average changed", async () => {
+    let orderReads = 0;
+    const account = { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" };
+    const order = (raw: string) => ({ id: "broker-raw", client_order_id: "entry:raw", symbol: "SPY260904C00645000", side: "buy", qty: "2", filled_qty: "1", filled_avg_price: raw, limit_price: "1.03", status: "partially_filled" });
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/v2/account")) return Promise.resolve(jsonResponse(200, account));
+      if (url.endsWith("/v2/positions")) return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/v2/orders?")) {
+        orderReads += 1;
+        return Promise.resolve(jsonResponse(200, [order(orderReads === 1 ? "1.031" : "1.034")]));
+      }
+      return Promise.resolve(jsonResponse(404, { message: "unexpected" }));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => 1_000, fetchImpl, requestTimeoutMs: 100 });
+    const snapshot = await broker.fullSnapshot();
+    expect(orderReads).toBe(3);
+    expect(snapshot.consistentReads).toBe(2);
+    expect(snapshot.orders[0]).toMatchObject({ avgFillPriceCents: 103, avgFillPriceRaw: "1.034" });
   });
 });
 

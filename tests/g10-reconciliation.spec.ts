@@ -157,7 +157,7 @@ describe("classifyBook — the pure discrimination", () => {
         { contractId: "TSLA", quantity: 5, avgEntryPriceCents: 100 },
       ],
       openOrders: [
-        { brokerOrderId: "b2", clientOrderId: "mystery-order", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null },
+        { brokerOrderId: "b2", clientOrderId: "mystery-order", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null },
       ],
     });
     const classification = classifyBook(testBook, lifecycles, [], ["entry-unclear"]);

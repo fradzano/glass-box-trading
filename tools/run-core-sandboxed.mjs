@@ -270,12 +270,12 @@ async function exerciseCore() {
   const intentDraft = execution.intentDraft({ atIso: "2026-08-31T13:31:00.000Z", epoch: 1 }, entryPlan, priced.candidate, recheck.candidateVerdicts[0], assembled.snapshot, binding);
   const intentPlanned = journal.planAppend({ lastSeq: 1, priorIntentRationales: [] }, intentDraft, []);
   if (!intentPlanned.ok) throw new Error("sandboxed intentDraft did not validate: " + intentPlanned.reason);
-  const outcome = execution.outcomeFromOrder({ clientOrderId: "entry:e", limit: priced.candidate.entryLimit, binding, epoch: 1, atIso: "2026-08-31T13:32:00.000Z" }, { brokerOrderId: "b", clientOrderId: "entry:e", status: "filled", filledQuantity: 1, avgFillPriceCents: 198, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null });
+  const outcome = execution.outcomeFromOrder({ clientOrderId: "entry:e", limit: priced.candidate.entryLimit, binding, epoch: 1, atIso: "2026-08-31T13:32:00.000Z" }, { brokerOrderId: "b", clientOrderId: "entry:e", status: "filled", filledQuantity: 1, avgFillPriceCents: 198, avgFillPriceRaw: "1.98", brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null });
   const outcomePlanned = journal.planAppend({ lastSeq: 2, priorIntentRationales: [] }, outcome.draft, []);
   if (!outcomePlanned.ok) throw new Error("sandboxed OUTCOME draft did not validate: " + outcomePlanned.reason);
   const fold = execution.foldLifecycles([planned.entry, intentPlanned.entry, outcomePlanned.entry]);
   if (!fold.ok || fold.entries.length !== 1 || fold.entries[0].state !== "filled") throw new Error("sandboxed lifecycle fold is wrong");
-  const heldBook = { ...book, equityCents: 9_000_000, positions: [{ contractId: "SHORT", quantity: -1, avgEntryPriceCents: 300 }, { contractId: "LONG", quantity: 1, avgEntryPriceCents: 100 }], openOrders: [{ brokerOrderId: "o", clientOrderId: "entry:x", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, brokerTimestamps: {}, brokerReason: null, legs: [{ contractId: "OTHER", side: "buy", ratio: 1 }], quantity: 1, limit: null }] };
+  const heldBook = { ...book, equityCents: 9_000_000, positions: [{ contractId: "SHORT", quantity: -1, avgEntryPriceCents: 300 }, { contractId: "LONG", quantity: 1, avgEntryPriceCents: 100 }], openOrders: [{ brokerOrderId: "o", clientOrderId: "entry:x", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerTimestamps: {}, brokerReason: null, legs: [{ contractId: "OTHER", side: "buy", ratio: 1 }], quantity: 1, limit: null }] };
   const killPlan = execution.planKillManagement(heldBook, fold.entries);
   const eligible = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "SHORT", side: "buy", quantity: 1 }, { contractId: "LONG", side: "sell", quantity: 1 }]);
   const opening = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "OTHER", side: "buy", quantity: 1 }]);

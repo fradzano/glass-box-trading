@@ -83,6 +83,7 @@ interface MutableOrder {
   status: string;
   filledQuantity: number;
   avgFillPriceCents: number | null;
+  avgFillPriceRaw: string | null;
   brokerTimestamps: Record<string, string>;
   brokerReason: string | null;
   legs: readonly { contractId: string; side: "buy" | "sell"; ratio: number }[];
@@ -94,6 +95,11 @@ interface MutableOrder {
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function exactDollarsFromCents(cents: number): string {
+  const whole = Math.floor(cents / 100);
+  return `${String(whole)}.${String(cents % 100).padStart(2, "0")}`;
 }
 
 export function readSubmitPayload(payload: unknown): SubmitPayload | null {
@@ -132,6 +138,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
     }
     order.filledQuantity += quantity;
     order.avgFillPriceCents = priceCents;
+    order.avgFillPriceRaw = exactDollarsFromCents(priceCents);
     order.brokerTimestamps["filled_at"] = stamp();
     order.status = order.filledQuantity >= order.quantity ? "filled" : "partially_filled";
   }
@@ -153,6 +160,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
       status: order.status,
       filledQuantity: order.filledQuantity,
       avgFillPriceCents: order.avgFillPriceCents,
+      avgFillPriceRaw: order.avgFillPriceRaw,
       brokerTimestamps: { ...order.brokerTimestamps },
       brokerReason: order.brokerReason,
       legs: order.legs.map(optionLeg => ({ ...optionLeg })),
@@ -183,6 +191,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
       status: "accepted",
       filledQuantity: 0,
       avgFillPriceCents: null,
+      avgFillPriceRaw: null,
       brokerTimestamps: { submitted_at: stamp() },
       brokerReason: null,
       legs: payload.legs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, ratio: optionLeg.ratio })),

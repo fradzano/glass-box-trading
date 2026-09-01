@@ -23,7 +23,9 @@ function at(minutes: number): string {
 }
 
 function outcomeEntry(seq: number, clientOrderId: string, minutes: number, overrides: Record<string, unknown> = {}): JournalEntry {
-  return { seq, at: at(minutes), epoch: 1, type: "OUTCOME", clientOrderId, status: "filled", brokerOrderId: `broker-${String(seq)}`, brokerTimestamps: { filled_at: at(minutes) }, filledQuantity: 1, avgFillPriceCents: 101, reasonCodes: [], binding: BINDING, ...overrides } as unknown as JournalEntry;
+  const price = typeof overrides["avgFillPriceCents"] === "number" ? overrides["avgFillPriceCents"] : 101;
+  const raw = Object.hasOwn(overrides, "avgFillPriceRaw") ? overrides["avgFillPriceRaw"] : `${String(Math.floor(price / 100))}.${String(price % 100).padStart(2, "0")}`;
+  return { seq, at: at(minutes), epoch: 1, type: "OUTCOME", clientOrderId, status: "filled", brokerOrderId: `broker-${String(seq)}`, brokerTimestamps: { filled_at: at(minutes) }, filledQuantity: 1, avgFillPriceCents: 101, avgFillPriceRaw: raw, reasonCodes: [], binding: BINDING, ...overrides } as unknown as JournalEntry;
 }
 
 function closeIntentEntry(seq: number, minutes: number, overrides: Record<string, unknown> = {}): JournalEntry {

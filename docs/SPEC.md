@@ -650,7 +650,21 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   proves that a lost-acknowledgement request has reached terminal truth; only a
   broker-terminal outcome or a pre-submit `REVALIDATION_VOID` releases it. A
   normally acknowledged working submit is durably distinguished as
-  `ACKNOWLEDGED_WORKING` and follows ordinary fillable-risk accounting.
+  `ACKNOWLEDGED_WORKING` and follows ordinary fillable-risk accounting. That
+  transition is valid only directly from `INTENT` (or idempotently for the same
+  broker order already `fillable`); it can never repair `CONFIRMATION_UNCLEAR`
+  or a terminal lifecycle. Entry client-order IDs are unique across INTENTs;
+  broker-order identity, filled quantity, and cumulative fill value are
+  monotonic. The exact broker decimal average is retained beside the
+  half-away-rounded cent value and the two must agree; every newly observed
+  exact fill increment is classified against the submitted limit, including
+  increments hidden by an aggregate average. The rounded display value uses
+  its conservative interval edge for risk accounting (upper for debit, lower
+  for credit).
+  `REVALIDATION_VOID` is valid only before submit; and no OUTCOME may weaken or
+  overwrite terminal truth. A cancel, expiry, or rejection after a partial fill
+  must preserve the observed filled quantity as terminal partial-fill evidence.
+  Any invalid transition makes lifecycle reconstruction fail closed.
 - **S-G10-05** A manual human trade is journaled `HUMAN_ACTION` — visible to
   the judge as exactly that, never absorbed into agent reasoning. On the dev
   account it follows ordinary reconciliation. On the competition account it

@@ -48,7 +48,11 @@ function snapshot(positions: readonly { contractId: string; quantity: number }[]
 }
 
 function entry(seq: number, type: string, fields: Record<string, unknown>): JournalEntry {
-  return { seq, at: `2026-09-01T14:${String(seq).padStart(2, "0")}:00.000Z`, epoch: 1, type, ...fields } as JournalEntry;
+  const price = fields["avgFillPriceCents"];
+  const withExactFill = type === "OUTCOME" && typeof price === "number" && !Object.hasOwn(fields, "avgFillPriceRaw")
+    ? { ...fields, avgFillPriceRaw: `${String(Math.floor(price / 100))}.${String(price % 100).padStart(2, "0")}` }
+    : fields;
+  return { seq, at: `2026-09-01T14:${String(seq).padStart(2, "0")}:00.000Z`, epoch: 1, type, ...withExactFill } as JournalEntry;
 }
 
 const LEGS = [
@@ -74,7 +78,7 @@ function passingJournal(overrides: { readonly g5?: boolean; readonly outcomeStat
 }
 
 function order(status: string, filled: boolean): BrokerOrderRecord {
-  return { brokerOrderId: "broker-1", clientOrderId: "entry:credit", status, filledQuantity: filled ? 1 : 0, avgFillPriceCents: filled ? 19 : null, brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z" }, brokerReason: null, legs: [{ contractId: SHORT, side: "sell", ratio: 1 }, { contractId: LONG, side: "buy", ratio: 1 }], quantity: 1, limit: { kind: "credit", priceCents: 18 } };
+  return { brokerOrderId: "broker-1", clientOrderId: "entry:credit", status, filledQuantity: filled ? 1 : 0, avgFillPriceCents: filled ? 19 : null, avgFillPriceRaw: filled ? "0.19" : null, brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z" }, brokerReason: null, legs: [{ contractId: SHORT, side: "sell", ratio: 1 }, { contractId: LONG, side: "buy", ratio: 1 }], quantity: 1, limit: { kind: "credit", priceCents: 18 } };
 }
 
 function observations(): readonly OrderObservation[] {
@@ -166,7 +170,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     const base = passingJournal();
     const originalFill = base.find(item => item.seq === 4);
     if (originalFill === undefined) throw new Error("fixture");
-    const oldFill = { ...originalFill, brokerOrderId: "broker-A" } as JournalEntry;
+    const oldFill = { ...originalFill, status: "confirmation_unclear", brokerOrderId: null, brokerTimestamps: {}, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null } as JournalEntry;
     const latestFill = entry(5, "OUTCOME", {
       clientOrderId: "entry:credit",
       status: "filled",
@@ -174,6 +178,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
       brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:05:00.000Z" },
       filledQuantity: 1,
       avgFillPriceCents: 20,
+      avgFillPriceRaw: "0.20",
     });
     const journal = [
       ...base.filter(item => item.seq <= 3),
@@ -185,7 +190,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     ];
     const brokerB = (status: string, filled: boolean): OrderObservation => ({
       observedAt: "2026-09-01T14:05:01.000Z",
-      order: { ...order(status, filled), brokerOrderId: "broker-B", avgFillPriceCents: filled ? 20 : null },
+      order: { ...order(status, filled), brokerOrderId: "broker-B", avgFillPriceCents: filled ? 20 : null, avgFillPriceRaw: filled ? "0.20" : null },
     });
     const certificate = buildCertificate(inputs({
       journal,
@@ -197,7 +202,15 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(certificate.evidence.creditAcceptance).toMatchObject({ brokerOrderId: "broker-B", outcomeSeq: 5 });
     expect(certificate.evidence.fill).toMatchObject({ brokerOrderId: "broker-B", outcomeSeq: 5 });
 
-    const malformedLatest = journal.map(item => item.seq === 5 ? { ...item, filledQuantity: 0, avgFillPriceCents: null } : item);
+    const identitySwitch = buildCertificate(inputs({
+      journal: journal.map(item => item.seq === 4 ? { ...originalFill, brokerOrderId: "broker-A" } : item),
+      orderObservations: [brokerB("accepted", false), brokerB("filled", true)],
+      fence: { httpStatus: 401, haltSeq: 7, unhaltSeq: 8, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+    expect(identitySwitch.verdict).toBe("FAIL");
+    expect(identitySwitch.failures.length).toBeGreaterThan(0);
+
+    const malformedLatest = journal.map(item => item.seq === 5 ? { ...item, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null } : item);
     const refused = buildCertificate(inputs({
       journal: malformedLatest,
       orderObservations: [brokerB("accepted", false), brokerB("filled", true)],

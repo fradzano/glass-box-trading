@@ -16,7 +16,9 @@ import {
   priceAndDecide,
   priceCloseLimit,
   priceEntryLimit,
+  revalidationVoidDraft,
   reversedLegs,
+  unresolvedEntryLifecycleIds,
   utcIsoToEpochMs,
 } from "../src/core/execution.js";
 import type { OutcomeContext } from "../src/core/execution.js";
@@ -127,7 +129,9 @@ describe("S-X-02 a fill is judged against the submitted limit", () => {
     if (!fold.ok) throw new Error(fold.reason);
     const exposure = exposureLifecyclesFrom(fold.entries);
     // The reservation was (500 − 198) × 100 = 30 200; the actual fill at 150 credit leaves (500 − 150) × 100 = 35 000 at risk.
-    expect(exposure).toMatchObject({ ok: true, lifecycles: [{ risk: [{ kind: "filled", maxLossCents: 35_000 }] }] });
+    expect(exposure).toMatchObject({ ok: true, lifecycles: [{ risk: [{ kind: "filled", maxLossCents: 35_100 }] }] });
+    const subcentBreach = outcomeFromOrder({ ...context, limit: { kind: "debit", priceCents: 103 } }, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", quantity: 5, filledQuantity: 5, avgFillPriceCents: 103, avgFillPriceRaw: "1.034", limit: { kind: "debit", priceCents: 103 } }));
+    expect(subcentBreach).toMatchObject({ status: "filled", fill: "BROKER_PRICE_BREACH", draft: { avgFillPriceRaw: "1.034", reasonCodes: ["BROKER_PRICE_BREACH"] } });
   });
 });
 
@@ -138,7 +142,7 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     expect(rejected).toMatchObject({ status: "rejected", terminal: true, draft: { status: "rejected", brokerReason: "insufficient options buying power", brokerOrderId: null, filledQuantity: 0, avgFillPriceCents: null } });
     expect(validateJournalEntry({ seq: 2, ...rejected!.draft })).toMatchObject({ ok: true });
     expect(validateJournalEntry({ seq: 2, ...rejected!.draft, brokerReason: "" })).toMatchObject({ ok: false, reason: "REJECTION_WITHOUT_BROKER_REASON" });
-    expect(validateJournalEntry({ seq: 2, ...rejected!.draft, filledQuantity: 1, avgFillPriceCents: 198 })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
+    expect(validateJournalEntry({ seq: 2, ...rejected!.draft, filledQuantity: 1, avgFillPriceCents: 198, avgFillPriceRaw: "1.98" })).toMatchObject({ ok: false, reason: "REJECTION_CARRIES_FILL" });
     const silent = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "rejected", brokerReason: null }));
     expect(silent?.draft["brokerReason"]).toBe("BROKER_REASON_ABSENT");
 
@@ -172,7 +176,7 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     expect(released).toMatchObject({ ok: true, entries: [{ state: "rejected" }] });
 
     // A cancel after a partial fill is a terminal partially_filled outcome: filled portion stays, the rest is released.
-    const partial = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "canceled", filledQuantity: 1, avgFillPriceCents: 198 }));
+    const partial = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "canceled", quantity: 2, filledQuantity: 1, avgFillPriceCents: 198 }));
     expect(partial).toMatchObject({ status: "partially_filled", terminal: true, draft: { filledQuantity: 1 } });
   });
 
@@ -195,8 +199,103 @@ describe("S-X-03 / S-X-04 broker rejection is an OUTCOME with the broker's reaso
     const foundWorking = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "new" }));
     expect(foldLifecycles(seqd([intent, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });
     expect(foldLifecycles(seqd([intent, unclear!.draft, foundWorking]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });
+    const acknowledgedWorking = entryAcknowledgementDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, status: "accepted" }));
+    const terminalAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], status: "filled" }] };
+    expect(foldLifecycles(seqd([intent, terminalAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/malformed working-order evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, terminalAck]))).toEqual([plan.clientOrderId]);
+    const blankAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], brokerOrderId: " ", status: " " }] };
+    expect(foldLifecycles(seqd([intent, blankAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/malformed working-order evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, blankAck]))).toEqual([plan.clientOrderId]);
+    const excessAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 198, avgFillPriceRaw: "1.98" }] };
+    expect(foldLifecycles(seqd([intent, excessAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/exceeds intended quantity/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, excessAck]))).toEqual([plan.clientOrderId]);
+    const mismatchedRawAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 199, avgFillPriceRaw: "1.50" }] };
+    expect(foldLifecycles(seqd([intent, mismatchedRawAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/malformed working-order evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, mismatchedRawAck]))).toEqual([plan.clientOrderId]);
+    const threeLotIntent = { ...intent, quantity: 3 };
+    const partialAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 198, avgFillPriceRaw: "1.98" }] };
+    const lowerAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 0, avgFillPriceCents: null }] };
+    expect(foldLifecycles(seqd([threeLotIntent, partialAck, lowerAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, partialAck, lowerAck]))).toEqual([plan.clientOrderId]);
+    const changedPriceAck = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 499, avgFillPriceRaw: "4.99" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, partialAck, changedPriceAck]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, partialAck, changedPriceAck]))).toEqual([plan.clientOrderId]);
+    const breachWorking = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 150, avgFillPriceRaw: "1.50" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, breachWorking]))).toMatchObject({ ok: true, entries: [{ state: "fillable", filledQuantity: 1, priceBreach: true }] });
+    const firstImprovedFill = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 300, avgFillPriceRaw: "3.00" }] };
+    const impossibleCumulativeFill = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 100, avgFillPriceRaw: "1.00" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, firstImprovedFill, impossibleCumulativeFill]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, firstImprovedFill, impossibleCumulativeFill]))).toEqual([plan.clientOrderId]);
+    const incrementalBreach = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 248, avgFillPriceRaw: "2.48" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, firstImprovedFill, incrementalBreach]))).toMatchObject({ ok: true, entries: [{ state: "fillable", filledQuantity: 2, priceBreach: true }] });
+    const roundedTwoLot = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 2, avgFillPriceRaw: "0.015" }] };
+    const roundedThreeLot = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 3, avgFillPriceCents: 1, avgFillPriceRaw: "0.013333333" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, roundedTwoLot, roundedThreeLot]))).toMatchObject({ ok: true, entries: [{ filledQuantity: 3 }] });
+    const debitThreeLotIntent = { ...threeLotIntent, submittedLimit: { kind: "debit", priceCents: 103 } };
+    const debitFirst = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 102, avgFillPriceRaw: "1.02" }] };
+    const debitSecond = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 103, avgFillPriceRaw: "1.025" }] };
+    expect(foldLifecycles(seqd([debitThreeLotIntent, debitFirst, debitSecond]))).toMatchObject({ ok: true, entries: [{ filledQuantity: 2, priceBreach: false }] });
+    const fourLotIntent = { ...intent, quantity: 4 };
+    const globalFirst = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 7, avgFillPriceRaw: "0.07" }] };
+    const globalMiddle = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 3, avgFillPriceCents: 2, avgFillPriceRaw: "0.02" }] };
+    const globalImpossibleTerminal = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", quantity: 4, filledQuantity: 4, avgFillPriceCents: 1 }))!.draft;
+    expect(foldLifecycles(seqd([fourLotIntent, globalFirst, globalMiddle, globalImpossibleTerminal]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([fourLotIntent, globalFirst, globalMiddle, globalImpossibleTerminal]))).toEqual([plan.clientOrderId]);
+    const exactRawFirst = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 103, avgFillPriceRaw: "1.034" }] };
+    const exactRawRegressed = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 2, avgFillPriceCents: 52, avgFillPriceRaw: "0.516" }] };
+    const exactRawRewrite = { ...acknowledgedWorking, items: [{ ...(acknowledgedWorking["items"] as readonly Record<string, unknown>[])[0], filledQuantity: 1, avgFillPriceCents: 103, avgFillPriceRaw: "1.031" }] };
+    expect(foldLifecycles(seqd([threeLotIntent, exactRawFirst, exactRawRegressed]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, exactRawFirst, exactRawRegressed]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([threeLotIntent, exactRawFirst, exactRawRewrite]))).toMatchObject({ ok: false, reason: expect.stringMatching(/regresses cumulative fill evidence/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, exactRawFirst, exactRawRewrite]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([intent, unclear!.draft, acknowledgedWorking]))).toMatchObject({ ok: false, reason: expect.stringMatching(/acknowledges .* after state confirmation_unclear/) });
+    expect(foldLifecycles(seqd([intent, unclear!.draft, intent, acknowledgedWorking]))).toMatchObject({ ok: false, reason: expect.stringMatching(/duplicates client order ID/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, unclear!.draft, intent, acknowledgedWorking]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([intent, acknowledgedWorking, acknowledgedWorking]))).toMatchObject({ ok: true, entries: [{ state: "fillable", brokerOrderId: "broker-1" }] });
+    expect(foldLifecycles(seqd([intent, acknowledgedWorking, entryAcknowledgementDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, brokerOrder({ clientOrderId: plan.clientOrderId, brokerOrderId: "broker-other", status: "accepted" }))]))).toMatchObject({ ok: false, reason: expect.stringMatching(/changes broker order identity/) });
     const foundFilled = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", filledQuantity: 1, avgFillPriceCents: 198 }));
     expect(foldLifecycles(seqd([intent, unclear!.draft, foundFilled!.draft]))).toMatchObject({ ok: true, entries: [{ state: "filled", filledQuantity: 1 }] });
+    const incompleteFilledObservation = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, status: "filled", quantity: 3, filledQuantity: 1, avgFillPriceCents: 198 }));
+    expect(incompleteFilledObservation).toMatchObject({ status: "confirmation_unclear", terminal: false });
+    expect(foldLifecycles(seqd([threeLotIntent, foundFilled!.draft]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, foundFilled!.draft]))).toEqual([plan.clientOrderId]);
+    const unlabelledBreachFill = { ...foundFilled!.draft, avgFillPriceCents: 150, avgFillPriceRaw: "1.50", reasonCodes: [] };
+    expect(foldLifecycles(seqd([intent, unlabelledBreachFill]))).toMatchObject({ ok: true, entries: [{ state: "filled", priceBreach: true }] });
+    const mismatchedRawOutcome = { ...foundFilled!.draft, avgFillPriceCents: 199, avgFillPriceRaw: "1.50" };
+    expect(foldLifecycles(seqd([intent, mismatchedRawOutcome]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, mismatchedRawOutcome]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([intent, foundFilled!.draft, acknowledgedWorking]))).toMatchObject({ ok: false, reason: expect.stringMatching(/working after terminal state filled/) });
+    const wrongBrokerFilled = outcomeFromOrder(context, brokerOrder({ clientOrderId: plan.clientOrderId, brokerOrderId: "broker-other", status: "filled", filledQuantity: 1, avgFillPriceCents: 198 }));
+    expect(foldLifecycles(seqd([intent, acknowledgedWorking, wrongBrokerFilled!.draft]))).toMatchObject({ ok: false, reason: expect.stringMatching(/changes broker order identity/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, acknowledgedWorking, wrongBrokerFilled!.draft]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([intent, foundFilled!.draft, foundFilled!.draft]))).toMatchObject({ ok: false, reason: expect.stringMatching(/follows terminal state filled/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, foundFilled!.draft, foundFilled!.draft]))).toEqual([plan.clientOrderId]);
+    const fillWithoutBrokerId = { ...foundFilled!.draft, brokerOrderId: null };
+    expect(foldLifecycles(seqd([intent, fillWithoutBrokerId]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, fillWithoutBrokerId]))).toEqual([plan.clientOrderId]);
+    const blankBrokerFill = { ...foundFilled!.draft, brokerOrderId: " " };
+    expect(foldLifecycles(seqd([intent, blankBrokerFill]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, blankBrokerFill]))).toEqual([plan.clientOrderId]);
+    const excessFill = { ...foundFilled!.draft, filledQuantity: 2 };
+    expect(foldLifecycles(seqd([intent, excessFill]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, excessFill]))).toEqual([plan.clientOrderId]);
+    const decreasedCanceled = { ...foundFilled!.draft, status: "canceled", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null };
+    const decreasedRejected = { ...foundFilled!.draft, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerReason: "broker rejected remainder" };
+    const decreasedFilled = { ...foundFilled!.draft, filledQuantity: 1 };
+    const preservedPartial = { ...foundFilled!.draft, status: "partially_filled", filledQuantity: 2 };
+    const changedPricePartial = { ...foundFilled!.draft, status: "partially_filled", filledQuantity: 2, avgFillPriceCents: 499, avgFillPriceRaw: "4.99" };
+    for (const decreasingOutcome of [decreasedCanceled, decreasedRejected, decreasedFilled]) {
+      expect(foldLifecycles(seqd([threeLotIntent, partialAck, decreasingOutcome]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+      expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, partialAck, decreasingOutcome]))).toEqual([plan.clientOrderId]);
+    }
+    expect(foldLifecycles(seqd([threeLotIntent, partialAck, preservedPartial]))).toMatchObject({ ok: true, entries: [{ state: "filled", filledQuantity: 2 }] });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, partialAck, preservedPartial]))).toEqual([]);
+    expect(foldLifecycles(seqd([threeLotIntent, partialAck, changedPricePartial]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([threeLotIntent, partialAck, changedPricePartial]))).toEqual([plan.clientOrderId]);
+    const malformedCancel = { ...foundFilled!.draft, status: "canceled", filledQuantity: 1 };
+    expect(foldLifecycles(seqd([intent, malformedCancel]))).toMatchObject({ ok: false, reason: expect.stringMatching(/cannot be applied/) });
+    expect(unresolvedEntryLifecycleIds(seqd([intent, malformedCancel]))).toEqual([plan.clientOrderId]);
+    expect(foldLifecycles(seqd([intent, acknowledgedWorking, revalidationVoidDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, { clientOrderId: plan.clientOrderId, candidateId: plan.candidateId, claims: [] }, [])]))).toMatchObject({ ok: false, reason: expect.stringMatching(/voids .* after state fillable/) });
     const notFound = entryResolutionDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan.clientOrderId, null);
     expect(notFound).toMatchObject({ reasonCodes: ["NOT_SUBMITTED"], items: [{ classification: "NOT_AT_BROKER" }] });
     expect(foldLifecycles(seqd([intent, unclear!.draft, notFound]))).toMatchObject({ ok: true, entries: [{ state: "confirmation_unclear" }] });

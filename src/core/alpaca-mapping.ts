@@ -182,6 +182,8 @@ export function mapOrder(raw: unknown): BrokerOrderRecord | null {
   const avgRaw = raw["filled_avg_price"];
   const avg = avgRaw === null || avgRaw === undefined ? null : dollarsToCentsRounded(avgRaw);
   if (avgRaw !== null && avgRaw !== undefined && avg === null) return null;
+  const avgFillPriceRaw = avgRaw === null || avgRaw === undefined ? null : typeof avgRaw === "string" ? avgRaw.trim() : null;
+  if (avg !== null && avgFillPriceRaw === null) return null;
   const brokerTimestamps: Record<string, string> = {};
   for (const field of timestampFields()) {
     const normalized = normalizeBrokerIso(raw[field]);
@@ -193,6 +195,7 @@ export function mapOrder(raw: unknown): BrokerOrderRecord | null {
     status,
     filledQuantity,
     avgFillPriceCents: avg === null ? null : Math.abs(avg),
+    avgFillPriceRaw,
     brokerTimestamps,
     brokerReason: null,
     legs,

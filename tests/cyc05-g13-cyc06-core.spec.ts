@@ -130,7 +130,7 @@ describe("G13 drawdown kill-switch (pure decisions)", () => {
 
     const { plan, market } = approved();
     const intent = intentDraft({ atIso: TEST_ONLY_AT, epoch: 1 }, plan, creditVertical({ entryLimit: plan.submittedLimit }), { candidateId: plan.candidateId, candidateRationale: "r", decision: "PASS", reservedMaxLossCents: plan.reservedMaxLossCents, gateVector: PASS_VECTOR }, market, BINDING);
-    const filled = { at: TEST_ONLY_AT, epoch: 1, type: "OUTCOME", clientOrderId: plan.clientOrderId, status: "filled", brokerOrderId: "b-1", brokerTimestamps: {}, filledQuantity: 1, avgFillPriceCents: 198, reasonCodes: [], binding: BINDING, brokerReason: null };
+    const filled = { at: TEST_ONLY_AT, epoch: 1, type: "OUTCOME", clientOrderId: plan.clientOrderId, status: "filled", brokerOrderId: "b-1", brokerTimestamps: {}, filledQuantity: 1, avgFillPriceCents: 198, avgFillPriceRaw: "1.98", reasonCodes: [], binding: BINDING, brokerReason: null };
     const fold = foldLifecycles(seqd([intent, filled]));
     if (!fold.ok) throw new Error(fold.reason);
     const held: BrokerBook = book({
@@ -235,7 +235,7 @@ describe("RES-P1-01 the adapter validates every shape before decide is reachable
     expect(assembleDecisionSnapshot({ ...base, journal: [intent, unknownState] })).toMatchObject({ ok: false, reason: expect.stringMatching(/^LIFECYCLE_FOLD:.*unknown classification SOMETHING_ELSE/) });
     const fractionalReserve = { ...intent, reservedMaxLossCents: 101.5 } as JournalEntry;
     expect(assembleDecisionSnapshot({ ...base, journal: [fractionalReserve] })).toMatchObject({ ok: false, reason: expect.stringMatching(/^LIFECYCLE_FOLD:/) });
-    const orphanOutcome = { seq: 1, at: TEST_ONLY_AT, epoch: 1, type: "OUTCOME", clientOrderId: "entry:nobody", status: "filled", brokerOrderId: "b", brokerTimestamps: {}, filledQuantity: 1, avgFillPriceCents: 1, reasonCodes: [], binding: BINDING } as unknown as JournalEntry;
+    const orphanOutcome = { seq: 1, at: TEST_ONLY_AT, epoch: 1, type: "OUTCOME", clientOrderId: "entry:nobody", status: "filled", brokerOrderId: "b", brokerTimestamps: {}, filledQuantity: 1, avgFillPriceCents: 1, avgFillPriceRaw: "0.01", reasonCodes: [], binding: BINDING } as unknown as JournalEntry;
     expect(assembleDecisionSnapshot({ ...base, journal: [orphanOutcome] })).toMatchObject({ ok: false, reason: expect.stringMatching(/references no INTENT/) });
     const valid = assembleDecisionSnapshot({ ...base, journal: [intent] });
     expect(valid).toMatchObject({ ok: true, snapshot: { exposureLifecycles: [{ exposureLifecycleId: "exposure-1", risk: [{ kind: "entry", state: "intent", maxLossCents: 10_100 }] }], submittedOrderIds: ["entry:2026-08-31:7:abc"] } });

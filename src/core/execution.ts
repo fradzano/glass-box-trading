@@ -232,6 +232,42 @@ export function classifyFillPrice(limit: { readonly kind: EntryLimitKind; readon
   return avgFillPriceCents < limit.priceCents ? "BROKER_PRICE_BREACH" : "PRICE_IMPROVED";
 }
 
+function exactDollarPriceComparedWithCents(raw: string, cents: number): -1 | 0 | 1 | null {
+  const value = exactDollarPriceInCents(raw);
+  if (value === null) return null;
+  const left = value.numerator;
+  const right = BigInt(cents) * value.denominator;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function exactDollarPriceInCents(raw: unknown): Readonly<{ numerator: bigint; denominator: bigint }> | null {
+  if (typeof raw !== "string") return null;
+  const match = /^-?(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (match === null) return null;
+  const fraction = match[2] ?? "";
+  const magnitude = BigInt(`${match[1] as string}${fraction}`);
+  const denominator = 10n ** BigInt(fraction.length);
+  return { numerator: magnitude * 100n, denominator };
+}
+
+function exactRawRoundsToCents(raw: string, cents: number): boolean {
+  const value = exactDollarPriceInCents(raw);
+  if (value === null) return false;
+  const whole = value.numerator / value.denominator;
+  const remainder = value.numerator % value.denominator;
+  const rounded = whole + (remainder * 2n >= value.denominator ? 1n : 0n);
+  return rounded === BigInt(cents);
+}
+
+export function classifyBrokerFillPrice(limit: { readonly kind: EntryLimitKind; readonly priceCents: number }, order: Pick<BrokerOrderRecord, "avgFillPriceCents" | "avgFillPriceRaw">): FillClassification | null {
+  if (order.avgFillPriceCents === null || order.avgFillPriceRaw === null || !exactRawRoundsToCents(order.avgFillPriceRaw, order.avgFillPriceCents)) return null;
+  const compared = exactDollarPriceComparedWithCents(order.avgFillPriceRaw, limit.priceCents);
+  if (compared === null) return null;
+  if (compared === 0) return "AT_LIMIT";
+  if (limit.kind === "debit") return compared > 0 ? "BROKER_PRICE_BREACH" : "PRICE_IMPROVED";
+  return compared < 0 ? "BROKER_PRICE_BREACH" : "PRICE_IMPROVED";
+}
+
 // ---------------------------------------------------------------------------
 // Broker observations (what the shell fetched; nothing here is trusted beyond its shape)
 // ---------------------------------------------------------------------------
@@ -256,6 +292,8 @@ export interface BrokerOrderRecord {
   readonly status: string;
   readonly filledQuantity: number;
   readonly avgFillPriceCents: number | null;
+  /** Exact broker decimal dollars before nearest-cent display/risk rounding. */
+  readonly avgFillPriceRaw: string | null;
   readonly brokerTimestamps: Readonly<Record<string, string>>;
   readonly brokerReason: string | null;
   readonly legs: readonly BrokerOrderLeg[];
@@ -310,6 +348,7 @@ function outcomeDraft(fields: {
   readonly brokerTimestamps: Readonly<Record<string, string>>;
   readonly filledQuantity: number;
   readonly avgFillPriceCents: number | null;
+  readonly avgFillPriceRaw: string | null;
   readonly reasonCodes: readonly ReasonCode[];
   readonly binding: AccountBinding;
   readonly brokerReason: string | null;
@@ -324,6 +363,7 @@ function outcomeDraft(fields: {
     brokerTimestamps: fields.brokerTimestamps,
     filledQuantity: fields.filledQuantity,
     avgFillPriceCents: fields.avgFillPriceCents,
+    avgFillPriceRaw: fields.avgFillPriceRaw,
     reasonCodes: fields.reasonCodes,
     binding: fields.binding,
     brokerReason: fields.brokerReason,
@@ -347,19 +387,22 @@ export interface OutcomeContext {
  */
 export function outcomeFromOrder(context: OutcomeContext, order: BrokerOrderRecord): OutcomeDerivation | null {
   if (!isTerminalBrokerStatus(order.status)) return null;
-  const base = { atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, brokerOrderId: order.brokerOrderId, brokerTimestamps: order.brokerTimestamps, binding: context.binding };
+  const base = { atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, brokerOrderId: order.brokerOrderId, brokerTimestamps: order.brokerTimestamps, binding: context.binding, avgFillPriceRaw: order.avgFillPriceRaw };
   if (order.status === "rejected") {
+    if (order.filledQuantity !== 0 || order.avgFillPriceCents !== null || order.avgFillPriceRaw !== null) return { status: "confirmation_unclear", terminal: false, fill: null, draft: outcomeDraft({ ...base, status: "confirmation_unclear", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], brokerReason: order.brokerReason }) };
     const brokerReason = order.brokerReason === null || order.brokerReason.length === 0 ? BROKER_REASON_ABSENT : order.brokerReason;
-    return { status: "rejected", terminal: true, fill: null, draft: outcomeDraft({ ...base, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, reasonCodes: [], brokerReason }) };
+    return { status: "rejected", terminal: true, fill: null, draft: outcomeDraft({ ...base, status: "rejected", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], brokerReason }) };
   }
   const filledQuantity = isNonnegativeSafeInteger(order.filledQuantity) ? order.filledQuantity : 0;
   const price = filledQuantity > 0 && isNonnegativeSafeInteger(order.avgFillPriceCents) ? order.avgFillPriceCents : null;
-  const fill = price === null ? null : classifyFillPrice(context.limit, price);
+  if (filledQuantity === 0 && order.avgFillPriceRaw !== null) return { status: "confirmation_unclear", terminal: false, fill: null, draft: outcomeDraft({ ...base, status: "confirmation_unclear", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], brokerReason: order.brokerReason }) };
+  const fill = price === null ? null : classifyBrokerFillPrice(context.limit, order);
   const reasonCodes: readonly ReasonCode[] = fill === "BROKER_PRICE_BREACH" ? ["BROKER_PRICE_BREACH"] : [];
   if (order.status === "filled") {
-    if (filledQuantity === 0 || price === null) return { status: "confirmation_unclear", terminal: false, fill: null, draft: outcomeDraft({ ...base, status: "confirmation_unclear", filledQuantity: 0, avgFillPriceCents: null, reasonCodes: [], brokerReason: order.brokerReason }) };
+    if (filledQuantity !== order.quantity || price === null || fill === null) return { status: "confirmation_unclear", terminal: false, fill: null, draft: outcomeDraft({ ...base, status: "confirmation_unclear", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], brokerReason: order.brokerReason }) };
     return { status: "filled", terminal: true, fill, draft: outcomeDraft({ ...base, status: "filled", filledQuantity, avgFillPriceCents: price, reasonCodes, brokerReason: order.brokerReason }) };
   }
+  if (filledQuantity >= order.quantity || (filledQuantity > 0 && fill === null)) return { status: "confirmation_unclear", terminal: false, fill: null, draft: outcomeDraft({ ...base, status: "confirmation_unclear", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], brokerReason: order.brokerReason }) };
   const status: OutcomeStatus = filledQuantity > 0 && price !== null ? "partially_filled" : order.status === "expired" ? "expired" : "canceled";
   return { status, terminal: true, fill, draft: outcomeDraft({ ...base, status, filledQuantity: status === "partially_filled" ? filledQuantity : 0, avgFillPriceCents: status === "partially_filled" ? price : null, reasonCodes, brokerReason: order.brokerReason }) };
 }
@@ -372,14 +415,14 @@ export function outcomeFromSubmit(context: OutcomeContext, observation: SubmitOb
         status: "rejected",
         terminal: true,
         fill: null,
-        draft: outcomeDraft({ atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, status: "rejected", brokerOrderId: null, brokerTimestamps: observation.brokerTimestamps, filledQuantity: 0, avgFillPriceCents: null, reasonCodes: [], binding: context.binding, brokerReason: observation.brokerReason.length === 0 ? BROKER_REASON_ABSENT : observation.brokerReason }),
+        draft: outcomeDraft({ atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, status: "rejected", brokerOrderId: null, brokerTimestamps: observation.brokerTimestamps, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], binding: context.binding, brokerReason: observation.brokerReason.length === 0 ? BROKER_REASON_ABSENT : observation.brokerReason }),
       };
     case "acknowledgement_lost":
       return {
         status: "confirmation_unclear",
         terminal: false,
         fill: null,
-        draft: outcomeDraft({ atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, status: "confirmation_unclear", brokerOrderId: null, brokerTimestamps: {}, filledQuantity: 0, avgFillPriceCents: null, reasonCodes: [], binding: context.binding, brokerReason: observation.detail }),
+        draft: outcomeDraft({ atIso: context.atIso, epoch: context.epoch, clientOrderId: context.clientOrderId, status: "confirmation_unclear", brokerOrderId: null, brokerTimestamps: {}, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, reasonCodes: [], binding: context.binding, brokerReason: observation.detail }),
       };
     case "duplicate":
       return observation.order === null
@@ -404,6 +447,9 @@ export interface EntryLifecycleRecord {
   readonly state: EntryReservationState;
   readonly filledQuantity: Quantity;
   readonly avgFillPriceCents: OptionPriceCents | null;
+  readonly avgFillPriceRaw?: string | null;
+  /** Twice the lowest cumulative fill value still feasible after nearest-cent rounding. */
+  readonly fillTotalLowerBoundTwice?: bigint;
   readonly brokerOrderId: string | null;
   readonly priceBreach: boolean;
 }
@@ -483,6 +529,8 @@ function entryRecordFrom(entry: JournalEntry): EntryLifecycleRecord | null {
     state: "intent",
     filledQuantity: integerUnit(0, "Quantity"),
     avgFillPriceCents: null,
+    avgFillPriceRaw: null,
+    fillTotalLowerBoundTwice: 0n,
     brokerOrderId: null,
     priceBreach: false,
   };
@@ -507,46 +555,205 @@ function isOutcomeStatus(value: unknown): value is OutcomeStatus {
   return value === "filled" || value === "partially_filled" || value === "rejected" || value === "canceled" || value === "expired" || value === "confirmation_unclear";
 }
 
+interface OutcomeEvidence {
+  readonly status: OutcomeStatus;
+  readonly filled: number;
+  readonly price: number | null;
+  readonly brokerOrderId: string | null;
+  readonly rawPrice: string | null;
+}
+
+function outcomeEvidenceFrom(entry: Readonly<Record<string, unknown>>): OutcomeEvidence | null {
+  const status = entry["status"];
+  const filled = entry["filledQuantity"];
+  const price = entry["avgFillPriceCents"];
+  const brokerOrderId = entry["brokerOrderId"];
+  const rawPriceValue = entry["avgFillPriceRaw"];
+  const rawPrice = typeof rawPriceValue === "string" && exactDollarPriceComparedWithCents(rawPriceValue, 0) !== null ? rawPriceValue : null;
+  if (rawPriceValue !== undefined && rawPriceValue !== null && rawPrice === null) return null;
+  if (!isOutcomeStatus(status) || !isNonnegativeSafeInteger(filled) || (price !== null && !isNonnegativeSafeInteger(price)) || (brokerOrderId !== null && (typeof brokerOrderId !== "string" || brokerOrderId.trim().length === 0))) return null;
+  if ((status === "filled" || status === "partially_filled") && (filled < 1 || price === null || typeof brokerOrderId !== "string")) return null;
+  if ((status === "canceled" || status === "expired") && (filled !== 0 || price !== null || typeof brokerOrderId !== "string")) return null;
+  if ((status === "rejected" || status === "confirmation_unclear") && (filled !== 0 || price !== null)) return null;
+  if ((price === null && rawPrice !== null) || (price !== null && rawPrice === null)) return null;
+  if (price !== null && rawPrice !== null && !exactRawRoundsToCents(rawPrice, price)) return null;
+  return { status, filled, price, brokerOrderId, rawPrice };
+}
+
+interface WorkingEvidence {
+  readonly brokerOrderId: string;
+  readonly status: string;
+  readonly filled: number;
+  readonly price: number | null;
+  readonly rawPrice: string | null;
+}
+
+function workingEvidenceFrom(item: Readonly<Record<string, unknown>>): WorkingEvidence | null {
+  const brokerOrderId = item["brokerOrderId"];
+  const status = item["status"];
+  const filled = item["filledQuantity"];
+  const price = item["avgFillPriceCents"];
+  const rawPriceValue = item["avgFillPriceRaw"];
+  const rawPrice = typeof rawPriceValue === "string" && exactDollarPriceComparedWithCents(rawPriceValue, 0) !== null ? rawPriceValue : null;
+  if (rawPriceValue !== undefined && rawPriceValue !== null && rawPrice === null) return null;
+  if (typeof brokerOrderId !== "string" || brokerOrderId.trim().length === 0 || typeof status !== "string" || status.trim().length === 0 || isTerminalBrokerStatus(status) || !isNonnegativeSafeInteger(filled) || (filled > 0 && !isNonnegativeSafeInteger(price)) || (filled === 0 && price !== null)) return null;
+  const normalizedPrice = isNonnegativeSafeInteger(price) ? price : null;
+  if ((normalizedPrice === null && rawPrice !== null) || (normalizedPrice !== null && rawPrice === null)) return null;
+  if (normalizedPrice !== null && rawPrice !== null && !exactRawRoundsToCents(rawPrice, normalizedPrice)) return null;
+  return { brokerOrderId, status, filled, price: normalizedPrice, rawPrice };
+}
+
+function roundedFillTotalBounds(filled: number, price: number): Readonly<{ lower: bigint; upperExclusive: bigint }> {
+  if (filled === 0) return { lower: 0n, upperExclusive: 0n };
+  const quantity = BigInt(filled);
+  const twicePrice = BigInt(price) * 2n;
+  const lower = quantity * (twicePrice - 1n);
+  return { lower: lower < 0n ? 0n : lower, upperExclusive: quantity * (twicePrice + 1n) };
+}
+
+function nextFillTotalLowerBound(previousFilled: number, previousPrice: number | null, previousLowerBound: bigint, nextFilled: number, nextPrice: number | null): bigint | null {
+  if (nextFilled < previousFilled) return null;
+  if (nextFilled === 0) return previousFilled === 0 ? previousLowerBound : null;
+  if (nextPrice === null) return null;
+  if (previousFilled > 0 && previousPrice === null) return null;
+  if (nextFilled === previousFilled) return nextPrice === previousPrice ? previousLowerBound : null;
+  const next = roundedFillTotalBounds(nextFilled, nextPrice);
+  if (next.upperExclusive <= previousLowerBound) return null;
+  return next.lower > previousLowerBound ? next.lower : previousLowerBound;
+}
+
+function exactFillEvidenceRegressed(previousFilled: number, previousRaw: string | null | undefined, nextFilled: number, nextRaw: string | null): boolean {
+  if (previousFilled === 0 || previousRaw === null || previousRaw === undefined) return false;
+  if (nextRaw === null) return true;
+  const previous = exactDollarPriceInCents(previousRaw);
+  const next = exactDollarPriceInCents(nextRaw);
+  if (previous === null || next === null) return true;
+  const previousTotal = BigInt(previousFilled) * previous.numerator * next.denominator;
+  const nextTotal = BigInt(nextFilled) * next.numerator * previous.denominator;
+  return nextFilled === previousFilled ? nextTotal !== previousTotal : nextTotal < previousTotal;
+}
+
+function conservativeRiskFillPrice(kind: EntryLimitKind, roundedPrice: number): number | null {
+  const value = kind === "debit" ? roundedPrice + 1 : Math.max(roundedPrice - 1, 0);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+export function entryFillTransitionBreachesLimit(record: EntryLifecycleRecord, nextFilled: number, nextPrice: number | null, nextRawPrice: string | null = null): boolean {
+  if (nextFilled <= record.filledQuantity || nextPrice === null) return false;
+  if (record.filledQuantity === 0 || record.avgFillPriceCents === null) return classifyBrokerFillPrice(record.candidate.entryLimit, { avgFillPriceCents: nextPrice, avgFillPriceRaw: nextRawPrice }) === "BROKER_PRICE_BREACH";
+  const previousExact = record.avgFillPriceRaw === null || record.avgFillPriceRaw === undefined ? null : exactDollarPriceInCents(record.avgFillPriceRaw);
+  const nextExact = nextRawPrice === null ? null : exactDollarPriceInCents(nextRawPrice);
+  if (previousExact !== null && nextExact !== null) {
+    const deltaNumerator = BigInt(nextFilled) * nextExact.numerator * previousExact.denominator
+      - BigInt(record.filledQuantity) * previousExact.numerator * nextExact.denominator;
+    const deltaDenominator = nextExact.denominator * previousExact.denominator;
+    const limitNumerator = BigInt(nextFilled - record.filledQuantity) * BigInt(record.candidate.entryLimit.priceCents) * deltaDenominator;
+    return record.candidate.entryLimit.kind === "debit" ? deltaNumerator > limitNumerator : deltaNumerator < limitNumerator;
+  }
+  const previous = roundedFillTotalBounds(record.filledQuantity, record.avgFillPriceCents);
+  const next = roundedFillTotalBounds(nextFilled, nextPrice);
+  const previousLower = record.fillTotalLowerBoundTwice ?? previous.lower;
+  const twiceIncrementalLimit = 2n * BigInt(nextFilled - record.filledQuantity) * BigInt(record.candidate.entryLimit.priceCents);
+  return record.candidate.entryLimit.kind === "debit"
+    ? next.lower - previous.upperExclusive >= twiceIncrementalLimit
+    : next.upperExclusive - previousLower <= twiceIncrementalLimit;
+}
+
 /**
  * Risk-increasing entry lifecycles that still lack broker-authoritative
  * terminal truth. NOT_AT_BROKER is deliberately not terminal after a lost
  * acknowledgement; only a pre-submit REVALIDATION_VOID can release that case.
  */
 export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): readonly string[] {
-  const unresolved = new Set<string>();
+  interface Terminality {
+    terminal: boolean;
+    uncertain: boolean;
+    acknowledged: boolean;
+    invalid: boolean;
+    brokerOrderId: string | null;
+    quantity: number | null;
+    filledQuantity: number;
+    avgFillPriceCents: number | null;
+    avgFillPriceRaw: string | null;
+    fillTotalLowerBoundTwice: bigint;
+  }
+  const states = new Map<string, Terminality>();
   for (const entry of entries) {
     if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
-      unresolved.add(entry["clientOrderId"]);
+      const id = entry["clientOrderId"];
+      const quantity = isNonnegativeSafeInteger(entry["quantity"]) && entry["quantity"] >= 1 ? entry["quantity"] : null;
+      if (states.has(id)) states.set(id, { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity, filledQuantity: states.get(id)?.filledQuantity ?? 0, avgFillPriceCents: states.get(id)?.avgFillPriceCents ?? null, avgFillPriceRaw: states.get(id)?.avgFillPriceRaw ?? null, fillTotalLowerBoundTwice: states.get(id)?.fillTotalLowerBoundTwice ?? 0n });
+      else states.set(id, { terminal: false, uncertain: false, acknowledged: false, invalid: quantity === null, brokerOrderId: null, quantity, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n });
       continue;
     }
     if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
-      const status = entry["status"];
-      if (status === "filled" || status === "partially_filled" || status === "rejected" || status === "canceled" || status === "expired") unresolved.delete(entry["clientOrderId"]);
-      else if (status === "confirmation_unclear") unresolved.add(entry["clientOrderId"]);
+      const id = entry["clientOrderId"];
+      const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
+      const evidence = outcomeEvidenceFrom(entry);
+      if (evidence === null) {
+        states.set(id, { ...state, terminal: false, invalid: true });
+        continue;
+      }
+      const status = evidence.status;
+      const observedBrokerOrderId = evidence.brokerOrderId;
+      const identityChanged = state.brokerOrderId !== null && observedBrokerOrderId !== state.brokerOrderId;
+      const quantityExceeded = state.quantity !== null && evidence.filled > state.quantity;
+      const nextLowerBound = nextFillTotalLowerBound(state.filledQuantity, state.avgFillPriceCents, state.fillTotalLowerBoundTwice, evidence.filled, evidence.price);
+      const fillEvidenceRegressed = nextLowerBound === null || exactFillEvidenceRegressed(state.filledQuantity, state.avgFillPriceRaw, evidence.filled, evidence.rawPrice);
+      const terminalQuantityInvalid = state.quantity === null
+        || (status === "filled" && evidence.filled !== state.quantity)
+        || (status === "partially_filled" && evidence.filled >= state.quantity);
+      const nextBrokerOrderId = state.brokerOrderId ?? observedBrokerOrderId;
+      if (status === "filled" || status === "partially_filled" || status === "rejected" || status === "canceled" || status === "expired") {
+        const invalid = state.invalid || state.terminal || identityChanged || quantityExceeded || fillEvidenceRegressed || terminalQuantityInvalid;
+        states.set(id, { ...state, terminal: !invalid, invalid, brokerOrderId: nextBrokerOrderId, filledQuantity: evidence.filled, avgFillPriceCents: evidence.price, avgFillPriceRaw: evidence.rawPrice ?? state.avgFillPriceRaw, fillTotalLowerBoundTwice: nextLowerBound ?? state.fillTotalLowerBoundTwice });
+      } else states.set(id, { ...state, terminal: false, uncertain: true, invalid: state.invalid || state.terminal || identityChanged || quantityExceeded || fillEvidenceRegressed, brokerOrderId: nextBrokerOrderId, filledQuantity: evidence.filled, avgFillPriceCents: evidence.price, avgFillPriceRaw: evidence.rawPrice ?? state.avgFillPriceRaw, fillTotalLowerBoundTwice: nextLowerBound ?? state.fillTotalLowerBoundTwice });
       continue;
     }
     if (entry.type !== "RECONCILIATION" || !Array.isArray(entry["items"])) continue;
     for (const item of entry["items"]) {
-      if (isRecord(item) && item["kind"] === "entry_order" && item["classification"] === "REVALIDATION_VOID" && typeof item["clientOrderId"] === "string") unresolved.delete(item["clientOrderId"]);
+      if (!isRecord(item) || item["kind"] !== "entry_order" || typeof item["clientOrderId"] !== "string") continue;
+      const id = item["clientOrderId"];
+      const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
+      const working = item["classification"] === "ACKNOWLEDGED_WORKING" || item["classification"] === "MATCHED_WORKING" ? workingEvidenceFrom(item) : null;
+      const observedBrokerOrderId = working?.brokerOrderId ?? null;
+      const identityChanged = state.brokerOrderId !== null && observedBrokerOrderId !== null && observedBrokerOrderId !== state.brokerOrderId;
+      const quantityExceeded = working !== null && state.quantity !== null && working.filled > state.quantity;
+      const nextLowerBound = working === null ? null : nextFillTotalLowerBound(state.filledQuantity, state.avgFillPriceCents, state.fillTotalLowerBoundTwice, working.filled, working.price);
+      const fillEvidenceRegressed = working !== null && (nextLowerBound === null || exactFillEvidenceRegressed(state.filledQuantity, state.avgFillPriceRaw, working.filled, working.rawPrice));
+      const nextBrokerOrderId = state.brokerOrderId ?? observedBrokerOrderId;
+      if (item["classification"] === "ACKNOWLEDGED_WORKING") states.set(id, { ...state, terminal: false, acknowledged: true, invalid: state.invalid || state.uncertain || state.terminal || working === null || identityChanged || quantityExceeded || fillEvidenceRegressed, brokerOrderId: nextBrokerOrderId, filledQuantity: working?.filled ?? state.filledQuantity, avgFillPriceCents: working?.price ?? state.avgFillPriceCents, avgFillPriceRaw: working?.rawPrice ?? state.avgFillPriceRaw, fillTotalLowerBoundTwice: nextLowerBound ?? state.fillTotalLowerBoundTwice });
+      else if (item["classification"] === "MATCHED_WORKING") states.set(id, { ...state, terminal: false, uncertain: state.uncertain || !state.acknowledged, invalid: state.invalid || state.terminal || working === null || identityChanged || quantityExceeded || fillEvidenceRegressed, brokerOrderId: nextBrokerOrderId, filledQuantity: working?.filled ?? state.filledQuantity, avgFillPriceCents: working?.price ?? state.avgFillPriceCents, avgFillPriceRaw: working?.rawPrice ?? state.avgFillPriceRaw, fillTotalLowerBoundTwice: nextLowerBound ?? state.fillTotalLowerBoundTwice });
+      else if (item["classification"] === "NOT_AT_BROKER") states.set(id, { ...state, terminal: false, uncertain: true, invalid: state.invalid || state.terminal });
+      else if (item["classification"] === "REVALIDATION_VOID") states.set(id, { ...state, terminal: !state.invalid && !state.uncertain && !state.acknowledged, invalid: state.invalid || state.uncertain || state.acknowledged || state.terminal });
     }
   }
-  return [...unresolved].sort();
+  return [...states.entries()].filter(([, state]) => state.invalid || !state.terminal).map(([id]) => id).sort();
+}
+
+function isTerminalEntryState(state: EntryReservationState): boolean {
+  return state === "filled" || state === "rejected" || state === "canceled" || state === "expired";
 }
 
 function applyOutcomeToEntry(record: EntryLifecycleRecord, entry: JournalEntry): EntryLifecycleRecord | null {
-  const status = entry["status"];
-  const filled = entry["filledQuantity"];
-  const price = entry["avgFillPriceCents"];
-  const brokerOrderId = entry["brokerOrderId"];
+  const evidence = outcomeEvidenceFrom(entry);
+  if (evidence === null) return null;
+  const { status, filled, price, brokerOrderId, rawPrice } = evidence;
+  const nextLowerBound = nextFillTotalLowerBound(record.filledQuantity, record.avgFillPriceCents, record.fillTotalLowerBoundTwice ?? 0n, filled, price);
+  if (filled > record.candidate.quantity || nextLowerBound === null) return null;
+  if (status === "filled" && filled !== record.candidate.quantity) return null;
+  if (status === "partially_filled" && filled >= record.candidate.quantity) return null;
+  if (exactFillEvidenceRegressed(record.filledQuantity, record.avgFillPriceRaw, filled, rawPrice)) return null;
   const reasonCodes = entry["reasonCodes"];
-  if (!isOutcomeStatus(status) || !isNonnegativeSafeInteger(filled) || (price !== null && !isNonnegativeSafeInteger(price)) || (brokerOrderId !== null && typeof brokerOrderId !== "string")) return null;
-  const breach = Array.isArray(reasonCodes) && reasonCodes.includes("BROKER_PRICE_BREACH");
+  const breach = (Array.isArray(reasonCodes) && reasonCodes.includes("BROKER_PRICE_BREACH")) || entryFillTransitionBreachesLimit(record, filled, price, rawPrice);
   const state: EntryReservationState = status === "partially_filled" ? "filled" : status;
   return {
     ...record,
     state,
     filledQuantity: integerUnit(filled, "Quantity"),
     avgFillPriceCents: price === null ? null : integerUnit(price, "OptionPriceCents"),
+    avgFillPriceRaw: rawPrice,
+    fillTotalLowerBoundTwice: nextLowerBound,
     brokerOrderId,
     priceBreach: record.priceBreach || breach,
   };
@@ -572,6 +779,7 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
       } else {
         const record = entryRecordFrom(entry);
         if (record === null) return { ok: false, reason: `INTENT seq ${String(entry.seq)} cannot be reconstructed` };
+        if (entryRecords.has(record.clientOrderId) || closeRecords.has(record.clientOrderId)) return { ok: false, reason: `INTENT seq ${String(entry.seq)} duplicates client order ID ${record.clientOrderId}` };
         entryRecords.set(record.clientOrderId, record);
       }
       continue;
@@ -581,6 +789,10 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
       if (typeof clientOrderId !== "string") return { ok: false, reason: `OUTCOME seq ${String(entry.seq)} has no client order ID` };
       const entryRecord = entryRecords.get(clientOrderId);
       if (entryRecord !== undefined) {
+        if (isTerminalEntryState(entryRecord.state)) return { ok: false, reason: `OUTCOME seq ${String(entry.seq)} follows terminal state ${entryRecord.state}` };
+        if (entryRecord.state === "fillable" && entry["status"] === "confirmation_unclear") return { ok: false, reason: `OUTCOME seq ${String(entry.seq)} weakens acknowledged state to confirmation_unclear` };
+        const brokerOrderId = entry["brokerOrderId"];
+        if (entryRecord.brokerOrderId !== null && brokerOrderId !== entryRecord.brokerOrderId) return { ok: false, reason: `OUTCOME seq ${String(entry.seq)} changes broker order identity for ${clientOrderId}` };
         const updated = applyOutcomeToEntry(entryRecord, entry);
         if (updated === null) return { ok: false, reason: `OUTCOME seq ${String(entry.seq)} cannot be applied` };
         entryRecords.set(clientOrderId, updated);
@@ -617,9 +829,21 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
         const record = entryRecords.get(clientOrderId);
         if (record === undefined) return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} references unknown entry ${clientOrderId}` };
         if (classification === "ACKNOWLEDGED_WORKING" || classification === "MATCHED_WORKING") {
-          const filled = item["filledQuantity"];
-          const price = item["avgFillPriceCents"];
-          const brokerOrderId = item["brokerOrderId"];
+          if (isTerminalEntryState(record.state)) return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} reports ${clientOrderId} working after terminal state ${record.state}` };
+          const evidence = workingEvidenceFrom(item);
+          if (evidence === null) {
+            return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} carries malformed working-order evidence` };
+          }
+          const { brokerOrderId, filled, price, rawPrice } = evidence;
+          if (filled > record.candidate.quantity) return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} exceeds intended quantity for ${clientOrderId}` };
+          const nextLowerBound = nextFillTotalLowerBound(record.filledQuantity, record.avgFillPriceCents, record.fillTotalLowerBoundTwice ?? 0n, filled, price);
+          if (nextLowerBound === null || exactFillEvidenceRegressed(record.filledQuantity, record.avgFillPriceRaw, filled, rawPrice)) return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} regresses cumulative fill evidence for ${clientOrderId}` };
+          if (record.brokerOrderId !== null && record.brokerOrderId !== brokerOrderId) {
+            return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} changes broker order identity for ${clientOrderId}` };
+          }
+          if (classification === "ACKNOWLEDGED_WORKING" && record.state !== "intent" && record.state !== "fillable") {
+            return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} acknowledges ${clientOrderId} after state ${record.state}` };
+          }
           // Seeing the exact order proves identity, but a working status does
           // not settle whether an unacknowledged submit will fill. Preserve
           // that uncertainty until broker-terminal truth arrives. An order
@@ -628,17 +852,22 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
           entryRecords.set(clientOrderId, {
             ...record,
             state,
-            filledQuantity: isNonnegativeSafeInteger(filled) ? integerUnit(filled, "Quantity") : record.filledQuantity,
-            avgFillPriceCents: isNonnegativeSafeInteger(price) ? integerUnit(price, "OptionPriceCents") : record.avgFillPriceCents,
-            brokerOrderId: typeof brokerOrderId === "string" ? brokerOrderId : record.brokerOrderId,
+            filledQuantity: integerUnit(filled, "Quantity"),
+            avgFillPriceCents: price === null ? record.avgFillPriceCents : integerUnit(price, "OptionPriceCents"),
+            avgFillPriceRaw: rawPrice ?? record.avgFillPriceRaw ?? null,
+            fillTotalLowerBoundTwice: nextLowerBound,
+            brokerOrderId,
+            priceBreach: record.priceBreach || entryFillTransitionBreachesLimit(record, filled, price, rawPrice),
           });
         } else if (classification === "NOT_AT_BROKER") {
           // A negative lookup cannot distinguish a never-sent request from a
           // delayed broker effect after a lost acknowledgement. Keep the
           // reservation and exact-ID reconciliation active until terminal
           // broker truth exists.
+          if (record.state !== "intent" && record.state !== "confirmation_unclear") return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} reports ${clientOrderId} absent after state ${record.state}` };
           entryRecords.set(clientOrderId, { ...record, state: "confirmation_unclear" });
         } else if (classification === "REVALIDATION_VOID") {
+          if (record.state !== "intent") return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} voids ${clientOrderId} after state ${record.state}` };
           entryRecords.set(clientOrderId, { ...record, state: "canceled" });
         } else {
           return { ok: false, reason: `RECONCILIATION seq ${String(entry.seq)} carries unknown classification ${String(classification)}` };
@@ -667,7 +896,9 @@ export function exposureLifecyclesFrom(records: readonly EntryLifecycleRecord[])
       const filledQuantity = integerUnit(Math.min(record.filledQuantity, approved), "Quantity");
       if (filledQuantity > 0) {
         if (record.avgFillPriceCents === null) return { ok: false, reason: `${record.clientOrderId}: filled without a fill price` };
-        const filledRisk = definedRiskAt(record.candidate, filledQuantity, record.avgFillPriceCents);
+        const conservativePrice = conservativeRiskFillPrice(record.candidate.entryLimit.kind, record.avgFillPriceCents);
+        if (conservativePrice === null) return { ok: false, reason: `${record.clientOrderId}: conservative fill price unavailable` };
+        const filledRisk = definedRiskAt(record.candidate, filledQuantity, integerUnit(conservativePrice, "OptionPriceCents"));
         if (filledRisk === null) return { ok: false, reason: `${record.clientOrderId}: filled risk unavailable` };
         risk.push({ kind: "filled", maxLossCents: filledRisk });
       }
@@ -1201,20 +1432,26 @@ export function revalidationVoidDraft(context: DraftContext, claimset: Revalidat
   };
 }
 
-export function entryResolutionDraft(context: DraftContext, clientOrderId: string, order: BrokerOrderRecord | null): JournalDraft {
+export function entryResolutionDraft(context: DraftContext, clientOrderId: string, order: BrokerOrderRecord | null, limit?: Readonly<{ kind: EntryLimitKind; priceCents: number }>): JournalDraft {
+  const fill = order !== null && order.filledQuantity > 0 && order.avgFillPriceCents !== null && limit !== undefined
+    ? classifyBrokerFillPrice(limit, order)
+    : null;
   return order === null
     ? { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: ["NOT_SUBMITTED"], items: [{ kind: "entry_order", clientOrderId, classification: "NOT_AT_BROKER" }] }
-    : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }] };
+    : { at: context.atIso, epoch: context.epoch, type: "RECONCILIATION", reasonCodes: fill === "BROKER_PRICE_BREACH" ? ["BROKER_PRICE_BREACH"] : [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents, avgFillPriceRaw: order.avgFillPriceRaw }] };
 }
 
 /** Durable proof that submit returned an acknowledgement for this exact working broker order. */
-export function entryAcknowledgementDraft(context: DraftContext, clientOrderId: string, order: BrokerOrderRecord): JournalDraft {
+export function entryAcknowledgementDraft(context: DraftContext, clientOrderId: string, order: BrokerOrderRecord, limit?: Readonly<{ kind: EntryLimitKind; priceCents: number }>): JournalDraft {
+  const fill = order.filledQuantity > 0 && order.avgFillPriceCents !== null && limit !== undefined
+    ? classifyBrokerFillPrice(limit, order)
+    : null;
   return {
     at: context.atIso,
     epoch: context.epoch,
     type: "RECONCILIATION",
-    reasonCodes: [],
-    items: [{ kind: "entry_order", clientOrderId, classification: "ACKNOWLEDGED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents }],
+    reasonCodes: fill === "BROKER_PRICE_BREACH" ? ["BROKER_PRICE_BREACH"] : [],
+    items: [{ kind: "entry_order", clientOrderId, classification: "ACKNOWLEDGED_WORKING", brokerOrderId: order.brokerOrderId, status: order.status, filledQuantity: order.filledQuantity, avgFillPriceCents: order.avgFillPriceCents, avgFillPriceRaw: order.avgFillPriceRaw }],
   };
 }
 

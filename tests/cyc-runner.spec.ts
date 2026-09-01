@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { integerUnit } from "../src/core/domain.js";
 import type { DecisionSnapshot } from "../src/core/domain.js";
-import { epochMsToUtcIso } from "../src/core/execution.js";
+import { entryAcknowledgementDraft, epochMsToUtcIso } from "../src/core/execution.js";
 import type { MarketObservation } from "../src/core/execution.js";
 import { parseJournalText } from "../src/core/journal.js";
 import type { JournalEntry } from "../src/core/journal.js";
@@ -323,6 +323,23 @@ describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before 
     expect(appearedLate.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(false);
   });
 
+  it("S-CYC-04 a misordered acknowledgement after lost ack invalidates the fold and sends no new order", async () => {
+    const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
+    const first = await run.cycle();
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    const order = await run.fake.read.orderByClientId(clientOrderId);
+    if (order === null) throw new Error("fixture");
+    const appended = await run.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: entryAcknowledgementDraft({ atIso: epochMsToUtcIso(run.clock.now), epoch: 1 }, clientOrderId, order) } });
+    expect(appended).toMatchObject({ ok: true });
+
+    run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
+    const refused = await run.cycle();
+    expect(refused.entriesBlocked).toContain("LIFECYCLE_FOLD");
+    expect(refused.actions).toEqual([]);
+    expect(run.analystCalls.count).toBe(1);
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+  });
+
   it("S-CYC-04 / S-G7-02 a replayed client order ID is adopted from the broker's duplicate answer, never re-sent under a fresh ID", async () => {
     const run = await harness();
     // Pre-plant the exact entry ID this cycle will derive by running one cycle, then replaying the same cycle index.
@@ -398,7 +415,7 @@ describe("S-G13-01 kill management under the valid fence", () => {
     if (options.extraOrder === "entry") {
       // A second lifecycle whose entry is resting at the broker: the risk-increasing order the kill must cancel first.
       run.fake.setSubmitBehaviour(() => ({ kind: "accept" }));
-      const second = await run.cycle();
+      const second = await run.cycle(options.onCancel === undefined ? undefined : { analyst: () => Promise.resolve(JSON.stringify({ candidates: [{ ...creditVertical(), quantity: 2 }] })) });
       restingEntryId = second.actions[0]!.clientOrderId;
       expect(second.actions[0]).toMatchObject({ status: null, detail: "working" });
     }
@@ -549,6 +566,28 @@ describe("S-CYC-06 journal failure blocks every new risk; the sole exception is 
 });
 
 describe("S-X-02 a broker record worse than the submitted limit halts new entries", () => {
+  it("S-X-02 halts immediately when a normally acknowledged working order already carries a partial fill worse than its limit", async () => {
+    const run = await harness({
+      analyst: () => Promise.resolve(JSON.stringify({ candidates: [{ ...creditVertical(), quantity: 3 }] })),
+      broker: { onSubmit: () => ({ kind: "partial", filledQuantity: 1, avgFillPriceCents: 150 }) },
+    });
+    const report = await run.cycle();
+    expect(report.actions[0]).toMatchObject({ result: "SUBMITTED", status: null, detail: "working" });
+    expect(report.entriesBlocked).toContain("BROKER_PRICE_BREACH");
+    expect(entriesOf(run.paths).find(entry => entry.type === "RECONCILIATION")).toMatchObject({
+      reasonCodes: ["BROKER_PRICE_BREACH"],
+      items: [{ classification: "ACKNOWLEDGED_WORKING", status: "partially_filled", filledQuantity: 1, avgFillPriceCents: 150 }],
+    });
+    expect(entriesOf(run.paths).at(-1)).toMatchObject({ type: "HALT", reason: "BROKER_PRICE_BREACH" });
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "BROKER_PRICE_BREACH", sticky: false });
+    expect(await run.gateway.dispatchManualUnhalt({ operator: "felix", reason: "exercise phase-zero breach re-observation" })).toMatchObject({ ok: true });
+    const repeated = await run.cycle({ analyst: () => Promise.resolve(JSON.stringify({ candidates: [] })) });
+    expect(repeated.resolved[0]).toMatchObject({ result: "STILL_WORKING" });
+    expect(repeated.entriesBlocked).toContain("BROKER_PRICE_BREACH");
+    expect(entriesOf(run.paths).at(-2)).toMatchObject({ type: "HALT", reason: "BROKER_PRICE_BREACH" });
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "BROKER_PRICE_BREACH", sticky: false });
+  });
+
   it("S-X-02 a fill below the submitted credit limit is journaled BROKER_PRICE_BREACH, reserves the actual exposure, and lands a non-sticky HALT that blocks the next cycle until a human reconciles", async () => {
     const run = await harness({ broker: { onSubmit: () => ({ kind: "fill", avgFillPriceCents: 150 }) } });
     const report = await run.cycle();
