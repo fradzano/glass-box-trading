@@ -155,7 +155,7 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
 
   it("gate findings G2: instants are compared as instants, every clause lies inside the window, a credit needs a bought leg and G1, OUTCOME follows INTENT, reconciliation respects the leg sign", () => {
     // G2-F1: one millisecond late is late, whatever the textual precision.
-    const lateByMs = buildCertificate(inputs({ orderObservations: [{ observedAt: "t", order: { ...order("accepted", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:05.001Z" } } }, ...observations()], journal: passingJournal().map(item => (item.seq === 4 ? { ...item, brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:03:05Z" } } : item)) }));
+    const lateByMs = buildCertificate(inputs({ orderObservations: [{ observedAt: "t", order: { ...order("accepted", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:05.001Z" } } }], journal: passingJournal().map(item => (item.seq === 4 ? { ...item, brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:03:05Z" } } : item)) }));
     expect(lateByMs.failures.some(item => item.includes("does not precede the terminal instant"))).toBe(true);
     // G2-F4a: evidence dated outside the window.
     const future = buildCertificate(inputs({ window: { startedAt: "2030-01-01T13:35:00.000Z", endedAt: "2030-01-01T15:10:00.000Z" } }));
@@ -174,6 +174,19 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ journal: wrongSign })).failures).toContain("no minimal defined-risk entry was filled and reconciled through a later broker snapshot");
     // A window that is textually well-formed but not a real instant is malformed.
     expect(buildCertificate(inputs({ window: { startedAt: "2026-02-30T13:35:00.000Z", endedAt: "2026-02-30T15:10:00.000Z" } })).failures).toContain("the test window is not a pair of ordered UTC instants");
+  });
+
+  it("gate findings G3: observations must agree on the submission instant, legs share underlying and expiry with balanced sides, quote instants lie inside the window", () => {
+    const disagreeing = buildCertificate(inputs({ orderObservations: [...observations(), { observedAt: "t", order: { ...order("accepted", false), brokerTimestamps: { submitted_at: "2026-09-01T14:03:05.001Z" } } }] }));
+    expect(disagreeing.failures.some(item => item.includes("disagree on the submission instant"))).toBe(true);
+    const crossUnderlying = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [LEGS[0], { ...LEGS[1], contractId: "QQQ260904P00600000", underlying: "QQQ", right: "put" }] } : item));
+    expect(buildCertificate(inputs({ journal: crossUnderlying })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const crossExpiry = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [LEGS[0], { ...LEGS[1], expiry: "2026-09-11" }] } : item));
+    expect(buildCertificate(inputs({ journal: crossExpiry })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const twoSellsOneBuy = passingJournal().map(item => (item.seq === 3 ? { ...item, legs: [LEGS[0], LEGS[0], LEGS[1]] } : item));
+    expect(buildCertificate(inputs({ journal: twoSellsOneBuy })).failures.some(item => item.includes("not defined-risk"))).toBe(true);
+    const oldQuotes = passingJournal().map(item => (item.seq === 2 ? { ...item, snapshot: { ...snapshot([]), quoteSamples: { SPY: { [SHORT]: { ...sample(50, 52), quotedAt: "2025-09-01T14:00:00.000Z", brokerQuotedAt: "2025-09-01T14:00:00.123456789Z" }, [LONG]: sample(30, 32) } } } } : item));
+    expect(buildCertificate(inputs({ journal: oldQuotes })).failures).toContain("a liquidity quote sample carries a timestamp outside the test window");
   });
 
   it("the fence drill needs a 401/403 observation, a journaled AUTH_FAILURE halt, and the manual un-halt after it", () => {
@@ -237,6 +250,11 @@ describe("S-ARM-01 — digests (WIN-17): identity switches preserve the proof, p
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: Number.NaN }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
     expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: Number.POSITIVE_INFINITY }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
     expect(() => canonicalJson([Number.NaN])).toThrow(RangeError);
+    // G3-N3: boxed primitives, functions, and exotic objects are not canonical; the string "NaN" is.
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: new Number(Number.NaN) }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: () => 5 }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: new Date(0) }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
+    expect(policyDigest({ ...raw, MAX_CANDIDATE_QTY: "NaN" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(true);
     expect(policyDigest({ ...raw, ALPACA_TRADING_ORIGIN: "https://api.alpaca.markets" }, { canonicalTradingOrigin: ORIGIN }).ok).toBe(false);
   });
 
@@ -300,5 +318,9 @@ describe("S-ARM-01 / S-CYC-11 — arming validation (WIN-7, WIN-10): only an int
     const evidence = serialized["evidence"] as Record<string, unknown>;
     expect(violationsOf({ ...serialized, evidence: { ...evidence, finalSnapshot: { ...(evidence["finalSnapshot"] as Record<string, unknown>), positionCount: 1 } } })).toContain("certificate final snapshot is not flat and fully paginated");
     expect(violationsOf({ ...serialized, evidence: { ...evidence, fence: { ...(evidence["fence"] as Record<string, unknown>), httpStatus: 500 } } })).toContain("certificate fence evidence is not a credential rejection");
+    // G3-N2: clause fields are typed, and every evidence instant must lie inside the certificate window.
+    expect(violationsOf({ ...serialized, evidence: { ...evidence, fill: { ...(evidence["fill"] as Record<string, unknown>), filledQuantity: "1" } } })).toContain("certificate fill.filledQuantity has the wrong type");
+    expect(violationsOf({ ...serialized, window: { startedAt: "2030-01-01T13:35:00.000Z", endedAt: "2030-01-01T15:10:00.000Z" } })).toContain("certificate fill.filledAt lies outside the certificate window");
+    expect(violationsOf({ ...serialized, evidence: { ...evidence, fence: { ...(evidence["fence"] as Record<string, unknown>), canceledAtFence: [1] } } })).toContain("certificate fence.canceledAtFence has the wrong type");
   });
 });

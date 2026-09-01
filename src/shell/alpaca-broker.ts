@@ -114,12 +114,17 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
 
   async function ordersByStatus(status: "open" | "closed" | "all"): Promise<{ readonly orders: readonly BrokerOrderRecord[]; readonly pages: number; readonly complete: boolean }> {
     const orders: BrokerOrderRecord[] = [];
+    const seen = new Set<string>();
     let after: string | null = null;
     let pages = 0;
     for (;;) {
       const page = await ordersPage(status, after);
       pages += 1;
-      orders.push(...page);
+      for (const order of page) {
+        if (seen.has(order.brokerOrderId)) continue;
+        seen.add(order.brokerOrderId);
+        orders.push(order);
+      }
       const next = nextOrderPageAfter(page, ORDER_PAGE_LIMIT);
       if (next.kind === "end") return { orders, pages, complete: true };
       if (next.kind === "unpageable" || next.after === after || pages > 200) return { orders, pages, complete: false };

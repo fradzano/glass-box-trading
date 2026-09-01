@@ -101,16 +101,25 @@ export function classifyConfig(raw: Raw): ClassifiedConfig {
 
 /** True when a value tree contains `undefined`, `NaN`, or an infinity: such material has no canonical form and is refused, never coerced to null. */
 export function containsNonCanonical(value: unknown): boolean {
-  if (value === undefined) return true;
-  if (typeof value === "number" && !Number.isFinite(value)) return true;
+  if (value === undefined || value === null) return value === undefined;
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") return true;
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (typeof value === "string" || typeof value === "boolean") return false;
   if (Array.isArray(value)) return value.some(containsNonCanonical);
-  if (isRecord(value)) return Object.values(value).some(containsNonCanonical);
-  return false;
+  // Boxed primitives, dates, maps, class instances: only a plain record or array has a canonical form.
+  if (!isRecord(value)) return true;
+  // A boxed primitive or a Date unwraps to something other than itself; an object without own keys that does not
+  // serialize as `{}` is not a plain record either. (A Map or Set serializes as `{}` exactly as JSON.stringify would;
+  // such values cannot arrive from a JSON-loaded policy and are not distinguished here without reflection.)
+  const unwrapped = (value as { readonly valueOf?: () => unknown }).valueOf;
+  if (typeof unwrapped === "function" && unwrapped.call(value) !== value) return true;
+  if (Object.keys(value).length === 0 && JSON.stringify(value) !== "{}") return true;
+  return Object.values(value).some(containsNonCanonical);
 }
 
 /** Canonical JSON: object keys sorted recursively, arrays in order, no whitespace. Throws on `undefined` (callers refuse first). */
 export function canonicalJson(value: unknown): string {
-  if (value === undefined || (typeof value === "number" && !Number.isFinite(value))) throw new RangeError("undefined and non-finite numbers have no canonical JSON form");
+  if (containsNonCanonical(value)) throw new RangeError("undefined, non-finite numbers, functions, and boxed or exotic objects have no canonical JSON form");
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (isRecord(value)) {
     const keys = Object.keys(value).sort();
@@ -157,14 +166,36 @@ function hasExactKeys(value: unknown, keys: readonly string[]): value is Raw {
   return isRecord(value) && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
-function evidenceClauseKeys(): Readonly<Record<string, readonly string[]>> {
+type FieldKind = "string" | "instant" | "integer" | "boolean" | "strings";
+
+/** The exact typed shape of every evidence clause; `instant` fields must parse and lie inside the certificate window at arming. */
+function evidenceClauseShapes(): Readonly<Record<string, Readonly<Record<string, FieldKind>>>> {
   return {
-    liquidity: ["contractId", "bidCents", "askCents", "bidSize", "askSize", "quotedAt", "brokerQuotedAt", "snapshotSeq"],
-    creditAcceptance: ["clientOrderId", "exposureLifecycleId", "intentSeq", "brokerOrderId", "acceptedStatus", "acceptedAt", "terminalStatus", "terminalAt", "outcomeSeq", "harnessRequestedCancel"],
-    fill: ["clientOrderId", "brokerOrderId", "filledQuantity", "avgFillPriceCents", "filledAt", "outcomeSeq", "reconciledSnapshotSeq"],
-    fence: ["httpStatus", "haltSeq", "unhaltSeq", "workingOrdersAtFence", "canceledAtFence"],
-    finalSnapshot: ["at", "accountId", "cashCents", "equityCents", "positionCount", "nonTerminalOrderCount", "orderPagesFetched", "pagesComplete"],
+    liquidity: { contractId: "string", bidCents: "integer", askCents: "integer", bidSize: "integer", askSize: "integer", quotedAt: "instant", brokerQuotedAt: "string", snapshotSeq: "integer" },
+    creditAcceptance: { clientOrderId: "string", exposureLifecycleId: "string", intentSeq: "integer", brokerOrderId: "string", acceptedStatus: "string", acceptedAt: "instant", terminalStatus: "string", terminalAt: "instant", outcomeSeq: "integer", harnessRequestedCancel: "boolean" },
+    fill: { clientOrderId: "string", brokerOrderId: "string", filledQuantity: "integer", avgFillPriceCents: "integer", filledAt: "instant", outcomeSeq: "integer", reconciledSnapshotSeq: "integer" },
+    fence: { httpStatus: "integer", haltSeq: "integer", unhaltSeq: "integer", workingOrdersAtFence: "strings", canceledAtFence: "strings" },
+    finalSnapshot: { at: "instant", accountId: "string", cashCents: "integer", equityCents: "integer", positionCount: "integer", nonTerminalOrderCount: "integer", orderPagesFetched: "integer", pagesComplete: "boolean" },
   };
+}
+
+function clauseViolations(clause: string, value: unknown, shape: Readonly<Record<string, FieldKind>>, window: { readonly startMs: number; readonly endMs: number } | null): readonly string[] {
+  if (!hasExactKeys(value, Object.keys(shape))) return [`certificate ${clause} evidence is absent or malformed`];
+  const out: string[] = [];
+  for (const [field, kind] of Object.entries(shape)) {
+    const item = value[field];
+    const ok = kind === "string" ? typeof item === "string"
+      : kind === "integer" ? Number.isSafeInteger(item)
+      : kind === "boolean" ? typeof item === "boolean"
+      : kind === "strings" ? Array.isArray(item) && item.every(entry => typeof entry === "string")
+      : instantOf(item) !== null;
+    if (!ok) out.push(`certificate ${clause}.${field} has the wrong type`);
+    else if (kind === "instant" && window !== null) {
+      const ms = instantOf(item) ?? 0;
+      if (ms < window.startMs || ms > window.endMs) out.push(`certificate ${clause}.${field} lies outside the certificate window`);
+    }
+  }
+  return out;
 }
 
 function isSha256(value: unknown): value is string {
@@ -327,6 +358,12 @@ function positiveAcceptanceStatuses(): readonly string[] {
   return ["new", "accepted", "open", "pending_new", "partially_filled", "filled"];
 }
 
+function fullLegsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string; readonly underlying: string; readonly expiry: string }[] {
+  const legs = entry["legs"];
+  if (!Array.isArray(legs)) return [];
+  return legs.flatMap(leg => (isRecord(leg) && typeof leg["contractId"] === "string" && typeof leg["side"] === "string" && typeof leg["underlying"] === "string" && typeof leg["expiry"] === "string" ? [{ contractId: leg["contractId"], side: leg["side"], underlying: leg["underlying"], expiry: leg["expiry"] }] : []));
+}
+
 function legsOf(entry: JournalEntry): readonly { readonly contractId: string; readonly side: string }[] {
   const legs = entry["legs"];
   if (!Array.isArray(legs)) return [];
@@ -346,6 +383,14 @@ function gatePassed(entry: JournalEntry, gate: string): boolean {
 
 function instantOf(value: unknown): number | null {
   return typeof value === "string" ? utcIsoToEpochMs(value) : null;
+}
+
+/** A broker quote timestamp (nanoseconds, `Z`) reduced to the core's millisecond grammar; anything else is null. */
+function brokerInstantToIso(value: string): string | null {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/.exec(value);
+  if (match === null) return null;
+  const iso = `${match[1] as string}.${(match[2] ?? "").slice(0, 3).padEnd(3, "0")}Z`;
+  return utcIsoToEpochMs(iso) === null ? null : iso;
 }
 
 /** Every evidence instant must lie inside the test window; an instant that cannot be parsed is outside by definition. */
@@ -396,9 +441,13 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
   for (const intent of intents) {
     const clientOrderId = intent["clientOrderId"];
     if (typeof clientOrderId !== "string") continue;
-    const legs = legsOf(intent);
-    if (legs.length < 2 || !legs.some(leg => leg.side === "buy") || !legs.some(leg => leg.side === "sell")) {
-      failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg is not defined-risk`);
+    const legs = fullLegsOf(intent);
+    const buys = legs.filter(leg => leg.side === "buy").length;
+    const sells = legs.filter(leg => leg.side === "sell").length;
+    const oneUnderlying = new Set(legs.map(leg => leg.underlying)).size === 1;
+    const oneExpiry = new Set(legs.map(leg => leg.expiry)).size === 1;
+    if (legs.length < 2 || buys === 0 || sells === 0 || buys !== sells || !oneUnderlying || !oneExpiry) {
+      failures.push(`credit lifecycle ${clientOrderId}: a credit structure without a bought protective leg on the same underlying and expiry, one per sold leg, is not defined-risk`);
       return null;
     }
     if (!gatePassed(intent, "G1")) {
@@ -406,6 +455,11 @@ function creditAcceptanceFrom(inputs: CertificateInputs, failures: string[]): Cr
       return null;
     }
     const observations = inputs.orderObservations.filter(item => item.order.clientOrderId === clientOrderId);
+    const submittedInstants = new Set(observations.map(item => item.order.brokerTimestamps["submitted_at"]).filter((value): value is string => value !== undefined));
+    if (submittedInstants.size > 1) {
+      failures.push(`credit lifecycle ${clientOrderId}: the broker observations disagree on the submission instant`);
+      return null;
+    }
     const accepted = observations.find(item => positiveAcceptanceStatuses().includes(item.order.status));
     const outcome = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry.seq > intent.seq && entry["clientOrderId"] === clientOrderId).sort((a, b) => b.seq - a.seq)[0];
     if (outcome !== undefined && outcome["status"] === "rejected") {
@@ -555,6 +609,7 @@ export function buildCertificate(inputs: CertificateInputs): PreArmCertificate {
     if (!gatePassed(intentForLiquidity, "G5")) failures.push("the credit INTENT does not carry a passed G5 liquidity verdict");
     const snapshotEntry = liquidity[0] === undefined ? undefined : inputs.journal.find(entry => entry.seq === liquidity[0]?.snapshotSeq);
     if (snapshotEntry !== undefined && outsideWindow(inputs.window, snapshotEntry.at)) failures.push("the snapshot consumed by the liquidity gate lies outside the test window");
+    if (liquidity.some(item => outsideWindow(inputs.window, item.quotedAt, brokerInstantToIso(item.brokerQuotedAt) ?? undefined))) failures.push("a liquidity quote sample carries a timestamp outside the test window");
     const legIds = new Set(legsOf(intentForLiquidity).map(leg => leg.contractId));
     if ([...legIds].some(id => !liquidity.some(item => item.contractId === id))) failures.push("the snapshot consumed by the liquidity gate lacks a quote sample with sizes and timestamps for every credit leg");
   }
@@ -617,14 +672,16 @@ export function validateArmingCertificate(raw: unknown, expectations: ArmingExpe
   const evidence = raw["evidence"];
   if (!isRecord(evidence) || Object.keys(evidence).sort().join(",") !== "creditAcceptance,fence,fill,finalSnapshot,liquidity") violations.push("certificate evidence is malformed");
   else {
-    const shapes = evidenceClauseKeys();
+    const shapes = evidenceClauseShapes();
+    const windowMs = startedAt !== null && endedAt !== null ? { startMs: utcIsoToEpochMs(startedAt) ?? 0, endMs: utcIsoToEpochMs(endedAt) ?? 0 } : null;
     const liquidity = evidence["liquidity"];
-    if (!Array.isArray(liquidity) || liquidity.length === 0 || !liquidity.every(item => hasExactKeys(item, shapes["liquidity"] ?? []))) violations.push("certificate liquidity evidence is absent or malformed");
-    for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) if (!hasExactKeys(evidence[clause], shapes[clause] ?? [])) violations.push(`certificate ${clause} evidence is absent or malformed`);
+    if (!Array.isArray(liquidity) || liquidity.length === 0) violations.push("certificate liquidity evidence is absent or malformed");
+    else for (const item of liquidity) violations.push(...clauseViolations("liquidity", item, shapes["liquidity"] ?? {}, windowMs));
+    for (const clause of ["creditAcceptance", "fill", "fence", "finalSnapshot"]) violations.push(...clauseViolations(clause, evidence[clause], shapes[clause] ?? {}, windowMs));
     const finalSnapshot = evidence["finalSnapshot"];
-    if (hasExactKeys(finalSnapshot, shapes["finalSnapshot"] ?? []) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true)) violations.push("certificate final snapshot is not flat and fully paginated");
+    if (isRecord(finalSnapshot) && (finalSnapshot["positionCount"] !== 0 || finalSnapshot["nonTerminalOrderCount"] !== 0 || finalSnapshot["pagesComplete"] !== true)) violations.push("certificate final snapshot is not flat and fully paginated");
     const fence = evidence["fence"];
-    if (hasExactKeys(fence, shapes["fence"] ?? []) && (fence["httpStatus"] !== 401 && fence["httpStatus"] !== 403)) violations.push("certificate fence evidence is not a credential rejection");
+    if (isRecord(fence) && fence["httpStatus"] !== 401 && fence["httpStatus"] !== 403) violations.push("certificate fence evidence is not a credential rejection");
   }
   if (violations.length > 0 || endedAt === null) return { ok: false, violations };
   return { ok: true, successfulDevLiveTestAt: endedAt };

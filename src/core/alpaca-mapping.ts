@@ -282,6 +282,13 @@ export type OrderPagePlan = { readonly kind: "end" } | { readonly kind: "after";
  */
 export function nextOrderPageAfter(page: readonly BrokerOrderRecord[], pageLimit: number): OrderPagePlan {
   if (page.length < pageLimit) return { kind: "end" };
-  const submittedAt = page[page.length - 1]?.brokerTimestamps["submitted_at"];
-  return submittedAt === undefined ? { kind: "unpageable" } : { kind: "after", after: submittedAt };
+  const lastInstant = page[page.length - 1]?.brokerTimestamps["submitted_at"];
+  if (lastInstant === undefined || lastInstant.length === 0) return { kind: "unpageable" };
+  // The broker cursor is strictly-after by instant, and several orders may share one instant across the page
+  // boundary. The next page therefore starts after the last instant that is strictly earlier than the page's last
+  // one, so the tie group is re-read in full (the shell drops duplicates by broker order ID); a page that is one
+  // single tie cannot be paged through at all (gate finding G3-N6, P7).
+  const earlier = page.map(order => order.brokerTimestamps["submitted_at"]).filter((value): value is string => value !== undefined && value.length > 0 && value < lastInstant);
+  const cursor = earlier.reduce<string | null>((best, value) => (best === null || value > best ? value : best), null);
+  return cursor === null ? { kind: "unpageable" } : { kind: "after", after: cursor };
 }

@@ -124,9 +124,15 @@ describe("order requests and pagination", () => {
 
   it("pages ascending by submission time and stops on a short page", () => {
     const full = Array.from({ length: 3 }, (_, index) => ({ ...(mapOrder(RECORDED_ORDER) as NonNullable<ReturnType<typeof mapOrder>>), brokerTimestamps: { submitted_at: `2026-08-24T20:17:0${String(index)}.000Z` } }));
-    expect(nextOrderPageAfter(full, 3)).toEqual({ kind: "after", after: "2026-08-24T20:17:02.000Z" });
+    // The cursor is the last instant strictly earlier than the page's last one, so a tie at the boundary is re-read.
+    expect(nextOrderPageAfter(full, 3)).toEqual({ kind: "after", after: "2026-08-24T20:17:01.000Z" });
     expect(nextOrderPageAfter(full, 500)).toEqual({ kind: "end" });
     // G2-F5: a full page without a usable cursor is unpageable, never complete.
     expect(nextOrderPageAfter(full.map(item => ({ ...item, brokerTimestamps: {} })), 3)).toEqual({ kind: "unpageable" });
+    expect(nextOrderPageAfter(full.map(item => ({ ...item, brokerTimestamps: { submitted_at: "" } })), 3)).toEqual({ kind: "unpageable" });
+    // G3-N6: a tie across the page boundary is re-read from the last earlier instant; a page that is one tie is unpageable.
+    const tied = full.map((item, index) => ({ ...item, brokerTimestamps: { submitted_at: index === 0 ? "2026-08-24T20:17:00.000Z" : "2026-08-24T20:17:02.000Z" } }));
+    expect(nextOrderPageAfter(tied, 3)).toEqual({ kind: "after", after: "2026-08-24T20:17:00.000Z" });
+    expect(nextOrderPageAfter(full.map(item => ({ ...item, brokerTimestamps: { submitted_at: "2026-08-24T20:17:02.000Z" } })), 3)).toEqual({ kind: "unpageable" });
   });
 });
