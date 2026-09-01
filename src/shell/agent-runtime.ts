@@ -88,6 +88,19 @@ function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Once a verified child exists, every exceptional construction exit owns its cleanup. */
+export async function withVerifiedChildFailureCleanup<T>(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, work: () => Promise<T> | T): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const cleanupErrors: unknown[] = [];
+    try { await child.stop(); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    try { await releaseHolder(paths, holderId); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], "runtime construction failed and cleanup was incomplete", { cause: error });
+    throw error;
+  }
+}
+
 export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuild> {
   const { repoRoot, clock, log } = options;
   const env = loadEnvironment(repoRoot, options.processEnv);
@@ -257,41 +270,43 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     return { ok: false, stage: "analyst", reason: detail, startup };
   }
   const child = launch.child as VerifiedChildHandle;
-  const observation = ports.lastObservation();
-  const extra = ports.extra();
-  if (observation === null) {
-    await child.stop();
-    await releaseHolder(paths, options.instanceId);
-    return { ok: false, stage: "digest", reason: "no launch observation was recorded", startup };
-  }
-  const runtime = computeRuntimeDigest(repoRoot, {
-    lockSha256: sha256File(lockPath),
-    manifestSha256: sha256File(manifestPath),
-    sourceRepository: observation.sourceRepository,
-    sourceCommit: observation.sourceCommit,
-    packageName: observation.packageName,
-    packageVersion: observation.packageVersion,
-    interpreterLauncherSha256: observation.interpreterLauncherSha256,
-    interpreterRuntimeSha256: observation.interpreterRuntimeSha256,
-    launchArtifactsSha256: extra.launchArtifactsSha256,
-  });
-  const policy = computePolicyDigest(raw, CANONICAL_PAPER_TRADING_ORIGIN);
-  if (!runtime.ok || !policy.ok) {
-    await child.stop();
-    await releaseHolder(paths, options.instanceId);
-    return { ok: false, stage: "digest", reason: `${runtime.ok ? "" : runtime.reason} ${policy.ok ? "" : policy.reason}`.trim(), startup };
-  }
-  log(`runtimeDigest ${runtime.digest} policyDigest ${policy.digest}; analyst inventory ${String(launch.inventory.length)} tools`);
+  try {
+    return await withVerifiedChildFailureCleanup(child, paths, options.instanceId, async () => {
+      const observation = ports.lastObservation();
+      const extra = ports.extra();
+      if (observation === null) {
+        await child.stop();
+        await releaseHolder(paths, options.instanceId);
+        return { ok: false, stage: "digest", reason: "no launch observation was recorded", startup };
+      }
+      const runtime = computeRuntimeDigest(repoRoot, {
+        lockSha256: sha256File(lockPath),
+        manifestSha256: sha256File(manifestPath),
+        sourceRepository: observation.sourceRepository,
+        sourceCommit: observation.sourceCommit,
+        packageName: observation.packageName,
+        packageVersion: observation.packageVersion,
+        interpreterLauncherSha256: observation.interpreterLauncherSha256,
+        interpreterRuntimeSha256: observation.interpreterRuntimeSha256,
+        launchArtifactsSha256: extra.launchArtifactsSha256,
+      });
+      const policy = computePolicyDigest(raw, CANONICAL_PAPER_TRADING_ORIGIN);
+      if (!runtime.ok || !policy.ok) {
+        await child.stop();
+        await releaseHolder(paths, options.instanceId);
+        return { ok: false, stage: "digest", reason: `${runtime.ok ? "" : runtime.reason} ${policy.ok ? "" : policy.reason}`.trim(), startup };
+      }
+      log(`runtimeDigest ${runtime.digest} policyDigest ${policy.digest}; analyst inventory ${String(launch.inventory.length)} tools`);
 
-  const oauthToken = env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "";
-  if (oauthToken.length === 0) {
-    await child.stop();
-    await releaseHolder(paths, options.instanceId);
-    return { ok: false, stage: "analyst", reason: "CLAUDE_CODE_OAUTH_TOKEN is not set", startup };
-  }
-  const analystDirectory = path.join(paths.root, "analyst");
-  mkdirSync(analystDirectory, { recursive: true });
-  const analyst = createClaudeAnalyst({
+      const oauthToken = env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "";
+      if (oauthToken.length === 0) {
+        await child.stop();
+        await releaseHolder(paths, options.instanceId);
+        return { ok: false, stage: "analyst", reason: "CLAUDE_CODE_OAUTH_TOKEN is not set", startup };
+      }
+      const analystDirectory = path.join(paths.root, "analyst");
+      mkdirSync(analystDirectory, { recursive: true });
+      const analyst = createClaudeAnalyst({
     child,
     oauthToken,
     model: config.analystModel,
@@ -304,9 +319,9 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     sessionsUntil: expiry => (days.some(day => day.date === expiry) ? remainingSessions(days, tradingDay, expiry) : null),
     log,
   });
-  const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
+      const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
 
-  const lifecycle = (overrides: CycleOverrides): LifecycleDeps => ({
+      const lifecycle = (overrides: CycleOverrides): LifecycleDeps => ({
     flattenDate: overrides.flattenDate ?? config.flattenDate,
     nextTradingDay: next,
     residueMaxSessions: config.residueMaxSessions,
@@ -318,7 +333,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     qualification: { checkpointMs: Date.parse(config.qualification.checkpointIso), windowEndMs: Date.parse(config.qualification.windowEndIso), maxLossCents: config.qualification.maxLossCents },
   });
 
-  return {
+      return {
     ok: true,
     runtime: {
       config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
@@ -366,5 +381,9 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
         await releaseHolder(paths, options.instanceId);
       },
     },
-  };
+      };
+    });
+  } catch (error) {
+    return { ok: false, stage: "digest", reason: `post-launch runtime construction failed: ${error instanceof Error ? error.message : String(error)}`, startup };
+  }
 }

@@ -1,23 +1,24 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAccountBoundBrokerPort } from "../src/shell/account-bound-broker.js";
 import { parseJournalText } from "../src/core/journal.js";
+import type { JournalEntry } from "../src/core/journal.js";
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
-import { buildRuntime } from "../src/shell/agent-runtime.js";
+import { buildRuntime, withVerifiedChildFailureCleanup } from "../src/shell/agent-runtime.js";
 import type { AgentRuntime } from "../src/shell/agent-runtime.js";
 import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
 import { enumerateRuntimeFiles } from "../src/shell/digests.js";
 import { readHolder, releaseHolder, writeHolder } from "../src/shell/epoch-store.js";
-import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
+import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import type { BrokerMutation, BrokerMutationPort } from "../src/shell/mutation-gateway.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { createPingPort } from "../src/shell/ping-healthchecks.js";
 import { resolveStateDir } from "../src/shell/state-dir.js";
 import { recordStartupBrokerFence } from "../src/shell/startup-broker-fence.js";
-import { recoverCertificateAfterFailure } from "../src/shell/certificate-run.js";
+import { nextCertificateCycleIndex, recoverCertificateAfterFailure } from "../src/shell/certificate-run.js";
 
 const ORIGIN = "https://paper-api.alpaca.markets";
 const EXPECTED = "PA_EXPECTED";
@@ -347,7 +348,7 @@ describe("P7 launch hardening — independent account identity", () => {
     expect(calls).toEqual([]);
   });
 
-  it("never steals an old mutex from a live broker operation, so a safety halt cannot linearize before its entry", async () => {
+  it("keeps a live broker operation serialized until a waiting safety halt can become durable", async () => {
     const resolved = resolveStateDir(temporaryDirectory("gbt-p7-live-mutex-"));
     if (!resolved.ok) throw new Error(resolved.detail);
     const now = Date.parse("2026-09-01T12:00:00.000Z");
@@ -369,8 +370,6 @@ describe("P7 launch hardening — independent account identity", () => {
 
     const entry = active.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } });
     await accountStarted;
-    const old = new Date(Date.now() - 120_000);
-    utimesSync(resolved.value.mutex, old, old);
     const contender = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now + 1, brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "MUST_NOT_RUN" }) }, instanceId: "contender", lockTakeoverBoundMs: 60_000 });
     let haltSettled = false;
     const halt = contender.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "must serialize after the live entry" }).finally(() => { haltSettled = true; });
@@ -386,18 +385,6 @@ describe("P7 launch hardening — independent account identity", () => {
     expect(delegateCalls).toHaveLength(1);
   });
 
-  it("reclaims an old mutex only after its recorded process is dead", async () => {
-    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-dead-mutex-"));
-    if (!resolved.ok) throw new Error(resolved.detail);
-    writeFileSync(resolved.value.mutex, JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" }), "utf8");
-    const old = new Date(Date.now() - 120_000);
-    utimesSync(resolved.value.mutex, old, old);
-    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => Date.now(), brokerPort: NO_BROKER_PORT, instanceId: "recovery", lockTakeoverBoundMs: 60_000 });
-
-    expect(await gateway.openJournal()).toMatchObject({ entries: [], halt: { halted: false } });
-    expect(() => readFileSync(resolved.value.mutex, "utf8")).toThrow();
-  });
-
   it("downgrades a mutation that settles after its aggregate deadline to broker-side confirmation uncertainty", async () => {
     const resolved = resolveStateDir(temporaryDirectory("gbt-p7-inflight-deadline-"));
     if (!resolved.ok) throw new Error(resolved.detail);
@@ -405,13 +392,15 @@ describe("P7 launch hardening — independent account identity", () => {
     let now = 0;
     let finish: (() => void) | undefined;
     let effects = 0;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
     const settled = new Promise<ReturnType<BrokerMutationPort["mutate"]> extends Promise<infer T> ? T : never>(resolve => {
       finish = () => { effects += 1; resolve({ ok: true, brokerOrderId: "late-effect" }); };
     });
-    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now, brokerPort: { mutate: () => settled }, instanceId: "deadline-runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
+    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now, brokerPort: { mutate: () => { markStarted?.(); return settled; } }, instanceId: "deadline-runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
     expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
     const pending = gateway.dispatch({ class: "authoritative", epoch: 2, deadlineAtMs: 10, action: { kind: "broker_mutation", mutation: { ...submitMutation(), notAfterMs: 10 } } });
-    await Promise.resolve();
+    await started;
     now = 10;
     finish?.();
     expect(await pending).toMatchObject({ ok: false, reason: "PORT_ERROR:CYCLE_WALLTIME_EXCEEDED", source: "broker_port" });
@@ -420,6 +409,16 @@ describe("P7 launch hardening — independent account identity", () => {
 });
 
 describe("P7 launch hardening — certificate failure recovery", () => {
+  it("starts a same-day certificate retry after the highest journaled cycle identity", () => {
+    const entries = [
+      { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "CYCLE", cycleIndex: 1 },
+      { seq: 2, at: "2026-09-01T12:01:00.000Z", epoch: 1, type: "SKIP", cycleIndex: 7 },
+      { seq: 3, at: "2026-09-01T12:02:00.000Z", epoch: null, type: "SUPPRESSED" },
+    ] as unknown as readonly JournalEntry[];
+    expect(nextCertificateCycleIndex(entries)).toBe(8);
+    expect(nextCertificateCycleIndex([])).toBe(1);
+  });
+
   it("retries after the first post-fill broker read throws and drives the account flat", async () => {
     let snapshotReads = 0;
     let exposed = true;
@@ -525,6 +524,18 @@ describe("P7 launch hardening — real broker transport", () => {
 });
 
 describe("P7 launch hardening — runtime and holder identity", () => {
+  it("stops the verified child and releases its holder when post-launch construction throws", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-post-launch-cleanup-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeHolder(resolved.value, { holderId: "runtime-builder", heartbeatAt: 1 });
+    let stopCalls = 0;
+
+    await expect(withVerifiedChildFailureCleanup({ stop: () => { stopCalls += 1; return Promise.resolve(); } }, resolved.value, "runtime-builder", () => { throw new Error("digest input disappeared"); })).rejects.toThrow("digest input disappeared");
+
+    expect(stopCalls).toBe(1);
+    expect(readHolder(resolved.value)).toBeNull();
+  });
+
   it("runtime file enumeration includes the built JavaScript Node executes", () => {
     const root = temporaryDirectory("gbt-p7-digest-");
     mkdirSync(path.join(root, "src"), { recursive: true });

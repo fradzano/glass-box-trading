@@ -1,7 +1,8 @@
 // STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 // writable directory that every instance on the host resolves identically.
 // All durable P2 state lives here: the journal, the halt flag, the epoch
-// store, the writer holder record, the short-lived mutex, and the quarantine.
+// store, the writer holder record, and the quarantine. The kernel mutex is
+// named from `root` but is deliberately not a durable file.
 import { accessSync, constants, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -11,7 +12,6 @@ export interface StatePaths {
   readonly halt: string;
   readonly epoch: string;
   readonly holder: string;
-  readonly mutex: string;
   readonly quarantineDir: string;
 }
 
@@ -35,7 +35,6 @@ export function resolveStateDir(raw: string): StateDirResolution {
         halt: path.join(root, "halt.json"),
         epoch: path.join(root, "epoch.json"),
         holder: path.join(root, "holder.json"),
-        mutex: path.join(root, "writer.mutex"),
         quarantineDir,
       },
     };

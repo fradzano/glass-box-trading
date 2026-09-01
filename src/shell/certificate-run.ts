@@ -61,13 +61,19 @@ function filledEntryExists(entries: readonly JournalEntry[]): boolean {
   return entries.some(entry => entry.type === "OUTCOME" && entry["status"] === "filled" && typeof entry["clientOrderId"] === "string" && intents.has(entry["clientOrderId"]));
 }
 
+/** Cycle indices are global journal identity, not process-local attempt slots. */
+export function nextCertificateCycleIndex(entries: readonly JournalEntry[]): number {
+  const indices = entries.map(entry => entry["cycleIndex"]).filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+  return (indices.length === 0 ? 0 : Math.max(...indices)) + 1;
+}
+
 async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
   const { runtime, clock, log } = options;
   const startedAt = epochMsToUtcIso(clock());
   const observations: OrderObservation[] = [];
   const harnessCancels: string[] = [];
   const cycles: CycleReport[] = [];
-  let cycleIndex = 0;
+  let cycleIndex = nextCertificateCycleIndex((await runtime.gateway.openJournal()).entries) - 1;
 
   const inCurrentWindow = (entries: readonly JournalEntry[]): readonly JournalEntry[] => entries.filter(entry => entry.at >= startedAt);
 
@@ -257,7 +263,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
     try {
       if (!await runtime.gateway.heartbeat()) throw new Error("certificate recovery lost writer authority");
       const entries = (await runtime.gateway.openJournal()).entries;
-      const cycleIndex = entries.filter(entry => entry.type === "CYCLE" || entry.type === "BOOTSTRAP" || entry.type === "GAP" || entry.type === "SKIP").length + 1;
+      const cycleIndex = nextCertificateCycleIndex(entries);
       await runtime.cycle(cycleIndex, { flattenDate: runtime.tradingDay, finalCycleOfSession: false, analyst: () => Promise.resolve("{\"candidates\":[]}") });
       if (!await runtime.gateway.heartbeat()) throw new Error("certificate recovery lost writer authority after flatten cycle");
     } catch (error) {

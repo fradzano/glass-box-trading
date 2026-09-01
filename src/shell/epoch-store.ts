@@ -2,7 +2,10 @@
 // (S-G12-07). The mutex only serializes local gateway and acquisition work;
 // authority is decided by the pure core against the epoch the store holds.
 // Writes are atomic: temp file, fsync, rename.
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import { createServer } from "node:net";
+import type { Server } from "node:net";
 import type { EpochStoreState } from "../core/authority.js";
 import type { StatePaths } from "./state-dir.js";
 
@@ -110,90 +113,58 @@ export async function releaseHolder(paths: StatePaths, holderId: string): Promis
   });
 }
 
-const MUTEX_STALE_MS = 15_000;
-const MUTEX_TIMEOUT_MS = 75_000;
-let mutexSequence = 0;
-
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
 /**
- * Exclusive-create mutex (`wx`): the OS guarantees that of concurrent
- * creators exactly one succeeds. Age alone never proves abandonment: an old
- * mutex is removed only when its recorded process is no longer alive. The
- * token also prevents an earlier holder from deleting a successor's mutex.
- * The mutex is held only for one gateway operation and is never authority.
+ * Kernel-owned, single-host mutex. Windows named-pipe names and Linux abstract
+ * sockets are exclusive while their server process lives and are released by
+ * the OS on close or crash. There is therefore no stale-file deletion, lease
+ * timeout, or recovery CAS window. The mutex serializes one gateway operation;
+ * epoch fencing, not holding this endpoint, grants mutation authority.
  */
 export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T): Promise<T> {
-  const startedAt = Date.now();
-  const token = `${String(process.pid)}:${String(startedAt)}:${String(mutexSequence += 1)}`;
+  const endpoint = mutexEndpoint(paths);
+  let server: Server;
   for (;;) {
-    let descriptor: number;
     try {
-      descriptor = openSync(paths.mutex, "wx");
+      server = await listenMutex(endpoint);
+      break;
     } catch (error) {
-      // EEXIST is the normal contention signal; on Windows a concurrent creator can also surface EPERM/EBUSY/EACCES
-      // for the same file. All of them mean "held right now" and are retried until the timeout.
       const code = error instanceof Error && "code" in error ? error.code : undefined;
-      if (code !== "EEXIST" && code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw error;
-      try {
-        const age = Date.now() - statSync(paths.mutex).mtimeMs;
-        if (age > MUTEX_STALE_MS) {
-          const observed = readFileSync(paths.mutex, "utf8");
-          const owner = mutexOwnerPid(observed);
-          // A readable live owner is never fenced by elapsed time, even if its
-          // broker I/O outlives the mtime. An unreadable abandoned record is
-          // eligible only after the same stale-age bound.
-          if ((owner === null || !processIsAlive(owner)) && readFileSync(paths.mutex, "utf8") === observed) unlinkSync(paths.mutex);
-        }
-      } catch {
-        // The mutex vanished between the checks; retry.
-      }
-      if (Date.now() - startedAt > MUTEX_TIMEOUT_MS) throw new Error("writer mutex timeout", { cause: error });
+      if (code !== "EADDRINUSE") throw error;
       await sleep(2 + Math.floor(Math.random() * 6));
-      continue;
     }
-    try {
-      writeSync(descriptor, JSON.stringify({ pid: process.pid, token }), null, "utf8");
-      fsyncSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    try {
-      return await work();
-    } finally {
-      try {
-        const current = readFileSync(paths.mutex, "utf8");
-        const parsed = JSON.parse(current) as unknown;
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && (parsed as Record<string, unknown>)["token"] === token) rmSync(paths.mutex, { force: true });
-      } catch {
-        // Missing/replaced mutex: never remove a path we can no longer prove is ours.
-      }
-    }
+  }
+  try {
+    return await work();
+  } finally {
+    await closeMutex(server);
   }
 }
 
-function mutexOwnerPid(text: string): number | null {
-  try {
-    const value = JSON.parse(text) as unknown;
-    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    const pid = (value as Record<string, unknown>)["pid"];
-    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    // Backward compatibility with the original plain-PID lock file.
-    const pid = Number(text.trim());
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-  }
+function mutexEndpoint(paths: StatePaths): string {
+  const identity = process.platform === "win32" ? paths.root.toLowerCase() : paths.root;
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex");
+  if (process.platform === "win32") return `\\\\.\\pipe\\glass-box-trading-${digest}`;
+  if (process.platform === "linux") return `\0glass-box-trading-${digest}`;
+  throw new Error(`writer mutex unsupported on ${process.platform}; production requires Windows or Linux`);
 }
 
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-    return code === "EPERM" || code === "EACCES";
-  }
+function listenMutex(endpoint: string): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = createServer(socket => { socket.destroy(); });
+    server.once("error", reject);
+    server.listen(endpoint, () => {
+      server.removeListener("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+function closeMutex(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close(error => { if (error === undefined) resolve(); else reject(error); });
+  });
 }

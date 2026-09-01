@@ -1288,3 +1288,12 @@ small, no ADR split).
   cannot be overlapped by a safety halt. A broker result arriving at or after
   the aggregate deadline is classified as broker-side confirmation uncertainty
   rather than success, preserving the reservation and next-cycle reconciliation.
+- **2026-09-01 — P7 R10 removes stale-lock recovery and restart identity
+  classes.** The file mutex is replaced by a kernel-owned Windows named pipe
+  (Linux abstract socket): exclusivity survives arbitrary operation duration,
+  waiters do not time out, and the OS releases ownership on process death, so
+  no path-level recovery unlink or CAS exists. Certificate attempts derive the
+  next global cycle identity from the journal maximum rather than restarting at
+  one. All post-launch runtime construction is failure-cleaned: exceptional
+  digest or adapter construction stops the verified child and releases only
+  the caller's holder.

@@ -64,6 +64,24 @@ async function runCli(compiledDist: string, args: readonly string[]): Promise<{ 
 }
 
 describe("S-G12-01 lock held by a live instance", () => {
+  it("S-G12-01 the kernel releases the mutex when its holder process crashes", async () => {
+    const compiledDist = inject("compiledDist");
+    const paths = freshPaths();
+    const child = spawn(process.execPath, [path.join(compiledDist, "shell", "gateway-cli.js"), paths.root, "crashing-holder", "hold"], { stdio: ["ignore", "pipe", "pipe"] });
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", chunk => { if (String(chunk).includes("LOCKED")) resolve(); else reject(new Error(`unexpected holder output: ${String(chunk)}`)); });
+    });
+    child.kill();
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => { resolve(); });
+    });
+
+    const reopened = gatewayFor(paths, "after-crash", () => TEST_ONLY_AT_MS);
+    await expect(Promise.race([reopened.openJournal(), new Promise<never>((_resolve, reject) => { setTimeout(() => { reject(new Error("kernel mutex was not released after process exit")); }, 2_000); })])).resolves.toMatchObject({ entries: [] });
+  });
+
   it("S-G12-01 the second instance is suppressed, appends one staleness-neutral witness line, and never reaches the broker", async () => {
     const paths = freshPaths();
     const portA = recordingPort();

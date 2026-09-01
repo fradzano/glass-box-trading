@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 (P7 R8 live-mutex and in-flight deadline repair in verification; the supervised market-hours run remains gated)
+**Last updated:** 2026-09-01 (P7 R10 kernel mutex, retry identity, and post-spawn cleanup in verification; the supervised market-hours run remains gated)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R8. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery is committed at `8911007`; R8 closes the remaining live-lock theft and late-success gaps and is being verified. **Next action:** complete repository verification and an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R10. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 replaces stale-file recovery with a kernel mutex and closes certificate-retry identity plus post-spawn cleanup. **Next action:** complete repository verification and an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 

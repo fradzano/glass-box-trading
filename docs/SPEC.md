@@ -701,9 +701,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   `HALT`/`UNHALT` line but before its projection write is therefore repaired
   before the state is exposed or an entry is admitted; an already-authorized
   but stale entry is vetoed. Cancel and explicit close remain available under
-  S-G12-03. The mutex itself is never taken over by age while its recorded
-  owner process is alive; abandoned-lock cleanup requires both age and a dead
-  owner, and release is owner-token-checked. Epoch acquisition is a single
+  S-G12-03. The mutex is a kernel-owned Windows named pipe (Linux: abstract
+  socket), exclusive while its process lives and automatically released on
+  close or crash. It has no stale-file cleanup, age takeover, or waiting
+  timeout. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the
