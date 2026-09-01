@@ -436,7 +436,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     // neither the journal nor the broker and is never state authority. dashboard-build.ts (P6) writes ONLY
     // rendered pages into the site output directory through its injected sink (S-J-07); it reads the journal
     // through the pure projection and never touches STATE_DIR.
-    expect(writers.sort()).toEqual(["dashboard-build.ts", "diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts"]);
+    // ping-healthchecks.ts (P7) appends ONLY the local ping record (a sidecar in STATE_DIR outside the journal, epoch,
+    // and halt flag) as the dead-man port's fallback; the runner decides every ping through the pure planPing.
+    expect(writers.sort()).toEqual(["dashboard-build.ts", "diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts", "ping-healthchecks.ts"]);
     const atomicWriters = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("writeJsonAtomically"));
     // publisher.ts (P6) writes the push state and the deployment receipts — sidecar files in STATE_DIR outside the
     // journal, epoch, and halt flag (S-J-07: receipts never create a journal revision); its only journal append is
@@ -446,8 +448,10 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(importers).toEqual(["mutation-gateway.ts"]);
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
     // watchdog.ts (P5) constructs its own gateway like gateway-cli; it never calls the port directly.
-    expect(brokerUsers.sort()).toEqual(["gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "watchdog.ts"]);
-    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts"]) {
+    // agent-runtime.ts (P7) is the composition root: it constructs the gateway with the real Alpaca port exactly like
+    // gateway-cli constructs it with the fake; it never calls the port itself.
+    expect(brokerUsers.sort()).toEqual(["agent-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "watchdog.ts"]);
+    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts", "agent-runtime.ts", "certificate-run.ts", "certificate-cli.ts", "agent-cli.ts"]) {
       expect(readFileSync(path.join(shellDirectory, name), "utf8")).not.toMatch(/\.mutate\(/u);
     }
   });

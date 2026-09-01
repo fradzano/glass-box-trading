@@ -12,6 +12,7 @@
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
 - `config/implementation-phases.json`
+- `config/policy.json`
 - `DECISIONS.md` — DECISIONS
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
 - `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
@@ -28,7 +29,9 @@
 - `package-lock.json`
 - `package.json`
 - `README.md` — Glass Box Trading
+- `src/core/alpaca-mapping.ts` — Pure Alpaca wire mapping (P7): broker JSON in, the closed P3 record shapes
 - `src/core/authority.ts` — Pure writer-authority core (S-G12-01/02/07, S-J-06): epoch acquisition
+- `src/core/certificate.ts` — Pure S-ARM-01 core (P7): the versioned configuration field classification,
 - `src/core/decision.ts`
 - `src/core/domain.ts`
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
@@ -38,27 +41,39 @@
 - `src/core/projection.ts` — Pure public-evidence projection (P6: S-J-07 content, S-J-09, the S-CYC-12
 - `src/core/publish.ts` — Pure publication core (P6: S-J-07 candidate/probe/promotion/rollback,
 - `src/core/qualification.ts` — Pure qualification core (P6: S-CYC-12). A qualifying options activity is a
+- `src/core/sha256.ts` — Pure SHA-256 over UTF-8 text (P7: S-ARM-01 digests). The core may not import
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
 - `src/fixtures/p6-golden.ts` — The P6 golden-path fixture contract: the expectations, the qualification
+- `src/shell/agent-cli.ts` — One scheduled invocation of the agent: `node dist/shell/agent-cli.js`.
+- `src/shell/agent-runtime.ts` — The composition root for a real run (P7): validate the configuration
+- `src/shell/alpaca-broker.ts` — The real Alpaca adapter (P7): the read side the runner fetches from, the
+- `src/shell/analyst-claude.ts` — The real analyst (P7): a Claude session through the Agent SDK whose only
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
+- `src/shell/certificate-cli.ts` — The S-ARM-01 entry point: `node dist/shell/certificate-cli.js --owner-go`.
+- `src/shell/certificate-run.ts` — The supervised dev live-test driver (P7, S-ARM-01). It runs the exact
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
 - `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
+- `src/shell/digests.ts` — Digest material for S-ARM-01 (P7): the shell enumerates and hashes the
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
 - `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
 - `src/shell/gateway-cli.ts` — Process-level driver for the fencing and serialization tests: each
 - `src/shell/halt-state.ts` — The persisted halt flag (S-G12-05): a file in STATE_DIR, written only as
 - `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
 - `src/shell/manual-unhalt.ts` — The one human path that clears the halt flag (S-G12-04). It is not
+- `src/shell/market-calendar.ts` — Exchange calendar arithmetic for the shell (S-G6-03: session boundaries come
+- `src/shell/mcp-environment.ts` — The real ports behind the pinned MCP launcher (P7, S-CYC-11): evidence
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
+- `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
 - `src/shell/render-decision-view.ts`
 - `src/shell/render-fixture.ts`
 - `src/shell/render-golden-dashboard.ts` — Local golden-path render (SUB-02 first working version, P6): builds
+- `src/shell/runtime-config.ts` — Configuration assembly for a real run (P7). The role-neutral policy is a
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
@@ -69,6 +84,8 @@
 - `submission/ONE-PAGER.md`
 - `submission/PREFLIGHT.md` — Submission preflight — SUB-09
 - `submission/slides/deck.md`
+- `tests/alpaca-mapping.spec.ts` — P7 — the pure Alpaca wire mapping, exercised against documents recorded
+- `tests/arm01-certificate.spec.ts` — S-ARM-01 — the dev live-test certificate (P7): the pure evidence
 - `tests/core-contract.spec.ts`
 - `tests/cyc-recovery-bootstrap.spec.ts` — S-CYC-03 (total connectivity loss), S-CYC-08 (first cycle after a gap),
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
@@ -112,5 +129,6 @@
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tsconfig.build.json`
 - `tsconfig.json`
+- `Usersfelixglass-box-statedev-sink.jsonl`
 - `video/README.md` — Video plan — SUB-04
 - `vitest.config.ts`

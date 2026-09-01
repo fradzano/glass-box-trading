@@ -422,6 +422,27 @@ async function exerciseCore() {
   const retried = publish.planPush(pushed, "rev-sandbox");
   const settled = publish.pushStateAfter(pushed, { ok: true, revision: "rev-sandbox" }, "t2");
   if (pushed.consecutiveFailures !== 1 || retried.kind !== "push" || settled.consecutiveFailures !== 0 || publish.planPush(settled, "rev-sandbox").kind !== "skip" || !publish.publishDegradation(pushed, "rev-sandbox").degraded || publish.publishDegradation(settled, "rev-sandbox").degraded) throw new Error("sandboxed push retry state is wrong");
+  // ---- P7: the S-ARM-01 certificate core and the Alpaca wire mapping ----
+  const certificate = await loadModuleGraph(context, path.join(DIST, "core", "certificate.js"));
+  const alpaca = await loadModuleGraph(context, path.join(DIST, "core", "alpaca-mapping.js"));
+  const sha = await loadModuleGraph(context, path.join(DIST, "core", "sha256.js"));
+  if (sha.sha256Text("abc") !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") throw new Error("sandboxed sha256 is wrong");
+  const rawConfig = { ALPACA_PROFILE: "dev", EXPECTED_ACCOUNT_ID: "TEST_ONLY_SANDBOX", STATE_DIR: "C:/state", BOOTSTRAP_DIAGNOSTIC_SINK: "C:/sink", ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets", MAX_CANDIDATE_QTY: 5 };
+  const devDigest = certificate.policyDigest(rawConfig, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  const competitionDigest = certificate.policyDigest({ ...rawConfig, ALPACA_PROFILE: "competition", EXPECTED_ACCOUNT_ID: "PA_OTHER", STATE_DIR: "D:/other" }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  const changedDigest = certificate.policyDigest({ ...rawConfig, MAX_CANDIDATE_QTY: 6 }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  if (!devDigest.ok || !competitionDigest.ok || !changedDigest.ok || devDigest.digest !== competitionDigest.digest || devDigest.digest === changedDigest.digest || certificate.policyDigest({ ...rawConfig, UNKNOWN: 1 }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" }).ok) throw new Error("sandboxed policy digest is wrong");
+  const analystRuntime = { lockSha256: "a".repeat(64), manifestSha256: "b".repeat(64), sourceRepository: "https://x.invalid/r.git", sourceCommit: "0".repeat(40), packageName: "p", packageVersion: "1", interpreterLauncherSha256: "c".repeat(64), interpreterRuntimeSha256: "d".repeat(64), launchArtifactsSha256: "e".repeat(64) };
+  const runtimeA = certificate.runtimeDigest({ files: [{ path: "src/a.ts", sha256: "f".repeat(64) }], analystRuntime });
+  const runtimeB = certificate.runtimeDigest({ files: [{ path: "src/a.ts", sha256: "0".repeat(64) }], analystRuntime });
+  if (!runtimeA.ok || !runtimeB.ok || runtimeA.digest === runtimeB.digest) throw new Error("sandboxed runtime digest is wrong");
+  const emptyCertificate = certificate.buildCertificate({ accountId: "TEST_ONLY_SANDBOX", tradingOrigin: "https://paper-api.alpaca.markets", canonicalTradingOrigin: "https://paper-api.alpaca.markets", window: { startedAt: "2026-09-01T13:35:00.000Z", endedAt: "2026-09-01T15:00:00.000Z" }, runtimeDigest: runtimeA.digest, policyDigest: devDigest.digest, mcpInventoryAccepted: true, journal: [], orderObservations: [], harnessCancels: [], fence: null, finalSnapshot: null });
+  const arming = certificate.validateArmingCertificate(emptyCertificate, { runtimeDigest: runtimeA.digest, policyDigest: devDigest.digest, canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  if (emptyCertificate.verdict !== "FAIL" || emptyCertificate.failures.length < 4 || arming.ok || certificate.successfulDevLiveTestAt(emptyCertificate) !== null) throw new Error("sandboxed certificate evaluation is wrong");
+  const mappedOrder = alpaca.mapOrder({ id: "o", client_order_id: "c", status: "accepted", qty: "1", filled_qty: "0", limit_price: "-0.35", submitted_at: "2026-09-01T14:00:00.123456789Z", legs: [{ symbol: "A", side: "sell", ratio_qty: "1" }, { symbol: "B", side: "buy", ratio_qty: "1" }] });
+  const request = alpaca.buildOrderRequest({ clientOrderId: "c", quantity: 1, intent: "entry", limit: { kind: "credit", priceCents: 35 }, legs: [{ contractId: "A", side: "sell", ratio: 1 }, { contractId: "B", side: "buy", ratio: 1 }] });
+  if (mappedOrder === null || mappedOrder.limit.kind !== "credit" || mappedOrder.limit.priceCents !== 35 || mappedOrder.brokerTimestamps.submitted_at !== "2026-09-01T14:00:00.123Z" || request.limit_price !== "-0.35" || alpaca.dollarsToCents("1.235") !== null || alpaca.dollarsToCentsRounded("1.235") !== 124 || alpaca.mapOrder({ id: "o" }) !== null) throw new Error("sandboxed alpaca mapping is wrong");
+  paths.push("sha256Text(abc vector), policyDigest(dev == competition identity / policy change differs / unknown field refused), runtimeDigest(file content change differs), buildCertificate(empty evidence -> FAIL, never arms, no live-test instant), mapOrder(credit sign, nanosecond truncation, malformed null) + buildOrderRequest(negative net credit) + dollarsToCents(exact / rounded)");
   paths.push("projectPerformance(reconciled +500 = -200 unrealized + 700 UNATTRIBUTED / cutoff rejects 3), assessFreshness(fresh/stale), projectQualification(not due / at risk / failed / qualified / n.a.) + qualificationEntryVeto(cap / one lot / one live / at cap ok / closed window none), verifyProbe(ok / mismatch / auth wall / down), planPromotion+planStableVerification(reject keeps alias / rollback to prior), checkPushTarget(exact ref only), planPush+pushStateAfter(retry after failure, skip when pushed)");
   return paths;
 }

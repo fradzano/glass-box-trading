@@ -9,7 +9,7 @@
 // the epoch this process won; the runner holds no order state in memory.
 import { decide, parseAnalystOutput } from "../core/decision.js";
 import { integerUnit } from "../core/domain.js";
-import type { CloseAttemptSnapshot, CloseLifecycleSnapshot, DecisionSnapshot, DecisionConfig, EntryActionPlan, OptionLeg, Quantity } from "../core/domain.js";
+import type { CloseAttemptSnapshot, CloseLifecycleSnapshot, DecisionSnapshot, DecisionConfig, EntryActionPlan, OptionContract, OptionLeg, OptionQuote, Quantity } from "../core/domain.js";
 import {
   assembleDecisionSnapshot,
   auditGapDraft,
@@ -96,6 +96,17 @@ export interface AnalystInput {
   readonly underlyings: readonly string[];
   /** S-CYC-12: the qualification window's prioritisation hint and cap — never a gate parameter. */
   readonly qualification: QualificationBrief;
+  /**
+   * P7: the very observation the gates will judge — contracts, their quotes,
+   * and spot — so the analyst proposes from what the core can price. A
+   * candidate outside this set is vetoed for a missing quote (S-G5-03); the
+   * analyst gains no gate influence by seeing it.
+   */
+  readonly market: {
+    readonly contracts: readonly OptionContract[];
+    readonly quotesByContract: Readonly<Record<string, OptionQuote>>;
+    readonly spotCentsByUnderlying: Readonly<Record<string, number>>;
+  };
 }
 
 /** The dead-man check's two endpoints (S-G14-03). The runner decides which to hit through the pure `planPing`. */
@@ -507,7 +518,13 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   if (qualification.state === "COMPETITIVENESS_AT_RISK" || qualification.state === "WINNING_ACCEPTANCE_FAILED") alarmConditions.push(qualification.state);
   if (!managementOnly) {
     try {
-      const raw = await withTimeout(deps.analyst({ tradingDay: deps.tradingDay, cycleIndex: deps.cycleIndex, underlyings: deps.decisionConfig.underlyingUniverse, qualification: qualificationBrief(qualification, qualificationConfig) }), deps.analystTimeoutMs);
+      const raw = await withTimeout(deps.analyst({
+        tradingDay: deps.tradingDay,
+        cycleIndex: deps.cycleIndex,
+        underlyings: deps.decisionConfig.underlyingUniverse,
+        qualification: qualificationBrief(qualification, qualificationConfig),
+        market: { contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying },
+      }), deps.analystTimeoutMs);
       batch = parseAnalystOutput(raw);
     } catch (error) {
       analystSkip = messageOf(error);
