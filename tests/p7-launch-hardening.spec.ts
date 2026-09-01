@@ -8,7 +8,7 @@ import type { JournalEntry } from "../src/core/journal.js";
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
 import { buildRuntime, withVerifiedChildFailureCleanup } from "../src/shell/agent-runtime.js";
 import type { AgentRuntime } from "../src/shell/agent-runtime.js";
-import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
+import { admitCertificateCommand, CERTIFICATE_RUN_LIMITS } from "../src/shell/certificate-command-guard.js";
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
 import { enumerateRuntimeFiles } from "../src/shell/digests.js";
 import { readHolder, releaseHolder, withMutex, writeHolder } from "../src/shell/epoch-store.js";
@@ -32,6 +32,8 @@ describe("certificate command admission", () => {
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: false })).toMatchObject({ ok: false });
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true })).toEqual({ ok: true });
     expect(admitCertificateCommand({ profile: "dev", ownerGo: true, preflight: false })).toEqual({ ok: true });
+    expect(CERTIFICATE_RUN_LIMITS).toEqual({ maxEntryCycles: 8, entryIntervalMs: 180_000, patienceCycles: 3, maxFlattenCycles: 20, flattenIntervalMs: 60_000 });
+    expect(Object.values(CERTIFICATE_RUN_LIMITS).every(value => Number.isSafeInteger(value) && value > 0)).toBe(true);
   });
 });
 
@@ -458,6 +460,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     let exposed = true;
     let flattenCycles = 0;
     let halted = false;
+    const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const failures: string[][] = [];
     const runtime = {
       binding: BINDING,
@@ -471,8 +474,8 @@ describe("P7 launch hardening — certificate failure recovery", () => {
       },
       gateway: {
         heartbeat: () => Promise.resolve(true),
-        openJournal: () => Promise.resolve({ entries: [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
-        openJournalAsWriter: () => Promise.resolve({ entries: [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        openJournal: () => Promise.resolve({ entries: halted ? [halt] : [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        openJournalAsWriter: () => Promise.resolve({ entries: halted ? [halt] : [], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
         dispatch: () => { halted = true; return Promise.resolve({ ok: true, seq: 1, stalenessNeutral: false }); },
       },
       cycle: () => { flattenCycles += 1; exposed = false; return Promise.resolve({}); },
@@ -512,6 +515,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     let terminal = false;
     let haltRequests = 0;
     const intent = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "INTENT", action: "entry", clientOrderId: "entry:late" } as unknown as JournalEntry;
+    const halt = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const filled = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "OUTCOME", clientOrderId: "entry:late", status: "filled" } as unknown as JournalEntry;
     const runtime = {
       binding: BINDING,
@@ -524,14 +528,14 @@ describe("P7 launch hardening — certificate failure recovery", () => {
       },
       gateway: {
         heartbeat: () => Promise.resolve(true),
-        openJournal: () => Promise.resolve({ entries: terminal ? [intent, filled] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
+        openJournal: () => Promise.resolve({ entries: terminal ? [intent, halt, filled] : halted ? [intent, halt] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } }),
         openJournalAsWriter: async () => {
           barrierReads += 1;
           if (barrierReads === 1) {
             enterBarrier?.();
             await barrier;
           }
-          return { entries: terminal ? [intent, filled] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } };
+          return { entries: terminal ? [intent, halt, filled] : halted ? [intent, halt] : [intent], quarantined: [], halt: halted ? { halted: true, reason: "MANUAL", sticky: false } : { halted: false, reason: null, sticky: false } };
         },
         dispatch: () => { haltRequests += 1; halted = true; return Promise.resolve({ ok: true, seq: 2, stalenessNeutral: false }); },
       },
@@ -566,6 +570,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
 
   it("refuses a flat recovery snapshot when writer authority changes during the broker read", async () => {
     let writerReads = 0;
+    const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
     const runtime = {
       binding: BINDING,
       tradingDay: "2026-09-01",
@@ -575,7 +580,7 @@ describe("P7 launch hardening — certificate failure recovery", () => {
         heartbeat: () => Promise.resolve(false),
         openJournalAsWriter: () => {
           writerReads += 1;
-          return Promise.resolve(writerReads === 1 ? { entries: [], quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } } : null);
+          return Promise.resolve(writerReads === 1 ? { entries: [halt], quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } } : null);
         },
       },
       cycle: () => Promise.resolve({}),
@@ -596,6 +601,32 @@ describe("P7 launch hardening — certificate failure recovery", () => {
       approveFenceUnhalt: () => Promise.resolve(null),
     })).resolves.toBe(false);
     expect(writerReads).toBe(2);
+  });
+
+  it("invalidates a flat proof when the human halt transition changes during the snapshot", async () => {
+    const firstHalt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "abort", sticky: false } as unknown as JournalEntry;
+    const unhalt = { seq: 2, at: "2026-09-01T12:00:01.000Z", epoch: 1, type: "UNHALT", operator: "owner", reason: "changed", actor: "human" } as unknown as JournalEntry;
+    const replacement = { seq: 3, at: "2026-09-01T12:00:02.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "replacement", sticky: false } as unknown as JournalEntry;
+    let opens = 0;
+    const runtime = {
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      epoch: 1,
+      broker: { fullSnapshot: () => Promise.resolve({ account: { accountId: EXPECTED }, positions: [], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 }) },
+      gateway: {
+        heartbeat: () => Promise.resolve(false),
+        openJournalAsWriter: () => {
+          opens += 1;
+          const entries = opens === 1 ? [firstHalt] : [firstHalt, unhalt, replacement];
+          return Promise.resolve({ entries, quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } });
+        },
+      },
+      cycle: () => Promise.resolve({}),
+      ping: { success: () => Promise.resolve(), fail: () => Promise.resolve() },
+    } as unknown as AgentRuntime;
+
+    await expect(recoverCertificateAfterFailure({ runtime, repoRoot: process.cwd(), clock: () => 0, sleep: () => Promise.resolve(), log: () => undefined, maxEntryCycles: 1, entryIntervalMs: 1, patienceCycles: 1, maxFlattenCycles: 1, flattenIntervalMs: 1, approveFenceUnhalt: () => Promise.resolve(null) })).resolves.toBe(false);
+    expect(opens).toBe(2);
   });
 });
 

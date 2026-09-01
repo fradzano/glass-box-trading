@@ -1315,3 +1315,13 @@ small, no ADR split).
   must still vanish from the flat snapshot. Atomic writer-epoch/heartbeat/
   journal checks bracket the stable flat snapshot, so a takeover or human
   halt change during the read also prevents a false proof.
+- **2026-09-01 — P7 R13 closes ambient harness and MCP launch inputs.** The
+  certificate attempt/recovery bounds are positive code constants covered by
+  `runtimeDigest`; ambient `CERTIFICATE_*` variables can no longer disable the
+  abort path. Recovery compares the exact terminal HALT journal sequence across
+  its flat snapshot, not merely the projected boolean. The pinned MCP SDK's
+  implicit Windows environment is neutralized with explicit empty overrides,
+  then a `-S` Python bootstrap reconstructs the exact validated environment
+  before any verified package import. Secrets are captured in-process and never
+  enter argv; exact non-secret literals undo interpreter rewrites such as a
+  prefixed `PYTHONPATH`.

@@ -4,7 +4,7 @@
 // and outside market hours. The certificate lands under evidence/pre-arm/.
 import { buildRuntime } from "./agent-runtime.js";
 import { runCertificate } from "./certificate-run.js";
-import { admitCertificateCommand } from "./certificate-command-guard.js";
+import { admitCertificateCommand, CERTIFICATE_RUN_LIMITS } from "./certificate-command-guard.js";
 import { loadEnvironment } from "./runtime-config.js";
 import { createInterface } from "node:readline/promises";
 
@@ -57,7 +57,6 @@ if (!runtime.session.isTradingDay || clock() < runtime.session.opensAt || clock(
   await runtime.shutdown();
   process.exit(2);
 }
-const minutes = (value: string | undefined, fallback: number): number => (value === undefined ? fallback : Number(value)) * 60_000;
 try {
   const result = await runCertificate({
     runtime,
@@ -65,11 +64,7 @@ try {
     clock,
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     log,
-    maxEntryCycles: Number(process.env["CERTIFICATE_MAX_ENTRY_CYCLES"] ?? "8"),
-    entryIntervalMs: minutes(process.env["CERTIFICATE_ENTRY_INTERVAL_MIN"], 3),
-    patienceCycles: Number(process.env["CERTIFICATE_PATIENCE_CYCLES"] ?? "3"),
-    maxFlattenCycles: Number(process.env["CERTIFICATE_MAX_FLATTEN_CYCLES"] ?? "20"),
-    flattenIntervalMs: minutes(process.env["CERTIFICATE_FLATTEN_INTERVAL_MIN"], 1),
+    ...CERTIFICATE_RUN_LIMITS,
     approveFenceUnhalt: async facts => {
       const token = `CLEAR-HALT ${String(facts.haltSeq)}`;
       process.stdout.write(`Fence reconciliation is stably flat after HTTP ${String(facts.httpStatus)}. Working orders: ${facts.workingOrders.join(",") || "none"}; confirmed canceled: ${facts.canceledOrders.join(",") || "none"}.\n`);

@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { DEFAULT_INHERITED_ENV_VARS, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpLaunchObservation, RuntimeLock } from "../core/startup.js";
 import type { McpChildHandle, McpChildPort, McpEvidencePort } from "./analyst-mcp-launcher.js";
 import type { AnalystEnvironmentPaths } from "./runtime-config.js";
@@ -23,6 +23,22 @@ export interface VerifiedChildHandle extends McpChildHandle {
 
 export interface EnvironmentEvidence {
   readonly launchArtifactsSha256: string;
+}
+
+/** Override the SDK's implicit host allowlist before it merges with our env. */
+export function isolatedMcpTransportEnvironment(validated: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...Object.fromEntries(DEFAULT_INHERITED_ENV_VARS.map(name => [name, ""])), ...validated };
+}
+
+/** Reconstruct the exact validated env before importing any verified MCP package code. */
+export function mcpPythonBootstrap(packageModuleDir: string, validated: Readonly<Record<string, string>>): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(packageModuleDir)) throw new Error("invalid MCP package module name");
+  const secretNames = ["ALPACA_API_KEY", "ALPACA_SECRET_KEY"].filter(name => validated[name] !== undefined);
+  const exactNonSecrets = Object.fromEntries(Object.entries(validated).filter(([name]) => !secretNames.includes(name)).sort(([left], [right]) => left.localeCompare(right)));
+  // Secret values stay in the child environment and never enter argv. All
+  // non-secret values are safe literals, restoring any interpreter rewrite
+  // (notably PYTHONPATH) before the verified package sees it.
+  return `import os; _secret_names=${JSON.stringify(secretNames)}; _secrets={_name: os.environ[_name] for _name in _secret_names}; _exact=${JSON.stringify(exactNonSecrets)}; os.environ.clear(); os.environ.update(_exact); os.environ.update(_secrets); from ${packageModuleDir}.cli import main; main()`;
 }
 
 function sha256Of(file: string): string {
@@ -200,13 +216,16 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
 
   const child: McpChildPort = {
     async spawn(env: Readonly<Record<string, string>>): Promise<VerifiedChildHandle> {
-      // The environment arrives exactly as the launcher validated it (WIN-6); nothing is added here.
+      const transportEnvironment = isolatedMcpTransportEnvironment(env);
       const transport = new StdioClientTransport({
         command: paths.runtime,
         // `-P` prevents Python from prepending cwd to sys.path; imports can come only from the explicitly
         // constructed PYTHONPATH whose package bytes were verified immediately before this spawn.
-        args: ["-P", "-S", "-c", `from ${packageModuleDir}.cli import main; main()`, "--transport", "stdio"],
-        env: { ...env },
+        args: ["-P", "-S", "-c", mcpPythonBootstrap(packageModuleDir, env), "--transport", "stdio"],
+        // SDK 1.30 merges a fixed host allowlist even when env is supplied.
+        // Empty overrides prevent value inheritance; the Python bootstrap then
+        // removes those names before importing the verified server package.
+        env: transportEnvironment,
         cwd: paths.site,
         stderr: "pipe",
       });

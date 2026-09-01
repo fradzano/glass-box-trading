@@ -18,6 +18,7 @@ import {
 import type { AnalystManifest, McpLaunchObservation, RuntimeLock } from "../src/core/startup.js";
 import { launchVerifiedAnalystChild } from "../src/shell/analyst-mcp-launcher.js";
 import type { McpChildHandle, McpLaunchPorts } from "../src/shell/analyst-mcp-launcher.js";
+import { isolatedMcpTransportEnvironment, mcpPythonBootstrap } from "../src/shell/mcp-environment.js";
 
 const ROOT = process.cwd();
 
@@ -54,6 +55,17 @@ function matchingObservation(lock: RuntimeLock, manifest: AnalystManifest, overr
 }
 
 describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree", () => {
+  it("neutralizes the SDK default host environment and scrubs it before MCP package import", () => {
+    const transport = isolatedMcpTransportEnvironment({ EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows" });
+    expect(transport).toMatchObject({ EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows", APPDATA: "", PATH: "", USERPROFILE: "" });
+    const bootstrap = mcpPythonBootstrap("alpaca_mcp_server", { EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows", PYTHONPATH: "PINNED_SITE", ALPACA_API_KEY: "TEST_ONLY_SECRET_VALUE", ALPACA_SECRET_KEY: "TEST_ONLY_SECRET_VALUE_2" });
+    expect(bootstrap).toContain("os.environ.clear()");
+    expect(bootstrap).toContain("PINNED_SITE");
+    expect(bootstrap).not.toContain("TEST_ONLY_SECRET_VALUE");
+    expect(bootstrap.indexOf("os.environ.clear()")).toBeLessThan(bootstrap.indexOf("from alpaca_mcp_server.cli import main"));
+    expect(() => mcpPythonBootstrap("bad;import host", {})).toThrow("invalid MCP package module name");
+  });
+
   it("the shipped config artifacts pass their schemas and name the same server identity", () => {
     const manifest = trackedManifest();
     const lock = trackedLock();

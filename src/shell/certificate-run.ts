@@ -98,6 +98,12 @@ export function unresolvedRecoveryEntryIds(entries: readonly JournalEntry[]): re
   return [...unresolved].sort();
 }
 
+function latestHaltSeq(entries: readonly JournalEntry[]): number | null {
+  const halt = [...entries].reverse().find(entry => entry.type === "HALT");
+  if (halt === undefined) return null;
+  return entries.some(entry => entry.seq > halt.seq && entry["actor"] === "human") ? null : halt.seq;
+}
+
 async function runCertificateAttempt(options: CertificateRunOptions): Promise<CertificateRunResult> {
   const { runtime, clock, log } = options;
   const startedAt = epochMsToUtcIso(clock());
@@ -283,6 +289,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
   }
   for (let attempt = 0; attempt < options.maxFlattenCycles; attempt += 1) {
     let quiescent = false;
+    let bracketHaltSeq: number | null = null;
     let opened: Awaited<ReturnType<AgentRuntime["gateway"]["openJournal"]>>;
     try {
       // Fence every exceptional run before attempting to prove flatness. The
@@ -291,7 +298,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
       const authoritative = await runtime.gateway.openJournalAsWriter(runtime.epoch);
       if (authoritative === null) throw new Error("certificate recovery lost writer authority before flat proof");
       opened = authoritative;
-      if (!opened.halt.halted) {
+      if (!opened.halt.halted || latestHaltSeq(opened.entries) === null) {
         const halted = await runtime.gateway.dispatch({ class: "authoritative", epoch: runtime.epoch, action: { kind: "journal_append", entry: { at: epochMsToUtcIso(options.clock()), epoch: runtime.epoch, type: "HALT", reason: "MANUAL", detail: "certificate aborted; reconcile every uncertain lifecycle and prove the bound account flat before human un-halt", sticky: false } } });
         if (!halted.ok) throw new Error(`certificate recovery halt failed: ${halted.reason}`);
         const haltedJournal = await runtime.gateway.openJournalAsWriter(runtime.epoch);
@@ -299,6 +306,8 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
         opened = haltedJournal;
       }
       if (!opened.halt.halted) throw new Error("certificate recovery halt is not durable");
+      bracketHaltSeq = latestHaltSeq(opened.entries);
+      if (bracketHaltSeq === null) throw new Error("certificate recovery halt has no journal transition");
       const unresolved = unresolvedRecoveryEntryIds(opened.entries);
       if (unresolved.length > 0) log(`certificate recovery unresolved entries ${String(attempt + 1)}: ${unresolved.join(",")}`);
       quiescent = unresolved.length === 0;
@@ -314,7 +323,7 @@ export async function recoverCertificateAfterFailure(options: CertificateRunOpti
           && snapshot.nonTerminalOrders.length === 0) {
           const after = await runtime.gateway.openJournalAsWriter(runtime.epoch);
           if (after === null) throw new Error("certificate recovery lost writer authority after flat snapshot");
-          if (after.halt.halted && unresolvedRecoveryEntryIds(after.entries).length === 0) return true;
+          if (after.halt.halted && latestHaltSeq(after.entries) === bracketHaltSeq && unresolvedRecoveryEntryIds(after.entries).length === 0) return true;
         }
       }
     } catch (error) {
