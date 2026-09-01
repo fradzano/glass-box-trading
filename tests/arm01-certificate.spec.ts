@@ -162,6 +162,68 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(certificate.evidence.fill?.clientOrderId).toBe("entry:filled");
   });
 
+  it("uses the exact effective terminal OUTCOME for both acceptance and fill evidence", () => {
+    const base = passingJournal();
+    const originalFill = base.find(item => item.seq === 4);
+    if (originalFill === undefined) throw new Error("fixture");
+    const oldFill = { ...originalFill, brokerOrderId: "broker-A" } as JournalEntry;
+    const latestFill = entry(5, "OUTCOME", {
+      clientOrderId: "entry:credit",
+      status: "filled",
+      brokerOrderId: "broker-B",
+      brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", filled_at: "2026-09-01T14:05:00.000Z" },
+      filledQuantity: 1,
+      avgFillPriceCents: 20,
+    });
+    const journal = [
+      ...base.filter(item => item.seq <= 3),
+      oldFill,
+      latestFill,
+      entry(6, "CYCLE", { cycleIndex: 2, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([{ contractId: SHORT, quantity: -1 }, { contractId: LONG, quantity: 1 }]), batchVerdicts: [], candidateVerdicts: [] }),
+      entry(7, "HALT", { reason: "AUTH_FAILURE", detail: "broker credential rejected (401)", sticky: false }),
+      entry(8, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "fence drill complete" }),
+    ];
+    const brokerB = (status: string, filled: boolean): OrderObservation => ({
+      observedAt: "2026-09-01T14:05:01.000Z",
+      order: { ...order(status, filled), brokerOrderId: "broker-B", avgFillPriceCents: filled ? 20 : null },
+    });
+    const certificate = buildCertificate(inputs({
+      journal,
+      orderObservations: [brokerB("accepted", false), brokerB("filled", true)],
+      fence: { httpStatus: 401, haltSeq: 7, unhaltSeq: 8, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+
+    expect(certificate.verdict).toBe("PASS");
+    expect(certificate.evidence.creditAcceptance).toMatchObject({ brokerOrderId: "broker-B", outcomeSeq: 5 });
+    expect(certificate.evidence.fill).toMatchObject({ brokerOrderId: "broker-B", outcomeSeq: 5 });
+
+    const malformedLatest = journal.map(item => item.seq === 5 ? { ...item, filledQuantity: 0, avgFillPriceCents: null } : item);
+    const refused = buildCertificate(inputs({
+      journal: malformedLatest,
+      orderObservations: [brokerB("accepted", false), brokerB("filled", true)],
+      fence: { httpStatus: 401, haltSeq: 7, unhaltSeq: 8, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+    expect(refused.verdict).toBe("FAIL");
+    expect(refused.evidence.fill).toBeNull();
+
+    const canceledAfterFill = [
+      ...base.filter(item => item.seq <= 4),
+      entry(5, "OUTCOME", { clientOrderId: "entry:credit", status: "canceled", brokerOrderId: "broker-1", brokerTimestamps: { submitted_at: "2026-09-01T14:03:00.000Z", canceled_at: "2026-09-01T14:05:00.000Z" }, filledQuantity: 0, avgFillPriceCents: null }),
+      entry(6, "CYCLE", { cycleIndex: 2, tradingDay: "2026-09-01", reasonCodes: [], snapshot: snapshot([{ contractId: SHORT, quantity: -1 }, { contractId: LONG, quantity: 1 }]), batchVerdicts: [], candidateVerdicts: [] }),
+      entry(7, "HALT", { reason: "AUTH_FAILURE", detail: "broker credential rejected (401)", sticky: false }),
+      entry(8, "UNHALT", { actor: "human", operator: "certificate-driver", reason: "fence drill complete" }),
+    ];
+    const canceled = buildCertificate(inputs({
+      journal: canceledAfterFill,
+      harnessCancels: ["entry:credit"],
+      orderObservations: [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: order("canceled", false) }],
+      fence: { httpStatus: 401, haltSeq: 7, unhaltSeq: 8, workingOrdersAtFence: [], canceledAtFence: [] },
+    }));
+    expect(canceled.verdict).toBe("FAIL");
+    expect(canceled.evidence.creditAcceptance).toMatchObject({ terminalStatus: "canceled", outcomeSeq: 5 });
+    expect(canceled.evidence.fill).toBeNull();
+  });
+
   it("requires an exact one-lot quantitative reconciliation, not merely matching position signs", () => {
     const oversizedPositions = passingJournal().map(item => item.seq === 5 ? { ...item, snapshot: snapshot([{ contractId: SHORT, quantity: -100 }, { contractId: LONG, quantity: 100 }]) } : item);
     expect(buildCertificate(inputs({ journal: oversizedPositions })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);

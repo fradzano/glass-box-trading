@@ -1362,3 +1362,11 @@ small, no ADR split).
   canonical paper origin remains solely in `config/policy.json`; stale
   `ALPACA_*_BASE_URL` examples were removed. P7 auth is OAuth-only and
   fail-closed; the unimplemented API-key fallback decision is superseded.
+- **2026-09-01 — P7 R17 uses one canonical terminal OUTCOME for both
+  acceptance and fill.** `creditAcceptance.outcomeSeq` is now the sole fill
+  source. The fill must be that exact `filled` OUTCOME and must retain the same
+  intent, client-order, and broker-order identities. An earlier fill cannot be
+  combined with a later fill or harness cancel, even when the client ID is
+  reused in the journal. The builder therefore refuses the same contradictions
+  that the arming validator checks instead of writing an internally invalid
+  PASS artifact.

@@ -584,53 +584,60 @@ function fillFrom(inputs: CertificateInputs, creditAcceptance: CreditAcceptanceE
     failures.push("no fill can be bound to an accepted credit lifecycle");
     return null;
   }
-  const fills = inputs.journal.filter(entry => entry.type === "OUTCOME" && entry["clientOrderId"] === creditAcceptance.clientOrderId && entry["status"] === "filled" && typeof entry["filledQuantity"] === "number" && entry["filledQuantity"] > 0 && typeof entry["avgFillPriceCents"] === "number");
-  for (const fill of fills) {
-    const clientOrderId = fill["clientOrderId"];
-    if (typeof clientOrderId !== "string") continue;
-    const intent = inputs.journal.find(entry => isEntryIntent(entry) && entry.seq < fill.seq && entry["clientOrderId"] === clientOrderId);
-    if (intent === undefined) continue;
-    // The filled entry must itself be a defined-risk, G1-passed structure (G5-L2): an unrelated naked fill is no evidence.
-    if (!definedRiskShape(intent) || !gatePassed(intent, "G1")) continue;
-    const intentQuantity = intent["quantity"];
-    const filledQuantity = fill["filledQuantity"] as number;
-    // The supervised certificate deliberately proves the smallest real structure: exactly one complete lot.
-    if (intentQuantity !== 1 || filledQuantity !== 1) continue;
-    const legs = fullLegsOf(intent);
-    if (legs.length === 0) continue;
-    const expectedPositions = new Map<string, number>();
-    for (const leg of legs) expectedPositions.set(leg.contractId, (expectedPositions.get(leg.contractId) ?? 0) + (leg.side === "sell" ? -leg.ratio : leg.ratio) * filledQuantity);
-    // Reconciliation: after a flat start, the later broker snapshot must carry exactly the filled Mleg quantities,
-    // with no unrelated non-zero position able to masquerade as the tested minimal structure.
-    const later = inputs.journal.filter(entry => entry.seq > fill.seq && snapshotOf(entry) !== null).find(entry => {
-      const positions = snapshotOf(entry)?.["positions"];
-      if (!Array.isArray(positions)) return false;
-      const actual = new Map<string, number>();
-      for (const position of positions) {
-        if (!isRecord(position) || !nonBlank(position["contractId"]) || !Number.isSafeInteger(position["quantity"])) return false;
-        if ((position["quantity"] as number) !== 0) actual.set(position["contractId"], (actual.get(position["contractId"]) ?? 0) + (position["quantity"] as number));
-      }
-      return snapshotOf(entry)?.["accountId"] === inputs.accountId
-        && actual.size === expectedPositions.size
-        && [...expectedPositions].every(([contractId, quantity]) => actual.get(contractId) === quantity);
-    });
-    if (later === undefined) continue;
-    const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
-    const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : null;
-    if (filledAtInstant === null || !nonBlank(fill["brokerOrderId"])) continue;
-    if (outsideWindow(inputs.window, intent.at, fill.at, filledAtInstant, later.at)) continue;
-    return {
-      clientOrderId,
-      brokerOrderId: fill["brokerOrderId"],
-      filledQuantity: fill["filledQuantity"] as number,
-      avgFillPriceCents: fill["avgFillPriceCents"] as number,
-      filledAt: filledAtInstant,
-      outcomeSeq: fill.seq,
-      reconciledSnapshotSeq: later.seq,
-    };
+  // Acceptance already selected the canonical effective terminal OUTCOME. Fill
+  // evidence must use that exact sequence and broker identity; an earlier fill
+  // bearing the same clientOrderId is not the accepted broker lifecycle.
+  const fill = inputs.journal.find(entry => entry.seq === creditAcceptance.outcomeSeq
+    && entry.type === "OUTCOME"
+    && entry["clientOrderId"] === creditAcceptance.clientOrderId
+    && entry["brokerOrderId"] === creditAcceptance.brokerOrderId
+    && entry["status"] === "filled"
+    && typeof entry["filledQuantity"] === "number"
+    && entry["filledQuantity"] > 0
+    && typeof entry["avgFillPriceCents"] === "number");
+  const intent = inputs.journal.find(entry => entry.seq === creditAcceptance.intentSeq
+    && isEntryIntent(entry)
+    && entry["clientOrderId"] === creditAcceptance.clientOrderId);
+  if (fill === undefined || intent === undefined || !definedRiskShape(intent) || !gatePassed(intent, "G1")) {
+    failures.push(`accepted credit lifecycle ${creditAcceptance.clientOrderId} was not filled as exactly one lot and reconciled through a later bound-account broker snapshot`);
+    return null;
   }
-  failures.push(`accepted credit lifecycle ${creditAcceptance.clientOrderId} was not filled as exactly one lot and reconciled through a later bound-account broker snapshot`);
-  return null;
+  const intentQuantity = intent["quantity"];
+  const filledQuantity = fill["filledQuantity"] as number;
+  if (intentQuantity !== 1 || filledQuantity !== 1) {
+    failures.push(`accepted credit lifecycle ${creditAcceptance.clientOrderId} was not filled as exactly one lot and reconciled through a later bound-account broker snapshot`);
+    return null;
+  }
+  const legs = fullLegsOf(intent);
+  const expectedPositions = new Map<string, number>();
+  for (const leg of legs) expectedPositions.set(leg.contractId, (expectedPositions.get(leg.contractId) ?? 0) + (leg.side === "sell" ? -leg.ratio : leg.ratio) * filledQuantity);
+  const later = inputs.journal.filter(entry => entry.seq > fill.seq && snapshotOf(entry) !== null).find(entry => {
+    const positions = snapshotOf(entry)?.["positions"];
+    if (!Array.isArray(positions)) return false;
+    const actual = new Map<string, number>();
+    for (const position of positions) {
+      if (!isRecord(position) || !nonBlank(position["contractId"]) || !Number.isSafeInteger(position["quantity"])) return false;
+      if ((position["quantity"] as number) !== 0) actual.set(position["contractId"], (actual.get(position["contractId"]) ?? 0) + (position["quantity"] as number));
+    }
+    return snapshotOf(entry)?.["accountId"] === inputs.accountId
+      && actual.size === expectedPositions.size
+      && [...expectedPositions].every(([contractId, quantity]) => actual.get(contractId) === quantity);
+  });
+  const timestamps = isRecord(fill["brokerTimestamps"]) ? fill["brokerTimestamps"] : {};
+  const filledAtInstant = typeof timestamps["filled_at"] === "string" ? timestamps["filled_at"] : null;
+  if (later === undefined || filledAtInstant === null || outsideWindow(inputs.window, intent.at, fill.at, filledAtInstant, later.at)) {
+    failures.push(`accepted credit lifecycle ${creditAcceptance.clientOrderId} was not filled as exactly one lot and reconciled through a later bound-account broker snapshot`);
+    return null;
+  }
+  return {
+    clientOrderId: creditAcceptance.clientOrderId,
+    brokerOrderId: creditAcceptance.brokerOrderId,
+    filledQuantity,
+    avgFillPriceCents: fill["avgFillPriceCents"] as number,
+    filledAt: filledAtInstant,
+    outcomeSeq: fill.seq,
+    reconciledSnapshotSeq: later.seq,
+  };
 }
 
 function fenceFrom(inputs: CertificateInputs, failures: string[]): FenceDrillEvidence | null {
