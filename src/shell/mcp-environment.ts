@@ -14,6 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { DEFAULT_INHERITED_ENV_VARS, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpLaunchObservation, RuntimeLock } from "../core/startup.js";
 import type { McpChildHandle, McpChildPort, McpEvidencePort } from "./analyst-mcp-launcher.js";
+import { withOperationTimeout } from "./operation-timeout.js";
 import type { AnalystEnvironmentPaths } from "./runtime-config.js";
 
 export interface VerifiedChildHandle extends McpChildHandle {
@@ -260,7 +261,7 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
   };
 
   const child: McpChildPort = {
-    async spawn(env: Readonly<Record<string, string>>): Promise<VerifiedChildHandle> {
+    async spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): Promise<VerifiedChildHandle> {
       const transportEnvironment = isolatedMcpTransportEnvironment(env);
       const transport = new StdioClientTransport({
         command: paths.runtime,
@@ -275,23 +276,32 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
         stderr: "pipe",
       });
       const client = new Client({ name: "glass-box-trading", version: "0.1.0" });
-      await client.connect(transport);
+      try {
+        await withOperationTimeout(client.connect(transport), operationTimeoutMs, "MCP_CONNECT_TIMEOUT");
+      } catch (error) {
+        try {
+          await withOperationTimeout(client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], "MCP connect failed and transport cleanup did not complete", { cause: cleanupError });
+        }
+        throw error;
+      }
       return {
         async listTools(): Promise<readonly string[]> {
-          const result = await client.listTools();
+          const result = await withOperationTimeout(client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
           return result.tools.map(tool => tool.name);
         },
         async listToolDefinitions() {
-          const result = await client.listTools();
+          const result = await withOperationTimeout(client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
           return result.tools.map(tool => ({ name: tool.name, description: tool.description ?? "", inputSchema: tool.inputSchema }));
         },
         async callTool(name, args) {
-          const result = await client.callTool({ name, arguments: { ...args } });
+          const result = await withOperationTimeout(client.callTool({ name, arguments: { ...args } }), operationTimeoutMs, "MCP_CALL_TOOL_TIMEOUT");
           const content = Array.isArray(result["content"]) ? (result["content"] as readonly unknown[]) : [];
           return { content, isError: result["isError"] === true };
         },
         async stop(): Promise<void> {
-          await client.close();
+          await withOperationTimeout(client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
         },
       };
     },

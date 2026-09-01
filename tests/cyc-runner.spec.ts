@@ -247,6 +247,28 @@ describe("S-X-01/03/04 through the runner: INTENT before order, OUTCOME after, e
 });
 
 describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before any new order", () => {
+  it("blocks every later plan in the same batch after a submit becomes confirmation-unclear", async () => {
+    let submitCalls = 0;
+    const run = await harness({
+      analyst: () => Promise.resolve(TWO_CANDIDATES_JSON),
+      broker: {
+        onSubmit: () => {
+          submitCalls += 1;
+          return submitCalls === 1 ? { kind: "lose_ack_never_sent" } : { kind: "fill" };
+        },
+      },
+    });
+
+    const report = await run.cycle();
+
+    expect(report.entriesBlocked).toContain("CONFIRMATION_UNCLEAR");
+    expect(report.actions).toHaveLength(2);
+    expect(report.actions[0]).toMatchObject({ result: "SUBMITTED", status: "confirmation_unclear" });
+    expect(report.actions[1]).toMatchObject({ result: "NOT_SENT", detail: "CONFIRMATION_UNCLEAR" });
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
+  });
+
   it("S-CYC-04 timeout after send → OUTCOME confirmation_unclear, reservation retained; the next cycle's phase 0 finds the order and journals the resolution first", async () => {
     const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
     const first = await run.cycle();

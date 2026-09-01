@@ -295,6 +295,52 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
     expect(stopped.count).toBe(1);
   });
 
+  it("bounds a stalled child connect before inventory can be released", async () => {
+    const { ports } = fakePorts({});
+    await expect(launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      child: { spawn: () => new Promise<McpChildHandle>(() => undefined) },
+    })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+  });
+
+  it("bounds stalled inventory and stalled child cleanup", async () => {
+    const { ports } = fakePorts({});
+    let stopCalls = 0;
+    const child: McpChildHandle = {
+      listTools: () => new Promise<readonly string[]>(() => undefined),
+      stop: () => { stopCalls += 1; return new Promise<void>(() => undefined); },
+    };
+    await expect(launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      child: { spawn: () => Promise.resolve(child) },
+    })).rejects.toThrow("MCP inventory failed and child cleanup did not complete");
+    expect(stopCalls).toBe(1);
+  });
+
+  it("preserves an invalid inventory finding when child cleanup also stalls", async () => {
+    const { ports } = fakePorts({});
+    const child: McpChildHandle = {
+      listTools: () => Promise.resolve([...manifest.allowedTools, "place_order"]),
+      stop: () => new Promise<void>(() => undefined),
+    };
+    let caught: unknown;
+    try {
+      await launchVerifiedAnalystChild({
+        ...ports,
+        operationTimeoutMs: 5,
+        child: { spawn: () => Promise.resolve(child) },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
+    expect(messages.some(message => message.includes("EXTRA_TOOL"))).toBe(true);
+    expect(messages).toContain("MCP_STOP_TIMEOUT after 5 ms");
+  });
+
   it("an ambiguous manifest/lock identity refuses before any port is touched", async () => {
     const { ports, calls } = fakePorts({});
     const result = await launchVerifiedAnalystChild({ ...ports, manifest: { ...manifest, server: { ...manifest.server, version: "9.9.9" } } });

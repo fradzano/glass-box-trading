@@ -18,7 +18,7 @@ import { createAlpacaBroker } from "./alpaca-broker.js";
 import type { AlpacaBroker, MarketWindow } from "./alpaca-broker.js";
 import { createAccountBoundBrokerPort, verifyActiveAccount } from "./account-bound-broker.js";
 import { createClaudeAnalyst } from "./analyst-claude.js";
-import { launchVerifiedAnalystChild } from "./analyst-mcp-launcher.js";
+import { launchVerifiedAnalystChild, MCP_CHILD_OPERATION_TIMEOUT_MS } from "./analyst-mcp-launcher.js";
 import { runCycle } from "./cycle-runner.js";
 import { runWithinCycleWalltime } from "./cycle-walltime.js";
 import type { AnalystInput, CycleReport, LifecycleDeps, PingPort } from "./cycle-runner.js";
@@ -37,6 +37,7 @@ import { httpStatusOf } from "./broker-errors.js";
 import { analystEnvironmentPaths, loadEnvironment, loadPolicy, rawStartupConfig, roleCredentials, secretValues } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
 import type { StatePaths } from "./state-dir.js";
+import { withOperationTimeout } from "./operation-timeout.js";
 
 export const MARKET_DATA_ORIGIN = "https://data.alpaca.markets";
 
@@ -88,24 +89,31 @@ function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
+async function runtimeCleanupErrors(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, stopTimeoutMs: number): Promise<unknown[]> {
+  const [stopped, released] = await Promise.allSettled([
+    withOperationTimeout(Promise.resolve().then(() => child.stop()), stopTimeoutMs, "MCP_STOP_TIMEOUT"),
+    Promise.resolve().then(() => releaseHolder(paths, holderId)),
+  ]);
+  const errors: unknown[] = [];
+  if (stopped.status === "rejected") errors.push(stopped.reason as unknown);
+  if (released.status === "rejected") errors.push(released.reason as unknown);
+  return errors;
+}
+
 /** Once a verified child exists, every exceptional construction exit owns its cleanup. */
-export async function withVerifiedChildFailureCleanup<T>(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, work: () => Promise<T> | T): Promise<T> {
+export async function withVerifiedChildFailureCleanup<T>(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, work: () => Promise<T> | T, stopTimeoutMs = MCP_CHILD_OPERATION_TIMEOUT_MS): Promise<T> {
   try {
     return await work();
   } catch (error) {
-    const cleanupErrors: unknown[] = [];
-    try { await child.stop(); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
-    try { await releaseHolder(paths, holderId); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    const cleanupErrors = await runtimeCleanupErrors(child, paths, holderId, stopTimeoutMs);
     if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], "runtime construction failed and cleanup was incomplete", { cause: error });
     throw error;
   }
 }
 
 /** Stop the verified child and release writer ownership independently. */
-export async function shutdownRuntimeResources(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string): Promise<void> {
-  const cleanupErrors: unknown[] = [];
-  try { await child.stop(); } catch (error) { cleanupErrors.push(error); }
-  try { await releaseHolder(paths, holderId); } catch (error) { cleanupErrors.push(error); }
+export async function shutdownRuntimeResources(child: Pick<VerifiedChildHandle, "stop">, paths: StatePaths, holderId: string, stopTimeoutMs = MCP_CHILD_OPERATION_TIMEOUT_MS): Promise<void> {
+  const cleanupErrors = await runtimeCleanupErrors(child, paths, holderId, stopTimeoutMs);
   if (cleanupErrors.length === 1) throw cleanupErrors[0];
   if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, "runtime shutdown cleanup was incomplete");
 }
@@ -284,8 +292,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
       const observation = ports.lastObservation();
       const extra = ports.extra();
       if (observation === null) {
-        await child.stop();
-        await releaseHolder(paths, options.instanceId);
+        await shutdownRuntimeResources(child, paths, options.instanceId);
         return { ok: false, stage: "digest", reason: "no launch observation was recorded", startup };
       }
       const runtime = computeRuntimeDigest(repoRoot, {
@@ -301,16 +308,14 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
       });
       const policy = computePolicyDigest(raw, CANONICAL_PAPER_TRADING_ORIGIN);
       if (!runtime.ok || !policy.ok) {
-        await child.stop();
-        await releaseHolder(paths, options.instanceId);
+        await shutdownRuntimeResources(child, paths, options.instanceId);
         return { ok: false, stage: "digest", reason: `${runtime.ok ? "" : runtime.reason} ${policy.ok ? "" : policy.reason}`.trim(), startup };
       }
       log(`runtimeDigest ${runtime.digest} policyDigest ${policy.digest}; analyst inventory ${String(launch.inventory.length)} tools`);
 
       const oauthToken = env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "";
       if (oauthToken.length === 0) {
-        await child.stop();
-        await releaseHolder(paths, options.instanceId);
+        await shutdownRuntimeResources(child, paths, options.instanceId);
         return { ok: false, stage: "analyst", reason: "CLAUDE_CODE_OAUTH_TOKEN is not set", startup };
       }
       const analystDirectory = path.join(paths.root, "analyst");

@@ -16,6 +16,9 @@ import {
   verifyMcpLaunch,
 } from "../core/startup.js";
 import type { AnalystCredentials, AnalystManifest, McpLaunchObservation, McpViolation, RuntimeLock } from "../core/startup.js";
+import { withOperationTimeout } from "./operation-timeout.js";
+
+export const MCP_CHILD_OPERATION_TIMEOUT_MS = 30_000;
 
 /** Evidence about the dedicated environment, computed by the port against the lock's expectations. */
 export interface McpEvidencePort {
@@ -33,7 +36,7 @@ export interface McpChildHandle {
 }
 
 export interface McpChildPort {
-  spawn(env: Readonly<Record<string, string>>): Promise<McpChildHandle>;
+  spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): Promise<McpChildHandle>;
 }
 
 export interface McpLaunchPorts {
@@ -45,6 +48,8 @@ export interface McpLaunchPorts {
   readonly osEnv: Readonly<Record<string, string>>;
   readonly evidence: McpEvidencePort;
   readonly child: McpChildPort;
+  /** Test seam; production uses the runtime-digested constant. */
+  readonly operationTimeoutMs?: number;
 }
 
 export type McpLaunchResult =
@@ -52,31 +57,41 @@ export type McpLaunchResult =
   | { readonly ok: false; readonly stage: "agreement" | "pre_spawn" | "inventory"; readonly violations: readonly McpViolation[]; readonly issues: readonly string[] };
 
 export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise<McpLaunchResult> {
+  const timeoutMs = ports.operationTimeoutMs ?? MCP_CHILD_OPERATION_TIMEOUT_MS;
   const agreement = verifyManifestLockAgreement(ports.manifest, ports.lock);
   if (!agreement.ok) return { ok: false, stage: "agreement", violations: [], issues: agreement.issues };
 
   const patterns = ports.lock.installPolicy.removeBeforeSpawn;
-  await ports.evidence.removeBytecode(patterns);
-  const surviving = await ports.evidence.scanBytecode(patterns);
+  await withOperationTimeout(ports.evidence.removeBytecode(patterns), timeoutMs, "MCP_REMOVE_TIMEOUT");
+  const surviving = await withOperationTimeout(ports.evidence.scanBytecode(patterns), timeoutMs, "MCP_SCAN_TIMEOUT");
 
   const childEnvironment: Readonly<Record<string, string>> = { ...ports.osEnv, ...buildAnalystChildEnv(ports.manifest, ports.credentials) };
-  const gathered = await ports.evidence.gather(ports.lock);
+  const gathered = await withOperationTimeout(ports.evidence.gather(ports.lock), timeoutMs, "MCP_EVIDENCE_TIMEOUT");
   const observation: McpLaunchObservation = { ...gathered, bytecodeArtifactsPresent: [...gathered.bytecodeArtifactsPresent, ...surviving], childEnvironment };
 
   const preSpawn = verifyMcpLaunch(ports.lock, observation, ports.osEnvAllowlist);
   if (!preSpawn.ok) return { ok: false, stage: "pre_spawn", violations: preSpawn.violations, issues: [] };
 
-  const child = await ports.child.spawn(childEnvironment);
+  const child = await withOperationTimeout(ports.child.spawn(childEnvironment, timeoutMs), timeoutMs, "MCP_CONNECT_TIMEOUT");
   let inventory: readonly string[];
   try {
-    inventory = await child.listTools();
+    inventory = await withOperationTimeout(child.listTools(), timeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
   } catch (error) {
-    await child.stop();
+    try {
+      await withOperationTimeout(child.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "MCP inventory failed and child cleanup did not complete", { cause: cleanupError });
+    }
     throw error;
   }
   const accepted = verifyMcpInventory(ports.manifest, inventory);
   if (!accepted.ok) {
-    await child.stop();
+    try {
+      await withOperationTimeout(child.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+    } catch (cleanupError) {
+      const inventoryError = new Error(`MCP_INVENTORY_REJECTED: ${accepted.violations.map(item => `${item.code}: ${item.detail}`).join("; ")}`);
+      throw new AggregateError([inventoryError, cleanupError], "MCP inventory was rejected and child cleanup did not complete", { cause: cleanupError });
+    }
     return { ok: false, stage: "inventory", violations: accepted.violations, issues: [] };
   }
   return { ok: true, child, inventory };

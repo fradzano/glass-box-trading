@@ -742,6 +742,34 @@ describe("P7 launch hardening — runtime and holder identity", () => {
     expect(readHolder(resolved.value)).toBeNull();
   });
 
+  it("releases the runtime holder when verified-child shutdown never settles", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-runtime-shutdown-timeout-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeHolder(resolved.value, { holderId: "runtime-owner", heartbeatAt: 1 });
+    let stopCalls = 0;
+
+    await expect(shutdownRuntimeResources({ stop: () => { stopCalls += 1; return new Promise<void>(() => undefined); } }, resolved.value, "runtime-owner", 5)).rejects.toThrow("MCP_STOP_TIMEOUT after 5 ms");
+
+    expect(stopCalls).toBe(1);
+    expect(readHolder(resolved.value)).toBeNull();
+  });
+
+  it("releases the construction holder when failure cleanup cannot stop the child", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-runtime-builder-timeout-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeHolder(resolved.value, { holderId: "runtime-builder", heartbeatAt: 1 });
+
+    const failure = withVerifiedChildFailureCleanup(
+      { stop: () => new Promise<void>(() => undefined) },
+      resolved.value,
+      "runtime-builder",
+      () => { throw new Error("construction failed"); },
+      5,
+    );
+    await expect(failure).rejects.toThrow("runtime construction failed and cleanup was incomplete");
+    expect(readHolder(resolved.value)).toBeNull();
+  });
+
   it("runtime file enumeration includes the built JavaScript Node executes", () => {
     const root = temporaryDirectory("gbt-p7-digest-");
     mkdirSync(path.join(root, "src"), { recursive: true });

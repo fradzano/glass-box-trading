@@ -667,6 +667,10 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     }
     if (derived !== null) await append(derived.draft);
     actions.push({ clientOrderId: plan.clientOrderId, result: "SUBMITTED", status: derived?.status ?? null, detail: derived === null ? "working" : null });
+    // S-CYC-04 applies inside the batch too. If the port answer cannot prove
+    // whether this submit exists at the broker, no sibling plan may cross the
+    // gateway until a later cycle's phase 0 reconciles this exact client ID.
+    if (derived?.status === "confirmation_unclear" && !entriesBlocked.includes("CONFIRMATION_UNCLEAR")) entriesBlocked.push("CONFIRMATION_UNCLEAR");
     if (derived?.fill === "BROKER_PRICE_BREACH") {
       await haltForPriceBreach(plan.clientOrderId);
       entriesBlocked.push("BROKER_PRICE_BREACH");

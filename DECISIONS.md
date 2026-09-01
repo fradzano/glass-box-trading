@@ -1380,3 +1380,11 @@ small, no ADR split).
   unchanged across each stable broker snapshot, including exceptional
   recovery, so a late lifecycle transition cannot be certified against an
   earlier flat view.
+- **2026-09-01 — P7 R19 applies lost-ack blocking inside a batch and bounds
+  MCP lifecycle cleanup.** A `confirmation_unclear` submit immediately blocks
+  every later risk-increasing plan in the same phase-4 batch; reconciliation
+  by that exact client-order ID remains phase 0 work for a later cycle. MCP
+  evidence, connect, inventory, tool-call, and stop operations use a fixed
+  runtime-covered deadline. Runtime cleanup starts holder release independently
+  of child stop and preserves timeout/cleanup errors, so a stalled stdio
+  transport cannot retain writer authority indefinitely.

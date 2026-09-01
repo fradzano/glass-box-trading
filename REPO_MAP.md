@@ -70,6 +70,7 @@
 - `src/shell/market-calendar.ts` — Exchange calendar arithmetic for the shell (S-G6-03: session boundaries come
 - `src/shell/mcp-environment.ts` — The real ports behind the pinned MCP launcher (P7, S-CYC-11): evidence
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
+- `src/shell/operation-timeout.ts` — Bound an external lifecycle operation without trusting it to honor cancellation.
 - `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
