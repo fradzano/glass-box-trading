@@ -61,7 +61,7 @@ parameter — no constant below may be hardcoded in core logic.
 | `CLOSE_ESCALATION_STEP` | *O5* | per-cycle limit re-price step for closes, $/share of option price (§7) |
 | `RESIDUE_MAX_SESSIONS` | *O5* (default 1) | sessions until unresolved residue alarms |
 | `ANALYST_TIMEOUT` | *O5* | hard wall-time ceiling for the analyst call |
-| `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it) |
+| `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on caller-visible total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it). No local effect begins after it; a broker request begun before it but settling after it is confirmation-unclear and must be reconciled, never reported as success. |
 | `LOCK_TAKEOVER_BOUND` | *O5* | scheduling constraint ONLY (writer authority comes from fencing, S-G12-07): `> CYCLE_WALLTIME_BUDGET`, and `LOCK_TAKEOVER_BOUND + 2 × (CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET) ≤ DEAD_MAN_BOUND` (corrected per spec-pass GV-2; see S-G12-02) |
 | `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
 | `ALPACA_PROFILE` | explicit `dev` or `competition` | selects one closed credential/account role; no default or fallback |
@@ -701,7 +701,9 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   `HALT`/`UNHALT` line but before its projection write is therefore repaired
   before the state is exposed or an entry is admitted; an already-authorized
   but stale entry is vetoed. Cancel and explicit close remain available under
-  S-G12-03. Epoch acquisition is a single
+  S-G12-03. The mutex itself is never taken over by age while its recorded
+  owner process is alive; abandoned-lock cleanup requires both age and a dead
+  owner, and release is owner-token-checked. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the

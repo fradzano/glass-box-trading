@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import { admitCertificateCommand } from "../src/shell/certificate-command-guard.
 import { runWithinCycleWalltime } from "../src/shell/cycle-walltime.js";
 import { enumerateRuntimeFiles } from "../src/shell/digests.js";
 import { readHolder, releaseHolder, writeHolder } from "../src/shell/epoch-store.js";
-import { createMutationGateway } from "../src/shell/mutation-gateway.js";
+import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
 import type { BrokerMutation, BrokerMutationPort } from "../src/shell/mutation-gateway.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { createPingPort } from "../src/shell/ping-healthchecks.js";
@@ -345,6 +345,77 @@ describe("P7 launch hardening — independent account identity", () => {
     now = 10;
     expect(await gateway.dispatch({ class: "authoritative", epoch: 2, deadlineAtMs: 10, action: { kind: "broker_mutation", mutation: { ...submitMutation(), notAfterMs: 10 } } })).toMatchObject({ ok: false, reason: "CYCLE_WALLTIME_EXCEEDED" });
     expect(calls).toEqual([]);
+  });
+
+  it("never steals an old mutex from a live broker operation, so a safety halt cannot linearize before its entry", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-live-mutex-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    let releaseAccount: ((accountId: string) => void) | undefined;
+    let accountReadStarted: (() => void) | undefined;
+    const accountStarted = new Promise<void>(resolve => { accountReadStarted = resolve; });
+    const accountResult = new Promise<string>(resolve => { releaseAccount = resolve; });
+    const delegateCalls: BrokerMutation[] = [];
+    const boundPort = createAccountBoundBrokerPort({
+      profile: "dev", requestedOrigin: ORIGIN, observedOrigin: ORIGIN,
+      config: { canonicalTradingOrigin: ORIGIN, expectedAccountId: EXPECTED }, expectedBinding: BINDING,
+      brokerReportedAccountId: () => { accountReadStarted?.(); return accountResult; },
+      delegate: { mutate: mutation => { delegateCalls.push(mutation); return Promise.resolve({ ok: true, brokerOrderId: "entry-before-halt" }); } },
+      clock: () => now,
+    });
+    const active = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now, brokerPort: boundPort, instanceId: "active", lockTakeoverBoundMs: 60_000, binding: BINDING });
+    expect(await active.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 8 });
+
+    const entry = active.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } });
+    await accountStarted;
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(resolved.value.mutex, old, old);
+    const contender = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now + 1, brokerPort: { mutate: () => Promise.resolve({ ok: false, reason: "MUST_NOT_RUN" }) }, instanceId: "contender", lockTakeoverBoundMs: 60_000 });
+    let haltSettled = false;
+    const halt = contender.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "must serialize after the live entry" }).finally(() => { haltSettled = true; });
+    await new Promise(resolve => { setTimeout(resolve, 25); });
+    expect(haltSettled).toBe(false);
+
+    releaseAccount?.(EXPECTED);
+    expect(await entry).toMatchObject({ ok: true });
+    expect(delegateCalls).toHaveLength(1);
+    expect(await halt).toMatchObject({ ok: true });
+    expect(parseJournalText(readFileSync(resolved.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", reason: "AUTH_FAILURE" });
+    expect(await active.dispatch({ class: "authoritative", epoch: 8, action: { kind: "broker_mutation", mutation: submitMutation() } })).toMatchObject({ ok: false, reason: "HALT" });
+    expect(delegateCalls).toHaveLength(1);
+  });
+
+  it("reclaims an old mutex only after its recorded process is dead", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-dead-mutex-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeFileSync(resolved.value.mutex, JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" }), "utf8");
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(resolved.value.mutex, old, old);
+    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => Date.now(), brokerPort: NO_BROKER_PORT, instanceId: "recovery", lockTakeoverBoundMs: 60_000 });
+
+    expect(await gateway.openJournal()).toMatchObject({ entries: [], halt: { halted: false } });
+    expect(() => readFileSync(resolved.value.mutex, "utf8")).toThrow();
+  });
+
+  it("downgrades a mutation that settles after its aggregate deadline to broker-side confirmation uncertainty", async () => {
+    const resolved = resolveStateDir(temporaryDirectory("gbt-p7-inflight-deadline-"));
+    if (!resolved.ok) throw new Error(resolved.detail);
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: "2026-09-01T12:00:00.000Z", seedPending: false, resetPending: false }), "utf8");
+    let now = 0;
+    let finish: (() => void) | undefined;
+    let effects = 0;
+    const settled = new Promise<ReturnType<BrokerMutationPort["mutate"]> extends Promise<infer T> ? T : never>(resolve => {
+      finish = () => { effects += 1; resolve({ ok: true, brokerOrderId: "late-effect" }); };
+    });
+    const gateway = createMutationGateway({ paths: resolved.value, secrets: [], clock: () => now, brokerPort: { mutate: () => settled }, instanceId: "deadline-runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    const pending = gateway.dispatch({ class: "authoritative", epoch: 2, deadlineAtMs: 10, action: { kind: "broker_mutation", mutation: { ...submitMutation(), notAfterMs: 10 } } });
+    await Promise.resolve();
+    now = 10;
+    finish?.();
+    expect(await pending).toMatchObject({ ok: false, reason: "PORT_ERROR:CYCLE_WALLTIME_EXCEEDED", source: "broker_port" });
+    expect(effects).toBe(1);
   });
 });
 

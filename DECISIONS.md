@@ -1242,9 +1242,11 @@ small, no ADR split).
   phase-boundary heartbeats run in production, gateway appends and mutations
   inherit the absolute deadline, Alpaca requests cap themselves to the time
   remaining, and the transport timeout covers response-body consumption as
-  well as headers. The caller regains control at the hard budget, while a
-  background continuation cannot append or begin/complete a broker mutation
-  past the propagated deadline. R3's red counterexamples and the complete
+  well as headers. The caller regains control at the hard budget; no local
+  effect begins past the propagated deadline. Because a remote broker effect
+  begun before the boundary cannot be revoked, an answer settling afterward
+  is reported as confirmation-unclear and reconciled, never as success. R3's
+  red counterexamples and the complete
   repository gate pass with 296 tests; a first otherwise-green gate attempt
   hit a transient Windows `EPERM` during the unchanged atomic dashboard rename
   and the immediate complete rerun passed.
@@ -1279,3 +1281,10 @@ small, no ADR split).
   crash after the fsynced journal line can neither bypass a durable halt nor
   strand a durable human un-halt. If the journal contains no halt transition,
   an unreadable projection remains fail-closed.
+- **2026-09-01 — P7 R8 closes live-lock theft and late-success reporting.**
+  The filesystem mutex now records process and owner token. Age can trigger
+  abandoned-lock cleanup only when that process is no longer alive, and final
+  removal is token-checked; a long but live broker observation therefore
+  cannot be overlapped by a safety halt. A broker result arriving at or after
+  the aggregate deadline is classified as broker-side confirmation uncertainty
+  rather than success, preserving the reservation and next-cycle reconciliation.

@@ -22,7 +22,7 @@ export interface BrokerMutation {
   readonly clientOrderId: string;
   readonly binding: AccountBinding;
   readonly payload?: unknown;
-  /** Absolute wall-clock deadline inherited from the cycle; the adapter must not mutate after it. */
+  /** Absolute wall-clock deadline inherited from the cycle; no local mutation may begin after it, and a later remote answer is uncertain. */
   readonly notAfterMs?: number;
 }
 
@@ -175,7 +175,11 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
   }
 
   async function dispatchUnderLock(request: MutationRequest): Promise<DispatchResult> {
-    if (request.class === "authoritative" && request.deadlineAtMs !== undefined && clock() >= request.deadlineAtMs) {
+    const mutationDeadline = request.action.kind === "broker_mutation" ? request.action.mutation.notAfterMs : undefined;
+    const deadlineAtMs = request.class === "authoritative"
+      ? request.deadlineAtMs === undefined ? mutationDeadline : mutationDeadline === undefined ? request.deadlineAtMs : Math.min(request.deadlineAtMs, mutationDeadline)
+      : undefined;
+    if (deadlineAtMs !== undefined && clock() >= deadlineAtMs) {
       return { ok: false, reason: "CYCLE_WALLTIME_EXCEEDED", lockHeld: true };
     }
     const store = readEpochStore(paths);
@@ -230,6 +234,12 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       }
       try {
         const broker = await options.brokerPort.mutate(request.action.mutation);
+        // A request begun in time can still settle remotely after the hard
+        // cycle boundary. It is never reported as success: the caller must
+        // retain the reservation and reconcile it as a lost acknowledgement.
+        if (deadlineAtMs !== undefined && clock() >= deadlineAtMs) {
+          return { ok: false, reason: "PORT_ERROR:CYCLE_WALLTIME_EXCEEDED", lockHeld: true, source: "broker_port" };
+        }
         return broker.ok ? { ok: true, broker } : { ok: false, reason: redact(broker.reason), lockHeld: true, source: "broker_port" };
       } catch (error) {
         if (error instanceof AccountBindingError) {

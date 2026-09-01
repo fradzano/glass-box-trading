@@ -111,7 +111,8 @@ export async function releaseHolder(paths: StatePaths, holderId: string): Promis
 }
 
 const MUTEX_STALE_MS = 15_000;
-const MUTEX_TIMEOUT_MS = 20_000;
+const MUTEX_TIMEOUT_MS = 75_000;
+let mutexSequence = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => { setTimeout(resolve, ms); });
@@ -119,12 +120,14 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Exclusive-create mutex (`wx`): the OS guarantees that of concurrent
- * creators exactly one succeeds. A mutex older than MUTEX_STALE_MS belongs to
- * a crashed holder and is removed; the mutex is held only for the duration of
- * one gateway operation and is never an authority.
+ * creators exactly one succeeds. Age alone never proves abandonment: an old
+ * mutex is removed only when its recorded process is no longer alive. The
+ * token also prevents an earlier holder from deleting a successor's mutex.
+ * The mutex is held only for one gateway operation and is never authority.
  */
 export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T): Promise<T> {
   const startedAt = Date.now();
+  const token = `${String(process.pid)}:${String(startedAt)}:${String(mutexSequence += 1)}`;
   for (;;) {
     let descriptor: number;
     try {
@@ -136,7 +139,14 @@ export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T
       if (code !== "EEXIST" && code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw error;
       try {
         const age = Date.now() - statSync(paths.mutex).mtimeMs;
-        if (age > MUTEX_STALE_MS) unlinkSync(paths.mutex);
+        if (age > MUTEX_STALE_MS) {
+          const observed = readFileSync(paths.mutex, "utf8");
+          const owner = mutexOwnerPid(observed);
+          // A readable live owner is never fenced by elapsed time, even if its
+          // broker I/O outlives the mtime. An unreadable abandoned record is
+          // eligible only after the same stale-age bound.
+          if ((owner === null || !processIsAlive(owner)) && readFileSync(paths.mutex, "utf8") === observed) unlinkSync(paths.mutex);
+        }
       } catch {
         // The mutex vanished between the checks; retry.
       }
@@ -145,14 +155,45 @@ export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T
       continue;
     }
     try {
-      writeSync(descriptor, String(process.pid), null, "utf8");
+      writeSync(descriptor, JSON.stringify({ pid: process.pid, token }), null, "utf8");
+      fsyncSync(descriptor);
     } finally {
       closeSync(descriptor);
     }
     try {
       return await work();
     } finally {
-      rmSync(paths.mutex, { force: true });
+      try {
+        const current = readFileSync(paths.mutex, "utf8");
+        const parsed = JSON.parse(current) as unknown;
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && (parsed as Record<string, unknown>)["token"] === token) rmSync(paths.mutex, { force: true });
+      } catch {
+        // Missing/replaced mutex: never remove a path we can no longer prove is ours.
+      }
     }
+  }
+}
+
+function mutexOwnerPid(text: string): number | null {
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const pid = (value as Record<string, unknown>)["pid"];
+    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    // Backward compatibility with the original plain-PID lock file.
+    const pid = Number(text.trim());
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    return code === "EPERM" || code === "EACCES";
   }
 }
