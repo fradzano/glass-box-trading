@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAnalystChildEnv,
   validateAnalystManifest,
@@ -300,14 +300,32 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   });
 
   it("bounds a stalled child connect before inventory can be released", async () => {
-    const { ports } = fakePorts({});
-    let stopCalls = 0;
-    await expect(launchVerifiedAnalystChild({
-      ...ports,
-      operationTimeoutMs: 5,
-      child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
-    })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
-    expect(stopCalls).toBe(1);
+    // On a virtual clock, so that CPU contention cannot decide the outcome.
+    // `withOperationTimeout` compares `Date.now()` against its own start, and
+    // with a 5 ms budget a real machine under load can measure a port that
+    // resolved in one microtask as an overrun — that is how this test failed
+    // once in a reviewer's scratch copy. Here the immediate fake ports always
+    // measure 0 ms and the stalled connect can only end through the timer this
+    // test fires itself. `queueMicrotask` deliberately stays real: it is how
+    // `withOperationTimeout` starts the work it bounds.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const { ports } = fakePorts({});
+      let stopCalls = 0;
+      const launched = launchVerifiedAnalystChild({
+        ...ports,
+        operationTimeoutMs: 5,
+        child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
+      });
+      const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+      // Every pre-spawn port settles on microtasks while the clock stands still;
+      // the only timer still armed at 5 ms is the one bounding connect.
+      await vi.advanceTimersByTimeAsync(5);
+      await rejected;
+      expect(stopCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("owns and stops a child attempt whose handle resolves only after the connect timeout", async () => {

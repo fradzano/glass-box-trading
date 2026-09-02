@@ -13,18 +13,17 @@
 // remainder is the content of the entry the owner is handed in writing
 // (S-G11-04), and the fail-ping is what raises it. Exit codes are
 // distinguishable on purpose: 2 usage, 3 a live writer, 4 a TERMINAL that
-// already stands, 1 everything else.
+// already stands, 1 everything else. That table is pure and lives in
+// `cli-exit-codes.ts` next to the other two entry points' tables, because
+// S-G12-01 defines them against each other.
+import { deadlineCliExitCode } from "./cli-exit-codes.js";
 import { admitDeadlineEntry, composeDeadline, parseDeadlineCommand } from "./deadline-runtime.js";
 import { DEADLINE_ENTRY_NOT_JOURNALED, runDeadlineReconciliation, runTerminal } from "./deadline.js";
-
-const EXIT_USAGE = 2;
-const EXIT_SUPPRESSED = 3;
-const EXIT_ALREADY_TERMINAL = 4;
 
 const parsed = parseDeadlineCommand(process.argv.slice(2));
 if (!parsed.ok) {
   process.stderr.write(`refusing: ${parsed.reason}\n`);
-  process.exit(EXIT_USAGE);
+  process.exit(deadlineCliExitCode({ kind: "usage_refused" }));
 }
 const fixedNowMs = parsed.nowMs;
 const clock = fixedNowMs === null ? (): number => Date.now() : (): number => fixedNowMs;
@@ -37,13 +36,13 @@ const composed = await composeDeadline({
 });
 if (!composed.ok) {
   process.stderr.write(`refused at ${composed.stage}: ${composed.reason}\n`);
-  process.exit(composed.stage === "suppressed" ? EXIT_SUPPRESSED : 1);
+  process.exit(deadlineCliExitCode({ kind: "composition_refused", stage: composed.stage }));
 }
 const admission = admitDeadlineEntry(parsed.command, composed.entries);
 if (!admission.ok) {
   await composed.release();
   process.stderr.write(`refusing: ${admission.reason}\n`);
-  process.exit(EXIT_ALREADY_TERMINAL);
+  process.exit(deadlineCliExitCode({ kind: "entry_already_stands" }));
 }
 try {
   const report = parsed.command === "reconciliation"
@@ -60,7 +59,7 @@ try {
     ...report,
   })}\n`);
   await composed.release();
-  process.exit(report.appended ? 0 : 1);
+  process.exit(deadlineCliExitCode({ kind: "entry_finished", appended: report.appended }));
 } catch (error) {
   // A broker read or a journal read that throws is the third way an entry can
   // fail to exist. `deadline.ts` raises the fail-signal for the two it can
@@ -73,5 +72,5 @@ try {
   }
   await composed.release();
   process.stderr.write(`deadline entry aborted: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-  process.exit(1);
+  process.exit(deadlineCliExitCode({ kind: "entry_aborted" }));
 }

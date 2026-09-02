@@ -5,6 +5,7 @@
 import { buildRuntime } from "./agent-runtime.js";
 import { runCertificate } from "./certificate-run.js";
 import { admitCertificateCommand, CERTIFICATE_RUN_LIMITS } from "./certificate-command-guard.js";
+import { certificateCliExitCode } from "./cli-exit-codes.js";
 import { loadEnvironment } from "./runtime-config.js";
 import { createInterface } from "node:readline/promises";
 
@@ -18,7 +19,7 @@ const commandAdmission = admitCertificateCommand({
 });
 if (!commandAdmission.ok) {
   process.stderr.write(`refusing: ${commandAdmission.reason}\n`);
-  process.exit(2);
+  process.exit(certificateCliExitCode({ kind: "command_refused" }));
 }
 const log = (line: string): void => { process.stdout.write(`${new Date().toISOString()} ${line}\n`); };
 const clock = (): number => Date.now();
@@ -27,35 +28,36 @@ try {
   built = await buildRuntime({ repoRoot: process.cwd(), processEnv: process.env, clock, objective: "certificate", instanceId: `certificate-${String(process.pid)}`, log });
 } catch (error) {
   process.stderr.write(`runtime construction failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-  process.exit(1);
+  process.exit(certificateCliExitCode({ kind: "runtime_construction_failed" }));
 }
 if (!built.ok) {
+  // By S-G12-01 this stays 1 even for `suppressed`: the owner asked for a run that did not happen.
   process.stderr.write(`refused at ${built.stage}: ${built.reason}\n`);
-  process.exit(1);
+  process.exit(certificateCliExitCode({ kind: "build_refused", stage: built.stage }));
 }
 const runtime = built.runtime;
 if (preflight) {
   // Everything up to the first order: validation, credentials, calendar, authority, the verified analyst child, both digests.
   process.stdout.write(`${JSON.stringify({ profile: runtime.config.profile, accountId: runtime.binding.accountId, tradingDay: runtime.tradingDay, session: runtime.session, expiries: runtime.window.expiries, mcpTools: runtime.mcpInventory.length, runtimeDigest: runtime.runtimeDigest, policyDigest: runtime.policyDigest, epoch: runtime.epoch }, null, 2)}\n`);
   await runtime.shutdown();
-  process.exit(0);
+  process.exit(certificateCliExitCode({ kind: "preflight_reported" }));
 }
 if (smokeCycle) {
   // One real cycle with no order possible: outside the session G6 vetoes every action; inside it this is the owner's call, not a smoke test.
   if (runtime.session.isTradingDay && clock() >= runtime.session.opensAt && clock() <= runtime.session.closesAt) {
     process.stderr.write("refusing: --smoke-cycle runs only outside the session (inside it a cycle can place orders)\n");
     await runtime.shutdown();
-    process.exit(2);
+    process.exit(certificateCliExitCode({ kind: "smoke_cycle_inside_session" }));
   }
   const report = await runtime.cycle(1);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   await runtime.shutdown();
-  process.exit(0);
+  process.exit(certificateCliExitCode({ kind: "smoke_cycle_finished" }));
 }
 if (!runtime.session.isTradingDay || clock() < runtime.session.opensAt || clock() > runtime.session.closesAt) {
   process.stderr.write("refusing: outside the exchange session for today; the live test needs market hours\n");
   await runtime.shutdown();
-  process.exit(2);
+  process.exit(certificateCliExitCode({ kind: "outside_session" }));
 }
 try {
   const result = await runCertificate({
@@ -80,9 +82,9 @@ try {
   });
   process.stdout.write(`${JSON.stringify({ verdict: result.certificate.verdict, file: result.file, failures: result.certificate.failures }, null, 2)}\n`);
   await runtime.shutdown();
-  process.exit(result.certificate.verdict === "PASS" ? 0 : 1);
+  process.exit(certificateCliExitCode({ kind: "certificate_finished", verdict: result.certificate.verdict }));
 } catch (error) {
   process.stderr.write(`certificate run aborted: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   await runtime.shutdown();
-  process.exit(1);
+  process.exit(certificateCliExitCode({ kind: "run_aborted" }));
 }
