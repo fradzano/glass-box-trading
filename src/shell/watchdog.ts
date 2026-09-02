@@ -9,6 +9,7 @@
 // decision lives in the pure core; this shell fetches, appends, and submits
 // through the gateway under the epoch it won.
 import { integerUnit } from "../core/domain.js";
+import { httpStatusOf } from "./broker-errors.js";
 import type { OptionLeg, Quantity } from "../core/domain.js";
 import {
   assembleDecisionSnapshot,
@@ -180,6 +181,10 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
         cycleIndex: 0,
       });
     } catch (error) {
+      // A credential rejection is the fence, not a skipped recovery: it must escape to the
+      // composition's recordCredentialFence (S-G12-06) exactly as before this guard existed.
+      const status = httpStatusOf(error);
+      if (status === 401 || status === 403) throw error;
       assembled = { ok: false, reason: `RECOVERY_READ_FAILED:${messageOf(error)}` };
     }
     if (assembled.ok && book !== null) {
