@@ -1687,3 +1687,22 @@ small, no ADR split).
   "bounds a stalled child connect before inventory can be released" is
   timing-sensitive and failed once in about seven full-suite runs in the
   reviewer's scratch copy; not seen in this session's six verify runs.
+- **2026-09-02 — R32 narrow gate at `258d4c1`: GO, A=0, B=1, C=2; declared
+  residual of the watchdog takeover.** All four named mutants (watchdog
+  `halted` literal, null ping in the environment-unreadable branch,
+  `durableAppendLanded: true`, cash-out classified as funding) are caught;
+  `npm run verify` passed twice in the reviewer's worktree, the
+  timing-sensitive MCP verifier test included. Declared, not patched: when a
+  watchdog takeover's HALT append fails transiently, the epoch fence locks out
+  only the fenced writer; the next scheduled agent cycle acquires its own
+  epoch, finds no standing halt, and may enter until the operator reacts to
+  the immediate `HALT_NOT_JOURNALED` fail ping (two to three cycles against
+  the alert SLA). Under a persistent journal failure the runner is fail-closed
+  by its own rule (no order whose INTENT append did not land). A second
+  authority in `halt.json` would contradict the single-authority rule of the
+  journal transition (2026-08-25) and be erased by the next projection
+  reconciliation, so the remedy is this declaration plus the operator's
+  response to the fail ping. Notes: the authority-refused branch of the
+  watchdog pings nothing and relies on the passive dead-man SLA; every
+  takeover path seeds `WATCHDOG_TAKEOVER`, so the watchdog's own ping
+  precondition is fixed by construction rather than measured.
