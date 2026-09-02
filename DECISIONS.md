@@ -2032,3 +2032,36 @@ small, no ADR split).
   acceptance event: P7 merges `--no-ff` into `main` next, then the owner's
   P8 steps from the README runbook with no `src/`, `assets/`, `config/` or
   `dist/` change.
+- **2026-09-02 — The competition bootstrap needed an operator seed: the
+  composition root cannot reach the virgin path on its own (live finding
+  four; digest-neutral remedy).** The first hand-run competition cycle on a
+  fresh, empty `STATE_DIR` did not bootstrap: `buildRuntime` acquires
+  authority with virginity `unknown` ("virginity cannot be learned before
+  authority without violating S-G12-01"), and `planEpochAcquisition` seeds
+  an absent store silently only for `virgin` AND an empty journal — every
+  other absence is a reset, so the run journaled `GAP` + `HALT
+  EPOCH_STORE_RESET` and the following cycle vetoed entries under the halt
+  flag; no BOOTSTRAP, no provenance proof, and a journal that is no longer
+  empty. Every test that exercises the bootstrap passes `"virgin"` to the
+  gateway directly; the composition root's path through a fresh directory
+  was measured by nobody — the README's step 10 described a path that did
+  not exist. Remedy without touching the digest (the certificate stands):
+  the P2 seed obligation. A one-time script outside the repository
+  (`seed-virgin-epoch.mjs`, archived in the verification store) refuses any
+  non-empty directory, acquires epoch 1 on a fresh `STATE_DIR` with the
+  owner's attestation `virgin`, releases the holder, and leaves
+  `epoch.json` with `seedPending: true` and no journal — the gateway
+  refuses every broker mutation until a `BOOTSTRAP` with `epochSeeded`
+  lands (`SEED_NOT_JOURNALED`). The agent then takes over that epoch
+  (`INCREMENT` inheriting `seedPending`, the G2-F1 rule), the runner sees an
+  empty journal and a virgin book, runs the S-CYC-09 provenance proof
+  against the real account, and appends the BOOTSTRAP as seq 1. Executed
+  18:42 CEST on `competition-2`: epoch 2, `epochSeeded: true`,
+  `PA376WIK2ATL` at exactly $100,000, zero positions, seed cleared. The
+  owner's attestation adds nothing the runner does not re-prove; it only
+  unlocks the path. The abandoned first directory (`competition`, GAP/HALT/
+  one CYCLE, no order) stays as evidence. Backlog (B for the next
+  digest-changing window): let the composition root plan `SEED_BOOTSTRAP`
+  for an absent store with an empty journal and virginity `unknown`, since
+  the runner's foreign-book gap and provenance proof already fail closed
+  before any BOOTSTRAP, and add the missing test through `buildRuntime`.
