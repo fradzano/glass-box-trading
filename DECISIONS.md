@@ -1445,3 +1445,8 @@ small, no ADR split).
   launcher therefore closes the attempt before propagating connect timeout or
   failure, so a late child handle cannot become an unowned process during
   runtime-construction failure.
+- **2026-09-03 — P7 R26 rejects late cycle results after event-loop
+  blocking.** The aggregate cycle wrapper checks its absolute deadline again
+  after work resolves. A timer remains the preemptive path for asynchronous
+  stalls; the post-check prevents synchronous blocking from returning a late
+  success after the timer was unable to run.

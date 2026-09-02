@@ -701,6 +701,16 @@ describe("P7 launch hardening — real broker transport", () => {
     await expect(runWithinCycleWalltime(5, () => 0, () => new Promise<never>(() => undefined))).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED after 5 ms");
   });
 
+  it("does not report a cycle result after synchronous work blocks past the walltime", async () => {
+    const budgetMs = 10;
+    await expect(runWithinCycleWalltime(budgetMs, () => Date.now(), async () => {
+      await Promise.resolve();
+      const releaseAt = Date.now() + 50;
+      while (Date.now() < releaseAt) { /* executable synchronous-stall probe */ }
+      return "LATE_SUCCESS";
+    })).rejects.toThrow(`CYCLE_WALLTIME_EXCEEDED after ${String(budgetMs)} ms`);
+  });
+
   it("does not report the pre-fill half of a torn snapshot as stable flat", async () => {
     let positionReads = 0;
     const account = { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" };
