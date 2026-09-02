@@ -2205,3 +2205,28 @@ small, no ADR split).
   `.env.local` beside the deploy tree; the render drops that file on the
   next run (only `.vercel/` is carried forward) and the CLI never uploads
   it.
+- **2026-09-02 — Competition day one closed: six filled structures, equity
+  $100,092.15, every order through the gates.** Between 20:05 and 22:00 CEST
+  the freeze-two build ran twelve scheduled cycles on `PA376WIK2ATL`. Filled
+  (all one structure per INTENT, all defined-risk, all after the eight gates
+  and the pre-submit revalidation): SPY 762/757 put credit vertical ×1 (exp
+  2026-09-08, 106 ¢), SPY iron condor 768/769C + 762/761P ×3 (exp 09-04,
+  63 ¢), SPY 760/755 put credit vertical ×2 (exp 09-08, 89 ¢), QQQ 712 long
+  call ×4 (exp 09-08, debit 3.39), SPY 762/761 put credit vertical ×3 (exp
+  09-04, 24 ¢), SPY 762/760 put credit vertical ×3 (exp 09-04, 47 ¢, filled
+  in the 22:00 phase 0); one resting duplicate of the 762/761 spread expired
+  as a day order (OUTCOME `expired`, cycle 9). Refused by the core: every
+  QQQ candidate but one (`REVALIDATION_VOID` five times, G5 twice), one
+  SPY spread on G5, one analyst batch as `SCHEMA_VETO` (truncated JSON).
+  Book at close, read through the real adapter: cash $99,329.15, equity
+  $100,092.15, no open orders; reserved max loss about $3,420 across the
+  six structures. The book is concentrated in short SPY 762 puts expiring
+  2026-09-04 (nine contracts across three structures) — G4's per-underlying
+  cap admitted it and every leg is covered, but the concentration is worth
+  a look when the O5 thresholds are next revisited (the same structure was
+  proposed and approved in three different cycles; G7 keys on the cycle, by
+  design). Tomorrow is `FLATTEN_DATE`: entries vetoed, the deadline regime
+  closes the book in the session; the scheduled tasks stay enabled. Both
+  journals of the day are archived in the verification store. Not swapped,
+  as ruled: the one-lot brief and the resolver fix wait for after the
+  competition.
