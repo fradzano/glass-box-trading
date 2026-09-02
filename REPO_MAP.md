@@ -79,6 +79,7 @@
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
 - `src/shell/operation-timeout.ts` — Bound an external lifecycle operation without trusting it to honor cancellation.
 - `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
+- `src/shell/presentation-guard.ts` — P9 / R33 (B1) — a stylesheet that sits outside the S-ARM-01 runtime digest
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
 - `src/shell/render-decision-view.ts` — The P1 decision-view renderer: one pure function from a recorded decision
@@ -141,6 +142,7 @@
 - `tests/p8-competition-provenance.spec.ts` — S-CYC-09 at the composition root (P8): the competition provenance port is
 - `tests/p8-watchdog-runtime.spec.ts` — P8 — the scheduled watchdog's composition root (src/shell/watchdog-runtime.ts):
 - `tests/p9-presentation-assets.spec.ts` — P9 — presentation assets live in `assets/`, outside the S-ARM-01 runtime
+- `tests/p9-presentation-guard.spec.ts` — P9 / R33 (B1) — the presentation stylesheets in `assets/` sit outside the
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy

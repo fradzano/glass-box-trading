@@ -9,6 +9,7 @@
 import type { CycleView, FreshnessAssessment, LifecycleLink, PerformanceProjection } from "../core/projection.js";
 import { expectedMeta } from "../core/publish.js";
 import type { PublishDegradation, PublishExpectation } from "../core/publish.js";
+import { auditPresentationStylesheet } from "./presentation-guard.js";
 
 export interface PublicSourceLinks {
   readonly repositoryUrl: string;
@@ -331,6 +332,8 @@ function renderFooter(): string {
 
 export function renderDashboard(projection: PerformanceProjection, expectation: PublishExpectation, context: RenderContext): string {
   if (context.styles.trim().length === 0) throw new Error("renderDashboard: no stylesheet supplied; refusing to render an unstyled page");
+  const stylesheetReasons = auditPresentationStylesheet(context.styles);
+  if (stylesheetReasons.length > 0) throw new Error(`renderDashboard: stylesheet refused: ${stylesheetReasons.join("; ")}`);
   const lifecyclesBySeq = new Map(projection.lifecycles.map(link => [link.intentSeq, link] as const));
   const firstVeto = projection.cycles.find(cycle => cycle.candidateVerdicts.some(verdict => verdict["decision"] === "VETO"));
   const firstProposal = projection.cycles.find(cycle => cycle.result === "proposal");

@@ -4,6 +4,7 @@
 // `assets/decision-view.css` (P9), which keeps presentation outside the
 // S-ARM-01 runtime digest while this renderer stays pure.
 import type { DecisionResult, GateVerdict } from "../core/domain.js";
+import { auditPresentationStylesheet } from "./presentation-guard.js";
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -70,6 +71,8 @@ function renderFooter(): string {
 /** `styles` is the text of `assets/decision-view.css`, inlined verbatim; empty text is refused rather than rendered unstyled. */
 export function renderDecisionView(result: DecisionResult, styles: string): string {
   if (styles.trim().length === 0) throw new Error("renderDecisionView: no stylesheet supplied; refusing to render an unstyled page");
+  const stylesheetReasons = auditPresentationStylesheet(styles);
+  if (stylesheetReasons.length > 0) throw new Error(`renderDecisionView: stylesheet refused: ${stylesheetReasons.join("; ")}`);
   const remainingActionsByCandidate = new Map<string, DecisionResult["actions"][number][]>();
   for (const action of result.actions) {
     const queuedActions = remainingActionsByCandidate.get(action.candidateId) ?? [];
