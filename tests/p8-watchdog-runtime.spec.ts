@@ -4,11 +4,13 @@
 // suite uses: a valid configuration composes live broker/market/binding ports
 // and the recovery branch closes an intact MATCHED structure whole; a missing
 // or unusable configuration degrades to exactly the fence-and-halt-only ports
-// (broker null, market null) and the watchdog still fences and halts; a
+// (broker null, market null) and the watchdog still fences and halts; every
+// such degrade nevertheless keeps the ping port, so the takeover raises its
+// ACTIVE alarm and not only the passive missed-ping SLA (S-G14-03); a
 // configured account identity the credentials do not report refuses at the
 // mutation boundary (S-J-06) so no order reaches the broker; and an empty book
 // produces no broker mutation at all.
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,6 +118,12 @@ async function compose(harness: LifecycleHarness, options: { readonly repoRoot: 
     brokerAdapter: adapter.factory,
   });
   return { composition, logs, adapter };
+}
+
+/** The local ping evidence the composed (URL-less) ping port leaves behind in the invoked STATE_DIR. */
+function pingRecord(paths: StatePaths): string {
+  const file = path.join(paths.root, "pings.log");
+  return existsSync(file) ? readFileSync(file, "utf8") : "";
 }
 
 describe("P8 — a valid configuration composes the book-recovery ports", () => {
@@ -227,6 +235,47 @@ describe("P8 — an unusable configuration degrades to fencing and halting, neve
     expect(composition.degraded).not.toContain("production");
     expect(composition.deps.broker).toBeNull();
   });
+});
+
+describe("P8 / S-G14-03 — a degraded composition still raises the active alarm", () => {
+  // Every reason a composition can degrade. The fail-ping is the ONLY active
+  // signal a takeover has (the 45–60 min missed-ping SLA is passive), so a
+  // watchdog that fences, halts and journals but cannot ping has degraded its
+  // alarm together with its book recovery — which S-G14-02/03 does not allow.
+  const branches: readonly { readonly what: string; readonly setup: () => { readonly repoRoot: string; readonly env: Readonly<Record<string, string | undefined>> } }[] = [
+    { what: "a missing policy document", setup: () => ({ repoRoot: fixtureRepoRoot({ withPolicy: false }), env: {} }) },
+    { what: "a configuration that refuses to arm", setup: () => ({ repoRoot: fixtureRepoRoot(), env: { ALPACA_PROFILE: "production" } }) },
+    { what: "absent role credentials", setup: () => ({ repoRoot: fixtureRepoRoot(), env: { ALPACA_DEV_KEY_ID: undefined, ALPACA_DEV_SECRET_KEY: undefined } }) },
+    {
+      what: "a foreign configured STATE_DIR",
+      setup: (): { readonly repoRoot: string; readonly env: Readonly<Record<string, string | undefined>> } => {
+        const foreign = mkdtempSync(path.join(tmpdir(), "gbt-p8-foreign-"));
+        fixtureRoots.push(foreign);
+        return { repoRoot: fixtureRepoRoot(), env: { STATE_DIR: foreign } };
+      },
+    },
+  ];
+
+  for (const branch of branches) {
+    it(`fail-pings the takeover when ${branch.what} degrades the composition`, async () => {
+      const harness = await lifecycleHarness();
+      harness.clock.now = STALE_NOW;
+      const { composition } = await compose(harness, branch.setup());
+      expect(composition.degraded).not.toBeNull();
+      expect(composition.deps.broker).toBeNull();
+      // The degraded record loses book recovery, never the alarm port.
+      expect(composition.deps.ping).not.toBeNull();
+
+      const report = await runWatchdog(composition.deps);
+      expect(report.halted).toBe(true);
+      expect(report.alarmConditions.some(condition => condition.startsWith("WATCHDOG_TAKEOVER"))).toBe(true);
+      // Planned AND delivered: the URL-less port leaves its record in the invoked STATE_DIR.
+      expect(report.ping).toBe("fail");
+      const record = pingRecord(harness.paths);
+      expect(record).toContain("fail ");
+      expect(record).toContain("WATCHDOG_TAKEOVER");
+    });
+  }
 });
 
 describe("P8 / S-G12-06 — a rejected credential during recovery is fenced, not swallowed", () => {

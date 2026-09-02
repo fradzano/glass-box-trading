@@ -13,7 +13,10 @@
 // broker access. Any configuration, credential or binding problem degrades to
 // exactly the fence-and-halt ports the CLI passed before this module existed
 // (broker null, market null): the watchdog still fences the writer, sets the
-// takeover halt and fail-pings. Nothing in here throws at the caller.
+// takeover halt and fail-pings. The fail-ping is why the ping port is composed
+// from the environment BEFORE the first branch that can degrade — degrading
+// book recovery must never also degrade the active alarm (S-G14-02/03).
+// Nothing in here throws at the caller.
 import path from "node:path";
 import type { MarketObservation } from "../core/execution.js";
 import type { SessionWindow } from "../core/lifecycle.js";
@@ -54,6 +57,8 @@ const FENCE_ONLY_CLOSE_ESCALATION_STEP_CENTS = 1;
 /** Calendar window around today, wide enough for every expiry a position can carry (mirrors the runner's window). */
 const CALENDAR_LOOKBACK_DAYS = -7;
 const CALENDAR_LOOKAHEAD_DAYS = 60;
+/** The ping bound that holds before a validated walltime budget exists — the same 10 s `createPingPort` defaults to. */
+const DEFAULT_PING_TIMEOUT_MS = 10_000;
 
 /**
  * The broker surface this composition needs. `createAlpacaBroker`'s result
@@ -112,8 +117,31 @@ function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
-/** Exactly the dependency record the CLI passed before this module existed: fence, halt, fail-ping, no book recovery. */
-function fenceOnlyDeps(options: WatchdogRuntimeOptions): WatchdogDependencies {
+/**
+ * The dead-man ping port (S-G14-03). Its URL comes from the ENVIRONMENT, never
+ * from the validated configuration, so the port can be — and is — built before
+ * the first branch that can degrade. That ordering is the point: a takeover's
+ * fail-ping is the only ACTIVE alarm a fenced deployment raises, and losing it
+ * together with book recovery would leave nothing but the passive 45–60 min
+ * missed-ping SLA (S-G14-02/03).
+ */
+function pingPort(options: WatchdogRuntimeOptions, env: EnvRecord, timeoutMs: number): PingPort {
+  return createPingPort({
+    url: env["HEALTHCHECK_PING_URL"] ?? null,
+    recordFile: path.join(options.paths.root, "pings.log"),
+    clock: options.clock,
+    timeoutMs,
+  });
+}
+
+/** What the runner's credential fence (S-G12-06) needs from a validated configuration; the fence-only defaults stand in for it. */
+interface FenceParameters {
+  readonly secrets: readonly string[];
+  readonly lockTakeoverBoundMs: number;
+}
+
+/** Exactly the dependency record the CLI passed before this module existed — minus the ping, which every path keeps: fence, halt, fail-ping, no book recovery. */
+function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort | null): WatchdogDependencies {
   return {
     paths: options.paths,
     secrets: [],
@@ -129,11 +157,11 @@ function fenceOnlyDeps(options: WatchdogRuntimeOptions): WatchdogDependencies {
     profile: "dev",
     calendar: { isTradingDay: true, opensAt: options.session.opensAt, closesAt: options.session.closesAt },
     tradingDay: "cli",
-    ping: null,
+    ping,
   };
 }
 
-function credentialFence(options: WatchdogRuntimeOptions, fence: { readonly secrets: readonly string[]; readonly lockTakeoverBoundMs: number; readonly ping: PingPort }): WatchdogComposition["recordCredentialFence"] {
+function credentialFence(options: WatchdogRuntimeOptions, fence: FenceParameters, ping: PingPort): WatchdogComposition["recordCredentialFence"] {
   return async (error: unknown): Promise<"AUTH_FAILURE" | "WORLD_DEGRADED"> => {
     const status = httpStatusOf(error);
     if (classifyBrokerFailure(status) !== "AUTH_FAILURE") return "WORLD_DEGRADED";
@@ -146,7 +174,7 @@ function credentialFence(options: WatchdogRuntimeOptions, fence: { readonly secr
         lockTakeoverBoundMs: fence.lockTakeoverBoundMs,
         reason: "AUTH_FAILURE",
         detail: `active credentials were rejected during watchdog book recovery (HTTP ${String(status ?? 0)})`,
-        ping: fence.ping,
+        ping,
       });
     } catch (fenceError) {
       // The takeover halt already stands; the fence is an added distinction, never a precondition.
@@ -156,13 +184,19 @@ function credentialFence(options: WatchdogRuntimeOptions, fence: { readonly secr
   };
 }
 
-function degrade(options: WatchdogRuntimeOptions, reason: string, fence?: { readonly secrets: readonly string[]; readonly lockTakeoverBoundMs: number; readonly ping: PingPort }): WatchdogComposition {
+/**
+ * Degrade to fencing and halting only — but never to silence. `ping` is the
+ * port the environment yielded; it is null in exactly one case, spelled out at
+ * the caller, and then the local recorder stands in for the credential fence so
+ * that fence still journals what it can.
+ */
+function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort | null, fence?: FenceParameters): WatchdogComposition {
   options.log(`watchdog book recovery unavailable, fencing and halting only: ${reason}`);
-  const localOnlyPing: PingPort = createPingPort({ url: null, recordFile: path.join(options.paths.root, "pings.log"), clock: options.clock });
+  const localOnlyPing: PingPort = ping ?? createPingPort({ url: null, recordFile: path.join(options.paths.root, "pings.log"), clock: options.clock });
   return {
-    deps: fenceOnlyDeps(options),
+    deps: fenceOnlyDeps(options, ping),
     degraded: reason,
-    recordCredentialFence: credentialFence(options, fence ?? { secrets: [], lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS, ping: localOnlyPing }),
+    recordCredentialFence: credentialFence(options, fence ?? { secrets: [], lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS }, localOnlyPing),
   };
 }
 
@@ -197,46 +231,59 @@ function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStar
  * reason. It never throws: a watchdog that cannot compose must still fence.
  */
 export async function composeWatchdog(options: WatchdogRuntimeOptions): Promise<WatchdogComposition> {
+  // The alarm port comes first, before anything that can refuse to compose:
+  // reading the environment is the only step it needs, and a takeover under a
+  // degraded composition must still ping (S-G14-03).
+  let env: EnvRecord;
+  let ping: PingPort;
   try {
-    return await Promise.resolve(compose(options));
+    env = loadEnvironment(options.repoRoot, options.processEnv);
+    ping = pingPort(options, env, DEFAULT_PING_TIMEOUT_MS);
   } catch (error) {
-    return degrade(options, `composition failed exceptionally: ${messageOf(error)}`);
+    // The one case where a null ping port is honest: without an environment
+    // there is no URL to ping and no record file to fall back to. The watchdog
+    // still fences the writer, halts and journals — it just cannot raise the
+    // active alarm, and only the passive missed-ping SLA remains.
+    return degrade(options, `environment could not be read, no alarm port: ${messageOf(error)}`, null);
+  }
+  try {
+    return await Promise.resolve(compose(options, env, ping));
+  } catch (error) {
+    return degrade(options, `composition failed exceptionally: ${messageOf(error)}`, ping);
   }
 }
 
-function compose(options: WatchdogRuntimeOptions): WatchdogComposition {
-  const env = loadEnvironment(options.repoRoot, options.processEnv);
+function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort): WatchdogComposition {
   const raw = rawStartupConfig(loadPolicy(options.repoRoot), env);
   const secrets = secretValues(env);
 
   const validation = validateStartupConfig(raw, { canonicalTradingOrigin: CANONICAL_PAPER_TRADING_ORIGIN, alertSlaMs: ALERT_SLA_MS });
-  if (!validation.ok) return degrade(options, `configuration refused to arm: ${redactedViolationSummary(validation.violations)}`);
+  if (!validation.ok) return degrade(options, `configuration refused to arm: ${redactedViolationSummary(validation.violations)}`, ping);
   const config = validation.value;
+  // From here the validated walltime budget is known, so the alarm port is
+  // re-bound to it: an armed watchdog may not spend more of a cycle's budget on
+  // its ping than a cycle would. Same URL, same record file — only the bound
+  // tightens, and it never loosens past the pre-validation default.
+  const armedPing = pingPort(options, env, Math.min(config.scheduling.cycleWalltimeBudgetMs, DEFAULT_PING_TIMEOUT_MS));
 
   // The deployment the configuration describes must be the deployment this
   // invocation was pointed at. Recovering a book in one STATE_DIR while
   // fencing the writer of another would be worse than not recovering at all.
   const configured = resolveStateDir(config.stateDir);
-  if (!configured.ok) return degrade(options, `configured STATE_DIR is unusable: ${configured.detail}`);
+  if (!configured.ok) return degrade(options, `configured STATE_DIR is unusable: ${configured.detail}`, armedPing);
   if (configured.value.root !== options.paths.root) {
-    return degrade(options, "the invoked STATE_DIR is not the configured STATE_DIR; refusing to recover a book in a foreign deployment");
+    return degrade(options, "the invoked STATE_DIR is not the configured STATE_DIR; refusing to recover a book in a foreign deployment", armedPing);
   }
 
-  const ping = createPingPort({
-    url: env["HEALTHCHECK_PING_URL"] ?? null,
-    recordFile: path.join(options.paths.root, "pings.log"),
-    clock: options.clock,
-    timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000),
-  });
-  const fence = { secrets, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs, ping };
+  const fence: FenceParameters = { secrets, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs };
 
   const credentials = roleCredentials(env, config.profile);
   if (credentials.keyId.length === 0 || credentials.secretKey.length === 0) {
-    return degrade(options, `no credentials for the ${config.profile} role`, fence);
+    return degrade(options, `no credentials for the ${config.profile} role`, armedPing, fence);
   }
   const expectedAccountId = config.binding.expectedAccountId;
   if (expectedAccountId === undefined || expectedAccountId.trim().length === 0) {
-    return degrade(options, "validated startup omitted EXPECTED_ACCOUNT_ID", fence);
+    return degrade(options, "validated startup omitted EXPECTED_ACCOUNT_ID", armedPing, fence);
   }
 
   // Constructed, not called: no request leaves this process before the fence.
@@ -280,9 +327,9 @@ function compose(options: WatchdogRuntimeOptions): WatchdogComposition {
       profile: config.profile,
       calendar: { isTradingDay: options.session.isTradingDay, opensAt: options.session.opensAt, closesAt: options.session.closesAt },
       tradingDay: newYorkDate(options.clock()),
-      ping,
+      ping: armedPing,
     },
     degraded: null,
-    recordCredentialFence: credentialFence(options, fence),
+    recordCredentialFence: credentialFence(options, fence, armedPing),
   };
 }
