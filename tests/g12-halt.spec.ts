@@ -128,6 +128,62 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.at(-1)?.type).toBe("HALT");
   });
 
+  // DECISIONS 2026-09-02 "P7 R24": the human UNHALT is an atomic CAS over epoch, holder, the fenced HALT
+  // transition, and the journal tail. Each of the three tests below isolates exactly one of those facts
+  // going stale while the other three still match, so no single comparison can be silently dropped.
+  it("refuses manual un-halt when an entry lands after the fence checkpoint's journal tail, and leaves the AUTH_FAILURE HALT in place", async () => {
+    const paths = resolveStateDir(temporaryStateDir());
+    if (!paths.ok) throw new Error(paths.reason);
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
+    const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "AUTH_FAILURE" })) } })).toMatchObject({ ok: true, seq: 1 });
+    // The operator's fence checkpoint reconciles at journal tail 1 (epoch 2, holder writer-a, HALT AUTH_FAILURE seq 1).
+    // Before the approval reaches the gateway, one more authoritative entry lands and moves the tail to 2.
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(cycleEntry(2, { epoch: 2 })) } })).toMatchObject({ ok: true, seq: 2 });
+
+    const staleTail = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed fence", clock: () => TEST_ONLY_AT_MS + 1_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "AUTH_FAILURE", expectedEpoch: 2, expectedHolderId: "writer-a", expectedJournalSeq: 1 });
+    expect(staleTail).toMatchObject({ ok: false, reason: "JOURNAL_CHANGED_SINCE_RECONCILIATION" });
+    expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+    const entries = parseJournalText(readFileSync(paths.value.journal, "utf8")).entries;
+    expect(entries.at(-1)?.type).toBe("CYCLE");
+    expect(entries.some(entry => entry.type === "UNHALT")).toBe(false);
+  });
+
+  it("refuses manual un-halt on a mismatched epoch alone, holder and journal tail otherwise exact", async () => {
+    const paths = resolveStateDir(temporaryStateDir());
+    if (!paths.ok) throw new Error(paths.reason);
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
+    const first = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await first.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await first.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "AUTH_FAILURE" })) } })).toMatchObject({ ok: true, seq: 1 });
+    // The operator reconciles here: epoch 2, holder writer-a, tail 1, HALT AUTH_FAILURE seq 1.
+
+    // The process restarts under the same instance id and re-acquires: same holder id, higher epoch, no new journal entry.
+    const restarted = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS + 500, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await restarted.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 3 });
+
+    const staleEpoch = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "reviewed fence", clock: () => TEST_ONLY_AT_MS + 1_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "AUTH_FAILURE", expectedEpoch: 2, expectedHolderId: "writer-a", expectedJournalSeq: 1 });
+    expect(staleEpoch).toMatchObject({ ok: false, reason: "WRITER_CHANGED_SINCE_RECONCILIATION" });
+    expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+    expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.some(entry => entry.type === "UNHALT")).toBe(false);
+  });
+
+  it("clears a non-sticky AUTH_FAILURE halt when epoch, holder, halt transition, and journal tail all still match", async () => {
+    const paths = resolveStateDir(temporaryStateDir());
+    if (!paths.ok) throw new Error(paths.reason);
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: TEST_ONLY_AT, seedPending: false }), "utf8");
+    const gateway = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer-a", lockTakeoverBoundMs: 60_000 });
+    expect(await gateway.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await gateway.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "AUTH_FAILURE" })) } })).toMatchObject({ ok: true, seq: 1 });
+
+    const unhalted = await manualUnhalt({ paths: paths.value, operator: "felix", reason: "fence drill cleared", clock: () => TEST_ONLY_AT_MS + 1_000, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000, expectedHaltSeq: 1, expectedHaltReason: "AUTH_FAILURE", expectedEpoch: 2, expectedHolderId: "writer-a", expectedJournalSeq: 1 });
+    expect(unhalted).toMatchObject({ ok: true });
+    expect(readHaltState(paths.value)).toEqual(NOT_HALTED);
+    const entries = parseJournalText(readFileSync(paths.value.journal, "utf8")).entries;
+    expect(entries.at(-1)).toMatchObject({ type: "UNHALT", operator: "felix", actor: "human", reason: "fence drill cleared" });
+  });
+
   it("retains a sticky halt reason when a rival startup appends a weaker safety interlock", async () => {
     const paths = resolveStateDir(temporaryStateDir());
     if (!paths.ok) throw new Error(paths.reason);

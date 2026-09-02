@@ -207,6 +207,24 @@ describe("S-ARM-01 — the certificate is PASS only when every clause is evidenc
     expect(buildCertificate(inputs({ journal: fiveLotJournal, orderObservations: fiveLotObservations })).failures.some(item => item.includes("was not filled as exactly one lot"))).toBe(true);
   });
 
+  it("FAILs the one-lot reconciliation when only the INTENT declares more than one lot: the submitted order and the actual fill both stay one-lot-consistent with each other, but not with the INTENT", () => {
+    // The submitted broker order must still equal the INTENT's own declared quantity for acceptance to bind at
+    // all (S-ARM-01's Mleg-shape clause, tested above); here both sides of that binding agree on 2 lots
+    // submitted. The broker OUTCOME (unchanged from `passingJournal`) reports a genuine one-lot fill. The
+    // one-lot reconciliation clause must still fail on the INTENT side alone: a 2-lot INTENT is never
+    // certifiable evidence, no matter how many lots of it actually filled.
+    const twoLotIntent = passingJournal().map(item => (item.seq === 3 ? { ...item, quantity: 2 } : item));
+    const twoLotOrder = (status: string, filled: boolean) => ({ ...order(status, filled), quantity: 2 });
+    const twoLotObservations = [
+      { observedAt: "2026-09-01T14:03:01.000Z", order: twoLotOrder("accepted", false) },
+      { observedAt: "2026-09-01T14:03:06.000Z", order: twoLotOrder("filled", true) },
+    ];
+    const certificate = buildCertificate(inputs({ journal: twoLotIntent, orderObservations: twoLotObservations }));
+    expect(certificate.verdict).toBe("FAIL");
+    expect(certificate.evidence.fill).toBeNull();
+    expect(certificate.failures).toContain("accepted credit lifecycle entry:credit was not filled as exactly one lot and reconciled through a later bound-account broker snapshot");
+  });
+
   it("a harness-canceled credit still counts as acceptance evidence, but only that accepted credit lifecycle can supply the fill", () => {
     const journal = passingJournal({ outcomeStatus: "canceled", reconciled: false });
     const canceled = buildCertificate(inputs({ journal, harnessCancels: ["entry:credit"], orderObservations: [{ observedAt: "t", order: order("accepted", false) }, { observedAt: "t", order: order("canceled", false) }] }));

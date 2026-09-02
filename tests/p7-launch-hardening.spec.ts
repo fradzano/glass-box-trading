@@ -710,6 +710,51 @@ describe("P7 launch hardening — certificate failure recovery", () => {
     await expect(recoverCertificateAfterFailure({ runtime, repoRoot: process.cwd(), clock: () => 0, sleep: () => Promise.resolve(), log: () => undefined, maxEntryCycles: 1, entryIntervalMs: 1, patienceCycles: 1, maxFlattenCycles: 1, flattenIntervalMs: 1, approveFenceUnhalt: () => Promise.resolve(null) })).resolves.toBe(false);
     expect(opens).toBe(2);
   });
+
+  it("does not declare a quiescent recovery snapshot flat while it still carries a nonzero position", async () => {
+    // Both certificate-recovery fixtures above flip their fake `exposed` flag false via the flatten `cycle()`
+    // side effect before the deciding snapshot read, so the snapshot itself is always already flat by then.
+    // This fixture stays quiescent (already halted, no unresolved entry lifecycle) from the very first barrier,
+    // so the recovery loop reaches the stable-flat snapshot gate on attempt 1 while the broker still reports a
+    // real nonzero position: `positions.every(quantity === 0)` must be the reason recovery is refused, not
+    // merely `pagesComplete`/`consistentReads`/`nonTerminalOrders`, which all read as satisfied here.
+    const halt = { seq: 1, at: "2026-09-01T12:00:00.000Z", epoch: 1, type: "HALT", reason: "MANUAL", detail: "certificate aborted", sticky: false } as unknown as JournalEntry;
+    let flattenCycles = 0;
+    const failures: string[][] = [];
+    const runtime = {
+      config: CERTIFICATE_TEST_CONFIG,
+      binding: BINDING,
+      tradingDay: "2026-09-01",
+      epoch: 1,
+      broker: { fullSnapshot: () => Promise.resolve({ account: { accountId: EXPECTED }, positions: [{ contractId: "SPY260904C00500000", quantity: 1 }], nonTerminalOrders: [], pagesComplete: true, consistentReads: 2 }) },
+      gateway: {
+        heartbeat: () => Promise.resolve(true),
+        openJournal: () => Promise.resolve({ entries: [halt], quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } }),
+        openJournalAsWriter: () => Promise.resolve({ entries: [halt], quarantined: [], halt: { halted: true, reason: "MANUAL", sticky: false } }),
+        dispatch: () => Promise.resolve({ ok: true, seq: 2, stalenessNeutral: false }),
+      },
+      cycle: () => { flattenCycles += 1; return Promise.resolve({}); },
+      ping: { success: () => Promise.resolve(), fail: (conditions: readonly string[]) => { failures.push([...conditions]); return Promise.resolve(); } },
+    } as unknown as AgentRuntime;
+
+    const recovered = await recoverCertificateAfterFailure({
+      runtime,
+      repoRoot: process.cwd(),
+      clock: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => undefined,
+      maxEntryCycles: 1,
+      entryIntervalMs: 1,
+      patienceCycles: 1,
+      maxFlattenCycles: 1,
+      flattenIntervalMs: 1,
+      approveFenceUnhalt: () => Promise.resolve(null),
+    });
+
+    expect(recovered).toBe(false);
+    expect(flattenCycles).toBe(1);
+    expect(failures).toEqual([["CERTIFICATE_ABORTED"], ["CERTIFICATE_EXPOSURE_UNRESOLVED"]]);
+  });
 });
 
 describe("P7 launch hardening — real broker transport", () => {
@@ -862,6 +907,50 @@ describe("P7 launch hardening — real broker transport", () => {
     const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => Date.now(), fetchImpl, requestTimeoutMs: 200 });
     await expect(broker.fullSnapshot(Date.now() + 30)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
     expect(orderRequests).toBe(2);
+  });
+
+  it("threads the same absolute deadline into the stability re-read instead of re-deriving a fresh one for it", async () => {
+    let now = 0;
+    const account = { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" };
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      now += 20;
+      if (url.endsWith("/v2/account")) return Promise.resolve(jsonResponse(200, account));
+      if (url.endsWith("/v2/positions")) return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/v2/orders?")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(404, { message: "unexpected" }));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => now, fetchImpl, requestTimeoutMs: 100_000 });
+    // The first read (account, positions, one empty orders page) completes at now=60; the loop's pre-read
+    // check at now=60 still clears deadlineAtMs=70, so the stability re-read genuinely starts. Its first
+    // request pushes now to 80 — past that same absolute deadline. A correctly threaded deadline rejects
+    // there; a freshly re-derived deadline for the re-read (e.g. clock-at-call-time plus its own budget)
+    // would not, since it would always still be in the future relative to whatever "now" is by then.
+    await expect(broker.fullSnapshot(70)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
+  });
+
+  it("enforces its one absolute deadline on every page of an order-history pagination, including the third and later", async () => {
+    let now = 0;
+    let pageRequests = 0;
+    const submittedAt = (index: number): string => new Date(1_772_000_000_000 + index * 1_000).toISOString();
+    const rawOrder = (index: number) => ({ id: `broker-${String(index)}`, client_order_id: `entry:${String(index)}`, symbol: "SPY260904C00645000", side: "buy", qty: "1", filled_qty: "0", filled_avg_price: null, limit_price: "1.00", status: "accepted", submitted_at: submittedAt(index) });
+    const page1 = Array.from({ length: 500 }, (_, index) => rawOrder(index));
+    const page2 = Array.from({ length: 500 }, (_, index) => rawOrder(500 + index));
+    const page3 = Array.from({ length: 10 }, (_, index) => rawOrder(1_000 + index));
+    const fetchImpl = ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes("/v2/orders?")) return Promise.reject(new Error(`unexpected request ${url}`));
+      pageRequests += 1;
+      // Pages 1 and 2 are cheap; page 3 is where the clock crosses the deadline.
+      now += pageRequests <= 2 ? 20 : 100;
+      const body = pageRequests === 1 ? page1 : pageRequests === 2 ? page2 : pageRequests === 3 ? page3 : [];
+      return Promise.resolve(jsonResponse(200, body));
+    }) as typeof fetch;
+    const broker = createAlpacaBroker({ credentials: { keyId: "test", secretKey: "test" }, tradingOrigin: ORIGIN, dataOrigin: "https://data.alpaca.markets", clock: () => now, fetchImpl, requestTimeoutMs: 100_000 });
+    // Three genuine pages (two full 500-item pages force real pagination, then a short third page); pages 1-2
+    // land under deadlineAtMs=100 carrying that same absolute deadline, page 3 pushes now to 140 past it.
+    await expect(broker.ordersByStatus("all", 100)).rejects.toThrow("CYCLE_WALLTIME_EXCEEDED");
+    expect(pageRequests).toBe(3);
   });
 });
 
