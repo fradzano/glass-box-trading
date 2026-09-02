@@ -1607,3 +1607,20 @@ small, no ADR split).
   `cycle-runner.ts` inside its isolated worktree and was reverted within a
   minute; its verify ran clean afterwards, the main worktree was never
   touched, and the A1/B1 fix diffs are reviewed hunk by hunk before commit.
+- **2026-09-02 — R29 fix set: fresh book for management closes, close
+  attempts reconciled in phase 0.** A1 is closed by one fresh book read at
+  the head of the management actions that feeds every close-planning input;
+  `ladderClose` takes the book as a parameter so the phase-1 snapshot is
+  unreachable inside the ladder, a failed refresh submits nothing and raises
+  `MANAGEMENT_BOOK_UNREADABLE`, a 401/403 goes through the credential fence.
+  The adjacent gap the fix exposed — a resting close that fills, cancels or is
+  rejected while the ladder no longer visits it never received an OUTCOME, so
+  the journal/account bijection broke silently — is closed in the pure core
+  (`closeAttemptsAwaitingOutcome`, `reconcileCloseAttempt`, reusing the entry
+  side's terminal mapping) and in phase 0 of the runner, before any management
+  or entry action, with S-CYC-04's lost-acknowledgement discipline: unknown,
+  failed or unsettled lookups invent nothing, stay reserved, and block
+  entries transiently as `CONFIRMATION_UNCLEAR`; `partially_filled` is not
+  re-queued because its remainder is the next generation's business. Cost:
+  one broker lookup per non-terminal close attempt per cycle. SPEC S-CYC-04
+  carries the close-side rule.

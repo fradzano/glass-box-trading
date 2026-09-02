@@ -270,6 +270,27 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   is retained, every later risk-increasing plan in the same analyst batch is
   blocked immediately, and the next cycle's phase 0 resolves it by client
   order ID against the broker BEFORE any new order is placed. (A2, A5, A23)
+  **Close side (2026-09-02):** a close attempt is journaled as INTENT before
+  submission and resolved by its own client order ID, exactly as an entry is.
+  Because the escalation ladder visits a close lifecycle only while the
+  exposure it belongs to is still on the book, a resting attempt can reach
+  its terminal broker state (filled, canceled, rejected, expired) while no
+  ladder step ever looks at it again; the position is then gone from the
+  account while the journal still shows the close working, and the S-J-09
+  projection loses its bijection with broker truth (A5). Phase 0 therefore
+  reconciles close attempts as well as entries: every journaled attempt that
+  is not yet terminal in the fold (`submitted`, or `confirmation_unclear`)
+  is re-read at the broker by its attempt ID BEFORE any management or entry
+  action of the cycle, and a terminal broker record is journaled as that
+  attempt's OUTCOME with the broker's exact filled quantity and average
+  price. An attempt whose broker record is still working is left to the
+  ladder and journals nothing. An attempt the broker does not know, a lookup
+  that fails, and an answer that settles nothing invent no outcome: the
+  attempt stays reserved and non-terminal, blocks every new entry of the
+  cycle, and appears in the G10 classification as `CONFIRMATION_UNCLEAR`
+  (S-G10-04), a transient block rather than a `RESIDUE_UNRESOLVED` halt. The
+  resolution is idempotent: an attempt already carrying the status the
+  broker reports is re-read but never re-journaled.
 - **S-CYC-05** Pre-submit revalidation via typed claimset (owner ruling
   GV-3, 2026-08-25): every core-approved action carries a **typed
   revalidation claimset** — the machine-readable list of facts its gate

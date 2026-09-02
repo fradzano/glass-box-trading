@@ -18,6 +18,7 @@ import {
   closeIntentDraft,
   classifyBrokerFillPrice,
   classifyWorkingOrder,
+  closeAttemptsAwaitingOutcome,
   cycleDraft,
   emergencyCloseEligibility,
   entryAcknowledgementDraft,
@@ -36,6 +37,7 @@ import {
   priceAndDecide,
   priceCloseLimit,
   reconcileCancel,
+  reconcileCloseAttempt,
   revalidateClaimset,
   revalidationVoidDraft,
   skipDraft,
@@ -422,6 +424,31 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       };
       if (!await append(auditGapDraft(context(), [item]))) break;
       auditGaps.push(attemptId);
+    }
+  }
+  // S-CYC-04 on the close side: a close attempt's broker fate can arrive while no ladder step is looking at it —
+  // the ladder only visits a close lifecycle while the exposure it belongs to is still on the book. Every journaled
+  // attempt without a terminal outcome is therefore re-read by its own client order ID and resolved here, before any
+  // management or entry action, so no broker fill exists without its journaled OUTCOME (A5, the S-J-09 bijection).
+  if (journalFailure() === null) {
+    for (const record of closeAttemptsAwaitingOutcome(firstFold.closes)) {
+      const lookup = await fetched(() => deps.broker.orderByClientId(record.attemptId, deps.cycleDeadlineMs));
+      if (!lookup.ok) {
+        if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
+        entriesBlocked.push(`UNRESOLVED:${record.attemptId}`);
+        resolved.push({ clientOrderId: record.attemptId, result: "UNRESOLVED" });
+        continue;
+      }
+      const reconciliation = reconcileCloseAttempt(context(), binding, record, lookup.value);
+      if (reconciliation.kind === "RESOLVED" && !await append(reconciliation.draft)) break;
+      if (reconciliation.kind === "RESOLVED") resolved.push({ clientOrderId: record.attemptId, result: `OUTCOME:${reconciliation.status}` });
+      if (reconciliation.kind === "WORKING") resolved.push({ clientOrderId: record.attemptId, result: "STILL_WORKING" });
+      // Absent at the broker, or answered with nothing terminal: never distinguishable from a delayed effect after a
+      // lost acknowledgement, so the attempt stays reserved and blocks new entries until broker truth settles it.
+      if (reconciliation.kind === "ABSENT" || reconciliation.kind === "UNCHANGED" || (reconciliation.kind === "RESOLVED" && !reconciliation.terminal)) {
+        entriesBlocked.push(`UNRESOLVED:${record.attemptId}`);
+        if (reconciliation.kind !== "RESOLVED") resolved.push({ clientOrderId: record.attemptId, result: reconciliation.kind === "ABSENT" ? "NOT_AT_BROKER" : "CONFIRMATION_UNCLEAR" });
+      }
     }
   }
   // A journal that already failed in phase 0 blocks every entry; the cycle still takes its snapshot, because the

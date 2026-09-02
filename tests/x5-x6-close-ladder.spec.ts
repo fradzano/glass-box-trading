@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { integerUnit, lotCount } from "../src/core/domain.js";
 import type { OptionLeg, OptionQuote } from "../src/core/domain.js";
-import { isWorkingBrokerStatus } from "../src/core/execution.js";
+import { foldLifecycles, isWorkingBrokerStatus } from "../src/core/execution.js";
 import {
   closeCapFor,
   equityLegExpirySentinel,
@@ -332,6 +332,119 @@ describe("S-CYC-05 at the management ladder — closes plan and submit against a
     expect(report.managementCloses).toEqual([]);
     expect(closeSubmissions(harness)).toEqual([]);
     expect(await harness.fake.read.positions()).toEqual([]);
+  });
+});
+
+describe("S-CYC-04 at the close side — phase 0 resolves close attempts the ladder no longer visits", () => {
+  const flattenDay = { tradingDay: "2026-09-03", lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }) };
+
+  function restingCloseAttempt(harness: LifecycleHarness): string {
+    const resting = harness.fake.allOrders().find(order => order.clientOrderId.startsWith("close:") && isWorkingBrokerStatus(order.status));
+    if (resting === undefined) throw new Error("fixture expects exactly one resting close attempt");
+    return resting.clientOrderId;
+  }
+
+  /** The close attempt as the journal fold sees it — the projection's own view of the close lifecycle. */
+  function foldedClose(harness: LifecycleHarness, attemptId: string) {
+    const fold = foldLifecycles(harness.entries());
+    if (!fold.ok) throw new Error(`fold failed: ${fold.reason}`);
+    return fold.closes.find(close => close.attemptId === attemptId);
+  }
+
+  function outcomesFor(harness: LifecycleHarness, attemptId: string): readonly Record<string, unknown>[] {
+    return harness.entries().filter(entry => entry.type === "OUTCOME" && entry["clientOrderId"] === attemptId);
+  }
+
+  it("A5 / S-J-09 the close that filled unobserved gets its OUTCOME in the next cycle's phase 0, and the fold turns terminal", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills under the normal calendar
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    await harness.cycle(flattenDay); // the deadline close rests at the broker
+    const resting = restingCloseAttempt(harness);
+    // The A1 scenario: the resting close fills while the analyst step runs, so no ladder step ever looks at it again.
+    await harness.cycle({ ...flattenDay, analyst: () => { harness.fake.transitionOrder(resting, { status: "filled" }); return Promise.resolve(CANDIDATE_JSON); } });
+    expect(foldedClose(harness, resting)?.status).toBe("submitted");
+
+    const report = await harness.cycle(flattenDay);
+    expect(report.resolved).toContainEqual({ clientOrderId: resting, result: "OUTCOME:filled" });
+    expect(outcomesFor(harness, resting)).toMatchObject([{ status: "filled", filledQuantity: 1, avgFillPriceCents: 200 }]);
+    expect(foldedClose(harness, resting)).toMatchObject({ status: "filled", filledQuantity: 1 });
+    expect(report.entriesBlocked).toEqual([]);
+  });
+
+  it("A5 a resting close canceled at the broker is journaled canceled in phase 0, before the ladder's next generation", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    await harness.cycle(flattenDay);
+    const resting = restingCloseAttempt(harness);
+    // Canceled at the broker while nobody was looking (a venue action or a human in the dashboard).
+    harness.fake.transitionOrder(resting, { status: "canceled", reason: "canceled at the venue" });
+
+    const report = await harness.cycle(flattenDay);
+    expect(report.resolved).toContainEqual({ clientOrderId: resting, result: "OUTCOME:canceled" });
+    expect(outcomesFor(harness, resting)).toMatchObject([{ status: "canceled", filledQuantity: 0 }]);
+    expect(foldedClose(harness, resting)?.status).toBe("canceled");
+    // Phase 0 runs before management: the outcome is journaled ahead of the next generation's close INTENT.
+    const types = harness.entries().map(entry => `${entry.type}:${typeof entry["clientOrderId"] === "string" ? entry["clientOrderId"] : ""}`);
+    const outcomeAt = types.indexOf(`OUTCOME:${resting}`);
+    const nextIntentAt = types.findIndex(item => item.startsWith("INTENT:close:") && item.endsWith(":g1"));
+    expect(outcomeAt).toBeGreaterThanOrEqual(0);
+    expect(nextIntentAt).toBeGreaterThan(outcomeAt);
+  });
+
+  it("S-CYC-04 a failed lookup invents no outcome: the attempt stays non-terminal and blocks entries", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    await harness.cycle(flattenDay);
+    const resting = restingCloseAttempt(harness);
+    const broker: BrokerReadPort = {
+      ...harness.fake.read,
+      orderByClientId: (clientOrderId, deadlineAtMs) => (clientOrderId === resting
+        ? Promise.reject(new Error("fake broker: orders endpoint unavailable"))
+        : harness.fake.read.orderByClientId(clientOrderId, deadlineAtMs)),
+    };
+
+    const report = await harness.cycle({ ...flattenDay, broker });
+    expect(outcomesFor(harness, resting)).toEqual([]);
+    expect(foldedClose(harness, resting)?.status).toBe("submitted");
+    expect(report.entriesBlocked).toContain(`UNRESOLVED:${resting}`);
+    expect(report.resolved).toContainEqual({ clientOrderId: resting, result: "UNRESOLVED" });
+  });
+
+  it("S-CYC-04 a close attempt the broker does not know stays reserved and blocking, cycle after cycle", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    // The port throws before the order is created: the close INTENT is durable, the attempt's existence is not.
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "lose_ack_never_sent" } : { kind: "fill" }));
+    const lost = await harness.cycle(flattenDay);
+    const attemptId = lost.managementCloses[0]?.attemptId ?? "";
+    expect(foldedClose(harness, attemptId)?.status).toBe("confirmation_unclear");
+
+    const report = await harness.cycle(flattenDay);
+    expect(outcomesFor(harness, attemptId)).toHaveLength(1); // the submit-time OUTCOME, never a second one
+    expect(foldedClose(harness, attemptId)?.status).toBe("confirmation_unclear");
+    expect(report.entriesBlocked).toContain(`UNRESOLVED:${attemptId}`);
+    expect(report.resolved).toContainEqual({ clientOrderId: attemptId, result: "NOT_AT_BROKER" });
+  });
+
+  it("an already terminal close attempt is never queried again", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    // The close fills on submit: its OUTCOME is journaled inside the same cycle, the attempt is terminal.
+    const closed = await harness.cycle(flattenDay);
+    const attemptId = closed.managementCloses[0]?.attemptId;
+    expect(attemptId).toBeDefined();
+    expect(foldedClose(harness, attemptId ?? "")?.status).toBe("filled");
+
+    const lookups: string[] = [];
+    const broker: BrokerReadPort = {
+      ...harness.fake.read,
+      orderByClientId: (clientOrderId, deadlineAtMs) => { lookups.push(clientOrderId); return harness.fake.read.orderByClientId(clientOrderId, deadlineAtMs); },
+    };
+    await harness.cycle({ ...flattenDay, broker });
+    expect(lookups.filter(clientOrderId => clientOrderId === attemptId)).toEqual([]);
   });
 });
 

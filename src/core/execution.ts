@@ -878,6 +878,43 @@ export function foldLifecycles(entries: readonly JournalEntry[]): LifecycleFold 
   return { ok: true, entries: [...entryRecords.values()], closes: [...closeRecords.values()] };
 }
 
+/**
+ * S-CYC-04 on the close side: the journaled close attempts whose fate the
+ * broker still has to settle. `submitted` is an INTENT no OUTCOME followed;
+ * `confirmation_unclear` is an OUTCOME that settled nothing. Every other
+ * status was derived from a broker-terminal record — including
+ * `partially_filled`, whose remainder is a NEW generation's business
+ * (`planCloseLifecycle` adopts it), not a second outcome for this attempt.
+ */
+export function closeAttemptsAwaitingOutcome(closes: readonly CloseAttemptRecord[]): readonly CloseAttemptRecord[] {
+  return closes.filter(close => close.status === "submitted" || close.status === "confirmation_unclear");
+}
+
+export type CloseAttemptReconciliation =
+  /** The attempt is not at the broker: never distinguishable from a delayed effect after a lost acknowledgement, so it stays reserved. */
+  | { readonly kind: "ABSENT" }
+  /** The order exists and is not terminal: the ladder's business, nothing to journal. */
+  | { readonly kind: "WORKING" }
+  /** The broker says nothing the journal does not already record; a second identical OUTCOME would be noise. */
+  | { readonly kind: "UNCHANGED" }
+  | { readonly kind: "RESOLVED"; readonly status: OutcomeStatus; readonly terminal: boolean; readonly draft: JournalDraft };
+
+/**
+ * What one broker record means for one journaled close attempt (S-CYC-04,
+ * S-G10): a terminal broker status becomes the attempt's OUTCOME, so a close
+ * that filled, was canceled, rejected or expired while no ladder step looked
+ * at it still reaches the journal. The status comparison keeps the resolution
+ * idempotent — an attempt the journal already carries as
+ * `confirmation_unclear` is re-read every cycle but appended only once.
+ */
+export function reconcileCloseAttempt(context: DraftContext, binding: AccountBinding, record: CloseAttemptRecord, order: BrokerOrderRecord | null): CloseAttemptReconciliation {
+  if (order === null) return { kind: "ABSENT" };
+  const derived = outcomeFromOrder({ clientOrderId: record.attemptId, limit: record.limit, binding, epoch: context.epoch, atIso: context.atIso }, order);
+  if (derived === null) return { kind: "WORKING" };
+  if (derived.status === record.status) return { kind: "UNCHANGED" };
+  return { kind: "RESOLVED", status: derived.status, terminal: derived.terminal, draft: derived.draft };
+}
+
 function isReleased(state: EntryReservationState): state is ReleasedEntryState {
   return state === "rejected" || state === "canceled" || state === "expired";
 }
