@@ -420,6 +420,52 @@ One phase per session; every session ends with the handoff protocol in
 
 ## Open threads
 
+### Remaining work from the competition day (2026-09-02 20:20 CEST), in due order
+
+- **Tonight until 22:00 CEST — nothing for the owner.** Scheduled tasks run
+  the 15-minute cycles and the 5-minute watchdog on the freeze-two build;
+  the PM monitors both journals and pushes a notification only for a halt
+  that needs a human (credential fence, provenance) or a deviation. Open
+  book at 20:16: SPY 762/757 put credit vertical (exp 2026-09-08, filled
+  106 ¢, max loss $395) and a resting SPY iron condor 768/769C + 762/761P
+  (exp 2026-09-04, 3 lots, credit 63 ¢, max loss $111).
+- **Thursday 2026-09-03 (FLATTEN_DATE) — automatic.** Entries are vetoed,
+  the deadline regime closes the book during the session; owner watches the
+  fail pings only.
+- **Thursday evening / Friday — owner CLIs from the README runbook,
+  digest-neutral:** `node dist/shell/deadline-cli.js reconciliation`
+  (names the submitted revision), then `… terminal` after the Friday cut.
+  Never `npm run …` variants that rebuild.
+- **Judge-facing dashboard over the live competition journal — the largest
+  gap.** The frozen build has no production caller for the publisher and no
+  git/Vercel ports (R35 C4; the P8 ports never landed before the digest
+  froze). Needed: a digest-neutral publication path — a `tools/*.ps1` (or
+  a script outside the repo) that calls the built modules to render the
+  site from the competition journal, plus a manual Vercel deploy — and the
+  SUB-09 clean-browser preflight against the real host (also R37 C-3: the
+  history pin's root-relative href on nested routes, percent-encoded route
+  directory). Thursday work; PM offered to start tonight in parallel.
+- **Submission (SUBMISSION-SPEC):** deck is through anti-slop; still open:
+  one-pager, Remotion video, form copy, account evidence (competition
+  account creation instant, $100k bootstrap, journal revision), the golden
+  demo link, preflight. Friday 12:00 CEST internal, 17:00 external.
+- **After the competition:** merge `p7/dev-live-certificate` `--no-ff` into
+  `main` (owner ruling 12:40: the PASS is the acceptance event), release tag;
+  clear the dev journal's `MANUAL` halt by manual un-halt; land the two gated
+  fixes (`c7c7174` one-lot brief on the branch, `9b2e155` resolver in
+  worktree `gbt-fix`, R39/R40 GO) and, if a live test is still wanted,
+  certificate run four with the scheduled dev tasks disabled (R40 C-2);
+  restore the two `f464a66` source files on the working tree to the branch
+  head at that moment (they are staged, uncommitted, and keep the running
+  digest equal to certificate two until then).
+- **Backlog recorded today (C class, DECISIONS 2026-09-02):** driver
+  reconciliation cycle after un-halt; `Object.hasOwn` on the tooltip table;
+  composition-root virgin bootstrap (`SEED_BOOTSTRAP` for an absent store
+  with an empty journal and virginity `unknown`) plus a test through
+  `buildRuntime`; prompt-builder unit test; timing-sensitive wall-clock
+  test; the `analyst-claude.ts` comment still saying "~190".
+
+
 - The verification store paths cited in this file (`C:/Users/felix/verify-runs/...`
   and its `prompts/`) are a local, unpublished record; a public reader of this
   repository cannot resolve them.
