@@ -2230,3 +2230,30 @@ small, no ADR split).
   journals of the day are archived in the verification store. Not swapped,
   as ruled: the one-lot brief and the resolver fix wait for after the
   competition.
+- **2026-09-02 — The submission video is a separate npm package under
+  `video/`, rendered only from the frozen presentation-cutoff dataset
+  (SUB-04; scaffold landed 22:30 CEST).** Remotion and React cannot enter
+  the root `package.json` without voiding the running certificate, so
+  `video/` carries its own lock, its own `tsconfig.json`, and the root
+  `eslint .` ignores `video/**`. Every figure and URL a scene shows is read
+  from `video/public/dataset/{meta,projection}.json` — the pinned
+  presentation route's `projection.json` plus a meta file with the URLs —
+  through pure selectors; nothing is typed into a scene. Two gates enforce
+  the SUBMISSION-SPEC rule that uploaded artifacts cite one frozen dataset:
+  `scripts/check-dataset.mjs` before the bundler and `validateDataset` in
+  the composition refuse a `{{` placeholder, a non-presentation cutoff, a
+  cutoff or account that differs between meta and projection, and a route
+  URL that does not name the pinned revision; the deliverable render
+  (`npm run render`, `--frozen`) additionally refuses `frozen: false`, a
+  projection that is not risk-flat, and an empty capture slot, while the
+  studio and `render:dev` accept those with a DEV watermark burned in. The
+  dev dataset committed today is the competition journal at 19:00:51Z
+  pinned as a presentation cutoff for scaffold work only, rendered into a
+  scratch directory so the owner's publish tree carries no premature pin.
+  Screen recordings are the owner's step against the pinned route after
+  Thursday's close; until then the scenes render data-driven stand-ins
+  behind a red "capture pending" border. Observed while wiring the
+  selectors: the journal's `candidateVerdicts` carry two shapes — the gate
+  verdict with rationale and G1–G8 vector, and the qualification window's
+  post-gate veto with only a code and a reason — so the featured veto is
+  always one with a vector.
