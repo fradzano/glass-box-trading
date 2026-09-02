@@ -1543,3 +1543,67 @@ small, no ADR split).
   document is a test fixture. Lesson recorded for the axiom "the artifact under
   test is not the standard": broker-facing proofs need one recorded document
   per endpoint before they gate anything.
+- **2026-09-02 — Pre-freeze cleanup rulings.** `docs/cold-read-2026-08-24.md`
+  stays: CONCEPT cites its finding numbers in four places, and a glass-box
+  repository publishes the design's own failure modes. The broker port
+  contracts move out of the fake into `src/shell/broker-ports.ts` so the real
+  adapter no longer imports a fake module (pure extraction). The map generator
+  skips `.claude` and `tmp`, and `.claude/worktrees/` is ignored, after one
+  ephemeral agent worktree leaked into REPO_MAP.md. `dist/` is inside the
+  certificate digest but gitignored, so the certificate binds bytes no clone
+  reproduces; the operator builds right before the run and never rebuilds
+  between the certificate and competition operation. The dev account
+  identifier already appears in tracked text and is not treated as a secret;
+  `evidence/` stays local for the raw certificate, not for the identifier.
+- **2026-09-02 — The Friday deadline entries get a one-shot CLI now, not on
+  Friday.** S-G11-03/04 (`DEADLINE_RECONCILIATION`, `TERMINAL`) existed only
+  as functions without a runtime caller. Because the certificate digest binds
+  `src/`, `deadline-runtime.ts` / `deadline-cli.ts` land before the
+  market-hours run. The CLI takes `STATE_DIR` from the validated configuration
+  only, acquires writer authority through the gateway like the agent, appends
+  nothing when a live writer holds the epoch (no witness line either: a
+  one-shot owner action is not a scheduled cycle whose absence needs
+  explaining), and refuses a second `TERMINAL` by a pure admission rule over
+  the journal. Exit codes: 0 appended, 2 usage, 3 live writer, 4 TERMINAL
+  already standing, 1 otherwise.
+- **2026-09-02 — The scheduled watchdog composes the real broker.**
+  `watchdog-cli.ts` had always passed null broker and market ports, so the
+  scheduled watchdog could fence, halt and ping but never flatten an open
+  book. `watchdog-runtime.ts` composes the validated configuration, the
+  account-bound Alpaca port, the ping port and a close-oriented market window
+  (expiries from zero remaining sessions, the full configured strike band)
+  from the existing factories, without acquiring writer authority up front
+  and without launching the analyst; any configuration or credential problem
+  degrades to the previous null-port behaviour with the reason logged, and a
+  401/403 escaping the run records the `AUTH_FAILURE` fence. The watchdog
+  submits closes only and is deliberately not gated on the arming
+  certificate: gating recovery on a certificate would fail open on risk.
+  Known residual: a 401/403 the gateway catches during a close submit is
+  treated as a lost acknowledgement (reserved and reconciled), not
+  classified as a credential fence — bounded, declared.
+- **2026-09-02 — R29 blind gate at `4403758`: NO-GO (A=1, B=1, C=12), fixes
+  before the certificate run.** A1: the management-close ladder (eviction,
+  flatten, residue) planned and submitted against the phase-1 book snapshot,
+  refreshing orders but never positions; a resting close that fills during
+  the analyst step made the ladder submit a further close against a flat
+  account, opening a reversed and partly unbounded exposure (reproduced with
+  the fake broker on the routes `deadline` and `expiry`; the mutant
+  "disable the eligibility refusal in ladderClose" survived all 388 tests
+  while the analogous entry-side mutant is caught). Fix: one fresh book read
+  at the head of the management actions, used by every close-planning input;
+  no close submits when that read fails. B1: the watchdog composition
+  carried `ping: null` into every degraded path, so a takeover under
+  degraded composition raised no active alarm. Fix: the ping port is built
+  before the first degrade branch. C-class: coverage gaps without a
+  demonstrated defect (one-lot INTENT half, deadline inheritance beyond the
+  first page, the UNHALT CAS epoch and journal-tail components, the
+  recovery-loop flatness gate, presentation CSS untested), the deck naming
+  only `HUMAN_ACTION`, the watchdog decision missing here, and the
+  certificate CLI exiting 1 on a suppressed rival. Ruling on the last:
+  S-G12-01's exit-0 rule is for the scheduled agent process; the certificate
+  CLI is an owner-driven one-shot and exits non-zero on suppression so the
+  owner learns the run did not happen — declared, not changed. The gate
+  reviewer disclosed that a scratch write of its own briefly mutated
+  `cycle-runner.ts` inside its isolated worktree and was reverted within a
+  minute; its verify ran clean afterwards, the main worktree was never
+  touched, and the A1/B1 fix diffs are reviewed hunk by hunk before commit.

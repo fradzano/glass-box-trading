@@ -73,5 +73,7 @@ failure, not external ineligibility.
 **Known limitation.** Alpaca's API has no conditional submit, so the gap
 between the pre-submit broker re-fetch and broker acceptance cannot be
 closed; that re-fetch's completion is the declared linearization point,
-and a manual account change inside the gap is caught next cycle as
-`HUMAN_ACTION`, which halts and irreversibly breaks the provenance latch.
+and manual account changes are prohibited while the agent operates
+(outside a durable halt); one that lands anyway is caught next cycle as
+`RESIDUE` or `HUMAN_ACTION`, halts, and on the competition account
+irreversibly breaks the provenance latch.

@@ -116,7 +116,8 @@ figure here may be typed by hand or diverge from theirs.
 - That re-fetch's completion is the declared linearization point; manual
   account mutation is prohibited outside a durable halt
 - Undetected only until the next cycle: phase 0 then classifies it
-  `HUMAN_ACTION`, halts, and irreversibly breaks the provenance latch
+  `RESIDUE` or `HUMAN_ACTION`, halts, and on the competition account
+  irreversibly breaks the provenance latch
 - Ask: an atomic conditional submit from Alpaca would close this window
 
 ---
