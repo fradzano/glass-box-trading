@@ -2090,3 +2090,29 @@ small, no ADR split).
   passed three times alone and in the repeated full verify — a
   timing-sensitive test for the backlog, same class as the MCP stall tests
   ported to a timers port this morning.
+- **2026-09-02 — First competition fill on the freeze-two build; no swap
+  tonight.** After the competition account was re-armed on the freeze-two
+  build (20:03 CEST, epoch 6, a GAP cycle re-deriving state after 62
+  minutes without a primary entry), cycle 5 at 20:05 (epoch 7) proposed a
+  SPY 762/757 put credit vertical expiring 2026-09-08 at quantity one — by
+  the analyst's own choice, the brief still lacked the one-lot rule — which
+  passed all eight gates with a reserved max loss of $395 under the $500
+  qualification cap, was submitted at a 105 ¢ credit limit and filled by the
+  broker at 106 ¢ (order `28f7a3b9…`, `entry:2026-09-02:5:90daa0a3…`,
+  INTENT seq 8, OUTCOME seq 9); a QQQ long call in the same batch was
+  vetoed `QUALIFICATION_ONE_LIVE`. The qualification window's purpose is
+  met from inside the gated build. Ruling (PM, with the owner's standing
+  "fix, regenerate, restart" now moot): the two gated fixes on the branch
+  (`c7c7174` one-lot brief, `9b2e155` resolver, R39 GO and R40 pending) are
+  NOT swapped in tonight — a rebuild would void the certificate while a
+  position is open, and neither fix touches the cycle runner that manages
+  the position (kill predicate, tomorrow's `FLATTEN_DATE` regime). The
+  running build is freeze two: `dist/` built from `f464a66`, and the two
+  source files of the one-lot fix restored to their `f464a66` content on the
+  working tree (staged, uncommitted), so `runtimeDigest` equals the
+  certificate's; the branch head is ahead of the running build and says so
+  here. The scheduled tasks are enabled again (15-minute cycles until 22:00
+  CEST, watchdog every 5 minutes). Certificate run three's abort left the
+  dev journal under a `MANUAL` halt with the account flat; it stays until
+  the next dev certificate run, after the resolver fix, clears it by manual
+  un-halt.

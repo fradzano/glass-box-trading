@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 18:45 CEST (P7 PASS at freeze two; competition armed on `competition-2` after an operator seed of the epoch store — live finding four: the composition root cannot reach the virgin bootstrap by itself, see DECISIONS; BOOTSTRAP seq 1 landed on `PA376WIK2ATL` at $100,000; next: cycles every 15 min via the scheduled tasks, qualification entry before the window end, merge to `main` afterwards; no `src/`, `assets/`, `config/` or `dist/` change)
+**Last updated:** 2026-09-02 20:10 CEST (**competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
