@@ -224,6 +224,10 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   try {
     days = await broker.calendar(isoDate(now, -7), isoDate(now, 60));
   } catch (error) {
+    const status = httpStatusOf(error);
+    if (status === 401 || status === 403) {
+      await persistBrokerFence("AUTH_FAILURE", `active credentials were rejected while observing the broker calendar (HTTP ${String(status)})`);
+    }
     return releaseAndRefuse("calendar", `broker calendar could not be observed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const tradingDay = newYorkDate(now);

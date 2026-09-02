@@ -757,7 +757,9 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   a core input — not ambient state read inside the core.
 - **S-G12-06** Credential fence (decision D): an auth failure (401/403) is
   journaled as `AUTH_FAILURE` — a distinguishable state, not generic
-  `WORLD_UNREACHABLE` — and blocks all orders. The runbook fact is spec:
+  `WORLD_UNREACHABLE` — and blocks all orders. This applies to every
+  authenticated startup read, including account identity and exchange
+  calendar, before later cycle reads use the same fence. The runbook fact is spec:
   a key rotation does NOT cancel working orders; the documented fence
   procedure therefore ends with a working-order check/cancel in the broker
   dashboard, and the fence is drilled once on the dev account pre-arm

@@ -152,6 +152,55 @@ describe("P7 launch hardening — independent account identity", () => {
     expect(readHolder(resolved.value)).toBeNull();
   });
 
+  it("persists AUTH_FAILURE when the authenticated account read succeeds but the calendar rejects credentials", async () => {
+    const stateRoot = temporaryDirectory("gbt-p7-calendar-auth-fence-");
+    const resolved = resolveStateDir(stateRoot);
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T14:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const originalFetch = globalThis.fetch;
+    let accountReads = 0;
+    let calendarReads = 0;
+    globalThis.fetch = (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/v2/account")) {
+        accountReads += 1;
+        return Promise.resolve(jsonResponse(200, { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" }));
+      }
+      if (url.includes("/v2/calendar?")) {
+        calendarReads += 1;
+        return Promise.resolve(jsonResponse(401, { message: "unauthorized" }));
+      }
+      return Promise.resolve(jsonResponse(500, { message: "unexpected request" }));
+    };
+    try {
+      const built = await buildRuntime({
+        repoRoot: process.cwd(),
+        processEnv: {
+          ALPACA_PROFILE: "dev",
+          ALPACA_DEV_KEY_ID: "dummy-key",
+          ALPACA_DEV_SECRET_KEY: "dummy-secret",
+          ALPACA_DEV_ACCOUNT_ID: EXPECTED,
+          STATE_DIR: stateRoot,
+          BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+          ANALYST_MODEL: "claude-sonnet-5",
+        },
+        clock: () => now,
+        objective: "certificate",
+        instanceId: "calendar-auth-probe",
+        log: () => undefined,
+      });
+      expect(built).toMatchObject({ ok: false, stage: "calendar" });
+      expect(accountReads).toBe(1);
+      expect(calendarReads).toBe(1);
+      expect(parseJournalText(readFileSync(resolved.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", reason: "AUTH_FAILURE" });
+      expect(readHaltState(resolved.value)).toEqual({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+      expect(readHolder(resolved.value)).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it.each(["ACCOUNT_BINDING_MISMATCH", "AUTH_FAILURE"] as const)("persists and pings an early %s refusal before the real broker gateway exists", async reason => {
     const resolved = resolveStateDir(temporaryDirectory("gbt-p7-startup-fence-"));
     if (!resolved.ok) throw new Error(resolved.detail);

@@ -1455,3 +1455,8 @@ small, no ADR split).
   sticky reason. An authority-free startup safety interlock can therefore add
   its observation without rewriting `KILL`, `PROVENANCE_BROKEN`, or another
   terminal sticky cause.
+- **2026-09-03 — P7 R28 applies the credential fence to every authenticated
+  startup read.** A 401/403 from the exchange calendar now persists and signals
+  `AUTH_FAILURE` exactly like rejection of the preceding account-identity read,
+  then releases the startup holder. Startup stage names cannot bypass the
+  broker-auth safety classification.
