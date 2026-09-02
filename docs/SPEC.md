@@ -753,6 +753,23 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   hands over to the owner in writing, never in silence. A valid
   `DECLARED_EXPIRY_HOLD` is recorded as a non-flat, zero-additional-liability
   terminal residue and does not masquerade as this failure path.
+  A Friday entry that cannot be written may not end in silence. Exactly two
+  conditions prevent the entry: the decision snapshot cannot be assembled
+  from the observed book and market, or the gateway refuses the
+  authoritative append. In both, no journal entry exists and the journal is
+  therefore unavailable as the handover channel, so the run raises the
+  active fail-signal with the alarm condition
+  `DEADLINE_ENTRY_NOT_JOURNALED`, qualified by the failure class
+  (`SNAPSHOT_NOT_ASSEMBLED` or `ENTRY_NOT_JOURNALED`) and the underlying
+  reason, and reports it in a closed `failure` field that is null exactly
+  when the entry landed; the process exit is non-zero on every such path
+  (an abort before either check reaches the same signal from the CLI as
+  `ENTRY_ABORTED`). A `TERMINAL` reporting a risk-bearing remainder remains
+  a success of the entry, not a failure of it. Both entries are owner-driven
+  one-shot processes (`deadline-cli`): `STATE_DIR` comes from the validated
+  configuration only, writer authority is acquired through the gateway like
+  the agent's, nothing is appended when a live writer holds the epoch, and
+  a second `TERMINAL` is refused by a pure admission rule over the journal.
 
 ## 5. State and failure gates
 
@@ -760,7 +777,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 
 - **S-G12-01** Lock held by a live instance → the second instance makes no
   broker call, appends a single `SUPPRESSED` line **as a witness append**
-  (the authority-free gateway class defined in S-G12-07), exits 0.
+  (the authority-free gateway class defined in S-G12-07); the scheduled
+  second instance exits 0, whereas an owner-driven one-shot tool (the
+  certificate CLI, the deadline CLI) exits non-zero on suppression so the
+  operator learns that the requested run did not happen.
   `SUPPRESSED` is **staleness-neutral**: it does not count as a journal
   append for the watchdog's staleness clock (S-G14-02) and never triggers
   a success ping (S-G14-03) — a dead or hanging holder can never be kept
@@ -897,6 +917,21 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   one fence, mleg close, both S-X-06 closes, no duplicate action, halt, journal,
   and fail-ping. A
   fenced old writer that wakes later cannot mutate anything (S-G12-07).
+  Controlled end: once a `TERMINAL` entry stands in the journal (S-G11-04),
+  the deployment has ended by design and the watchdog stands down. A journal
+  that stops growing after the controlled end is the intended outcome, not
+  evidence of a hung writer, so the staleness assessment yields the quiet
+  reason `DEPLOYMENT_TERMINAL`, and that reason outranks every other: no
+  fence, no epoch increment, no takeover halt, no book recovery, no broker
+  mutation and no ping, regardless of session hours and of how far the last
+  authoritative append lies beyond `DEAD_MAN_BOUND`. The flag is a fold over
+  the same journal read the staleness clock uses, passed into the pure
+  assessment, which never reads a journal itself. Absent a standing
+  `TERMINAL`, staleness behaviour is unchanged. The scheduled watchdog
+  composes the real account-bound broker, the ping port and a close-oriented
+  market window from the validated configuration; any configuration or
+  credential problem degrades to fence-only behaviour that still halts and
+  still fail-pings.
   Witness appends (the S-G12-07 class — `SUPPRESSED`, `FENCED_OUT`) never
   reset this staleness clock.
 - **S-G14-03** External detection (decision C): the agent sends a success

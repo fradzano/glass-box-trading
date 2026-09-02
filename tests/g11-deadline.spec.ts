@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { deadlineRegime, lifecycleEntryVeto } from "../src/core/lifecycle.js";
 import { runDeadlineReconciliation, runTerminal } from "../src/shell/deadline.js";
-import { creditVertical } from "./execution-fixtures.js";
+import { SHORT_CALL, creditVertical } from "./execution-fixtures.js";
 import { cleanupLifecycleDirs, defaultLifecycleDeps, lifecycleCalendar, lifecycleHarness, lifecycleMarket } from "./lifecycle-fixtures.js";
 
 afterEach(() => { cleanupLifecycleDirs(); });
@@ -130,5 +130,56 @@ describe("S-G11-03/04 — the dedicated Friday entries", () => {
     expect(remainder.positions.length).toBeGreaterThan(0);
     expect(remainder.maxLossStatement.length).toBeGreaterThan(0);
     expect(remainder.expiryConsequence.length).toBeGreaterThan(0);
+  });
+});
+
+describe("S-G11-03/04 — a Friday entry that cannot be written hands over in writing, never in silence", () => {
+  it("S-G11-04 an unassemblable snapshot appends nothing, raises the active fail-signal and names the failure class in the report", async () => {
+    const harness = await lifecycleHarness();
+    const before = harness.entries();
+    // One malformed quote in the market observation is enough: the pure assembly refuses the whole snapshot.
+    const brokenMarket = lifecycleMarket(() => harness.clock.now, {
+      quotes: { [SHORT_CALL]: { bidCents: -1, askCents: 302, bidSize: 20, askSize: 20, quotedAtMs: harness.clock.now, brokerQuotedAt: "2026-08-31T13:30:59.871234567Z" } },
+    });
+    const report = await runTerminal({
+      gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: brokenMarket,
+      clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
+      cycleIndex: 43, ping: harness.ping,
+    });
+    expect(report.appended).toBe(false);
+    expect(report.failure).toMatchObject({ kind: "SNAPSHOT_NOT_ASSEMBLED" });
+    expect(report.failure?.detail).toContain("QUOTE_INVALID");
+    // No entry could land in that state, so the ping is the only channel left — and it is used.
+    expect(report.ping).toBe("fail");
+    expect(harness.ping.record.failures.at(-1)?.conditions.join(" ")).toContain("DEADLINE_ENTRY_NOT_JOURNALED");
+    expect(harness.entries()).toEqual(before);
+  });
+
+  it("S-G11-03 an append the gateway refuses is fail-signalled with the refusal reason, not swallowed", async () => {
+    const harness = await lifecycleHarness();
+    const before = harness.entries();
+    const report = await runDeadlineReconciliation({
+      // A stale epoch: the snapshot assembles, the gateway refuses the append. Nothing about that may be quiet.
+      gateway: harness.gateway, epoch: 99, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
+      clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
+      cycleIndex: 44, ping: harness.ping,
+    }, "journal-rev-unwritable");
+    expect(report.appended).toBe(false);
+    expect(report.failure).toMatchObject({ kind: "ENTRY_NOT_JOURNALED" });
+    expect(report.failure?.detail).toContain("STALE_EPOCH");
+    expect(report.ping).toBe("fail");
+    expect(harness.ping.record.failures.at(-1)?.conditions.join(" ")).toContain("DEADLINE_ENTRY_NOT_JOURNALED");
+    expect(harness.entries()).toEqual(before);
+  });
+
+  it("a written entry reports no failure at all: the field distinguishes silence from success", async () => {
+    const harness = await lifecycleHarness();
+    const report = await runTerminal({
+      gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
+      clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
+      cycleIndex: 45, ping: harness.ping,
+    });
+    expect(report).toMatchObject({ appended: true, ping: "success", failure: null });
+    expect(harness.ping.record.failures).toEqual([]);
   });
 });

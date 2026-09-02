@@ -672,6 +672,23 @@ export function assertFlattened(book: BrokerBook, declaredHoldContractIds: reado
   return { satisfied: violations.length === 0, holdVisible, violations };
 }
 
+/**
+ * The `TERMINAL` entry, if one stands (S-G11-04). It is the controlled end of
+ * the run: after it the scheduler stops, the artifacts are frozen, and a
+ * journal that no longer grows is the intended outcome rather than evidence of
+ * a hung writer. The fold is here so that every consumer — the watchdog's
+ * staleness assessment, the deadline CLI's once-only admission — reads the
+ * same fact from the same entries instead of re-deciding what "ended" means.
+ */
+export function terminalEntry(entries: readonly JournalEntry[]): JournalEntry | null {
+  return entries.find(entry => entry.type === "TERMINAL") ?? null;
+}
+
+/** Whether the controlled end already stands; the boolean form the staleness assessment takes. */
+export function deploymentTerminal(entries: readonly JournalEntry[]): boolean {
+  return terminalEntry(entries) !== null;
+}
+
 // ---------------------------------------------------------------------------
 // G14 — watchdog staleness and the ping plan
 // ---------------------------------------------------------------------------
@@ -683,7 +700,7 @@ export interface SessionWindow {
 }
 
 export type StalenessAssessment =
-  | { readonly kind: "quiet"; readonly reason: "OUTSIDE_SESSION" | "FRESH" | "NO_JOURNAL" }
+  | { readonly kind: "quiet"; readonly reason: "OUTSIDE_SESSION" | "FRESH" | "NO_JOURNAL" | "DEPLOYMENT_TERMINAL" }
   | { readonly kind: "stale"; readonly ageMs: number };
 
 /**
@@ -694,8 +711,16 @@ export type StalenessAssessment =
  * watchdog stays quiet on it (decision in DECISIONS.md P5). Witness appends
  * never feed `lastAuthoritativeAtMs` (the caller derives it via
  * `journalStaleness`, which is witness-neutral).
+ *
+ * `deploymentTerminal` outranks every other reason (S-G11-04): once the
+ * `TERMINAL` entry stands, the run ended on purpose and its silence is the
+ * expected outcome. Treating that as a hung writer would fence a writer that
+ * finished, halt an account that is flat, and fail-ping an owner whose story
+ * already closed in writing. The caller derives the flag from the journal fold
+ * (`deploymentTerminal`); this function never reads a journal.
  */
-export function assessStaleness(nowMs: number, session: SessionWindow, lastAuthoritativeAtMs: number | null, deadManBoundMs: number): StalenessAssessment {
+export function assessStaleness(nowMs: number, session: SessionWindow, lastAuthoritativeAtMs: number | null, deadManBoundMs: number, deploymentTerminal: boolean): StalenessAssessment {
+  if (deploymentTerminal) return { kind: "quiet", reason: "DEPLOYMENT_TERMINAL" };
   if (!session.isTradingDay || nowMs < session.opensAt || nowMs >= session.closesAt) return { kind: "quiet", reason: "OUTSIDE_SESSION" };
   if (lastAuthoritativeAtMs === null) return { kind: "quiet", reason: "NO_JOURNAL" };
   const ageMs = nowMs - lastAuthoritativeAtMs;

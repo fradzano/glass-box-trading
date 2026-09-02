@@ -26,6 +26,7 @@ import {
   assessStaleness,
   classifyBook,
   closeCapFor,
+  deploymentTerminal,
   escalateCloseLimit,
   marketableCloseLimit,
   planBookClosure,
@@ -87,7 +88,10 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   const opened = await gateway.openJournal();
   const staleness = journalStaleness(opened.entries);
   const lastMs = staleness.lastAuthoritativeAt === null ? null : utcIsoToEpochMs(staleness.lastAuthoritativeAt);
-  const assessment = assessStaleness(deps.clock(), deps.session, lastMs, deps.deadManBoundMs);
+  // S-G11-04: a run that ended on purpose is not a hung writer. The fold is
+  // taken from the same journal read the staleness clock uses, so the two can
+  // never disagree about which entries they saw.
+  const assessment = assessStaleness(deps.clock(), deps.session, lastMs, deps.deadManBoundMs, deploymentTerminal(opened.entries));
   if (assessment.kind === "quiet") return quiet(assessment);
 
   // Fence FIRST (S-G14-02): authority comes only from the atomic epoch increment, never from observing staleness.

@@ -15,7 +15,7 @@
 // distinguishable on purpose: 2 usage, 3 a live writer, 4 a TERMINAL that
 // already stands, 1 everything else.
 import { admitDeadlineEntry, composeDeadline, parseDeadlineCommand } from "./deadline-runtime.js";
-import { runDeadlineReconciliation, runTerminal } from "./deadline.js";
+import { DEADLINE_ENTRY_NOT_JOURNALED, runDeadlineReconciliation, runTerminal } from "./deadline.js";
 
 const EXIT_USAGE = 2;
 const EXIT_SUPPRESSED = 3;
@@ -62,6 +62,15 @@ try {
   await composed.release();
   process.exit(report.appended ? 0 : 1);
 } catch (error) {
+  // A broker read or a journal read that throws is the third way an entry can
+  // fail to exist. `deadline.ts` raises the fail-signal for the two it can
+  // see; this one only surfaces here, and it may not be quieter than those.
+  const detail = error instanceof Error ? error.message : String(error);
+  try {
+    await composed.deps.ping?.fail([`${DEADLINE_ENTRY_NOT_JOURNALED}:ENTRY_ABORTED:${detail}`]);
+  } catch {
+    // Delivery is best effort; stderr and the exit code carry it regardless.
+  }
   await composed.release();
   process.stderr.write(`deadline entry aborted: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exit(1);

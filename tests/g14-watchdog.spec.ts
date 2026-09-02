@@ -7,7 +7,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, inject, it } from "vitest";
-import { assessStaleness, planPing } from "../src/core/lifecycle.js";
+import { assessStaleness, deploymentTerminal, planPing, terminalEntry } from "../src/core/lifecycle.js";
+import { runTerminal } from "../src/shell/deadline.js";
 import { runWatchdog } from "../src/shell/watchdog.js";
 import type { WatchdogDependencies } from "../src/shell/watchdog.js";
 import { LONG_CALL, SHORT_CALL } from "./execution-fixtures.js";
@@ -28,6 +29,7 @@ afterEach(() => { cleanupLifecycleDirs(); });
 
 const SESSION = { isTradingDay: true, opensAt: P5_NOW - 3_600_000, closesAt: P5_NOW + 7_200_000 };
 const DEAD_MAN_BOUND_MS = 3_000_000;
+const TERMINAL_AT = "2026-09-04T20:00:00.000Z";
 
 function watchdogDeps(harness: LifecycleHarness, overrides: Partial<WatchdogDependencies> = {}): WatchdogDependencies {
   return {
@@ -53,12 +55,24 @@ function watchdogDeps(harness: LifecycleHarness, overrides: Partial<WatchdogDepe
 describe("S-G14-01 — market-hours-aware: an overnight or weekend gap is normal", () => {
   it("assessStaleness is quiet outside a session, on a fresh journal, and on no journal at all; stale only in-session beyond the bound", () => {
     const session = { isTradingDay: true, opensAt: 1_000, closesAt: 2_000 };
-    expect(assessStaleness(500, session, 0, 100)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
-    expect(assessStaleness(2_000, session, 0, 100)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
-    expect(assessStaleness(1_500, { ...session, isTradingDay: false }, 0, 100)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
-    expect(assessStaleness(1_500, session, 1_450, 100)).toEqual({ kind: "quiet", reason: "FRESH" });
-    expect(assessStaleness(1_500, session, null, 100)).toEqual({ kind: "quiet", reason: "NO_JOURNAL" });
-    expect(assessStaleness(1_500, session, 1_300, 100)).toEqual({ kind: "stale", ageMs: 200 });
+    expect(assessStaleness(500, session, 0, 100, false)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
+    expect(assessStaleness(2_000, session, 0, 100, false)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
+    expect(assessStaleness(1_500, { ...session, isTradingDay: false }, 0, 100, false)).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
+    expect(assessStaleness(1_500, session, 1_450, 100, false)).toEqual({ kind: "quiet", reason: "FRESH" });
+    expect(assessStaleness(1_500, session, null, 100, false)).toEqual({ kind: "quiet", reason: "NO_JOURNAL" });
+    expect(assessStaleness(1_500, session, 1_300, 100, false)).toEqual({ kind: "stale", ageMs: 200 });
+  });
+
+  it("S-G11-04/S-G14-01 a deployment whose TERMINAL entry stands is ended, not stale: nothing else can make it loud again", () => {
+    const session = { isTradingDay: true, opensAt: 1_000, closesAt: 2_000 };
+    // The controlled end outranks every other reason — in-session, past the bound, it stays quiet.
+    expect(assessStaleness(1_500, session, 1_300, 100, true)).toEqual({ kind: "quiet", reason: "DEPLOYMENT_TERMINAL" });
+    expect(assessStaleness(500, session, 1_300, 100, true)).toEqual({ kind: "quiet", reason: "DEPLOYMENT_TERMINAL" });
+    // And the flag is derived from the fold, never from a second reading of the file.
+    expect(deploymentTerminal([])).toBe(false);
+    expect(deploymentTerminal([{ seq: 1, at: TERMINAL_AT, epoch: 1, type: "CYCLE" }])).toBe(false);
+    expect(deploymentTerminal([{ seq: 1, at: TERMINAL_AT, epoch: 1, type: "TERMINAL" }])).toBe(true);
+    expect(terminalEntry([{ seq: 7, at: TERMINAL_AT, epoch: 1, type: "TERMINAL" }])?.seq).toBe(7);
   });
 
   it("S-G14-01 an overnight gap triggers no takeover and no mutation", async () => {
@@ -127,6 +141,55 @@ describe("S-G14-02 / WIN-8 — in-session staleness fences first, then recovers 
     expect(witness).toMatchObject({ ok: true, stalenessNeutral: true });
     const report = await runWatchdog(watchdogDeps(harness));
     expect(report.assessment.kind).toBe("stale");
+  });
+});
+
+describe("S-G11-04 / S-G14-02 — after the controlled end the watchdog stands down", () => {
+  /** A flat harness whose Friday TERMINAL entry stands, then wound forward well past the dead-man bound inside a session. */
+  async function endedDeployment(): Promise<LifecycleHarness> {
+    const harness = await lifecycleHarness();
+    const terminal = await runTerminal({
+      gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
+      clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
+      cycleIndex: 40, ping: harness.ping,
+    });
+    expect(terminal.appended).toBe(true);
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+    return harness;
+  }
+
+  it("a journal that stopped because the run ended is quiet: no takeover, no halt, no mutation, no ping", async () => {
+    const harness = await endedDeployment();
+    const pingsBefore = harness.ping.record.successes.length;
+    const mutationsBefore = harness.fake.mutations.length;
+
+    const report = await runWatchdog(watchdogDeps(harness));
+    expect(report.assessment).toEqual({ kind: "quiet", reason: "DEPLOYMENT_TERMINAL" });
+    expect(report.acquired).toBeNull();
+    expect(report.epoch).toBeNull();
+    expect(report.halted).toBe(false);
+    expect(report.closes).toEqual([]);
+    expect(report.ping).toBeNull();
+    expect(harness.fake.mutations).toHaveLength(mutationsBefore);
+    expect(harness.ping.record.successes).toHaveLength(pingsBefore);
+    expect(harness.ping.record.failures).toEqual([]);
+    expect(harness.entries().some(entry => entry.type === "HALT")).toBe(false);
+    // The writer that ended the run still owns its epoch: nothing was fenced.
+    const stillOwned = await harness.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: { at: TERMINAL_AT, epoch: 1, type: "SKIP", reasonCodes: [], snapshot: null } } });
+    expect(stillOwned.ok).toBe(true);
+  });
+
+  it("the very same staleness without a standing TERMINAL still fences, halts and fail-pings", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+
+    const report = await runWatchdog(watchdogDeps(harness));
+    expect(report.assessment.kind).toBe("stale");
+    expect(report.acquired).toBe("WON");
+    expect(report.halted).toBe(true);
+    expect(report.ping).toBe("fail");
+    expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
   });
 });
 

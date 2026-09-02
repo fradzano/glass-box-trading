@@ -20,6 +20,7 @@
 import path from "node:path";
 import type { MarketObservation } from "../core/execution.js";
 import type { AccountBinding, JournalEntry } from "../core/journal.js";
+import { terminalEntry } from "../core/lifecycle.js";
 import { redactedViolationSummary, validateStartupConfig } from "../core/startup.js";
 import type { ValidatedStartup } from "../core/startup.js";
 import { createAccountBoundBrokerPort } from "./account-bound-broker.js";
@@ -167,8 +168,8 @@ export function parseDeadlineCommand(argv: readonly string[]): DeadlineCommand {
  */
 export function admitDeadlineEntry(command: DeadlineCommandName, entries: readonly JournalEntry[]): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
   if (command !== "terminal") return { ok: true };
-  const terminal = entries.find(entry => entry.type === "TERMINAL");
-  if (terminal === undefined) return { ok: true };
+  const terminal = terminalEntry(entries);
+  if (terminal === null) return { ok: true };
   return { ok: false, reason: `a TERMINAL entry already stands at seq ${String(terminal.seq)}; the run ended there and is not reopened by a second one` };
 }
 
