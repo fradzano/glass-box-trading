@@ -73,6 +73,10 @@ export function renderDecisionView(result: DecisionResult, styles: string): stri
   if (styles.trim().length === 0) throw new Error("renderDecisionView: no stylesheet supplied; refusing to render an unstyled page");
   const stylesheetReasons = auditPresentationStylesheet(styles);
   if (stylesheetReasons.length > 0) throw new Error(`renderDecisionView: stylesheet refused: ${stylesheetReasons.join("; ")}`);
+  // Defence in depth (P9/R34 B2): the audit above already refuses any `<`, but a renderer that
+  // inlines the text verbatim is the one place a style-block breakout would actually fire, so it
+  // re-checks the exact text it is about to splice into the page.
+  if (styles.includes("</")) throw new Error("renderDecisionView: stylesheet refused: </ (style-block breakout: the inlined text could close </style> and inject markup)");
   const remainingActionsByCandidate = new Map<string, DecisionResult["actions"][number][]>();
   for (const action of result.actions) {
     const queuedActions = remainingActionsByCandidate.get(action.candidateId) ?? [];

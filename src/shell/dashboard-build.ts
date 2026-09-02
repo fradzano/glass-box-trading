@@ -54,9 +54,14 @@ export const presentationAssetsDir = path.resolve(path.dirname(fileURLToPath(imp
  * unreadable asset throws instead of yielding an unstyled page. Inside a site
  * build the throw surfaces as a build failure, and the previous published
  * page is left fully intact.
+ *
+ * `assetsDir` defaults to the module-relative `presentationAssetsDir` (every
+ * production caller relies on this default); it is a parameter, not an
+ * ambient read, purely so a test can point it at a scratch directory instead
+ * of mutating the committed `assets/` tree (P9/R34 B3).
  */
-export function readPresentationAsset(name: string): string {
-  const file = path.join(presentationAssetsDir, name);
+export function readPresentationAsset(name: string, assetsDir: string = presentationAssetsDir): string {
+  const file = path.join(assetsDir, name);
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");

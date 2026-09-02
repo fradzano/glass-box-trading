@@ -8,7 +8,8 @@
 // stays byte-identical and every test stays green. This file exercises the
 // countermeasure — `auditPresentationStylesheet`
 // (src/shell/presentation-guard.ts) — and its wiring into both renderers.
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
@@ -17,7 +18,7 @@ import { emptyPushState } from "../src/core/publish.js";
 import type { GitPort, PublishDependencies } from "../src/shell/publisher.js";
 import { P1_RECORDED_CANDIDATES, P1_RECORDED_SNAPSHOT, TEST_ONLY_P1_NOW, TEST_ONLY_P1_O5_CONFIG } from "../src/fixtures/p1-recorded-cycle.js";
 import { GOLDEN_CYCLE_INTERVAL_MS, GOLDEN_DEAD_MAN_BOUND_MS, GOLDEN_SOURCE, TEST_ONLY_GOLDEN_EXPECTATIONS, TEST_ONLY_GOLDEN_NOW_MS } from "../src/fixtures/p6-golden.js";
-import { DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET, presentationAssetsDir, readBuiltPage, readPresentationAsset } from "../src/shell/dashboard-build.js";
+import { DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET, readBuiltPage, readPresentationAsset } from "../src/shell/dashboard-build.js";
 import { auditPresentationStylesheet } from "../src/shell/presentation-guard.js";
 import { journalContentRevision, runPublish, sitePagesFor } from "../src/shell/publisher.js";
 import { renderDecisionView } from "../src/shell/render-decision-view.js";
@@ -137,25 +138,56 @@ describe("P9/R33 — auditPresentationStylesheet: one unit test per rule family"
   });
 });
 
+describe("P9/R34 B2 — a stylesheet cannot break out of its inlined <style> block", () => {
+  // R34's executed counter-example: appending this payload to a stylesheet closes the page's
+  // <style> block early and injects a <script> that removes every veto and no-trade result —
+  // the same content the R33 hiding audit exists to protect, reached through a different door.
+  const BREAKOUT_PAYLOAD = ".x{color:var(--ink)}</style><script>for (const e of document.querySelectorAll('.gate--veto,.result--no_trade')) e.remove()</script><style>";
+
+  it("refuses any stylesheet containing < (a style-block breakout), naming the breakout", () => {
+    const reasons = auditPresentationStylesheet(BREAKOUT_PAYLOAD);
+    expect(reasons).toEqual([expect.stringContaining("style-block breakout")]);
+  });
+
+  it("refuses renderDashboard given the exact payload", () => {
+    const styles = `${readPresentationAsset(DASHBOARD_STYLESHEET)}\n${BREAKOUT_PAYLOAD}`;
+    expect(goldenIndexPage(styles)).toThrow(/stylesheet refused/u);
+  });
+
+  it("refuses renderDecisionView given the exact payload", () => {
+    const styles = `${readPresentationAsset(DECISION_VIEW_STYLESHEET)}\n${BREAKOUT_PAYLOAD}`;
+    const result = decide(P1_RECORDED_SNAPSHOT, P1_RECORDED_CANDIDATES, TEST_ONLY_P1_O5_CONFIG, TEST_ONLY_P1_NOW);
+    expect(() => renderDecisionView(result, styles)).toThrow(/stylesheet refused/u);
+  });
+
+  it("still allows > as the child combinator", () => {
+    expect(auditPresentationStylesheet("ul > li{margin:0}")).toEqual([]);
+  });
+});
+
 describe("P9/R33 — comments are stripped before the audit runs", () => {
   it("ignores a forbidden declaration written only inside a comment", () => {
     expect(auditPresentationStylesheet(".x{ /* display: none */ color: red }")).toEqual([]);
   });
+
+  // R34 C1 — stripComments' `g` flag was unmeasured: no prior test distinguished "strip every
+  // comment" from "strip only the first". Dropping `g` leaves later comments un-stripped, which
+  // leaks into the next selector header (`/* two */ .c` instead of `.c`) — a real, if narrow,
+  // parsing difference this assertion pins down by checking the exact reason text, not just that
+  // some refusal happened (which the unpatched mutant would already produce here too, since the
+  // forbidden declaration itself sits outside any comment).
+  it("refuses a forbidden declaration that follows a second comment, with the selector unpolluted by a leftover comment", () => {
+    expect(auditPresentationStylesheet(".a{color:#000} /* one */ .b{color:#111} /* two */ .c{display:none}")).toEqual(["display: none (selector .c)"]);
+  });
 });
 
 describe("P9/R33 — the committed stylesheets against the audit", () => {
-  // KNOWN FINDING (undecided as of this commit): assets/dashboard.css line 2
-  // sets `body{...overflow-x:hidden}`, unrelated to the R33 hiding pattern
-  // (page-level horizontal-scrollbar suppression, not a per-element hide),
-  // but it trips the same literal rule that blocks the exploit
-  // (`overflow-x`/`overflow-y` must not be `hidden` or `clip`) because that
-  // rule cannot distinguish "hides one element's overflow" from "no
-  // scrollbar on the page" — and loosening it to allow axis-scoped `hidden`
-  // would reopen a real hiding vector (a fixed-width/height wrapper around
-  // e.g. `.discrepancies` with `overflow:hidden` truncates its content
-  // without tripping the zero-size rule). See the session report for the
-  // options; this assertion is left red on purpose rather than silently
-  // loosening the rule or editing the shipped stylesheet without approval.
+  // R33 B1 found assets/dashboard.css's `body{...overflow-x:hidden}` tripping
+  // this same audit rule (page-level horizontal-scrollbar suppression, not a
+  // per-element hide, but textually indistinguishable from one). The R33 fix
+  // dropped that declaration from the shipped stylesheet (the tables keep
+  // `overflow-x:auto`, which the audit allows); both assertions below are
+  // green.
   it("assets/decision-view.css audits to an empty list", () => {
     expect(auditPresentationStylesheet(readPresentationAsset(DECISION_VIEW_STYLESHEET))).toEqual([]);
   });
@@ -171,61 +203,50 @@ function fakeGit(): GitPort {
   return { commitJournal: (text: string) => Promise.resolve(journalContentRevision(text)), push: () => Promise.resolve() };
 }
 
-function publishDeps(harness: LifecycleHarness): PublishDependencies {
+function publishDeps(harness: LifecycleHarness, presentationAssetsDirOverride: string): PublishDependencies {
   return {
     paths: harness.paths, git: fakeGit(), deploy: null, configuredJournalRef: "journal", requestedRef: "journal",
     clock: () => harness.clock.now, siteDir: path.join(harness.paths.root, "site"),
     expectations: { initialCapitalCents: 10_000_000, expectedAccountId: TEST_ONLY_ACCOUNT_ID, flattenDate: "2026-09-03", profile: "dev", qualification: null },
     cycleIntervalMs: 900_000, deadManBoundMs: 3_000_000, source: SOURCE, pins: [], gateway: { gateway: harness.gateway, epoch: 1 },
+    presentationAssetsDir: presentationAssetsDirOverride,
   };
 }
 
 describe("P9/R33 — a publish whose stylesheet hides content fails closed and leaves the previous page standing", () => {
-  afterEach(() => { cleanupLifecycleDirs(); });
+  const scratch: string[] = [];
+  afterEach(() => { cleanupLifecycleDirs(); for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-  // Modeled on the R33 reviewer probe (swaps assets/dashboard.css on disk,
-  // like the earlier "a missing presentation asset fails publication
-  // closed" probe already committed as p9-presentation-assets coverage).
-  // `presentationAssetsDir` resolves from this module's own location
-  // (src/shell/dashboard-build.ts), not from an injectable field on
-  // PublishDependencies, so the only way to exercise runPublish against a
-  // poisoned stylesheet is to poison the file on disk and restore it after.
-  //
-  // KNOWN FINDING: the "first publish succeeds" precondition below renders
-  // the real, committed assets/dashboard.css through the now-guarded
-  // renderDashboard, which currently refuses it for the same reason noted
-  // above (`overflow-x: hidden` on `body`) — independent of any poisoning.
-  // This test is therefore red today for the same single, disclosed cause,
-  // not because the fail-closed behavior being tested is broken.
+  // R34 B3 — the committed assets/dashboard.css is never touched: runPublish
+  // reads its stylesheet through readPresentationAsset(name, assetsDir), and
+  // PublishDependencies.presentationAssetsDir points that read at a scratch
+  // directory holding a copy (then a poisoned copy) of the stylesheet
+  // instead. Three other spec files read the real assets/dashboard.css in
+  // parallel workers, so mutating it in place — even rename-then-restore —
+  // was a cross-file race (npm run verify failed ~1 in 10 runs with
+  // "renderDashboard: stylesheet refused" in tests/j7-j9-golden-path.spec.ts)
+  // and a crash between the rename and the restore would leave a poisoned
+  // committed stylesheet.
   it("first publish builds; with the veto/discrepancy hiding rule appended the next publish reports DASHBOARD_BUILD_FAILED and the previous page stands", async () => {
+    const scratchDir = mkdtempSync(path.join(tmpdir(), "gbt-p9-guard-"));
+    scratch.push(scratchDir);
+    const cleanStylesheet = readPresentationAsset(DASHBOARD_STYLESHEET);
+    writeFileSync(path.join(scratchDir, DASHBOARD_STYLESHEET), cleanStylesheet, "utf8");
+
     const harness = await lifecycleHarness({});
     await harness.cycle();
-    const deps = publishDeps(harness);
+    const deps = publishDeps(harness, scratchDir);
     const first = await runPublish(deps);
     expect(first.build).not.toBeNull();
     const standing = readBuiltPage(deps.siteDir, "index.html");
     expect(standing).not.toBeNull();
 
-    const asset = path.join(presentationAssetsDir, DASHBOARD_STYLESHEET);
-    const parked = `${asset}.parked-p9-guard-probe`;
-    renameSync(asset, parked);
-    writeFileSync(asset, `${readFileSync(parked, "utf8")}\n${POISON_LINE}`, "utf8");
-    try {
-      const second = await runPublish(deps);
-      expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
-      expect(second.build).toBeNull();
-      expect(second.buildError).toMatch(/display: none/u);
-      expect(readBuiltPage(deps.siteDir, "index.html")).toBe(standing);
-    } finally {
-      rmSync(asset, { force: true });
-      renameSync(parked, asset);
-    }
-  });
-});
-
-describe("P9/R33 — cleanup guard", () => {
-  it("no probe leaves a parked stylesheet behind", () => {
-    expect(existsSync(path.join(presentationAssetsDir, `${DASHBOARD_STYLESHEET}.parked-p9-guard-probe`))).toBe(false);
+    writeFileSync(path.join(scratchDir, DASHBOARD_STYLESHEET), `${cleanStylesheet}\n${POISON_LINE}`, "utf8");
+    const second = await runPublish(deps);
+    expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
+    expect(second.build).toBeNull();
+    expect(second.buildError).toMatch(/display: none/u);
+    expect(readBuiltPage(deps.siteDir, "index.html")).toBe(standing);
   });
 });
 

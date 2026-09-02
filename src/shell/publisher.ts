@@ -78,6 +78,14 @@ export interface PublishDependencies {
   /** Present when a refusal must be journaled locally; the publisher never appends anything else. */
   readonly gateway: { readonly gateway: MutationGateway; readonly epoch: number } | null;
   readonly buildSink?: BuildSink;
+  /**
+   * Where `readPresentationAsset` reads `assets/*.css` from. Defaults to the
+   * module-relative `presentationAssetsDir` (every production caller relies
+   * on this default and stays unchanged); a test points it at a scratch
+   * directory instead of renaming or overwriting the committed stylesheet
+   * (P9/R34 B3).
+   */
+  readonly presentationAssetsDir?: string;
 }
 
 export interface PublishReport {
@@ -245,7 +253,7 @@ export async function runPublish(deps: PublishDependencies): Promise<PublishRepo
   // stylesheet is a build failure like any other, never a silently unstyled page.
   let styles: string;
   try {
-    styles = readPresentationAsset(DASHBOARD_STYLESHEET);
+    styles = readPresentationAsset(DASHBOARD_STYLESHEET, deps.presentationAssetsDir);
   } catch (error) {
     alarms.push("DASHBOARD_BUILD_FAILED");
     return { revision, refusal: null, push, pushState, build: null, buildError: messageOf(error), candidateUrl: null, promotion: "not_attempted", stableVerification: "not_attempted", deploymentState, alarms, projection: null };

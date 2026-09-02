@@ -334,6 +334,10 @@ export function renderDashboard(projection: PerformanceProjection, expectation: 
   if (context.styles.trim().length === 0) throw new Error("renderDashboard: no stylesheet supplied; refusing to render an unstyled page");
   const stylesheetReasons = auditPresentationStylesheet(context.styles);
   if (stylesheetReasons.length > 0) throw new Error(`renderDashboard: stylesheet refused: ${stylesheetReasons.join("; ")}`);
+  // Defence in depth (P9/R34 B2): the audit above already refuses any `<`, but a renderer that
+  // inlines the text verbatim is the one place a style-block breakout would actually fire, so it
+  // re-checks the exact text it is about to splice into the page.
+  if (context.styles.includes("</")) throw new Error("renderDashboard: stylesheet refused: </ (style-block breakout: the inlined text could close </style> and inject markup)");
   const lifecyclesBySeq = new Map(projection.lifecycles.map(link => [link.intentSeq, link] as const));
   const firstVeto = projection.cycles.find(cycle => cycle.candidateVerdicts.some(verdict => verdict["decision"] === "VETO"));
   const firstProposal = projection.cycles.find(cycle => cycle.result === "proposal");

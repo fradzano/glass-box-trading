@@ -24,7 +24,11 @@
 // arguments as well; custom-property definitions are audited by value, so
 // `var()` indirection cannot smuggle a refused value past the guard;
 // `!important` is stripped before the comparison; a backslash anywhere is
-// refused because a CSS escape can spell a refused keyword.
+// refused because a CSS escape can spell a refused keyword; a `<` anywhere is
+// refused because CSS has no legitimate use for it and it is exactly what a
+// stylesheet needs to break out of the `<style>` block it is inlined into
+// (`</style><script>...`) — `>` stays allowed, it is the child combinator
+// (P9/R34 B2).
 //
 // Declared residual (DECISIONS.md 2026-09-02, R33 B1): the audit reads text,
 // not a rendered page. It does not catch text painted in the ground colour
@@ -277,6 +281,10 @@ export function auditPresentationStylesheet(text: string): readonly string[] {
   if (/url\s*\(/iu.test(stripped)) reasons.push("url( (stylesheet must stay self-contained; no external resource load)");
   // A CSS escape (`\6e one` is `none` to the browser) would let a declaration slip past every textual rule below.
   if (stripped.includes("\\")) reasons.push("backslash escape (a CSS escape could spell a refused keyword; the audit reads text, not the parsed identifier)");
+  // CSS has no legitimate use for `<`; `>` stays allowed (the child combinator). A `<` lets the
+  // stylesheet text break out of the inlined `<style>` block (`</style><script>...`) once it is
+  // spliced into a page's HTML — this is a style-block breakout, not a CSS construct.
+  if (stripped.includes("<")) reasons.push("< (style-block breakout: the inlined text could close </style> and inject markup; CSS has no legitimate use for `<`)");
 
   for (const decl of collectDeclarations(stripped)) reasons.push(...auditDeclaration(decl));
 
