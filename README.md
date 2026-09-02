@@ -1,6 +1,6 @@
 # Glass Box Trading
 
-Glass Box Trading is a paper-only options agent whose deterministic core records why every candidate passed or failed each entry gate. P1–P3 established the pure decision core, append-only journal, fenced single-writer mutation gateway, lifecycle reconciliation, kill handling, and deterministic fake broker. P4–P6 added the broker-independent analyst boundary, session lifecycle, and public evidence pipeline. P7 adds a real Alpaca **paper** adapter and a supervised dev-certificate driver. The real adapter is reachable only through explicit `ALPACA_PROFILE=dev`, canonical paper-origin and bound-account checks, current writer authority, the journal-authoritative halt veto, and the account-bound mutation wrapper. Competition arming and scheduled operation remain P8 work.
+Glass Box Trading is a paper-only options agent whose deterministic core records why every candidate passed or failed each entry gate. P1–P3 established the pure decision core, append-only journal, fenced single-writer mutation gateway, lifecycle reconciliation, kill handling, and deterministic fake broker. P4–P6 added the broker-independent analyst boundary, session lifecycle, and public evidence pipeline. P7 adds a real Alpaca **paper** adapter and a supervised dev-certificate driver. The real adapter is reachable only through explicit `ALPACA_PROFILE=dev`, canonical paper-origin and bound-account checks, current writer authority, the journal-authoritative halt veto, and the account-bound mutation wrapper. The competition arming gate (`src/shell/arming-gate.ts`), its provenance wiring, the watchdog's real-broker composition, and the scheduled-task installer (`tools/install-scheduled-task.ps1`) now exist; the real git and Vercel publication ports still arrive with P8.
 
 P6 adds the public evidence pipeline: a pure performance projection over one committed journal revision at an explicit cutoff (`src/core/projection.ts`, S-J-09), the S-CYC-12 qualification state and its window vetoes (`src/core/qualification.ts`), the anonymous probe contract with promotion, rollback, push-retry, and branch-isolation rules (`src/core/publish.ts`, S-J-07/S-J-08/S-CYC-07), a static dashboard renderer, an atomic render-aside-then-swap site build with immutable revision routes, and a publisher that drives fake git/deploy ports (`src/shell/render-dashboard.ts`, `dashboard-build.ts`, `publisher.ts`). `npm run dashboard` builds `artifacts/dashboard/` from the recorded `fixtures/golden-journal.jsonl` — the deterministic golden path of `docs/SUBMISSION-SPEC.md` §3, navigable with markets closed. No GitHub or Vercel mutation exists in the repository; the real git and Vercel ports arrive with the kickoff release (P8).
 
@@ -32,7 +32,7 @@ The rendered local evidence is `artifacts/p1-decision-view.html`. It is generate
 - The market-hours preflight and the current clean-commit verification gate pass.
 - A human is present for the credential-fence un-halt prompt and can monitor reconciliation to a stable flat account.
 
-A successful command is not itself P7 acceptance. Acceptance requires a generated `PASS` certificate and a stably flat bound dev account. `validateArmingCertificate` exists for P8; the competition account is never used by this P7 command.
+A successful command is not itself P7 acceptance. Acceptance requires a generated `PASS` certificate and a stably flat bound dev account. `validateArmingCertificate` (`src/core/certificate.ts`), wired through `src/shell/arming-gate.ts`, checks that certificate at competition startup, not during this P7 command; the competition account is never used by this P7 command.
 
 ## Execution model
 
@@ -52,8 +52,12 @@ npm.cmd run architecture
 npm.cmd run fixture
 npm.cmd run dashboard
 npm.cmd run build
+npm.cmd run sandbox
+npm.cmd run clean
 python tools/check_implementation_phases.py
 ```
+
+`sandbox` re-executes the compiled core inside the `node:vm` realm described above, standalone. `clean` removes `dist/` and `artifacts/`.
 
 Production behavior is defined only by [`docs/SPEC.md`](docs/SPEC.md). Test-only values for thresholds still owned by O5 are conspicuously named `TEST_ONLY_*`; they are not production defaults.
 
@@ -64,11 +68,12 @@ The owner runbook from a passed P7 certificate to unattended competition operati
 1. **Freeze policy.** Rule on the final O5 values in `config/policy.json`; no further edits to that file once the certificate run below starts.
 2. **Verify.** `npm.cmd ci --ignore-scripts && npm.cmd run verify` exits 0 on a clean commit.
 3. **Tag the baseline.** `git tag pre-kickoff-baseline` on that clean commit.
-4. **Run the certificate during market hours.** `npm run certificate` (see "P7 supervised paper certificate" above); require a `PASS` verdict in `evidence/pre-arm/` and a stably flat dev account before moving on.
-5. **Create the competition account.** A new Alpaca paper account, created at or after kickoff (P8 acceptance requires provable $100k / zero positions / zero orders / empty history before its first mutation).
-6. **Bind identity and a fresh deployment.** In `.env`: `ALPACA_COMP_KEY_ID`, `ALPACA_COMP_SECRET_KEY`, `ALPACA_COMP_ACCOUNT_ID`; a new absolute, **empty** `STATE_DIR` distinct from the dev journal (a reused dev `STATE_DIR` yields `GAP` + halt, never a bootstrap, S-CYC-09); a fresh `BOOTSTRAP_DIAGNOSTIC_SINK`. Keep `ANALYST_MODEL` byte-identical to the value used for the certificate run in step 4 — it is policy-classified and enters the S-ARM-01 policy digest (`src/core/certificate.ts`), so a mismatch refuses to arm.
-7. **Set the certificate.** `PRE_ARM_CERTIFICATE` points at the `PASS` file from step 4.
-8. **Switch the profile.** `ALPACA_PROFILE=competition`.
-9. **Run the first cycle by hand.** `node dist/shell/agent-cli.js` in a terminal, with `ALPACA_PROFILE=competition`, before installing anything scheduled — and read its printed report. This is the virgin-account provenance bootstrap (S-CYC-09): on a fresh, empty `STATE_DIR` nothing can be journaled before the seed `BOOTSTRAP`, so a failed provenance proof (wrong account, non-$100k, non-empty history) leaves no journal entry at all. It is fail-closed and reaches the dead-man ping, but the *reason* is only visible in this terminal report — a declared limit, not a bug.
-10. **Install the scheduled tasks.** `tools\install-scheduled-task.ps1` (preview first with `-WhatIf`); see that script's header for the S4U/Interactive login-type tradeoff and for the watchdog's scope — it fences, halts and flattens the open book, and degrades to fence-and-halt-only (with the reason in `watchdog-run.log`) when the configuration, the credentials or the account binding do not compose.
-11. **Never touch the account manually while the agent operates.** Manual activity during the run breaks the reconciliation the agent depends on (S-CYC-05 in [`docs/SPEC.md`](docs/SPEC.md)) and can set the irreversible `PROVENANCE_BROKEN` latch.
+4. **Run the certificate during market hours.** `npm run certificate` (see "P7 supervised paper certificate" above); require a `PASS` verdict in `evidence/pre-arm/` and a stably flat dev account before moving on. `npm run certificate` itself builds immediately before running (`npm run build && ...`), matching the clean-commit build `npm run verify` already produced in step 2.
+5. **Do not rebuild after the certificate run.** Never run `npm.cmd run clean` or otherwise rebuild between the certificate run and competition operation: `dist/` is inside the certificate's self-digest and is gitignored, so a later rebuild silently invalidates the certificate that steps 7–9 rely on.
+6. **Create the competition account.** A new Alpaca paper account, created at or after kickoff (P8 acceptance requires provable $100k / zero positions / zero orders / empty history before its first mutation).
+7. **Bind identity and a fresh deployment.** In `.env`: `ALPACA_COMP_KEY_ID`, `ALPACA_COMP_SECRET_KEY`, `ALPACA_COMP_ACCOUNT_ID`; a new absolute, **empty** `STATE_DIR` distinct from the dev journal (a reused dev `STATE_DIR` yields `GAP` + halt, never a bootstrap, S-CYC-09); a fresh `BOOTSTRAP_DIAGNOSTIC_SINK`. Keep `ANALYST_MODEL` byte-identical to the value used for the certificate run in step 4 — it is policy-classified and enters the S-ARM-01 policy digest (`src/core/certificate.ts`), so a mismatch refuses to arm.
+8. **Set the certificate.** `PRE_ARM_CERTIFICATE` points at the `PASS` file from step 4.
+9. **Switch the profile.** `ALPACA_PROFILE=competition`.
+10. **Run the first cycle by hand.** `node dist/shell/agent-cli.js` in a terminal, with `ALPACA_PROFILE=competition`, before installing anything scheduled — and read its printed report. This is the virgin-account provenance bootstrap (S-CYC-09): on a fresh, empty `STATE_DIR` nothing can be journaled before the seed `BOOTSTRAP`, so a failed provenance proof (wrong account, non-$100k, non-empty history) leaves no journal entry at all. It is fail-closed and reaches the dead-man ping, but the *reason* is only visible in this terminal report — a declared limit, not a bug.
+11. **Install the scheduled tasks.** `tools\install-scheduled-task.ps1` (preview first with `-WhatIf`); see that script's header for the S4U/Interactive login-type tradeoff and for the watchdog's scope — it fences, halts and flattens the open book, and degrades to fence-and-halt-only (with the reason in `watchdog-run.log`) when the configuration, the credentials or the account binding do not compose.
+12. **Never touch the account manually while the agent operates.** Manual activity during the run breaks the reconciliation the agent depends on (S-CYC-05 in [`docs/SPEC.md`](docs/SPEC.md)) and can set the irreversible `PROVENANCE_BROKEN` latch.

@@ -7,31 +7,20 @@
 //
 // Honesty note on the model: cash and equity are set by the test, not derived
 // from fills — the paper environment's own accounting is what P7 observes.
-import type { EntryLimitKind, OptionLeg } from "../core/domain.js";
+import type { EntryLimitKind } from "../core/domain.js";
 import { isWorkingBrokerStatus } from "../core/execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "../core/execution.js";
 import { BrokerHttpError } from "./broker-errors.js";
+import { readSubmitPayload } from "./broker-ports.js";
+import type { BrokerReadPort, SubmitPayload } from "./broker-ports.js";
 import type { BrokerMutation, BrokerMutationPort, BrokerMutationResult } from "./mutation-gateway.js";
 
-export interface SubmitPayload {
-  readonly legs: readonly OptionLeg[];
-  readonly quantity: number;
-  readonly limit: { readonly kind: EntryLimitKind; readonly priceCents: number };
-  readonly intent: "entry" | "close";
-}
-
-export interface AccountView {
-  readonly accountId: string;
-  readonly cashCents: number;
-  readonly equityCents: number;
-}
-
-export interface BrokerReadPort {
-  account(deadlineAtMs?: number): Promise<AccountView>;
-  positions(deadlineAtMs?: number): Promise<readonly BrokerPosition[]>;
-  openOrders(deadlineAtMs?: number): Promise<readonly BrokerOrderRecord[]>;
-  orderByClientId(clientOrderId: string, deadlineAtMs?: number): Promise<BrokerOrderRecord | null>;
-}
+// The port contracts (`BrokerReadPort`, `SubmitPayload`, `AccountView`) and
+// the pure `readSubmitPayload` guard now live in `broker-ports.ts`, shared
+// with the real Alpaca adapter; re-exported here so every existing importer
+// of this module keeps compiling unchanged.
+export { readSubmitPayload } from "./broker-ports.js";
+export type { AccountView, BrokerReadPort, SubmitPayload } from "./broker-ports.js";
 
 export type SubmitBehaviour =
   | { readonly kind: "fill"; readonly avgFillPriceCents?: number }
@@ -93,27 +82,9 @@ interface MutableOrder {
   onNextRead: { status: string; reason: string | null; fill?: { quantity: number; priceCents: number } } | null;
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function exactDollarsFromCents(cents: number): string {
   const whole = Math.floor(cents / 100);
   return `${String(whole)}.${String(cents % 100).padStart(2, "0")}`;
-}
-
-export function readSubmitPayload(payload: unknown): SubmitPayload | null {
-  if (!isRecord(payload)) return null;
-  const legs = payload["legs"];
-  const quantity = payload["quantity"];
-  const limit = payload["limit"];
-  const intent = payload["intent"];
-  if (!Array.isArray(legs) || legs.length === 0 || !Number.isSafeInteger(quantity) || (quantity as number) < 1 || !isRecord(limit) || (intent !== "entry" && intent !== "close")) return null;
-  if ((limit["kind"] !== "debit" && limit["kind"] !== "credit") || !Number.isSafeInteger(limit["priceCents"])) return null;
-  for (const optionLeg of legs) {
-    if (!isRecord(optionLeg) || typeof optionLeg["contractId"] !== "string" || (optionLeg["side"] !== "buy" && optionLeg["side"] !== "sell") || !Number.isSafeInteger(optionLeg["ratio"])) return null;
-  }
-  return { legs: legs as readonly OptionLeg[], quantity: quantity as number, limit: { kind: limit["kind"], priceCents: limit["priceCents"] as number }, intent };
 }
 
 export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {

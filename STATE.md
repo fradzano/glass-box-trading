@@ -223,7 +223,7 @@ One phase per session; every session ends with the handoff protocol in
   recorded in DECISIONS.md (entry of 2026-08-31, "Verification depth for
   P2–P6 is reduced by declaration").
 
-## Next (after P4)
+## Phase record (P5–P7)
 
 - **P5 — recovery and lifecycle — implemented at `c4d055c` (2026-08-31,
   branch `p5/recovery-lifecycle` from the P4 merge `43e7170`).** All 21
@@ -410,13 +410,19 @@ One phase per session; every session ends with the handoff protocol in
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
 - Aug 26–27 target: reach the P7 market-hours dev certificate if every earlier
   phase passes; schedule pressure delays arming rather than collapsing phases.
+  **Superseded:** the certificate run is today, 2026-09-02 from 15:30 CEST.
 - Fri Aug 28 kickoff 17:00 CEST: inspect the real submission form, create the
   competition account (owner), put its keys in `.env` (`ALPACA_COMP_*`),
   publish GitHub + Vercel, and arm in the partial session only if pre-arm gates
   are green.
+  **Superseded:** kickoff happened on 2026-08-28; owner steps now live in the
+  README competition runbook.
 
 ## Open threads
 
+- The verification store paths cited in this file (`C:/Users/felix/verify-runs/...`
+  and its `prompts/`) are a local, unpublished record; a public reader of this
+  repository cannot resolve them.
 - P1 adversarial run is paused at R5 of 8 (store `R5.md`, `LEDGER.md`);
   resumable from R6 (prompts staged in the store) if time allows after P8.
   Preserve the store and its errata (`E-R1-01`, `E-R2-01`, `E-R4-01..04`,
