@@ -87,7 +87,7 @@ describe("SUBMISSION-SPEC §3 — the golden path over the recorded journal", ()
     const revision = journalContentRevision(text);
     // R35 C3: the golden journal is journal evidence outside the runtime digest; its content
     // revision is pinned here so an edit to the demo data is visible in the suite.
-    expect(revision).toBe("sha256:343a65ef13ad5f05");
+    expect(revision).toBe("sha256:0deeb1f42e01e19b");
     const presentationAt = goldenPresentationCutoffAt(entries);
     expect(presentationAt).not.toBeNull();
     const { pages, latest } = sitePagesFor({

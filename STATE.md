@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 17:35 CEST (R37 GO A=0/B=0/C=4 at `c886776`; owner O5 freeze and go recorded; tags `p7-freeze` and `pre-kickoff-baseline` on the freeze commit; public repository `https://github.com/fradzano/glass-box-trading`; the supervised `npm run certificate` runs from the owner's terminal on the dev account next — no `src/`, `assets/`, `config/` or `dist/` change after it)
+**Last updated:** 2026-09-02 18:05 CEST (certificate run one at freeze `673d217` failed on the broker's 128-character client_order_id limit — a live-only finding; fix: digest-encoded structure identity in the entry id, fake broker enforces the limit; R38 delta gate then a new freeze tag and certificate run two from the owner's terminal)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`

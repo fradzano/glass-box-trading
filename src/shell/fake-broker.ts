@@ -10,6 +10,7 @@
 import type { EntryLimitKind } from "../core/domain.js";
 import { isWorkingBrokerStatus } from "../core/execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "../core/execution.js";
+import { MAX_CLIENT_ORDER_ID_LENGTH } from "../core/order-identity.js";
 import { BrokerHttpError } from "./broker-errors.js";
 import { readSubmitPayload } from "./broker-ports.js";
 import type { BrokerReadPort, SubmitPayload } from "./broker-ports.js";
@@ -152,6 +153,9 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
   function submit(mutation: BrokerMutation): BrokerMutationResult {
     const payload = readSubmitPayload(mutation.payload);
     if (payload === null) return { ok: false, reason: "REJECTED:malformed order payload" };
+    // Alpaca's synchronous limit, observed live on 2026-09-02 (the first dev certificate run): the
+    // hex-encoded structure identity produced a 190-character id and every entry was rejected.
+    if (mutation.clientOrderId.length > MAX_CLIENT_ORDER_ID_LENGTH) return { ok: false, reason: "REJECTED:client_order_id must be <= 128 characters" };
     if (orders.has(mutation.clientOrderId)) return { ok: false, reason: "DUPLICATE_CLIENT_ORDER_ID" };
     const behaviour = onSubmit(payload, mutation.clientOrderId);
     if (behaviour.kind === "reject") return { ok: false, reason: `REJECTED:${behaviour.reason}` };

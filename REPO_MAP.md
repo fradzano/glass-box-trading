@@ -124,6 +124,7 @@
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
+- `tests/g7-order-id-length.spec.ts` — G7 / S-G7-01 — every client order id the core derives stays within Alpaca's
 - `tests/g8-schema-whitelist.spec.ts`
 - `tests/g9-expiry-eviction.spec.ts` — G9 — expiry eviction (S-G9-01..03): the entry veto for an
 - `tests/global-setup.ts` — Compiles src/** once per test run into a scratch directory so that the

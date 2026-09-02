@@ -22,6 +22,7 @@
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
+- `tests/g7-order-id-length.spec.ts`
 - `tests/g8-schema-whitelist.spec.ts`
 - `tests/g9-expiry-eviction.spec.ts`
 - `tests/j1-j2-journal-format.spec.ts`

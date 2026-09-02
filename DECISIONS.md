@@ -1935,3 +1935,34 @@ small, no ADR split).
   outside the digest. The competition account `PA376WIK2ATL` was virgin at
   the 15:39 probe. The calendar: qualification window ends today 22:00
   CEST; the certificate run starts from the owner's terminal now.
+- **2026-09-02 — The first dev certificate run failed on the broker's
+  128-character `client_order_id` limit; the structure identity becomes a
+  digest.** Run one (17:36 CEST, epoch 7, freeze `673d217`) reached the
+  broker with a defined-risk SPY credit vertical every three minutes and got
+  the same synchronous rejection each time: `client_order_id must be <= 128
+  characters`. The entry id hex-encoded every contract id (four characters
+  per character, ~190 in total) — a charset precaution that no fake, no
+  gate and no SPEC line had bounded, and the third instance today of the
+  lesson "the fake encoded an assumption, the live read corrected it".
+  Ruling (PM, in the owner's "fix it, regenerate, restart" of 17:50):
+  `entryClientOrderId` keeps the S-G7-01 inputs and the prefix
+  `entry:<tradingDay>:<cycleIndex>:` and carries the order-independent
+  structure identity as the first 24 hex digits of its SHA-256 (96 bits; the
+  legs themselves are on the INTENT, nothing ever decoded the id). Every
+  derived id — exposure lifecycle, close lifecycle, close attempt at any
+  generation — stays below `MAX_CLIENT_ORDER_ID_LENGTH = 128` for a
+  four-leg structure on a five-letter ticker at cycle 999 999. The fake
+  broker refuses an over-long id synchronously with Alpaca's message, so the
+  suite now sees what the live run saw: with the limit in the fake and the
+  old scheme, 27 runner and ladder tests fail; with the new scheme all pass.
+  The live run's journal (seq 3–24, epoch 7) records the rejections as
+  OUTCOME entries with the broker reason; the dev account stayed flat
+  because nothing was accepted. Consequence for the calendar: the fix
+  changes `src/core/`, so a delta gate (R38) and a new freeze tag precede
+  certificate run two in the same session.
+  The golden journal (`fixtures/golden-journal.jsonl`) embeds entry and
+  close ids, so it was re-recorded by its own deterministic test
+  (`GBT_UPDATE_GOLDEN=1`); its content revision moves from
+  `sha256:343a65ef13ad5f05` to `sha256:0deeb1f42e01e19b` and the R35 C3 pin
+  follows it — the demo data changes only in the id strings, every figure
+  and verdict stays.
