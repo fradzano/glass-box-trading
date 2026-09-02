@@ -66,3 +66,15 @@ preflight checks this).
 
 - [ ] Tag count and format checked against the actual form's tag input
       (delimiter, max count, allowed characters) at preflight time.
+
+## URLs
+
+> Demo: https://glass-box-trading.vercel.app
+> Repository: https://github.com/fradzano/glass-box-trading
+
+- [ ] Demo URL is the stable Vercel production alias (team `glass-box-trading`,
+      project `glass-box-trading`); every promotion is preceded by the anonymous
+      probe of `tools/probe-dashboard.ps1` (receipts in the owner's publish
+      directory). First promotion 2026-09-02 19:20Z, journal revision
+      `sha256:c1c8e14ea4035034`.
+- [ ] Repository URL names the exact submitted revision at preflight time.

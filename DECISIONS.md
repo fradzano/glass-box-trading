@@ -2182,3 +2182,26 @@ small, no ADR split).
   Vercel project, Deployment Protection off, and every promotion are owner
   steps. `eslint.config.mjs` (outside the digest) ignores `**/*.d.mts` so the
   hand-written type surface of the JavaScript module can sit beside it.
+- **2026-09-02 — The judge dashboard is live at
+  `https://glass-box-trading.vercel.app` (SUB-02 first working version, on
+  the real competition journal).** Owner steps 21:05–21:20 CEST: Vercel
+  team `glass-box-trading`, project `glass-box-trading`, CLI-linked from the
+  deploy directory (no Git integration, so nothing builds on push), first
+  candidate `glass-box-trading-fo9aanlix-glass-box-trading.vercel.app`
+  probed anonymously (15 checks PASS: HTTP 200 on every route, exact
+  `glass-box-*` meta, no relative `revisions/` href), promoted, the stable
+  alias probed again (PASS). Measured on the real host afterwards: the
+  candidate URL answered without an auth wall (Deployment Protection is
+  not blocking it), `.env.local`, `.vercel/project.json` and `vercel.json`
+  are not served (404), the renderer's percent-encoded route spelling
+  returns 404 — which confirms that the host decodes request paths and the
+  R37 C-3 host-safe spelling was necessary, not cautious — and a directory
+  route without trailing slash redirects 308 to the slash form. Journal
+  revision on the page `sha256:c1c8e14ea4035034` (25 entries, last seq 25,
+  latest cutoff 19:00:51Z); no presentation pin yet, so the nested-route
+  pin check of the probe has not executed on the real host — it runs with
+  the first `-PresentationCutoff` publish after Thursday's close. Note for
+  the re-publish: `vercel link` wrote a `VERCEL_OIDC_TOKEN` into
+  `.env.local` beside the deploy tree; the render drops that file on the
+  next run (only `.vercel/` is carried forward) and the CLI never uploads
+  it.
