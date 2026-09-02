@@ -636,7 +636,7 @@ MAX_REL_SPREAD`, quote size ≥ `MIN_QUOTE_SIZE`, quote age ≤ `QUOTE_MAX_AGE`.
   every id the core derives — entry, exposure lifecycle, close lifecycle,
   close attempt — stays within the broker's synchronous 128-character
   `client_order_id` limit (observed live 2026-09-02: a hex-encoded identity
-  of ~190 characters was rejected on every entry; the fake broker enforces
+  of 177 characters was rejected on every entry; the fake broker enforces
   the same limit with the same message; `tests/g7-order-id-length.spec.ts`). Every close instead owns one stable,
   route-independent `closeLifecycleId` derived from the exposure lifecycle.
   Ordinary, emergency, expiry, kill, and watchdog routes reconcile/adopt that

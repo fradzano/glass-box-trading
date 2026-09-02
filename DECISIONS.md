@@ -1941,7 +1941,7 @@ small, no ADR split).
   broker with a defined-risk SPY credit vertical every three minutes and got
   the same synchronous rejection each time: `client_order_id must be <= 128
   characters`. The entry id hex-encoded every contract id (four characters
-  per character, ~190 in total) — a charset precaution that no fake, no
+  per character, 177 in total) — a charset precaution that no fake, no
   gate and no SPEC line had bounded, and the third instance today of the
   lesson "the fake encoded an assumption, the live read corrected it".
   Ruling (PM, in the owner's "fix it, regenerate, restart" of 17:50):
@@ -1966,3 +1966,38 @@ small, no ADR split).
   `sha256:343a65ef13ad5f05` to `sha256:0deeb1f42e01e19b` and the R35 C3 pin
   follows it — the demo data changes only in the id strings, every figure
   and verdict stays.
+- **2026-09-02 — R38 delta gate at `ce68abd`: GO (A=0, B=0, C=4); freeze
+  two for certificate run two.** The blind reviewer showed the length bound
+  to be structural: every derived id depends only on the trading day and
+  the decimal widths of cycle index and generation, never on contract ids,
+  leg count or ratios — eight legs with 64-character contract ids, a
+  1000-character contract id, and both counters at `MAX_SAFE_INTEGER` top
+  out at 91 characters. Both named mutants caught (hex encoding restored →
+  47 tests across 12 files red; fake limit dropped → 1 red); four
+  calibration mutants of the derivation caught, one survived (C1). The
+  digest was cross-checked against `node:crypto`; the G7 duplicate veto
+  still fires (the golden journal's declared condor is vetoed for sharing
+  the vertical's id); S-G7-02 adoption is id-agnostic and the live message
+  correctly fell through to the generic rejection rather than the duplicate
+  branch. Old-format ids parse, validate, project and render byte-identically
+  apart from their own bytes; a rejected old-format OUTCOME in the window is
+  FAIL, an accepted-then-filled new-format lifecycle is PASS. The golden
+  journal differs from its predecessor only in the substituted id string
+  (proven byte-wise); every rendered figure and verdict is unchanged.
+  Cleared before the freeze, digest-neutral: C1 the constant's value 128 is
+  pinned by a test (a mutant to 256 had survived); C2 the pre-fix id length
+  is the measured 177, not "~190", in SPEC, DECISIONS and the test comment
+  (the module comment keeps the old figure until the next digest-changing
+  window). Declared: C3 the raw contract id now sits next to the identity's
+  own `.` and `|` delimiters, so a contract id containing those characters
+  could collide with a different structure — unreachable, since G8 admits
+  only contracts from the broker's own chain fetch and OCC symbology is
+  alphanumeric, and fail-closed if reached (a G7 veto of the second
+  candidate; the id is never decoded); C4 a close derived from an accepted
+  old-format exposure id would exceed the limit — premise checked: the dev
+  journal holds seven OUTCOME entries, all rejections, zero accepted or
+  filled lifecycles (run one), and the competition account is virgin, so no
+  such lifecycle exists. Correction of the record: run one made seven entry
+  attempts (cycles 3–9), not eight. Tags `p7-freeze-2` and
+  `pre-kickoff-baseline-2` mark this freeze; the owner's O5 freeze and go
+  of 15:40/17:50 CEST stand unchanged.

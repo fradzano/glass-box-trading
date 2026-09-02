@@ -2,7 +2,7 @@
 // synchronous 128-character limit. Found live, not by any fake: the first dev
 // certificate run on 2026-09-02 had every entry rejected with
 // `client_order_id must be <= 128 characters` because the structure identity
-// was hex-encoded (four characters per contract-id character, ~190 in total).
+// was hex-encoded (four characters per contract-id character, 177 in total).
 // The fake broker now enforces the same limit with the same message, so a
 // runner test sees the OUTCOME rejection the live run saw.
 import { describe, expect, it } from "vitest";
@@ -41,6 +41,10 @@ const P1_CANDIDATE: EntryCandidate = (() => {
 })();
 
 describe("G7 — client order ids stay within the broker's 128-character limit", () => {
+  it("the bound is the broker's actual limit, 128, not whatever the constant happens to say (R38 C1)", () => {
+    expect(MAX_CLIENT_ORDER_ID_LENGTH).toBe(128);
+  });
+
   it("the recorded P1 candidate's entry id has the short digest shape and is far below the limit", () => {
     const id = entryClientOrderId(P1_RECORDED_SNAPSHOT, P1_CANDIDATE);
     expect(id).toMatch(ENTRY_ID_SHAPE);
