@@ -9,9 +9,10 @@
 //
 // This module is also the one place the shell reads presentation assets from
 // `assets/` (P9): the stylesheets are inlined into the rendered page, so a
-// published page stays one self-contained HTML file, while the asset bytes
-// themselves sit outside the S-ARM-01 runtime digest (src/shell/digests.ts) —
-// design work during competition operation cannot void the certificate.
+// published page stays one self-contained HTML file. The asset bytes are
+// bound by the S-ARM-01 runtime digest (src/shell/digests.ts; owner ruling
+// 2026-09-02 after R33/R34) — they are what the judges see, so a restyle
+// after the certificate voids it exactly like a code change.
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

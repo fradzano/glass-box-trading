@@ -1,11 +1,12 @@
-// P9 — presentation assets live in `assets/`, outside the S-ARM-01 runtime
-// digest, and are inlined into the rendered page at render time. Three claims
-// are tested here: the asset is inlined verbatim into the one `<style>` block
-// (so a published page stays self-contained), a missing, unreadable or empty
-// asset fails closed instead of yielding an unstyled page, and `assets/` is
-// not matched by the digest's file enumeration — design work during
-// competition operation cannot void the certificate.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// P9 — presentation assets live in `assets/` and are inlined into the
+// rendered page at render time. Three claims are tested here: the asset is
+// inlined verbatim into the one `<style>` block (so a published page stays
+// self-contained), a missing, unreadable or empty asset fails closed instead
+// of yielding an unstyled page, and every file under `assets/` is bound by
+// the S-ARM-01 runtime digest (owner ruling 2026-09-02 after R33/R34: the
+// stylesheet is what the judges see, so a change after the certificate
+// voids it exactly like a code change).
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -104,9 +105,29 @@ describe("P9 — a missing, unreadable or empty presentation asset fails closed"
   });
 });
 
-describe("P9 — assets/ is outside the S-ARM-01 runtime digest", () => {
-  it("the digest's file list contains no path under assets/", () => {
-    expect(enumerateRuntimeFiles(REPO_ROOT).filter(file => file.path.startsWith("assets/"))).toEqual([]);
+describe("P9 — assets/ is inside the S-ARM-01 runtime digest (owner ruling 2026-09-02 after R33/R34)", () => {
+  it("the digest's file list contains every file under assets/", () => {
+    const enumerated = enumerateRuntimeFiles(REPO_ROOT).filter(file => file.path.startsWith("assets/")).map(file => file.path);
+    expect(enumerated).toContain(`assets/${DASHBOARD_STYLESHEET}`);
+    expect(enumerated).toContain(`assets/${DECISION_VIEW_STYLESHEET}`);
+    const onDisk = readdirSync(path.join(REPO_ROOT, "assets")).map(name => `assets/${name}`).sort();
+    expect([...enumerated].sort()).toEqual(onDisk);
+  });
+
+  it("one appended stylesheet byte changes the enumerated digest material, so a post-certificate design change voids the certificate", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gbt-assets-digest-"));
+    try {
+      mkdirSync(path.join(root, "assets"));
+      writeFileSync(path.join(root, "assets", DASHBOARD_STYLESHEET), "body{margin:0}\n");
+      const before = enumerateRuntimeFiles(root);
+      writeFileSync(path.join(root, "assets", DASHBOARD_STYLESHEET), "body{margin:0}\n.gate--veto{display:none}\n");
+      const after = enumerateRuntimeFiles(root);
+      expect(before.map(file => file.path)).toEqual([`assets/${DASHBOARD_STYLESHEET}`]);
+      expect(after.map(file => file.path)).toEqual([`assets/${DASHBOARD_STYLESHEET}`]);
+      expect(after[0]?.sha256).not.toBe(before[0]?.sha256);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("still binds the code that inlines them: the renderer and the asset reader are enumerated", () => {

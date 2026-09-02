@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 15:40 CEST (R33 freeze gate at `c36f6f1` returned NO-GO A=0/B=1/C=3; B1 stylesheet audit `6df70a0`, C1/C2 `04df95a`, C3 `50ba4d1` landed; delta gate R34 on the new HEAD decides the freeze; the supervised market-hours run waits for R34 GO and Felix's O5 freeze)
+**Last updated:** 2026-09-02 16:25 CEST (R34 at `f18a485` NO-GO A=0/B=3/C=4: the textual stylesheet audit does not converge; owner ruling 16:20 — `assets/**` is bound into the runtime digest (option 1), the audit stays as defence in depth, `</style>` breakout refused, tests no longer touch the committed assets; owner has the rendered dashboard for review before the freeze; delta gate R35 decides the freeze; owner go for the supervised run stands once a gate returns A=0/B=0)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`

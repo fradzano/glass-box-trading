@@ -1792,3 +1792,41 @@ small, no ADR split).
   sites (`50ba4d1`) — the third site, the live cycle's own ping, needs a
   real analyst child and stays covered by the P7 market-hours run itself.
   Delta gate R34 on the fix commits decides the freeze.
+- **2026-09-02 — R34 delta gate at `f18a485`: NO-GO (A=0, B=3, C=4); the
+  presentation assets go back into the runtime digest (owner ruling, option
+  1).** The blind reviewer confirmed the three cleared C findings of R33 and
+  refuted the B1 countermeasure: the textual stylesheet audit caught all 36
+  named variants but not native CSS nesting, `@container`, the `font:0/0`
+  shorthand, `00px`/`0e0` zeros, `0e0` alpha, or a `{` inside a selector
+  string that desynchronizes the brace walker — the reviewer named the
+  generator (a string-blind, nesting-blind text scanner over closed
+  enumerations does not converge against a living standard). Two more B:
+  the stylesheet was inlined unescaped, so `</style><script>` broke out of
+  the style block and could delete or invent page content; and the new tests
+  renamed the committed `assets/dashboard.css` in place while three parallel
+  spec files read it, making `npm run verify` fail one run in ten and
+  leaving a poisoned committed stylesheet if a run died mid-probe. Options
+  put to the owner: (1) enumerate `assets/**` in the runtime digest — a
+  change voids the certificate like a code change, complete by construction,
+  costs the freedom to restyle during operation; (2) a separate non-voiding
+  `assetsDigest` reported by the publisher — detects, does not prevent; (3)
+  an audit over a parsed CSS tree — still a list over a living standard, and
+  the most expensive with the qualification window closing. **Owner ruling
+  16:20 CEST: option 1**, with the stated caveat that the owner had not yet
+  seen the rendered dashboard and it is what the judges see. Consequence
+  drawn immediately: the rendered dashboard and decision view from the
+  freeze candidate were put in front of the owner before the freeze, and the
+  README runbook now says "look before the certificate, never restyle
+  after". `src/shell/digests.ts` enumerates every file under `assets/`;
+  `tests/p9-presentation-assets.spec.ts` asserts the enumeration equals the
+  directory listing and that one appended byte changes the digest material.
+  The 12:40 "Presentation lives outside the runtime digest" entry is
+  superseded on its digest clause; the `assets/` layout, the module-relative
+  resolution, the CRLF normalization, the inlining, and the fail-closed
+  reading all stand. The textual audit stays as defence in depth with its
+  incompleteness declared (SPEC S-J-07); the `</style>` breakout is refused
+  by the audit (`<` has no use in CSS) and asserted again in both renderers;
+  the publish dependencies take an injectable `presentationAssetsDir` so no
+  test touches the committed assets. The `runtimeDigest` of every commit
+  before this one differs from the freeze candidate's; no certificate
+  existed, so nothing is voided.

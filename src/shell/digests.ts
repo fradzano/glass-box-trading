@@ -35,12 +35,20 @@ function walk(root: string, directory: string, predicate: (relative: string) => 
   }
 }
 
-/** Executable code, built Node artifacts, schemas, and locks. The digest binds both reviewed source and every built JavaScript byte Node executes. */
+/**
+ * Executable code, built Node artifacts, schemas, locks, and the presentation
+ * assets inlined into every published page. The digest binds both reviewed
+ * source and every built JavaScript byte Node executes; `assets/` is bound
+ * because the stylesheet is what the judges see (R33/R34, DECISIONS.md
+ * 2026-09-02): a change there after the certificate voids it exactly like a
+ * code change.
+ */
 export function enumerateRuntimeFiles(repoRoot: string): readonly { readonly path: string; readonly sha256: string }[] {
   const files: string[] = [];
   walk(repoRoot, repoRoot, relative =>
     (relative.startsWith("src/") && relative.endsWith(".ts"))
     || (relative.startsWith("dist/") && relative.endsWith(".js"))
+    || relative.startsWith("assets/")
     || (relative.startsWith("config/") && relative.endsWith(".json"))
     || (relative.startsWith("tools/") && (relative.endsWith(".mjs") || relative.endsWith(".py")))
     || relative === "package.json" || relative === "package-lock.json" || relative === "tsconfig.json" || relative === "tsconfig.build.json",

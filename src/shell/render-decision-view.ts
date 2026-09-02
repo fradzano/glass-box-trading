@@ -1,8 +1,8 @@
 // The P1 decision-view renderer: one pure function from a recorded decision
 // result plus its stylesheet to one self-contained HTML document. The CSS is a
 // parameter, not an import — the shell reads it from
-// `assets/decision-view.css` (P9), which keeps presentation outside the
-// S-ARM-01 runtime digest while this renderer stays pure.
+// `assets/decision-view.css` (P9), bound by the S-ARM-01 runtime digest
+// since 2026-09-02, while this renderer stays pure.
 import type { DecisionResult, GateVerdict } from "../core/domain.js";
 import { auditPresentationStylesheet } from "./presentation-guard.js";
 

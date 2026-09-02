@@ -121,8 +121,10 @@ integrity and semantic-evidence boundary, not an external attestation against a
 malicious local operator or modified verifier that deliberately regenerates a
 synthetic certificate.
 The certificate contains the literal dev role/account ID, canonical paper
-origin, UTC test window, `runtimeDigest`, role-neutral `policyDigest`, and broker
-IDs/timestamps proving:
+origin, UTC test window, `runtimeDigest` (over `src/**/*.ts`, `dist/**/*.js`,
+`config/**/*.json`, `tools/*.mjs|*.py`, the package and tsconfig files, and
+every file under `assets/` — the judge-visible stylesheets, bound since
+2026-09-02), role-neutral `policyDigest`, and broker IDs/timestamps proving:
 
 1. fresh market-hours option quotes including bid/ask sizes and quote timestamps
    were consumed by the real liquidity gate;
@@ -1108,18 +1110,25 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   journal, so acceptance does not create a recursive new journal revision.
   Tests cover candidate rejection, successful promotion, and rollback for the
   deadline and terminal appends. "Content may not lie" reaches the
-  presentation layer: the stylesheet inlined into every page lives outside
-  the S-ARM-01 runtime digest (`assets/`), so the pure renderers audit its
-  text before rendering and refuse any construct that can hide, collapse, or
-  paint away content or load an external resource (`display:none`,
-  `visibility`, `opacity`, zero-alpha colours, zero sizes, negative offsets,
-  `overflow:hidden`, absolute placement, transforms, clipping, CSS escapes,
-  `@import`, `url(`; also through `var()` fallbacks and custom-property
-  definitions). A refused stylesheet is a failed build
-  (`DASHBOARD_BUILD_FAILED`); the previous page stands. Declared residual:
-  text in the ground colour, near-zero sizes, and off-canvas placement
-  through positive spacing are not textually decidable and stay with the
-  reviewer's eyes on the golden render (`src/shell/presentation-guard.ts`,
+  presentation layer. The gate is the S-ARM-01 runtime digest: every file
+  under `assets/` (the stylesheets inlined into every page) is enumerated
+  like source, so a stylesheet change after the certificate voids it
+  exactly like a code change and the arming gate refuses (owner ruling
+  2026-09-02 after R33/R34; the rendered dashboard is reviewed by the owner
+  before the certificate run, never restyled after it). Defence in depth,
+  not the gate: the pure renderers audit the stylesheet text before
+  rendering and refuse constructs that hide, collapse, or paint away
+  content, break out of the `<style>` block, or load an external resource
+  (`display:none`, `visibility`, `opacity`, zero-alpha colours, zero sizes,
+  negative offsets, `overflow:hidden`, absolute placement, transforms,
+  clipping, CSS escapes, `<`, `@import`, `url(`; also through `var()`
+  fallbacks and custom-property definitions); a refused stylesheet is a
+  failed build (`DASHBOARD_BUILD_FAILED`) and the previous page stands. The
+  audit is textual and known incomplete (R34: native nesting, `@container`,
+  shorthand zeros, exponent notation, string-embedded braces, and any
+  hiding by colour, near-zero size, or off-canvas spacing), which is why the
+  digest, not the audit, carries the guarantee (`src/shell/digests.ts`,
+  `src/shell/presentation-guard.ts`, `tests/p9-presentation-assets.spec.ts`,
   `tests/p9-presentation-guard.spec.ts`). (A9, A10, A26)
 - **S-J-08** Branch isolation is checked, not assumed: the journal writer
   pushes exclusively to the configured journal branch and refuses any other

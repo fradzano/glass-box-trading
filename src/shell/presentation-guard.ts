@@ -1,7 +1,7 @@
-// P9 / R33 (B1) — a stylesheet that sits outside the S-ARM-01 runtime digest
-// (src/shell/digests.ts) can still be inlined verbatim into the published
+// P9 / R33 (B1) — the stylesheet is inlined verbatim into the published
 // page (src/shell/dashboard-build.ts, renderDashboard, renderDecisionView).
-// The gate's executed counter-example: appending
+// While it sat outside the S-ARM-01 runtime digest, the gate's executed
+// counter-example was: appending
 // `.gate--veto,.stamp--veto,.discrepancies,.result--no_trade{display:none}`
 // to assets/dashboard.css hides every gate veto, no-trade result and
 // reconciliation discrepancy on the published page while the digest stays
