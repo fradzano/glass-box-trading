@@ -2001,3 +2001,34 @@ small, no ADR split).
   attempts (cycles 3–9), not eight. Tags `p7-freeze-2` and
   `pre-kickoff-baseline-2` mark this freeze; the owner's O5 freeze and go
   of 15:40/17:50 CEST stand unchanged.
+- **2026-09-02 — P7 acceptance event: certificate run two PASSED on the dev
+  account (freeze two, `f464a66`).** Window 16:16:51Z–16:20:48Z, epoch 8.
+  The first entry (cycle 10, SPY 762/759 put credit vertical, one lot,
+  credit limit 57 ¢, reserved max loss $243, id
+  `entry:2026-09-02:10:e250e300e3a04c21bb604100`, 44 characters) was
+  accepted and filled by the broker at 63 ¢ (`b01f5a42…`, OUTCOME seq 30),
+  reconciled through the snapshot (seq 31); the flatten phase submitted the
+  deadline close `…:g0` at a 65 ¢ debit (INTENT seq 33) and the broker
+  filled it inside the flatten interval; the credential-fence drill against
+  the real adapter with an invalid secret observed HTTP 401 on the close
+  order lookup in phase 0, halted (`AUTH_FAILURE`, seq 34), skipped (seq
+  35), found no working order, and the owner cleared the halt at the human
+  checkpoint (UNHALT seq 36, operator felix); the final snapshot read the
+  bound account `PA349COOGKZ1` stably flat twice: cash and equity
+  $99,997.90 (the round trip cost $2.10), zero positions, zero non-terminal
+  orders, one complete order page. Certificate
+  `evidence/pre-arm/2026-09-02T16-20-48-944Z.json`: `verdict: PASS`, no
+  failures, `runtimeDigest ac8a6e3e…`, `policyDigest f8fa85c7…`, MCP
+  inventory accepted. Observation, not a defect of the certificate: the
+  close lifecycle's OUTCOME is not yet journaled — the fence cycle's phase
+  0 hit the 401 before it could observe the fill, and the driver ends with
+  the final snapshot rather than a reconciliation cycle; S-J-09 A5 covers
+  it (the next phase 0 on this STATE_DIR journals the filled close), and
+  the certificate's evidence rests on the entry lifecycle and the two
+  consistent flat reads. Backlog (C): let the driver run one reconciliation
+  cycle after the un-halt before the final snapshot so the dev journal
+  closes cleanly. Run one (FAIL on the id length) stands archived beside it
+  in the verification store. Per the owner's 12:40 ruling the PASS is the
+  acceptance event: P7 merges `--no-ff` into `main` next, then the owner's
+  P8 steps from the README runbook with no `src/`, `assets/`, `config/` or
+  `dist/` change.
