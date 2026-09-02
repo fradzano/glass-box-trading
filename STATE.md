@@ -6,12 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 (P7 R24 binds long certificate operations and human un-halt to current writer authority; the supervised market-hours run remains gated)
+**Last updated:** 2026-09-02 (P7 R25 owns MCP cleanup before connect waiting; the supervised market-hours run remains gated)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R24. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import; R15 binds PASS to the exact final open-state transition, makes shutdown cleanup independent, canonicalizes the effective terminal lifecycle outcome, and repairs operative documentation; R16 moves the historical end instant before the last writer read and enforces a wheel-authenticated dependency-site digest; R17 binds acceptance and fill to the same exact effective terminal broker OUTCOME; R18 makes every risk-increasing entry lifecycle terminal before PASS and rejects journal changes across flat snapshots; R19 blocks same-batch siblings after a lost acknowledgement and bounds MCP lifecycle cleanup; R20 preserves lost-ack uncertainty across negative lookups and moves evidence work to asynchronous deadline-aware ports; R21 durably distinguishes normal working acknowledgements from lost-ack discovery and blocks the latter until terminal truth; R22 makes that acknowledgement transition state- and broker-identity-monotonic; R23 closes duplicate-INTENT, void, outcome, and evidence-shape transitions across the lifecycle graph; R24 makes long snapshots deadline-bound and the human un-halt an exact writer/journal CAS. **Next action:** complete an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R25. R2–R5 fixes are committed through `bba7d49`; R6 journal/projection recovery at `8911007`; R8 live-lock/deadline closure at `61922e8`; R10 kernel mutex/retry identity/post-spawn cleanup at `20b4d78`; R11 canonicalizes physical state identity; R12 adds durable abort halt, broker-terminal lost-ack reconciliation, and bracketed flat proof; R13 fixes certificate bounds and exact halt transition identity; R14 reconstructs the SDK/Python child environment exactly before verified package import; R15 binds PASS to the exact final open-state transition, makes shutdown cleanup independent, canonicalizes the effective terminal lifecycle outcome, and repairs operative documentation; R16 moves the historical end instant before the last writer read and enforces a wheel-authenticated dependency-site digest; R17 binds acceptance and fill to the same exact effective terminal broker OUTCOME; R18 makes every risk-increasing entry lifecycle terminal before PASS and rejects journal changes across flat snapshots; R19 blocks same-batch siblings after a lost acknowledgement and bounds MCP lifecycle cleanup; R20 preserves lost-ack uncertainty across negative lookups and moves evidence work to asynchronous deadline-aware ports; R21 durably distinguishes normal working acknowledgements from lost-ack discovery and blocks the latter until terminal truth; R22 makes that acknowledgement transition state- and broker-identity-monotonic; R23 closes duplicate-INTENT, void, outcome, and evidence-shape transitions across the lifecycle graph; R24 makes long snapshots deadline-bound and the human un-halt an exact writer/journal CAS; R25 makes MCP attempt cleanup owned before connect waiting. **Next action:** complete an isolated zero-finding gate, then Felix's explicit O5 freeze and the supervised market-hours certificate run; a generated PASS certificate is the P7 acceptance event.
 
 ## Done
 
@@ -359,7 +359,7 @@ One phase per session; every session ends with the handoff protocol in
   with `--preflight` / `--smoke-cycle` / `--owner-go`, `agent-cli.ts` = one
   scheduled cycle), config assembly and `.env` loading, the healthchecks
   ping port, digests. `config/policy.json` holds the proposed O5 values; Felix's
-  freeze remains pending. The R24 `npm run verify` passed 33 files / 340 tests
+  freeze remains pending. The R25 `npm run verify` passed 33 files / 342 tests
   plus build, architecture, dashboard, sandbox, and phase gates. The sandbox
   gate executes the certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17
   are closed.
@@ -390,7 +390,9 @@ One phase per session; every session ends with the handoff protocol in
   out-of-order acknowledgement or broker-order identity change; R23 enforces
   monotonicity across duplicate INTENT, VOID, OUTCOME, and evidence shapes;
   R24 binds every long certificate snapshot to a deadline below writer
-  takeover and makes the human un-halt an exact authority/journal CAS. **Next action:** complete a
+  takeover and makes the human un-halt an exact authority/journal CAS; R25
+  owns MCP attempt cleanup before connect waiting so a late handle cannot
+  leak a child. **Next action:** complete a
   fresh clean A/B-zero gate, obtain Felix's explicit O5 freeze, then run
   `npm run certificate` during the session under supervision. The command may
   reach only the bound dev paper account. P7 acceptance requires its real PASS

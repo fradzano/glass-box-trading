@@ -35,8 +35,15 @@ export interface McpChildHandle {
   stop(): Promise<void>;
 }
 
+export interface McpChildSpawnAttempt {
+  /** The connect result. Ownership of cleanup exists before this promise is awaited. */
+  readonly connected: Promise<McpChildHandle>;
+  /** Cancel or close the attempt even when connect has not produced a handle yet. */
+  stop(): Promise<void>;
+}
+
 export interface McpChildPort {
-  spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): Promise<McpChildHandle>;
+  spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): McpChildSpawnAttempt;
 }
 
 export interface McpLaunchPorts {
@@ -72,7 +79,18 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   const preSpawn = verifyMcpLaunch(ports.lock, observation, ports.osEnvAllowlist);
   if (!preSpawn.ok) return { ok: false, stage: "pre_spawn", violations: preSpawn.violations, issues: [] };
 
-  const child = await withOperationTimeout(() => ports.child.spawn(childEnvironment, timeoutMs), timeoutMs, "MCP_CONNECT_TIMEOUT");
+  const attempt = ports.child.spawn(childEnvironment, timeoutMs);
+  let child: McpChildHandle;
+  try {
+    child = await withOperationTimeout(() => attempt.connected, timeoutMs, "MCP_CONNECT_TIMEOUT");
+  } catch (error) {
+    try {
+      await withOperationTimeout(() => attempt.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "MCP connect failed and child cleanup did not complete", { cause: cleanupError });
+    }
+    throw error;
+  }
   let inventory: readonly string[];
   try {
     inventory = await withOperationTimeout(() => child.listTools(), timeoutMs, "MCP_LIST_TOOLS_TIMEOUT");

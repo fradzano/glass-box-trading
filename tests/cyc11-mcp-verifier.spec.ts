@@ -226,6 +226,10 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   const lock = trackedLock();
   const manifest = trackedManifest();
 
+  function connectedAttempt(child: McpChildHandle) {
+    return { connected: Promise.resolve(child), stop: () => child.stop() };
+  }
+
   function fakePorts(options: { readonly observation?: Partial<McpLaunchObservation>; readonly offeredTools?: readonly string[]; readonly surviving?: readonly string[]; readonly inventoryError?: Error }): { readonly ports: McpLaunchPorts; readonly calls: readonly string[]; readonly stopped: { count: number } } {
     const calls: string[] = [];
     const stopped = { count: 0 };
@@ -248,7 +252,7 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
         removeBytecode: () => { calls.push("removeBytecode"); return Promise.resolve([]); },
         scanBytecode: () => { calls.push("scanBytecode"); return Promise.resolve(options.surviving ?? []); },
       },
-      child: { spawn: () => { calls.push("spawn"); return Promise.resolve(child); } },
+      child: { spawn: () => { calls.push("spawn"); return connectedAttempt(child); } },
     };
     return { ports, calls, stopped };
   }
@@ -297,11 +301,58 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
 
   it("bounds a stalled child connect before inventory can be released", async () => {
     const { ports } = fakePorts({});
+    let stopCalls = 0;
     await expect(launchVerifiedAnalystChild({
       ...ports,
       operationTimeoutMs: 5,
-      child: { spawn: () => new Promise<McpChildHandle>(() => undefined) },
+      child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
     })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    expect(stopCalls).toBe(1);
+  });
+
+  it("owns and stops a child attempt whose handle resolves only after the connect timeout", async () => {
+    let resourceActive = true;
+    let stopCalls = 0;
+    const child: McpChildHandle = {
+      listTools: () => Promise.resolve(manifest.allowedTools),
+      stop: () => { stopCalls += 1; resourceActive = false; return Promise.resolve(); },
+    };
+    const { ports } = fakePorts({});
+    await expect(launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      child: {
+        spawn: () => ({
+          connected: new Promise<McpChildHandle>(resolve => setTimeout(() => { resolve(child); }, 20)),
+          stop: () => child.stop(),
+        }),
+      },
+    })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    expect(stopCalls).toBe(1);
+    expect(resourceActive).toBe(false);
+  });
+
+  it("preserves both connect timeout and attempt-cleanup timeout", async () => {
+    const { ports } = fakePorts({});
+    let caught: unknown;
+    try {
+      await launchVerifiedAnalystChild({
+        ...ports,
+        operationTimeoutMs: 5,
+        child: {
+          spawn: () => ({
+            connected: new Promise<McpChildHandle>(() => undefined),
+            stop: () => new Promise<void>(() => undefined),
+          }),
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
+    expect(messages).toContain("MCP_CONNECT_TIMEOUT after 5 ms");
+    expect(messages).toContain("MCP_STOP_TIMEOUT after 5 ms");
   });
 
   it("bounds asynchronous evidence work before spawn and rejects synchronous overruns", async () => {
@@ -337,7 +388,7 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
     await expect(launchVerifiedAnalystChild({
       ...ports,
       operationTimeoutMs: 5,
-      child: { spawn: () => Promise.resolve(child) },
+      child: { spawn: () => connectedAttempt(child) },
     })).rejects.toThrow("MCP inventory failed and child cleanup did not complete");
     expect(stopCalls).toBe(1);
   });
@@ -353,7 +404,7 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
       await launchVerifiedAnalystChild({
         ...ports,
         operationTimeoutMs: 5,
-        child: { spawn: () => Promise.resolve(child) },
+        child: { spawn: () => connectedAttempt(child) },
       });
     } catch (error) {
       caught = error;

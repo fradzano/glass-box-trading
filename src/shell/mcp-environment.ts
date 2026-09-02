@@ -320,7 +320,7 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
   };
 
   const child: McpChildPort = {
-    async spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): Promise<VerifiedChildHandle> {
+    spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number) {
       const transportEnvironment = isolatedMcpTransportEnvironment(env);
       const transport = new StdioClientTransport({
         command: paths.runtime,
@@ -335,17 +335,12 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
         stderr: "pipe",
       });
       const client = new Client({ name: "glass-box-trading", version: "0.1.0" });
-      try {
-        await withOperationTimeout(() => client.connect(transport), operationTimeoutMs, "MCP_CONNECT_TIMEOUT");
-      } catch (error) {
-        try {
-          await withOperationTimeout(() => client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], "MCP connect failed and transport cleanup did not complete", { cause: cleanupError });
-        }
-        throw error;
-      }
-      return {
+      let stopPromise: Promise<void> | null = null;
+      const stop = (): Promise<void> => {
+        stopPromise ??= withOperationTimeout(() => client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
+        return stopPromise;
+      };
+      const handle: VerifiedChildHandle = {
         async listTools(): Promise<readonly string[]> {
           const result = await withOperationTimeout(() => client.listTools(), operationTimeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
           return result.tools.map(tool => tool.name);
@@ -360,9 +355,14 @@ export function createEnvironmentPorts(paths: AnalystEnvironmentPaths, packageMo
           return { content, isError: result["isError"] === true };
         },
         async stop(): Promise<void> {
-          await withOperationTimeout(() => client.close(), operationTimeoutMs, "MCP_STOP_TIMEOUT");
+          await stop();
         },
       };
+      const connected = Promise.resolve().then(async () => {
+        await client.connect(transport);
+        return handle;
+      });
+      return { connected, stop };
     },
   };
 

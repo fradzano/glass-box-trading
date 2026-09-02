@@ -1439,3 +1439,9 @@ small, no ADR split).
   manual UNHALT then atomically requires the same epoch, holder, AUTH_FAILURE
   HALT, and journal tail. A successor takeover or any intervening journal
   transition therefore preserves the halt instead of applying stale approval.
+- **2026-09-02 — P7 R25 owns MCP cleanup before connect begins.** The MCP
+  child port returns a spawn-attempt object synchronously: its connect result
+  may settle later, but its stop operation is available immediately. The
+  launcher therefore closes the attempt before propagating connect timeout or
+  failure, so a late child handle cannot become an unowned process during
+  runtime-construction failure.

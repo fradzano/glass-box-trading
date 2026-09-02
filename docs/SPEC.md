@@ -404,7 +404,12 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   external launch lifecycle operation — evidence collection, connect, inventory,
   tool call, and stop — has a hard runtime-digested deadline. Holder release is
   attempted independently of child shutdown, so a stalled transport cannot
-  retain writer authority indefinitely. Evidence cleanup/scans/hashes use
+  retain writer authority indefinitely. The launcher owns a cancellable child
+  attempt before it waits for connect; timeout or connect failure must stop
+  that attempt before returning,
+  including when the connected child handle would arrive only after timeout.
+  No started child may become unreachable through late promise settlement.
+  Evidence cleanup/scans/hashes use
   asynchronous deadline-aware filesystem operations, and every Git subprocess
   receives the remaining aggregate timeout; a timed-out pre-spawn operation
   releases no child or analyst request. Required
