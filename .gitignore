@@ -19,3 +19,7 @@ artifacts/
 # "Certificates stay local" — the certificate carries the dev account ID and
 # broker evidence the public repository does not need).
 evidence/
+
+# Remotion (video/ is its own package; renders go to submission/ by hand)
+video/out/
+video/.remotion/

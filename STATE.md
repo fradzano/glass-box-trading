@@ -451,6 +451,15 @@ One phase per session; every session ends with the handoff protocol in
   `glass-box-trading` (owner wants to rename it; the runbook says how and
   what to re-probe); the SUB-09 preflight rows for the host are drafted,
   not run.
+- **Video (SUB-04) — Remotion scaffold landed 2026-09-02 22:30 CEST** under
+  `video/` as its own package (root `package.json` is digest material):
+  nine scenes along the SPEC section 5 table, every figure and URL read
+  from `video/public/dataset/{meta,projection}.json`, a dataset gate that
+  refuses placeholders, an unfrozen dataset and missing captures for the
+  deliverable render, a DEV watermark meanwhile. Stills of every scene were
+  rendered and reviewed. Open: after Thursday's close produce the frozen
+  dataset (README in `video/`), record the five captures against the pinned
+  presentation route, `npm run render` to `submission/glass-box-trading.mp4`.
 - **Submission (SUBMISSION-SPEC):** deck is through anti-slop; still open:
   one-pager, Remotion video, form copy, account evidence (competition
   account creation instant, $100k bootstrap, journal revision), the golden

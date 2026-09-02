@@ -164,5 +164,29 @@
 - `tools/watchdog-run.ps1`
 - `tsconfig.build.json`
 - `tsconfig.json`
+- `video/package-lock.json`
+- `video/package.json`
+- `video/public/dataset/meta.json`
+- `video/public/dataset/projection.json`
 - `video/README.md` — Video plan — SUB-04
+- `video/remotion.config.ts` — Remotion project configuration (video/ is its own package; nothing here
+- `video/scripts/check-dataset.mjs` — Dataset gate for the video render (SUB-04, video/README.md): every URL and
+- `video/src/dataset.ts` — The single frozen presentation-cutoff dataset (video/README.md): the
+- `video/src/format.ts` — Integer-cent formatting, no float arithmetic on money: the same rules the
+- `video/src/GlassBoxVideo.tsx` — The composition: one Sequence per SUBMISSION-SPEC §5 slot, in order. Every
+- `video/src/index.ts`
+- `video/src/Root.tsx` — A type alias, not an interface: Remotion's Composition props must be assignable to Record<string, unknown>.
+- `video/src/scenes/Architecture.tsx` — 2:45–3:40 — the architecture boundary and why the LLM cannot place an order.
+- `video/src/scenes/Close.tsx` — 4:55–4:59 — demo URL and project name.
+- `video/src/scenes/ColdOpen.tsx` — 0:00–0:30 — the auditability problem, the glass-box answer, the result.
+- `video/src/scenes/DashboardOpen.tsx` — 0:30–1:00 — the public dashboard opens with no login: result, exposure,
+- `video/src/scenes/DecisionCycle.tsx` — 1:00–1:40 — one completed decision cycle: market context, the analyst's
+- `video/src/scenes/GateVector.tsx` — 1:40–2:15 — the complete deterministic gate vector, with at least one
+- `video/src/scenes/OrderToOutcome.tsx` — 2:15–2:45 — one approved intent to its Alpaca order, fill and P&L
+- `video/src/scenes/PnlAndLimits.tsx` — 3:40–4:25 — P&L, both sleeves, budgets at risk, drawdown, and what one
+- `video/src/scenes/shared.tsx` — Layout primitives shared by the scenes: a titled frame with the cutoff
+- `video/src/scenes/SourceAndTests.tsx` — 4:25–4:55 — the public repository at the pure core and the test that
+- `video/src/theme.ts` — The dashboard's own palette and type (assets/dashboard.css), so the video
+- `video/src/timeline.ts` — The SUBMISSION-SPEC §5 timing table as frames. Total 299 s: under the
+- `video/tsconfig.json`
 - `vitest.config.ts`

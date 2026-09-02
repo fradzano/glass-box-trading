@@ -1,0 +1,19 @@
+{
+  "frozen": false,
+  "datasetNote": "DEV dataset: the competition journal at 2026-09-02T19:00:51.380Z pinned as a presentation cutoff for scaffold work only. Replace both files with the frozen Sep 3 post-close dataset (README) and set frozen to true before `npm run render`.",
+  "demoUrl": "https://glass-box-trading.vercel.app",
+  "presentationRouteUrl": "https://glass-box-trading.vercel.app/revisions/sha256-c1c8e14ea4035034/presentation/",
+  "repositoryUrl": "https://github.com/fradzano/glass-box-trading",
+  "accountId": "PA376WIK2ATL",
+  "presentationCutoffAt": "2026-09-02T19:00:51.380Z",
+  "corePath": "src/core/decision.ts",
+  "evidenceTestPath": "tests/cyc-runner.spec.ts (S-CYC-06)",
+  "featuredCycleSeq": null,
+  "captures": {
+    "dashboardOpen": null,
+    "decisionCycle": null,
+    "gateVector": null,
+    "orderToOutcome": null,
+    "sourceAndTests": null
+  }
+}
