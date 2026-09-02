@@ -323,3 +323,55 @@ describe("P8 / S-J-06 — the composed mutation port refuses a foreign account i
     expect(entries.some(item => item.type === "HALT" && item["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
   });
 });
+
+describe("P8 / S-G14-03 — an unreadable environment loses the ping URL, never the local record", () => {
+  /**
+   * The one branch that composes before an environment exists. `loadEnvironment`
+   * swallows a missing or unreadable `.env`, so its read fails only when the
+   * ambient record itself refuses to yield its entries — a hardened or revoked
+   * process environment.
+   */
+  function unreadableProcessEnv(): EnvRecord {
+    const env: Record<string, string | undefined> = {};
+    Object.defineProperty(env, "ALPACA_PROFILE", {
+      enumerable: true,
+      configurable: true,
+      get: (): string => { throw new Error("TEST_ONLY the process environment cannot be read"); },
+    });
+    return env;
+  }
+
+  it("still records the takeover's fail-ping in the invoked STATE_DIR", async () => {
+    // The ping URL lives in the environment, so this branch genuinely has none.
+    // The record FILE does not: it derives from the invoked STATE_DIR, which
+    // this invocation was handed. Dropping it too would leave the takeover with
+    // no evidence at all — not even the local trace the credential fence keeps.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.clock.now = STALE_NOW;
+    const logs: string[] = [];
+
+    const composition = await composeWatchdog({
+      paths: harness.paths,
+      repoRoot: fixtureRepoRoot(),
+      processEnv: unreadableProcessEnv(),
+      clock: () => harness.clock.now,
+      instanceId: "watchdog",
+      session: { isTradingDay: true, opensAt: harness.clock.now - 3_600_000, closesAt: harness.clock.now + 3_600_000 },
+      deadManBoundMs: DEAD_MAN_BOUND_MS,
+      log: line => logs.push(line),
+    });
+    expect(composition.degraded).toContain("environment could not be read");
+    expect(logs.some(line => line.includes("fencing and halting only"))).toBe(true);
+    expect(composition.deps.broker).toBeNull();
+    expect(composition.deps.ping).not.toBeNull();
+
+    const report = await runWatchdog(composition.deps);
+    expect(report.halted).toBe(true);
+    expect(report.ping).toBe("fail");
+    expect(harness.entries().some(item => item.type === "HALT" && item["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
+    const record = pingRecord(harness.paths);
+    expect(record).toContain("fail ");
+    expect(record).toContain("WATCHDOG_TAKEOVER");
+  });
+});

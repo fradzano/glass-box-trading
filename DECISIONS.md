@@ -1652,3 +1652,23 @@ small, no ADR split).
   exactly. Second instance today of the same lesson: the fake encoded an
   assumption, the live read corrected it. The recorded competition account
   document is a fixture (account number and instants only).
+- **2026-09-02 — R30 delta gate at `f2e214d`: A=0, B=2, C=5; the R29 fixes
+  hold.** Every named mutant on A1, the close reconciliation, B1, the deadline
+  entries, and the coverage closures is caught; the deadline CLI has no order
+  path; a partial fill can never over-close (`EXCEEDS_HELD_QUANTITY`). New:
+  B1 the runner's "success ping only after a durable append" wiring is
+  unmeasured (the mutant `durableAppendLanded: true` survives; paths with no
+  durable append and no alarm exist) — closed by tests; B2 the watchdog
+  reports `halted: true` regardless of whether its HALT append landed, and
+  the operator tooling reads that line as "halted" — closed by reporting the
+  append's durability and alarming on an unjournaled halt; C4 the
+  environment-unreadable branch of the watchdog composition left the takeover
+  without even the local ping recorder the fence uses — closed. Declared:
+  C1/C2 the freshness of the close-planning inputs is redundant with the
+  eligibility gate on the fresh book and not measured separately, and the
+  residue loop still iterates the phase-1 classification (every submission
+  passes the fresh eligibility check); C3 after a partial fill of a resting
+  close the remainder is deferred one cycle (under-close direction only,
+  unreachable under the one-lot rule); C5 the pre-freeze port extraction is
+  code motion inside the digest window, behaviour-preserving on reading and
+  by the full suite.

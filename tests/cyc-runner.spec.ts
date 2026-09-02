@@ -29,7 +29,7 @@ import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN, journalSnapshot } from "./journal-fixtures.js";
 // The P5 harness (real lifecycle deps, so phase 0's HUMAN_ACTION classification actually runs — the
 // plain harness() above passes `lifecycle: null`, which turns that phase off entirely).
-import { cleanupLifecycleDirs, lifecycleHarness } from "./lifecycle-fixtures.js";
+import { cleanupLifecycleDirs, lifecycleHarness, recordingPing } from "./lifecycle-fixtures.js";
 
 const temporaryDirectories: string[] = [];
 const journalsToUnlock: string[] = [];
@@ -760,5 +760,77 @@ describe("S-G12-06 the credential fence also fences the phase-4 re-check (P4 gat
     expect(readHaltState(run.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE", sticky: false });
     expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
     expect(run.fake.mutations).toHaveLength(0);
+  });
+});
+
+describe("S-G14-03 a success ping never precedes a durable append", () => {
+  // The dead-man check reads a success ping as "this deployment is alive AND
+  // its journal took the run". Every exit below reaches `finish` with nothing
+  // durable appended and no alarm condition, so the only honest plan is `none`:
+  // a success ping here would refresh liveness for a deployment that wrote
+  // nothing, and the 45-60 min missed-ping SLA — the sole passive detector of a
+  // journal that has gone silent — would never fire.
+  const marketDark = (): Promise<MarketObservation> => Promise.reject(new Error("market data unreachable"));
+
+  it("a cycle whose journal cannot be appended plans no ping and delivers none", async () => {
+    const run = await harness();
+    const ping = recordingPing(() => run.clock.now);
+    lockJournal(run.paths);
+
+    const report = await run.cycle({ ping });
+    expect(report.journalFailure).not.toBeNull();
+    expect(report.alarmConditions).toEqual([]);
+    expect(report.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+    unlockJournal(run.paths);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP"]);
+  });
+
+  it("a cycle whose journal cannot be folded plans no ping and delivers none", async () => {
+    // The S-CYC-04 fold invalidation: a misordered acknowledgement after a lost
+    // ack. Phase 0 refuses before any append, so nothing durable exists.
+    const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
+    const first = await run.cycle();
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    const order = await run.fake.read.orderByClientId(clientOrderId);
+    if (order === null) throw new Error("fixture");
+    const appended = await run.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: entryAcknowledgementDraft({ atIso: epochMsToUtcIso(run.clock.now), epoch: 1 }, clientOrderId, order) } });
+    expect(appended).toMatchObject({ ok: true });
+
+    const ping = recordingPing(() => run.clock.now);
+    const refused = await run.cycle({ ping });
+    expect(refused.entriesBlocked).toContain("LIFECYCLE_FOLD");
+    expect(refused.alarmConditions).toEqual([]);
+    expect(refused.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+  });
+
+  it("total world loss pings success only when its SKIP landed, and nothing at all when the journal was down too", async () => {
+    // With the journal alive the abstention itself is the durable append, so a
+    // success ping is earned even though the broker answered nothing (S-CYC-03).
+    const journaled = await harness();
+    const earned = recordingPing(() => journaled.clock.now);
+    journaled.fake.failNextReads(["account", "positions", "orders"]);
+    const durable = await journaled.cycle({ ping: earned, market: marketDark });
+    expect(durable).toMatchObject({ primary: "SKIP", reasonCodes: ["WORLD_UNREACHABLE"], journalFailure: null });
+    expect(durable.ping).toBe("success");
+    expect(earned.record.successes).toHaveLength(1);
+
+    // Same darkness, journal unwritable: the SKIP never lands, so nothing may claim liveness.
+    const dark = await harness();
+    const ping = recordingPing(() => dark.clock.now);
+    dark.fake.failNextReads(["account", "positions", "orders"]);
+    lockJournal(dark.paths);
+    const report = await dark.cycle({ ping, market: marketDark });
+    expect(report).toMatchObject({ primary: null, reasonCodes: ["WORLD_UNREACHABLE"] });
+    expect(report.journalFailure).not.toBeNull();
+    expect(report.alarmConditions).toEqual([]);
+    expect(report.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+    unlockJournal(dark.paths);
+    expect(types(dark.paths)).toEqual(["BOOTSTRAP"]);
   });
 });

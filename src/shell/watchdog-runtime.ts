@@ -141,7 +141,7 @@ interface FenceParameters {
 }
 
 /** Exactly the dependency record the CLI passed before this module existed — minus the ping, which every path keeps: fence, halt, fail-ping, no book recovery. */
-function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort | null): WatchdogDependencies {
+function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort): WatchdogDependencies {
   return {
     paths: options.paths,
     secrets: [],
@@ -187,14 +187,16 @@ function credentialFence(options: WatchdogRuntimeOptions, fence: FenceParameters
 /**
  * Degrade to fencing and halting only — but never to silence. `ping` is the
  * port the environment yielded; it is null in exactly one case, spelled out at
- * the caller, and then the local recorder stands in for the credential fence so
- * that fence still journals what it can.
+ * the caller, and then a local-only recorder stands in — for the takeover's own
+ * fail-ping and for the credential fence alike. The record file derives from
+ * the INVOKED `STATE_DIR`, which this invocation was handed as an argument, so
+ * it survives the very failure that lost the URL.
  */
 function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort | null, fence?: FenceParameters): WatchdogComposition {
   options.log(`watchdog book recovery unavailable, fencing and halting only: ${reason}`);
   const localOnlyPing: PingPort = ping ?? createPingPort({ url: null, recordFile: path.join(options.paths.root, "pings.log"), clock: options.clock });
   return {
-    deps: fenceOnlyDeps(options, ping),
+    deps: fenceOnlyDeps(options, localOnlyPing),
     degraded: reason,
     recordCredentialFence: credentialFence(options, fence ?? { secrets: [], lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS }, localOnlyPing),
   };
@@ -240,11 +242,13 @@ export async function composeWatchdog(options: WatchdogRuntimeOptions): Promise<
     env = loadEnvironment(options.repoRoot, options.processEnv);
     ping = pingPort(options, env, DEFAULT_PING_TIMEOUT_MS);
   } catch (error) {
-    // The one case where a null ping port is honest: without an environment
-    // there is no URL to ping and no record file to fall back to. The watchdog
-    // still fences the writer, halts and journals — it just cannot raise the
-    // active alarm, and only the passive missed-ping SLA remains.
-    return degrade(options, `environment could not be read, no alarm port: ${messageOf(error)}`, null);
+    // The only branch that loses the ping URL: it lives in the environment, and
+    // there is none. The record FILE does not — it derives from the invoked
+    // STATE_DIR, which this invocation was handed — so `degrade` substitutes a
+    // local-only recorder and the takeover still leaves durable local evidence.
+    // What is genuinely gone is the REMOTE alarm: for that only the passive
+    // 45–60 min missed-ping SLA remains (S-G14-03).
+    return degrade(options, `environment could not be read, no remote alarm URL: ${messageOf(error)}`, null);
   }
   try {
     return await Promise.resolve(compose(options, env, ping));

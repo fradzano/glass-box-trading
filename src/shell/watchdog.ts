@@ -110,8 +110,16 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     return result.ok;
   }
 
-  if (!opened.halt.halted) {
-    await append(haltDraft(context(), "WATCHDOG_TAKEOVER", `journal stale for ${String(assessment.ageMs)} ms during a session; writer fenced at epoch ${String(epoch)}; phase-0 recovery follows`));
+  // `halted` is a claim about durable state, not about intent: the CLI prints
+  // this report as the operator-facing line, and a halt nothing journaled must
+  // never be reported as one. It is true when a halt already stood before the
+  // takeover, or when this run's HALT append landed. An append that did not
+  // land also raises its own alarm condition, so the fail-ping says which of
+  // the two things the fence produced is missing.
+  let halted = opened.halt.halted;
+  if (!halted) {
+    halted = await append(haltDraft(context(), "WATCHDOG_TAKEOVER", `journal stale for ${String(assessment.ageMs)} ms during a session; writer fenced at epoch ${String(epoch)}; phase-0 recovery follows`));
+    if (!halted) alarmConditions.push("HALT_NOT_JOURNALED");
   }
 
   let classification: BookClassification | null = null;
@@ -206,5 +214,5 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
       // Best-effort delivery; the report carries the plan either way.
     }
   }
-  return { assessment, acquired: acquired.kind, epoch, halted: true, classification, closes, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+  return { assessment, acquired: acquired.kind, epoch, halted, classification, closes, alarmConditions, ping: deps.ping === null ? null : plan.kind };
 }

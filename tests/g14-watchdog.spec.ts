@@ -5,12 +5,15 @@
 // staleness-neutral witness class, the ping precondition, and the watchdog
 // as a separate OS process entry point.
 import { spawn } from "node:child_process";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, inject, it } from "vitest";
 import { assessStaleness, deploymentTerminal, planPing, terminalEntry } from "../src/core/lifecycle.js";
 import { runTerminal } from "../src/shell/deadline.js";
+import { readHaltState } from "../src/shell/halt-state.js";
 import { runWatchdog } from "../src/shell/watchdog.js";
 import type { WatchdogDependencies } from "../src/shell/watchdog.js";
+import type { StatePaths } from "../src/shell/state-dir.js";
 import { LONG_CALL, SHORT_CALL } from "./execution-fixtures.js";
 import { TEST_ONLY_AT_MS } from "./journal-fixtures.js";
 import {
@@ -25,7 +28,22 @@ import {
 } from "./lifecycle-fixtures.js";
 import type { LifecycleHarness } from "./lifecycle-fixtures.js";
 
-afterEach(() => { cleanupLifecycleDirs(); });
+const journalsToUnlock: string[] = [];
+afterEach(() => {
+  for (const file of journalsToUnlock.splice(0)) { try { chmodSync(file, 0o666); } catch { /* already writable or gone */ } }
+  cleanupLifecycleDirs();
+});
+
+/** The journal file made read-only: every authoritative append fails, while reads, the epoch store and the holder stay intact. */
+function lockJournal(paths: StatePaths): void {
+  if (!existsSync(paths.journal)) writeFileSync(paths.journal, "", "utf8");
+  chmodSync(paths.journal, 0o444);
+  journalsToUnlock.push(paths.journal);
+}
+
+function unlockJournal(paths: StatePaths): void {
+  chmodSync(paths.journal, 0o666);
+}
 
 const SESSION = { isTradingDay: true, opensAt: P5_NOW - 3_600_000, closesAt: P5_NOW + 7_200_000 };
 const DEAD_MAN_BOUND_MS = 3_000_000;
@@ -190,6 +208,54 @@ describe("S-G11-04 / S-G14-02 — after the controlled end the watchdog stands d
     expect(report.halted).toBe(true);
     expect(report.ping).toBe("fail");
     expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
+  });
+});
+
+describe("S-G14-02/03 — the report tells the operator only about the halt it actually journaled", () => {
+  // `watchdog-cli.ts` prints this report as the operator-facing JSON line. A
+  // takeover whose HALT append never landed leaves a fenced writer, no halt
+  // flag and no journal line — reporting `halted: true` there would tell the
+  // operator a halt exists that nothing carries, and the fail-ping would name
+  // only the staleness that caused the takeover, not the halt that is missing.
+
+  it("with a writable journal the takeover halt is durable and the report says so", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+
+    const report = await runWatchdog(watchdogDeps(harness, { broker: null, market: null, binding: null }));
+    expect(report.acquired).toBe("WON");
+    expect(report.halted).toBe(true);
+    expect(report.alarmConditions).not.toContain("HALT_NOT_JOURNALED");
+    expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
+    expect(readHaltState(harness.paths).halted).toBe(true);
+  });
+
+  it("with an unwritable journal the fence still lands, the report says halted false and the fail-ping names the unjournaled halt", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+    lockJournal(harness.paths);
+
+    const report = await runWatchdog(watchdogDeps(harness, { broker: null, market: null, binding: null }));
+    expect(report.acquired).toBe("WON");
+    expect(report.epoch).toBe(2);
+    expect(report.halted).toBe(false);
+    expect(report.alarmConditions).toContain("HALT_NOT_JOURNALED");
+
+    // The alarm is raised AND delivered, carrying both the takeover and the missing halt.
+    expect(report.ping).toBe("fail");
+    const conditions = harness.ping.record.failures.at(-1)?.conditions ?? [];
+    expect(conditions.some(item => item.startsWith("WATCHDOG_TAKEOVER"))).toBe(true);
+    expect(conditions).toContain("HALT_NOT_JOURNALED");
+
+    // The fence is the epoch increment, not the append: the stale writer stays locked out either way (S-G14-02).
+    const wokenWriter = await harness.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: { at: "2026-08-31T15:00:00.000Z", epoch: 1, type: "SKIP", reasonCodes: [], snapshot: null } } });
+    expect(wokenWriter).toMatchObject({ ok: false, reason: "STALE_EPOCH" });
+
+    unlockJournal(harness.paths);
+    expect(harness.entries().every(entry => entry.type !== "HALT")).toBe(true);
+    expect(readHaltState(harness.paths).halted).toBe(false);
   });
 });
 
