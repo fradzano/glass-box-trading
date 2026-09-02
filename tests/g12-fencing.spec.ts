@@ -471,8 +471,10 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     // account-bound-broker.ts is the gateway's final delegate wrapper: it independently re-observes account identity
     // immediately before forwarding a mutation and has no other caller.
     // startup-broker-fence.ts constructs a brokerless gateway only to journal a pre-runtime refusal.
-    expect(brokerUsers.sort()).toEqual(["account-bound-broker.ts", "agent-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "startup-broker-fence.ts", "watchdog.ts"]);
-    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts", "agent-runtime.ts", "certificate-run.ts", "certificate-cli.ts", "agent-cli.ts"]) {
+    // deadline-runtime.ts (S-G11-03/04) is the Friday entries' composition root: like agent-runtime.ts it hands the
+    // account-bound real port to the gateway it constructs, and like it, it never calls that port itself.
+    expect(brokerUsers.sort()).toEqual(["account-bound-broker.ts", "agent-runtime.ts", "deadline-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "startup-broker-fence.ts", "watchdog.ts"]);
+    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "deadline-runtime.ts", "deadline-cli.ts", "cycle-runner.ts", "agent-runtime.ts", "certificate-run.ts", "certificate-cli.ts", "agent-cli.ts"]) {
       expect(readFileSync(path.join(shellDirectory, name), "utf8")).not.toMatch(/\.mutate\(/u);
     }
   });

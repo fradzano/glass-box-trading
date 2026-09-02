@@ -60,6 +60,8 @@
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
 - `src/shell/cycle-walltime.ts` — Aggregate shell deadline for one cycle. The runner propagates the absolute
 - `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
+- `src/shell/deadline-cli.ts` — The S-G11-03/04 entry point — the two Friday entries as their own one-shot
+- `src/shell/deadline-runtime.ts` — The composition root for one Friday deadline entry (S-G11-03/04). It builds
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/digests.ts` — Digest material for S-ARM-01 (P7): the shell enumerates and hashes the
@@ -130,6 +132,7 @@
 - `tests/j9-projection.spec.ts` — S-J-09 — the judge-facing performance projection is a pure fold over one
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
+- `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
 - `tests/p8-competition-provenance.spec.ts` — S-CYC-09 at the composition root (P8): the competition provenance port is

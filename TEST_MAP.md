@@ -30,6 +30,7 @@
 - `tests/j7-j8-publication.spec.ts`
 - `tests/j7-j9-golden-path.spec.ts`
 - `tests/j9-projection.spec.ts`
+- `tests/p10-deadline-runtime.spec.ts`
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts`
 - `tests/p8-competition-provenance.spec.ts`

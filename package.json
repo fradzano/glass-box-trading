@@ -20,7 +20,9 @@
     "sandbox": "node --experimental-vm-modules tools/run-core-sandboxed.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run architecture && npm run fixture && npm run dashboard && npm run sandbox && python tools/check_implementation_phases.py",
     "agent": "npm run build && node dist/shell/agent-cli.js",
-    "certificate": "npm run build && node dist/shell/certificate-cli.js --owner-go"
+    "certificate": "npm run build && node dist/shell/certificate-cli.js --owner-go",
+    "deadline-reconciliation": "npm run build && node dist/shell/deadline-cli.js reconciliation",
+    "deadline-terminal": "npm run build && node dist/shell/deadline-cli.js terminal"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
