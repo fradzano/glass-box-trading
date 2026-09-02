@@ -65,11 +65,11 @@ describe("S-CYC-12 — checkpoint, window, and failure are journaled and exposed
     harness.clock.now = WINDOW_END;
     await harness.cycle();
     expect(briefs).toEqual([
-      { active: false, maxLossCents: null, windowEndMs: null },
-      { active: true, maxLossCents: CAP, windowEndMs: WINDOW_END },
-      { active: false, maxLossCents: null, windowEndMs: null },
+      { active: false, maxLossCents: null, windowEndMs: null, quantityBound: null },
+      { active: true, maxLossCents: CAP, windowEndMs: WINDOW_END, quantityBound: 1 },
+      { active: false, maxLossCents: null, windowEndMs: null, quantityBound: null },
     ]);
-    expect(Object.keys(qualificationBrief({ state: "COMPETITIVENESS_AT_RISK", fills: [], checkpointMs: 0, windowEndMs: 1, windowOpen: true }, QUALIFICATION))).toEqual(["active", "maxLossCents", "windowEndMs"]);
+    expect(Object.keys(qualificationBrief({ state: "COMPETITIVENESS_AT_RISK", fills: [], checkpointMs: 0, windowEndMs: 1, windowOpen: true }, QUALIFICATION))).toEqual(["active", "maxLossCents", "windowEndMs", "quantityBound"]);
   });
 });
 

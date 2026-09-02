@@ -2065,3 +2065,28 @@ small, no ADR split).
   for an absent store with an empty journal and virginity `unknown`, since
   the runner's foreign-book gap and provenance proof already fail closed
   before any BOOTSTRAP, and add the missing test through `buildRuntime`.
+- **2026-09-02 — Live finding five: the analyst was never told the one-lot
+  bound of the qualification window.** Competition cycle 2 (18:47 CEST):
+  the analyst proposed a QQQ long call that passed all eight gates with a
+  reserved max loss of $85 and was then vetoed `QUALIFICATION_ONE_LOT`
+  ("quantity 5 exceeds the one-lot bound"). The brief the prompt carries
+  (`qualificationBrief`) stated `active`, `maxLossCents` and `windowEndMs`
+  only, while the policy line in the same prompt said "max quantity 5"; a
+  one-lot proposal could only happen by chance, and the qualification
+  window ends 22:00 CEST today with `FLATTEN_DATE` tomorrow — today is the
+  competition account's only entry day. Fix: the brief gains
+  `quantityBound: 1` while active (`null` otherwise) and the prompt line
+  spells the rule out (one live lifecycle, exactly one lot, at or below the
+  cap, anything else vetoed after the gates). Core and prompt only; gates,
+  vetoes and the executor are untouched — the analyst still proposes, the
+  core still decides. Consequence: `src/core/` and `src/shell/` change, the
+  P7 certificate of freeze two is void for this build; the scheduled tasks
+  keep running the frozen build meanwhile (a one-lot proposal may still
+  land by chance), a narrow gate (R39) and a third dev certificate run
+  decide whether the fixed build replaces it before the window closes.
+  Observed on the side: `tests/p7-launch-hardening.spec.ts` "does not
+  return a late snapshot when synchronous broker work blocks the real wall
+  clock" failed once under CPU contention (scheduled cycles running) and
+  passed three times alone and in the repeated full verify — a
+  timing-sensitive test for the backlog, same class as the MCP stall tests
+  ported to a timers port this morning.
