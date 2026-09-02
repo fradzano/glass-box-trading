@@ -1729,3 +1729,23 @@ small, no ADR split).
   `DASHBOARD_BUILD_FAILED`, and the previously published page stands
   ("publication never blocks trading" holds). Output verified byte-identical
   after normalizing only the two render-time timestamps.
+- **2026-09-02 — The C-class residuals of R29–R32 are cleared, not
+  declared (owner ruling: technical excellence is a judging criterion).**
+  Management ladder: refusals are a report artifact (`managementRefusals`),
+  residues are re-classified from the fresh book, the remainder after a
+  ladder cancel is `min(fresh exposure, unfilled part)` from the pure
+  `remainingCloseExposure`; the `emergencyCloseEligibility` refusal inside
+  the ladder is thereby unreachable from tests and stands as
+  defence-in-depth against a race between the management read and the
+  submit. Watchdog: the authority-refused branch fail-pings on closed
+  conditions; the retry after a failed HALT append is pinned (one watchdog
+  interval); eligibility and adoption are measured; the `halted` flag needs
+  no "already stood" distinction because no consumer parses it and
+  `HALT_NOT_JOURNALED` carries the meaning for a human reader. CLIs: exit
+  codes are pure tables tested exhaustively by stage. MCP: the
+  launch-artifact digest walk is exported and tested to depth three with the
+  exact skip set (`__pycache__`, `.pyc`). Tests: the stalled-connect verifier
+  test runs on a virtual clock (30/30), the remaining 5 ms-budget siblings
+  get an injectable timers port. Presentation: `assets/` outside the digest
+  with its own tests. A newly appeared foreign contract is still journaled as
+  `HUMAN_ACTION` only by the next phase 1 (the ladder skips it by design).

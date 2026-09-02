@@ -19,8 +19,8 @@ import {
   outcomeFromSubmit,
   utcIsoToEpochMs,
 } from "../core/execution.js";
-import type { BrokerBook, CloseAttemptRecord, MarketObservation, SubmitObservation } from "../core/execution.js";
-import { journalStaleness } from "../core/journal.js";
+import type { BrokerBook, CloseAttemptRecord, MarketObservation, SnapshotAssemblyResult, SubmitObservation } from "../core/execution.js";
+import { journalStaleness, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, JournalDraft } from "../core/journal.js";
 import {
   assessStaleness,
@@ -74,6 +74,10 @@ export interface WatchdogReport {
 
 function quiet(assessment: StalenessAssessment): WatchdogReport {
   return { assessment, acquired: null, epoch: null, halted: false, classification: null, closes: [], alarmConditions: [], ping: null };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogReport> {
@@ -150,28 +154,39 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   if (deps.broker !== null && deps.market !== null && deps.binding !== null) {
     const binding = deps.binding;
     const brokerRead = deps.broker.read;
-    const [account, positions, openOrders, market] = await Promise.all([
-      brokerRead.account(),
-      brokerRead.positions(),
-      brokerRead.openOrders(),
-      deps.market(),
-    ]);
-    const book: BrokerBook = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
-    const reopened = await gateway.openJournal();
-    const assembled = assembleDecisionSnapshot({
-      broker: book,
-      market,
-      journal: reopened.entries,
-      halt: true,
-      profile: deps.profile,
-      calendar: { isTradingDay: deps.calendar.isTradingDay, opensAt: integerUnit(Number(deps.calendar.opensAt), "EpochMilliseconds"), closesAt: integerUnit(Number(deps.calendar.closesAt), "EpochMilliseconds") },
-      tradingDay: deps.tradingDay,
-      cycleIndex: 0,
-    });
-    if (assembled.ok) {
+    // A refused snapshot (bad quotes, unreconstructable lifecycles, ...) or a
+    // broker/market read that throws must not surface as a silent no-op: the
+    // fence and halt above already stand, but nothing here closed anything,
+    // and the operator sees only the takeover unless this names the reason.
+    let book: BrokerBook | null = null;
+    let assembled: SnapshotAssemblyResult;
+    try {
+      const [account, positions, openOrders, market] = await Promise.all([
+        brokerRead.account(),
+        brokerRead.positions(),
+        brokerRead.openOrders(),
+        deps.market(),
+      ]);
+      book = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
+      const reopened = await gateway.openJournal();
+      assembled = assembleDecisionSnapshot({
+        broker: book,
+        market,
+        journal: reopened.entries,
+        halt: true,
+        profile: deps.profile,
+        calendar: { isTradingDay: deps.calendar.isTradingDay, opensAt: integerUnit(Number(deps.calendar.opensAt), "EpochMilliseconds"), closesAt: integerUnit(Number(deps.calendar.closesAt), "EpochMilliseconds") },
+        tradingDay: deps.tradingDay,
+        cycleIndex: 0,
+      });
+    } catch (error) {
+      assembled = { ok: false, reason: `RECOVERY_READ_FAILED:${messageOf(error)}` };
+    }
+    if (assembled.ok && book !== null) {
+      const activeBook = book;
       const { snapshot, lifecycles, closes: journaledCloses } = assembled;
-      classification = classifyBook(book, lifecycles, journaledCloses, []);
-      const closure = planBookClosure(book, lifecycles);
+      classification = classifyBook(activeBook, lifecycles, journaledCloses, []);
+      const closure = planBookClosure(activeBook, lifecycles);
 
       async function submitWatchdogClose(exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, cap: CloseCap, reason: string): Promise<void> {
         // Adoption before submission: an existing active attempt is never duplicated (S-G7, WIN-8 "no duplicate action").
@@ -195,7 +210,7 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
           ? marketableCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, deps.closeEscalationStepCents)
           : escalateCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, deps.closeEscalationStepCents, cap);
         if (!priced.ok) return;
-        const eligibility = emergencyCloseEligibility(book.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
+        const eligibility = emergencyCloseEligibility(activeBook.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
         if (!eligibility.eligible) return;
         if (!await append(closeIntentDraft(context(), { exposureLifecycleId, route: "watchdog", generation: plan.generation, closingLegs, quantity: plan.quantity, limit: priced.limit, reason }, binding))) return;
         const dispatched = await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: plan.attemptId, binding, payload: { legs: closingLegs, quantity: plan.quantity, limit: priced.limit, intent: "close" } } } });
@@ -224,6 +239,8 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
         if (residue.quantity < 0) alarmConditions.push(`UNBOUNDED_RESIDUE_RECOVERY:${residue.contractId}`);
         await submitWatchdogClose(`residue:${residue.contractId}`, [closingLeg], integerUnit(Math.abs(residue.quantity), "Quantity"), cap, residue.quantity < 0 ? `watchdog uncapped marketable-limit close of unbounded residue ${residue.contractId} (S-X-06)` : `watchdog zero-floor close of bounded residue ${residue.contractId} (S-G10-03)`);
       }
+    } else if (!assembled.ok) {
+      alarmConditions.push(`WATCHDOG_RECOVERY_SKIPPED:${redactSecrets(assembled.reason, deps.secrets)}`);
     }
   }
 

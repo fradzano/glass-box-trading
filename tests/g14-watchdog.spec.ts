@@ -313,6 +313,41 @@ describe("S-G14-02/03 — the report tells the operator only about the halt it a
   });
 });
 
+describe("S-G14-02/03 — a refused recovery snapshot alarms instead of silently closing nothing", () => {
+  // `assembleDecisionSnapshot` can refuse the book-recovery read (an invalid
+  // quote, an unreconstructable lifecycle, ...). The fence and the halt above
+  // this branch already stand on their own, but recovery itself never ran —
+  // and without an alarm naming that, the operator sees a takeover that
+  // looks complete while nothing was actually closed.
+
+  it("an invalid quote refuses the snapshot: fence and halt stand, classification stays null, nothing closes, and the fail-ping names WATCHDOG_RECOVERY_SKIPPED", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+    // A quote that fails `validateQuote` (negative bidCents) refuses assembly with QUOTE_INVALID.
+    const invalidMarket = lifecycleMarket(() => harness.clock.now, { quotes: { [SHORT_CALL]: { bidCents: -1 } } });
+
+    const report = await runWatchdog(watchdogDeps(harness, { market: invalidMarket }));
+    expect(report.assessment.kind).toBe("stale");
+    expect(report.acquired).toBe("WON");
+    expect(report.halted).toBe(true); // the takeover halt is untouched by the recovery refusal
+    expect(report.classification).toBeNull();
+    expect(report.closes).toEqual([]);
+    expect(report.alarmConditions.some(item => item.startsWith(`WATCHDOG_RECOVERY_SKIPPED:QUOTE_INVALID:${SHORT_CALL}`))).toBe(true);
+
+    // The alarm is delivered, not just planned: the fail-ping carries both the takeover and the skipped recovery.
+    expect(report.ping).toBe("fail");
+    const conditions = harness.ping.record.failures.at(-1)?.conditions ?? [];
+    expect(conditions.some(item => item.startsWith("WATCHDOG_TAKEOVER"))).toBe(true);
+    expect(conditions.some(item => item.startsWith(`WATCHDOG_RECOVERY_SKIPPED:QUOTE_INVALID:${SHORT_CALL}`))).toBe(true);
+
+    // Recovery never ran: no close INTENT, no order, only the takeover HALT was journaled.
+    expect(harness.entries().some(item => item["action"] === "close")).toBe(false);
+    expect(harness.fake.mutations.some(mutation => mutation.kind === "submit_order" && (mutation.payload as { intent?: string }).intent === "close")).toBe(false);
+    expect(harness.entries().filter(entry => entry.type === "HALT" && entry["reason"] === "WATCHDOG_TAKEOVER")).toHaveLength(1);
+  });
+});
+
 describe("S-G14-02 / WIN-8 — the watchdog's own emergency-close eligibility and one-attempt adoption", () => {
   // Two guards inside `submitWatchdogClose` that the WIN-8 combined test never
   // reaches, because on a book that matches the journal both are satisfied:
