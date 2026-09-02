@@ -5,7 +5,8 @@
 // asset fails closed instead of yielding an unstyled page, and `assets/` is
 // not matched by the digest's file enumeration — design work during
 // competition operation cannot void the certificate.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
@@ -39,6 +40,26 @@ describe("P9 — presentation assets are read from assets/ and inlined", () => {
     expect(presentationAssetsDir).toBe(path.join(REPO_ROOT, "assets"));
     for (const name of [DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET]) {
       expect(readPresentationAsset(name)).toBe(readFileSync(path.join(REPO_ROOT, "assets", name), "utf8").replace(/\r\n/gu, "\n"));
+    }
+  });
+
+  it("still resolves to the repo's assets/ after the working directory changes (a cwd-based resolution would not)", async () => {
+    // The equality above holds for a cwd-based implementation too, because
+    // vitest's own working directory happens to be the repo root — so it
+    // cannot tell "resolved from the module" apart from "resolved from cwd".
+    // Here the process cwd is moved elsewhere first, and the module is
+    // re-imported (cache-busted) under that cwd: only a resolution anchored
+    // on the module's own location (import.meta.url) still finds REPO_ROOT/assets.
+    const originalCwd = process.cwd();
+    const tempCwd = path.join(tmpdir(), `gbt-p9-cwd-probe-${String(process.pid)}-${String(Date.now())}`);
+    mkdirSync(tempCwd, { recursive: true });
+    try {
+      process.chdir(tempCwd);
+      const reimported = (await import(/* @vite-ignore */ `../src/shell/dashboard-build.js?p9-cwd-probe=${String(Date.now())}`)) as { presentationAssetsDir: string };
+      expect(reimported.presentationAssetsDir).toBe(path.join(REPO_ROOT, "assets"));
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempCwd, { recursive: true, force: true });
     }
   });
 

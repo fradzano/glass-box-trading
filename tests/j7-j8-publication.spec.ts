@@ -4,13 +4,13 @@
 // the page shows its last-updated stamp). Ports are fakes: no git remote,
 // no Vercel, no network. The deadline and terminal appends of S-G11-03/04
 // go through the same candidate gate.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkPushTarget, planPromotion, planPush, planStableVerification, pushStateAfter, stateAfterPromotion, verifyProbe } from "../src/core/publish.js";
 import type { DeploymentState, ProbeObservation, PublishExpectation } from "../src/core/publish.js";
-import { buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
+import { buildSiteAtomically, DASHBOARD_STYLESHEET, immutableRoute, presentationAssetsDir, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
 import { runDeadlineReconciliation, runTerminal } from "../src/shell/deadline.js";
 import { journalContentRevision, readDeploymentState, readPushState, runPublish } from "../src/shell/publisher.js";
 import type { DeployPort, GitPort, PublishDependencies } from "../src/shell/publisher.js";
@@ -218,6 +218,53 @@ describe("S-CYC-07 — push failure: trading and journaling continue, push retri
     expect(third.push).toBe("skipped");
     expect(planPush(third.pushState, third.revision)).toEqual({ kind: "skip", reason: "ALREADY_PUSHED" });
     expect(pushStateAfter(third.pushState, { ok: false, error: "x" }, "t").consecutiveFailures).toBe(1);
+  });
+});
+
+describe("R33 C1 — a site build failure (unreadable asset, or a failing write) pushes DASHBOARD_BUILD_FAILED and leaves the previously published page untouched", () => {
+  it("a presentation asset that goes missing between publishes fails the build closed", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const deps = publishDeps(harness, fakeGit(), fakeDeploy());
+    const first = await runPublish(deps);
+    expect(first.build).not.toBeNull();
+    const standing = readBuiltPage(deps.siteDir, "index.html");
+    expect(standing).not.toBeNull();
+
+    // readPresentationAsset() is called inline in runPublish (src/shell/publisher.ts), not
+    // imported once at module load, so removing the file between publishes is observable here.
+    const asset = path.join(presentationAssetsDir, DASHBOARD_STYLESHEET);
+    const parked = `${asset}.parked-r33-c1-probe`;
+    renameSync(asset, parked);
+    try {
+      const second = await runPublish(deps);
+      expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
+      expect(second.build).toBeNull();
+      expect(second.buildError).toMatch(/dashboard\.css.*missing or unreadable.*refusing to render an unstyled page/su);
+      expect(readBuiltPage(deps.siteDir, "index.html")).toBe(standing);
+    } finally {
+      renameSync(parked, asset);
+    }
+  });
+
+  it("a write that fails mid-build (the atomic swap itself) fails the build closed", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const git = fakeGit();
+    const deploy = fakeDeploy();
+    const first = await runPublish(publishDeps(harness, git, deploy));
+    expect(first.build).not.toBeNull();
+    const standing = readBuiltPage(path.join(harness.paths.root, "site"), "index.html");
+    expect(standing).not.toBeNull();
+
+    harness.clock.now += 900_000;
+    await harness.cycle(); // a new journal entry so the second publish has a fresh revision to build
+    const failingSink = { writeFile: () => { throw new Error("disk full (probe)"); } };
+    const second = await runPublish(publishDeps(harness, git, deploy, { buildSink: failingSink }));
+    expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
+    expect(second.build).toBeNull();
+    expect(second.buildError).toBe("disk full (probe)");
+    expect(readBuiltPage(path.join(harness.paths.root, "site"), "index.html")).toBe(standing);
   });
 });
 
