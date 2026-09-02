@@ -373,7 +373,9 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   `INITIAL_CAPITAL` (the rule is the sum, not the count). The remainder is
   graded: any non-`JNLC` activity, or an executed `JNLC` with a negative
   amount (cash that left the account), is reset/reuse evidence and latches
-  `PROVENANCE_BROKEN`; a `JNLC` that merely fails to count (cancelled,
+  `PROVENANCE_BROKEN`; so does a countable funding sum that differs from
+  `INITIAL_CAPITAL` (a second funding is a reset, a different opening
+  balance is not the prescribed account); a `JNLC` that merely fails to count (cancelled,
   non-USD, zero, amount absent), a ledger with no funding journal at all, or
   an incomplete page blocks the bootstrap retryably without the latch —
   reuse evidence must be positive evidence that the account was spent. No

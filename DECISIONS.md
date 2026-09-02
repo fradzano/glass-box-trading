@@ -1624,3 +1624,16 @@ small, no ADR split).
   re-queued because its remainder is the next generation's business. Cost:
   one broker lookup per non-terminal close attempt per cycle. SPEC S-CYC-04
   carries the close-side rule.
+- **2026-09-02 — Declared reduced depth after R29 (owner to countersign at
+  the freeze).** Not fixed, stated: presentation CSS (`render-styles.ts`) has
+  no test of its own beyond the byte-identical golden render (C1); a
+  countable funding sum that differs from `INITIAL_CAPITAL` latches the
+  provenance halt — ruled as intended, since a second funding is a reset and
+  a different opening balance is not the prescribed account (C3, SPEC
+  S-CYC-09 amended); the certificate CLI exits 1 and the deadline CLI exits 3
+  on a suppressed rival while the scheduled agent exits 0 (C11, SPEC
+  S-G12-01 amended); the MCP launch-artifact digest's walk of the full site
+  tree is traced as wiring, not confirmed by a test that plants a file deep in
+  the tree (C12). The R29 gate also named a structural lesson: the launch
+  class taxonomy used for P7 gates had no class for the management/close
+  path, where A1 lived; R30 and any later gate carry that class explicitly.
