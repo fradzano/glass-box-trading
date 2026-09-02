@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
-    ignores: ["dist/**", "artifacts/**", "node_modules/**", ".tmp/**", ".claude/**", "evidence/**"],
+    ignores: ["dist/**", "artifacts/**", "node_modules/**", ".tmp/**", ".claude/**", "evidence/**", "**/*.d.mts"],
   },
   {
     files: ["**/*.ts"],

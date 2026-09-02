@@ -97,6 +97,8 @@
 - `submission/COVER.md` — Cover image brief — SUB-06
 - `submission/ONE-PAGER.md`
 - `submission/PREFLIGHT.md` — Submission preflight — SUB-09
+- `submission/publish/render-site.d.mts` — Type surface of render-site.mjs for the test suite (tests/publish-dashboard.spec.ts).
+- `submission/publish/render-site.mjs` — Digest-neutral publication path for the judge-facing dashboard (SUB-02,
 - `submission/slides/deck.md`
 - `tests/alpaca-fixtures.ts` — Alpaca wire documents recorded from the paper accounts, shared by the suites
 - `tests/alpaca-mapping.spec.ts` — P7 — the pure Alpaca wire mapping, exercised against documents recorded
@@ -144,6 +146,7 @@
 - `tests/p8-watchdog-runtime.spec.ts` — P8 — the scheduled watchdog's composition root (src/shell/watchdog-runtime.ts):
 - `tests/p9-presentation-assets.spec.ts` — P9 — presentation assets live in `assets/` and are inlined into the
 - `tests/p9-presentation-guard.spec.ts` — P9 / R33 (B1) — the presentation stylesheets in `assets/` sit outside the
+- `tests/publish-dashboard.spec.ts` — The digest-neutral publication path (submission/publish/render-site.mjs;
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
@@ -153,6 +156,8 @@
 - `tools/derive_mcp_dependency_digest.py` — Derive the MCP dependency-site digest from a hash-locked clean wheel install.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
 - `tools/install-scheduled-task.ps1`
+- `tools/probe-dashboard.ps1`
+- `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tools/scan-secrets.ps1`
 - `tools/watchdog-run.ps1`

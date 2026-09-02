@@ -39,5 +39,6 @@
 - `tests/p8-watchdog-runtime.spec.ts`
 - `tests/p9-presentation-assets.spec.ts`
 - `tests/p9-presentation-guard.spec.ts`
+- `tests/publish-dashboard.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`
