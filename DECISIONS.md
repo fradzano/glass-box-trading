@@ -1892,3 +1892,46 @@ small, no ADR split).
   The follow-up `3453287` (rationale wrap) was reviewed as
   behaviour-preserving apart from the stylesheet bytes. A narrow R37 on the
   prose corrections decides the freeze.
+- **2026-09-02 — R37 narrow gate at `c886776`: GO (A=0, B=0, C=4); the
+  P7 freeze.** Every sentence added to the judge-facing dashboard since
+  `d693077` was quoted and verified against the code and the executed
+  golden render (the presentation route shows the freshness stamp at seq 8
+  / 14:01 with two entries rejected as newer than its 14:01 cutoff, while
+  the live route shows seq 10 / 14:31 — the corrected sentence says exactly
+  that; the one history pin carries the page's own revision at the earlier
+  cutoff); the eight gate tooltips are true against SPEC G1–G8; the
+  renderer is pure and deterministic (byte-identical double render, only
+  the two render timestamps move); both stylesheets audit `[]`, the one new
+  colour was checked numerically for contrast (5.42:1); nothing under
+  `src/core/`, the cycle runner, the gateway, the certificate driver, the
+  arming gate, `config/` or `tools/` changed since `d693077`; the recursive
+  `assets/` pin fails on a planted nested file; `npm run verify` exit 0
+  twice (40/547). **Declared, not cleared, because the freeze must happen
+  inside today's market session (owner go 15:40 CEST "once a gate returns
+  A=0/B=0"):** C-1 the corrected sentences and the tooltip texts are pinned
+  by no test (mutants restoring the untrue wording survive) — a test-only
+  change outside the digest, to be added after the certificate without
+  voiding it; C-2 the tooltip lookup indexes an object literal, so a
+  prototype-key gate id throws instead of rendering without a tooltip —
+  fail-closed into `DASHBOARD_BUILD_FAILED`, unreachable from the decision
+  core's literal ids and the journal's INTENT validator, a one-line
+  `Object.hasOwn` for the next digest-changing window; C-3 (pre-existing)
+  the history pin's href is site-root-relative and resolves wrongly from a
+  nested route, and the percent-encoded route directory depends on the
+  host not decoding paths — both to be checked in the SUB-09 preflight on
+  the real host, the golden path runs from the site root; C-4 three lead
+  sentences are slightly wider or narrower than their sections ("and
+  nothing else" mirrors S-J-07's own phrasing; "the broker reports" also
+  covers journal-internal discrepancy codes; "earlier" holds against the
+  live page). **Owner freeze and countersignature.** Felix ruled at 15:40
+  CEST that his go for the supervised certificate run stands once a gate
+  returns A=0/B=0; that go is read, and recorded here, as the O5 freeze of
+  `config/policy.json` as committed (unchanged since `9777c05`) and as the
+  countersignature of the declared reduced depth entries of this day. He
+  reviewed the rendered dashboard three times before the freeze (16:25,
+  16:35, 17:00) and accepted the stylesheet. Tags `p7-freeze` and
+  `pre-kickoff-baseline` (README runbook step 3) mark the freeze commit;
+  its `runtimeDigest` equals that of `c886776`, since documentation is
+  outside the digest. The competition account `PA376WIK2ATL` was virgin at
+  the 15:39 probe. The calendar: qualification window ends today 22:00
+  CEST; the certificate run starts from the owner's terminal now.
