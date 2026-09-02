@@ -27,8 +27,10 @@ preflight checks this).
 > Alpaca AI Trading Agents Hackathon, run against a dedicated $100k paper
 > competition account. Its central claim is architectural, not predictive:
 > the LLM analyst can propose a trade candidate but has no code path to an
-> order, and the deterministic decision core can place an order but has no
-> access to the LLM's free-text reasoning. Every decision cycle — a proposed
+> order, and the deterministic decision core can place an order but evaluates
+> only structured, whitelist-constrained fields — the LLM's free-text
+> reasoning is stored in the journal for review, never read by a gate. Every
+> decision cycle — a proposed
 > candidate, a full risk-gate vector, and either an approval or a veto with
 > its reason — is written to an append-only public journal and rendered on a
 > live dashboard, with no authentication required to view it. Rejections are
@@ -55,7 +57,7 @@ preflight checks this).
 > strategy has edge, and every result shown is explicitly framed as a bounded,
 > auditable exercise rather than proof of trading skill.
 
-- [ ] Word count: 321 (≥100 required)
+- [ ] Word count: 335 (≥100 required)
 
 ## Proposed tags
 

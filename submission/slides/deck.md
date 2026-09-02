@@ -27,10 +27,10 @@ figure here may be typed by hand or diverge from theirs.
 ## The auditability problem
 
 - "Autonomous trading agent" claims are easy to make, hard to verify
-- Most demos show a happy path; the losing/vetoed decisions stay private
 - Target user: a trader or allocator who wants unattended execution but
   distrusts opaque bot claims
-- This entry publishes the whole decision trail, not just the wins
+- This entry publishes the whole decision trail — proposals, vetoes, and
+  fills alike — not just the wins
 
 ---
 
