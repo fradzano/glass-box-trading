@@ -327,7 +327,8 @@ function openingLedgerOf(value: unknown): OpeningLedgerEvidence | null {
  * The one activity a virgin competition account legitimately carries: the
  * broker own opening capital journal. Recorded on the dev paper account on
  * 2026-09-02 as an executed USD cash journal-in (`JNLC`) with a positive exact
- * net amount. Only such a journal counts toward the funding sum.
+ * net amount. Only such a journal counts toward the funding sum. It is not
+ * guaranteed to exist yet — see `validateCompetitionProvenance`.
  */
 function isOpeningFundingJournal(activity: AccountActivityRecord): boolean {
   return activity.activityType === "JNLC" && activity.status === "executed" && activity.currency === "USD" && activity.netAmountCents !== null && activity.netAmountCents > 0;
@@ -354,11 +355,22 @@ function distinctTypes(activities: readonly AccountActivityRecord[]): readonly s
  * before any order: paper role and expected ID, creation at or after
  * COMPETITION_START, opening cash and equity exactly INITIAL_CAPITAL, zero
  * positions and non-terminal orders, an empty complete order and fill history,
- * and an activity ledger whose ONLY entries are opening funding journals
- * summing to exactly INITIAL_CAPITAL. A virgin Alpaca paper account is NOT
- * activity-free: it carries the `JNLC` journal that funded it (recorded on the
- * dev account 2026-09-02), so an empty ledger is not the virgin state and a
- * non-empty one is not by itself reuse.
+ * and an activity ledger whose ONLY entries are opening funding journals.
+ * A non-empty ledger is not by itself reuse: an Alpaca paper account carries
+ * the `JNLC` journal that funded it (recorded on the dev account 2026-09-02),
+ * so the countable journals present must sum to exactly INITIAL_CAPITAL.
+ *
+ * The funding journal is posted ASYNCHRONOUSLY, though, not at account
+ * creation: read-only probes of the competition account minutes after its
+ * creation (`PA376WIK2ATL`, created 2026-09-02T09:54:41Z) returned an empty
+ * activity ledger under every filter while cash and equity already stood at
+ * exactly $100,000. Requiring the journal would therefore block arming for as
+ * long as the broker takes to post it. So an EMPTY, complete ledger is itself
+ * accepted as virgin evidence — but only when every other clause of this proof
+ * already holds, above all opening cash AND equity at exactly INITIAL_CAPITAL
+ * with complete, empty order and fill histories: on a virgin snapshot the
+ * balance is the funding evidence. Where that snapshot is off in any way, the
+ * empty ledger proves nothing and the funding evidence stays incomplete.
  *
  * Deliberately NOT checked: any ordering between the funding journal instant
  * and the account creation instant. The two timestamps come from different
@@ -416,9 +428,18 @@ export function validateCompetitionProvenance(bundle: unknown, expectations: Pro
   if (uncountable.length > 0) violations.push(`activity ledger carries ${String(uncountable.length)} cash journal(s) that are not an executed positive USD credit and cannot be counted as funding`);
   const fundedCents = funding.reduce((sum, activity) => sum + (activity.netAmountCents ?? 0), 0);
   if (funding.length === 0) {
-    // Incomplete evidence, not proof of reuse: a virgin account ALWAYS carries its opening journal, so its
-    // absence means the ledger was not observed rather than that the account was spent. Retryable (GAP).
-    violations.push("activity ledger carries no opening funding journal; funding evidence is incomplete");
+    // An empty COMPLETE ledger is the virgin state the broker shows before it posts the opening journal, but it
+    // carries that meaning only on an otherwise perfect snapshot: `violations.length === 0` here means opening cash
+    // and equity are exactly INITIAL_CAPITAL, both histories are complete and empty, there are no positions and no
+    // non-terminal orders, the role/ID/creation clauses hold, and the ledger page itself is complete. Then the
+    // balance IS the funding evidence and nothing is missing. Otherwise the funding evidence is incomplete — which
+    // is not proof of reuse either way (a ledger that was not observed is not a spent account), so this blocks
+    // retryably (GAP) and never latches PROVENANCE_BROKEN. The two leading conjuncts are subsumed by that same
+    // `violations.length === 0` today — an incomplete page and any non-empty ledger without a countable journal
+    // each push their own violation above — and are kept deliberately: they state the rule at its own site, so a
+    // later reordering of the checks above cannot silently widen what counts as the virgin empty ledger.
+    const balanceIsFundingEvidence = ledger.complete && ledger.activities.length === 0 && violations.length === 0;
+    if (!balanceIsFundingEvidence) violations.push("activity ledger carries no opening funding journal; funding evidence is incomplete");
   } else if (!Number.isSafeInteger(fundedCents)) {
     violations.push("opening funding journals do not sum within the exact-cent integer range");
   } else if (fundedCents !== expectations.initialCapitalCents) {

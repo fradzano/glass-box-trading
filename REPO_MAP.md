@@ -95,7 +95,7 @@
 - `submission/ONE-PAGER.md`
 - `submission/PREFLIGHT.md` — Submission preflight — SUB-09
 - `submission/slides/deck.md`
-- `tests/alpaca-fixtures.ts` — Alpaca wire documents recorded from the DEV paper account, shared by the
+- `tests/alpaca-fixtures.ts` — Alpaca wire documents recorded from the paper accounts, shared by the suites
 - `tests/alpaca-mapping.spec.ts` — P7 — the pure Alpaca wire mapping, exercised against documents recorded
 - `tests/arm01-certificate.spec.ts` — S-ARM-01 — the dev live-test certificate (P7): the pure evidence
 - `tests/arm01-fixtures.ts` — Shared S-ARM-01 certificate fixtures: one coherent dev live-test run

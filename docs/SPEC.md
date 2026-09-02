@@ -376,9 +376,15 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   `PROVENANCE_BROKEN`; so does a countable funding sum that differs from
   `INITIAL_CAPITAL` (a second funding is a reset, a different opening
   balance is not the prescribed account); a `JNLC` that merely fails to count (cancelled,
-  non-USD, zero, amount absent), a ledger with no funding journal at all, or
-  an incomplete page blocks the bootstrap retryably without the latch —
-  reuse evidence must be positive evidence that the account was spent. No
+  non-USD, zero, amount absent) or an incomplete page blocks the bootstrap
+  retryably without the latch — reuse evidence must be positive evidence
+  that the account was spent. A complete but EMPTY ledger is virgin
+  evidence: the broker posts the opening funding journal later than account
+  creation (recorded 2026-09-02 on the competition account, created
+  09:54:41Z with cash and equity at exactly the initial capital and no
+  activity at all), so when no funding journal exists yet, opening cash and
+  equity equal to `INITIAL_CAPITAL` together with empty, complete order and
+  fill history are the funding evidence. No
   ordering between the funding instant and the creation instant is checked;
   creation is bounded by `COMPETITION_START` alone. Missing pages, reset/
   reuse evidence, or an allowed-looking $100k snapshot without creation/history

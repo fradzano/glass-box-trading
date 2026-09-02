@@ -23,7 +23,7 @@ import { readHaltState } from "../src/shell/halt-state.js";
 import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import type { StatePaths } from "../src/shell/state-dir.js";
 import type { JournalEntry } from "../src/core/journal.js";
-import { RECORDED_OPENING_FUNDING_JOURNAL } from "./alpaca-fixtures.js";
+import { RECORDED_OPENING_FUNDING_JOURNAL, RECORDED_VIRGIN_COMPETITION_ACCOUNT, RECORDED_VIRGIN_COMPETITION_ACTIVITIES } from "./alpaca-fixtures.js";
 import { TEST_ONLY_EXECUTION_CONFIG } from "./execution-fixtures.js";
 import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_ORIGIN } from "./journal-fixtures.js";
@@ -58,8 +58,9 @@ function activity(overrides: Record<string, unknown>): AccountActivityRecord {
 }
 
 /**
- * The bundle a genuinely virgin competition account produces; overrides break exactly one clause at a time.
- * Note the ledger: a virgin Alpaca paper account is NOT activity-free — it carries the journal that funded it.
+ * The bundle a genuinely virgin competition account produces once its funding journal is posted; overrides break
+ * exactly one clause at a time. Note the ledger: a settled Alpaca paper account is NOT activity-free — it carries
+ * the journal that funded it. The brand-new account's other virgin shape (ledger still empty) is `ledger([])`.
  */
 function virginBundle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -192,6 +193,22 @@ describe("P8 / S-CYC-09 — the executed competition bootstrap", () => {
     expect(source.calls).toHaveLength(1);
   });
 
+  it("(a') an EMPTY complete ledger on an exact-capital account bootstraps too — the balance is the funding evidence", async () => {
+    // The recorded competition account: the broker had not posted its opening journal yet. Requiring the journal
+    // would have blocked arming until the broker got around to it, possibly past the qualification window.
+    const harness = await lifecycleHarness({ seedEntries: null, profile: "competition" });
+    const source = countingSource(() => Promise.resolve(virginBundle(ledger([]))));
+    const report = await harness.cycle({ lifecycle: buildLifecycleDeps(composition("competition", source)) });
+
+    expect(report.primary).toBe("BOOTSTRAP");
+    expect(harness.entries()[0]?.type).toBe("BOOTSTRAP");
+    expect(report.entriesBlocked).not.toContain("PROVENANCE");
+    expect(report.alarmConditions).not.toContain("COMPETITION_PROVENANCE_FAILED");
+    expect(haltEntries(harness.entries())).toHaveLength(0);
+    expect(readHaltState(harness.paths).halted).toBe(false);
+    expect(source.calls).toHaveLength(1);
+  });
+
   it("(b) a pre-start creation instant journals GAP and latches the irreversible PROVENANCE_BROKEN halt", async () => {
     const run = await recoveredCompetitionRun(() => Promise.resolve(virginBundle({ createdAt: "2026-08-27T16:00:00.000Z" })));
 
@@ -218,8 +235,21 @@ describe("P8 / S-CYC-09 — the executed competition bootstrap", () => {
     expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "PROVENANCE_BROKEN", sticky: true });
   });
 
-  it("(c') a ledger without any funding journal halts retryably — absent evidence is not proof of reuse", async () => {
-    const run = await recoveredCompetitionRun(() => Promise.resolve(virginBundle(ledger([]))));
+  it("(c') an empty ledger whose cash is one cent short halts RETRYABLY — a balance mismatch is ineligibility, not proof of spending", async () => {
+    // Classification argument: with no ledger entry at all there is no record of anything leaving the account, so
+    // $99,999.99 is evidence that this account is not the virgin $100,000 the competition requires — not evidence
+    // that it was traded. It could equally be a broker still settling the funding. Ineligible, therefore blocked;
+    // unproven as reuse, therefore the retryable GAP rather than the irreversible PROVENANCE_BROKEN latch.
+    const run = await recoveredCompetitionRun(() => Promise.resolve(virginBundle({ ...ledger([]), openingCashCents: INITIAL_CAPITAL_CENTS - 1 })));
+
+    expect(run.report.primary).toBe("GAP");
+    expect(run.entries().map(entry => entry.type)).not.toContain("BOOTSTRAP");
+    expect(run.fake.mutations).toHaveLength(0);
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "GAP", sticky: false });
+  });
+
+  it("(c'') a ledger with only an uncountable journal still halts retryably — the empty-ledger rule does not cover it", async () => {
+    const run = await recoveredCompetitionRun(() => Promise.resolve(virginBundle(ledger([openingFundingJournal({ status: "canceled" })]))));
 
     expect(run.report.primary).toBe("GAP");
     expect(run.entries().map(entry => entry.type)).not.toContain("BOOTSTRAP");
@@ -365,10 +395,36 @@ describe("P8 / S-CYC-09 — the pure opening-ledger classification", () => {
     expect(validateCompetitionProvenance(out, EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: true });
   });
 
-  it("no funding journal at all fails closed retryably: absent evidence is not proof of a spent account", () => {
-    // A virgin account ALWAYS carries its opening journal, so an empty ledger means the ledger was not
-    // observed, not that the account was used. Retryable GAP, never the irreversible PROVENANCE_BROKEN latch.
-    const verdict = validateCompetitionProvenance(virginBundle(ledger([])), EXPECTATIONS);
+  it("an EMPTY complete ledger at exactly INITIAL_CAPITAL is virgin evidence: the balance funds the proof", () => {
+    // The broker posts the opening journal asynchronously (recorded on the competition account 2026-09-02:
+    // ledger empty under every filter, cash and equity already $100,000). On an otherwise perfect snapshot the
+    // balance itself is the funding evidence, so the bootstrap is not held hostage to the broker's posting delay.
+    expect(validateCompetitionProvenance(virginBundle(ledger([])), EXPECTATIONS)).toEqual({ ok: true });
+  });
+
+  it("an empty ledger is virgin evidence ONLY at exactly INITIAL_CAPITAL — a wrong balance leaves the funding evidence incomplete", () => {
+    // MUTANT GUARD: an implementation that accepts an empty ledger regardless of balances drops the funding
+    // violation asserted here. The balance clauses themselves keep their own verdict (blocked, no reuse latch):
+    // with an empty ledger nothing records money leaving the account, so a mismatch is ineligibility evidence,
+    // not proof of spending, and it must stay retryable.
+    for (const off of [{ openingCashCents: INITIAL_CAPITAL_CENTS - 1 }, { openingEquityCents: INITIAL_CAPITAL_CENTS - 1 }, { openingCashCents: INITIAL_CAPITAL_CENTS + 100 }]) {
+      const verdict = validateCompetitionProvenance(virginBundle({ ...ledger([]), ...off }), EXPECTATIONS);
+      expect(verdict).toMatchObject({ ok: false, reuseEvidence: false });
+      if (verdict.ok) continue;
+      expect(verdict.violations.some(item => item.includes("INITIAL_CAPITAL"))).toBe(true);
+      expect(verdict.violations.some(item => item.includes("no opening funding journal"))).toBe(true);
+    }
+    // The same for the rest of the virgin snapshot: an empty ledger next to a used account proves nothing.
+    for (const off of [{ fillHistory: { complete: true, items: 1 } }, { orderHistory: { complete: false, items: 0 } }, { positionCount: 1 }, { nonTerminalOrderCount: 1 }, { createdAt: "2026-08-27T16:00:00.000Z" }]) {
+      const verdict = validateCompetitionProvenance(virginBundle({ ...ledger([]), ...off }), EXPECTATIONS);
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) continue;
+      expect(verdict.violations.some(item => item.includes("no opening funding journal"))).toBe(true);
+    }
+  });
+
+  it("a non-empty ledger without a countable funding journal still reports the missing funding evidence", () => {
+    const verdict = validateCompetitionProvenance(virginBundle(ledger([openingFundingJournal({ status: "canceled" })])), EXPECTATIONS);
     expect(verdict).toMatchObject({ ok: false, reuseEvidence: false });
     if (verdict.ok) return;
     expect(verdict.violations.some(item => item.includes("no opening funding journal"))).toBe(true);
@@ -376,6 +432,14 @@ describe("P8 / S-CYC-09 — the pure opening-ledger classification", () => {
 
   it("an incomplete ledger page and a malformed ledger both fail closed without claiming reuse", () => {
     expect(validateCompetitionProvenance(virginBundle(ledger([openingFundingJournal()], false)), EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: false });
+    // MUTANT GUARD: an incomplete EMPTY page must never read as the virgin empty ledger — the missing page could
+    // hold the FILL that disqualifies the account. An implementation that treats it as complete returns ok here.
+    const incompleteEmpty = validateCompetitionProvenance(virginBundle(ledger([], false)), EXPECTATIONS);
+    expect(incompleteEmpty).toMatchObject({ ok: false, reuseEvidence: false });
+    if (!incompleteEmpty.ok) {
+      expect(incompleteEmpty.violations.some(item => item.includes("activityLedger pagination is incomplete"))).toBe(true);
+      expect(incompleteEmpty.violations.some(item => item.includes("no opening funding journal"))).toBe(true);
+    }
     expect(validateCompetitionProvenance(virginBundle({ activityLedger: { complete: true, activities: [{ id: "a" }] } }), EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: false });
     // A bundle in the OLD count-only shape no longer satisfies the proof: the shape change fails closed, not open.
     expect(validateCompetitionProvenance(virginBundle({ activityLedger: { complete: true, items: 0 } }), EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: false });
@@ -408,6 +472,27 @@ describe("P8 — the real adapter assembles the bundle the pure proof accepts", 
     // Both ledgers are read: the whole activity history and the fill subset separately.
     expect(requests.some(url => url.includes("/v2/account/activities?page_size=100&direction=asc") && !url.includes("activity_types"))).toBe(true);
     expect(requests.some(url => url.includes("activity_types=FILL"))).toBe(true);
+  });
+
+  it("the recorded brand-new competition account — empty ledger, exact capital — assembles a bundle that passes the proof", async () => {
+    const { broker } = stubBroker({ account: { ...RECORDED_VIRGIN_COMPETITION_ACCOUNT }, activityPages: [RECORDED_VIRGIN_COMPETITION_ACTIVITIES], fillPages: [[]] });
+    const bundle = await broker.provenanceBundle();
+
+    expect(bundle).toEqual({
+      accountRole: "paper",
+      accountId: RECORDED_VIRGIN_COMPETITION_ACCOUNT.account_number,
+      // The broker's nanosecond creation instant, truncated to the millisecond the proof compares.
+      createdAt: "2026-09-02T09:54:41.384Z",
+      openingCashCents: INITIAL_CAPITAL_CENTS,
+      openingEquityCents: INITIAL_CAPITAL_CENTS,
+      positionCount: 0,
+      nonTerminalOrderCount: 0,
+      orderHistory: { complete: true, items: 0 },
+      fillHistory: { complete: true, items: 0 },
+      activityLedger: { complete: true, activities: [] },
+    });
+    const expectations = { ...EXPECTATIONS, expectedAccountId: RECORDED_VIRGIN_COMPETITION_ACCOUNT.account_number };
+    expect(validateCompetitionProvenance(bundle, expectations)).toEqual({ ok: true });
   });
 
   it("the activity ledger is paged to the end and every page reaches the proof", async () => {

@@ -31,11 +31,12 @@ afterEach(() => { cleanupLifecycleDirs(); });
 const COMPETITION_START_MS = utcIsoToEpochMs("2026-08-28T15:00:00Z") as number;
 
 /**
- * A virgin Alpaca paper account is NOT activity-free: it carries the `JNLC`
- * journal that funded it (recorded on the dev account 2026-09-02, P8). An
- * empty ledger here would encode the spec assumption instead of broker
- * reality and would let every fresh competition account latch
- * PROVENANCE_BROKEN on its first bootstrap.
+ * A settled Alpaca paper account is NOT activity-free: it carries the `JNLC`
+ * journal that funded it (recorded on the dev account 2026-09-02, P8). This
+ * bundle is deliberately that settled shape, so these cases keep exercising
+ * the funding-sum rule; the other virgin shape — the brand-new account whose
+ * journal the broker has not posted yet, ledger empty at exactly
+ * INITIAL_CAPITAL — is covered in `p8-competition-provenance.spec.ts`.
  */
 function validBundle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

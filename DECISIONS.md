@@ -1637,3 +1637,18 @@ small, no ADR split).
   the tree (C12). The R29 gate also named a structural lesson: the launch
   class taxonomy used for P7 gates had no class for the management/close
   path, where A1 lived; R30 and any later gate carry that class explicitly.
+- **2026-09-02 — The competition account exists; an empty activity ledger is
+  virgin evidence.** Felix created the dedicated paper account
+  `PA376WIK2ATL` (login alias for the hackathon, created
+  2026-09-02T09:54:41Z, options level 3, keys bound in `.env` as
+  `ALPACA_COMP_*`). A read-only probe through the real adapter minutes later
+  showed cash and equity at exactly $100,000 and an activity ledger with no
+  entry at all — the opening `JNLC` funding journal the dev account carries is
+  posted by the broker later than creation. The proof's "no funding journal
+  → incomplete, retry" rule from earlier today would therefore have blocked
+  arming until the broker's batch ran. Ruling: a complete, empty ledger with
+  cash and equity equal to `INITIAL_CAPITAL` and empty, complete order and
+  fill history is virgin evidence; present funding journals must still sum
+  exactly. Second instance today of the same lesson: the fake encoded an
+  assumption, the live read corrected it. The recorded competition account
+  document is a fixture (account number and instants only).
