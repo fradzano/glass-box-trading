@@ -95,7 +95,7 @@ describe("P9 — a missing, unreadable or empty presentation asset fails closed"
   });
 
   it("no test writes into the committed assets/ tree: the directory holds exactly the two stylesheets", () => {
-    expect(readdirSync(path.join(REPO_ROOT, "assets")).sort()).toEqual([DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET].sort());
+    expect(readdirSync(path.join(REPO_ROOT, "assets"), { recursive: true }).map(String).sort()).toEqual([DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET].sort());
   });
 
   it("refuses to render an unstyled dashboard page even when the shell hands it blank text", () => {
@@ -113,7 +113,12 @@ describe("P9 — assets/ is inside the S-ARM-01 runtime digest (owner ruling 202
     const enumerated = enumerateRuntimeFiles(REPO_ROOT).filter(file => file.path.startsWith("assets/")).map(file => file.path);
     expect(enumerated).toContain(`assets/${DASHBOARD_STYLESHEET}`);
     expect(enumerated).toContain(`assets/${DECISION_VIEW_STYLESHEET}`);
-    const onDisk = readdirSync(path.join(REPO_ROOT, "assets")).map(name => `assets/${name}`).sort();
+    // Recursive, so a file in any subdirectory of assets/ must be enumerated too (R36 C-2).
+    const onDisk = readdirSync(path.join(REPO_ROOT, "assets"), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isFile())
+      .map(entry => path.relative(path.join(REPO_ROOT, "assets"), path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+      .map(name => `assets/${name}`)
+      .sort();
     expect([...enumerated].sort()).toEqual(onDisk);
   });
 

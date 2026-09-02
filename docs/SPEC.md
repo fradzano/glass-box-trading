@@ -1129,8 +1129,10 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   audit is textual and known incomplete (R34/R35: native nesting,
   `@container`, shorthand zeros, exponent notation, string-embedded braces
   and string-embedded comment openers, a `</style>` breakout hidden inside
-  a CSS comment — that one is refused by the renderers' own `</` assertion,
-  which is the only layer for it and is measured as such — and any hiding by
+  a CSS comment — that one is refused by the renderers' own `</` assertion
+  on the raw text, which is the only layer for it and is measured as such,
+  while a lone `<` inside a comment passes both layers and is inert, since
+  only `</` can close the style element — and any hiding by
   colour, near-zero size, or off-canvas spacing), which is why the
   digest, not the audit, carries the guarantee (`src/shell/digests.ts`,
   `src/shell/presentation-guard.ts`, `tests/p9-presentation-assets.spec.ts`,

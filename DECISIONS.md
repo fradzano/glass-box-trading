@@ -1866,3 +1866,29 @@ small, no ADR split).
   `overflow-wrap:anywhere` and `min-width:0` on the flex headers and table
   cells; the audit still returns `[]`). Narrow gate R36 covers the R35 fixes
   and the presentation commit together.
+- **2026-09-02 — R36 delta gate at `b5a4eec`/`3453287`: NO-GO (A=0, B=2,
+  C=4); the six R35 fixes hold, two sentences on the judge-facing page were
+  untrue.** Part A: every R35 closure held at its counter-example, its
+  adjacent variants and its named mutant (eleven breakout payloads against
+  the renderers' `</` assertion, an fs-mutator preload proving no test
+  writes under `assets/`, the skip-list and raw-byte digest claims on the
+  real layout, the pinned golden revision). Part B, the owner-requested
+  reading guide (`29cf8d6`): B-1 the how-to-read section said the freshness
+  stamp is relative to the journal's last recorded entry, while
+  `assessFreshness` is fed the newest entry at or before the page's evidence
+  cutoff (the presentation page itself shows two entries rejected as newer
+  than the cutoff); B-2 the history lead said "earlier journal revisions"
+  while every pin carries the same revision at earlier cutoffs. Both
+  sentences rewritten to say what the code does; C-1 the source lead said
+  "links" where the page names code and links only the repository —
+  rewritten; C-2 the `assets/` listing pin is now recursive; C-3
+  `min-width:0` sits outside the audit's zero-length set and is used by the
+  flex-header wrap fix — declared not exploitable, since `overflow` stays
+  visible and `overflow:hidden` is refused; C-4 a lone `<` inside a CSS
+  comment passes both layers and is inert, since only `</` closes the style
+  element — SPEC S-J-07 now says so instead of reading as absolute. The
+  gate tooltips were all found true against SPEC G1–G8, the renderer pure,
+  the stylesheets audit-clean, escaping proven with a poisoned gate record.
+  The follow-up `3453287` (rationale wrap) was reviewed as
+  behaviour-preserving apart from the stylesheet bytes. A narrow R37 on the
+  prose corrections decides the freeze.

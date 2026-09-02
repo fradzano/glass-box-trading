@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 17:05 CEST (R35 at `d693077` NO-GO A=0/B=2/C=4 with the digest binding confirmed end to end; all six findings closed on the branch; owner-reviewed dashboard readability commit `29cf8d6` landed; narrow gate R36 on HEAD decides the freeze; owner go for the supervised run stands once a gate returns A=0/B=0; owner asked about the public GitHub remote — none exists, push waits for the freeze tag and an explicit go)
+**Last updated:** 2026-09-02 17:30 CEST (R36 NO-GO A=0/B=2/C=4: the R35 fixes hold, two untrue sentences in the dashboard reading guide corrected together with the C items; public repository `https://github.com/fradzano/glass-box-trading` created and pushed; narrow R37 on the prose corrections decides the freeze; owner go for the supervised run stands once a gate returns A=0/B=0)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`

@@ -229,7 +229,7 @@ function renderHowToReadSection(): string {
 <p>Vetoes and no-trade cycles are shown on purpose: they are the evidence that the gates work, not an omission.</p>
 <p>The sleeves table attributes realized and unrealized profit and loss to the income and convex sleeves against their declared budgets.</p>
 <p>The reconciliation section lists any discrepancy between what the broker reports and what the journal can explain.</p>
-<p>The freshness stamp near the top of this page states how stale it is relative to the journal's last recorded entry.</p>
+<p>The freshness stamp near the top of this page states how stale it is relative to the newest journal entry at or before this page's evidence cutoff; entries after the cutoff are counted as rejected, never folded in.</p>
 </section>`;
 }
 
@@ -288,7 +288,7 @@ ${projection.humanActions.length === 0 ? "" : `<h3>Human actions detected</h3><u
 function renderSourceSection(context: RenderContext, projection: PerformanceProjection): string {
   return `<section id="source" aria-labelledby="source-title">
 <h2 id="source-title">Public source</h2>
-<p class="lead">This section links the pure decision core and the test that exercises one named evidence-debt path, so a reader can verify the code that produced this page.</p>
+<p class="lead">This section names the pure decision core whose verdicts this page shows and the test that exercises one named evidence-debt path, and links the public repository that holds both.</p>
 <ul>
 <li>Repository: <a href="${escapeHtml(context.source.repositoryUrl)}">${escapeHtml(context.source.repositoryUrl)}</a>${context.source.journalRevisionUrl === null ? "" : ` · journal revision <a href="${escapeHtml(context.source.journalRevisionUrl)}">${escapeHtml(projection.journalRevision)}</a>`}</li>
 <li>The pure core: <code>${escapeHtml(context.source.corePath)}</code> — no I/O, no clock, no randomness; time, configuration, and observations are parameters.</li>
@@ -365,7 +365,7 @@ ${haltStateLine(projection)}
 function renderHistorySection(context: RenderContext): string {
   return `<section id="history" aria-labelledby="history-title">
 <h2 id="history-title">Immutable projections</h2>
-<p class="lead">This section lists the immutable, pinned projections of earlier journal revisions.</p>
+<p class="lead">This section lists the immutable, pinned projections of this journal revision at earlier evidence cutoffs; each pin stays reachable at its own route after the live page moves on.</p>
 ${context.pinned.length === 0 ? "<p>No pinned projection yet. The presentation-cutoff route is pinned when the uploaded artifacts are rendered.</p>" : `<ul>${context.pinned.map(pin => `<li><a href="${escapeHtml(pin.href)}">${escapeHtml(pin.cutoffKind)} cutoff ${escapeHtml(pin.cutoffAt)} · revision ${escapeHtml(pin.journalRevision)}</a></li>`).join("")}</ul>`}
 </section>`;
 }
