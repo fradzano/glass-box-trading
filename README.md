@@ -80,6 +80,8 @@ The owner runbook from a passed P7 certificate to unattended competition operati
 
 ## Publish the judge-facing dashboard (digest-neutral)
 
+The click-by-click owner record (first Vercel setup, the routine per snapshot, measured host behaviour, the pending team rename) is [`docs/PUBLISH-RUNBOOK.md`](docs/PUBLISH-RUNBOOK.md); this section states the mechanism.
+
 The frozen build has no production caller for the publisher (`src/shell/publisher.ts`) and no git or Vercel port ([`DECISIONS.md`](DECISIONS.md), R35 C4). Publication is therefore an owner runbook over two PowerShell tools and one Node script that only *read* the checkout: `dist/`, `config/policy.json` and `assets/` are read, nothing is built, `.env` is never opened, and the S-ARM-01 `runtimeDigest` of the operating checkout is unchanged (`submission/**`, `tools/*.ps1` and `tests/` are outside `enumerateRuntimeFiles` in `src/shell/digests.ts`). A separate worktree with its own `dist/` may serve as `-RepoRoot` when the operating checkout must not be touched at all.
 
 1. **Copy the journal.** `Copy-Item <STATE_DIR>\journal.jsonl <work>\journal-copy.jsonl`. The renderer refuses a journal that still sits beside a live `STATE_DIR` marker (`epoch.json`, `pings.log`, `halt.json`, `quarantine\`); it never reads the original.

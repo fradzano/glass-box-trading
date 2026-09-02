@@ -21,6 +21,7 @@
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
+- `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec

@@ -6,8 +6,8 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 20:10 CEST (**competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
-**Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
+**Last updated:** 2026-09-02 21:45 CEST (**judge dashboard live** at `https://glass-box-trading.vercel.app` over the real competition journal, revision `sha256:c1c8e14ea4035034`, published through the digest-neutral path of `docs/PUBLISH-RUNBOOK.md`; branch pushed to `origin/p7/dev-live-certificate` while the operating checkout stays at `796c9b0` — fast-forward it there after the competition. **Competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
+**Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; remote `origin` = `https://github.com/fradzano/glass-box-trading` (public). The operating checkout is pinned at `796c9b0` during the competition; the publication commits landed from the worktree `gbt-publish` (helper branch `p7/publish-dashboard`) directly onto the remote branch
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
 **Current implementation phase:** P7 — supervised dev live certificate
@@ -436,15 +436,21 @@ One phase per session; every session ends with the handoff protocol in
   digest-neutral:** `node dist/shell/deadline-cli.js reconciliation`
   (names the submitted revision), then `… terminal` after the Friday cut.
   Never `npm run …` variants that rebuild.
-- **Judge-facing dashboard over the live competition journal — the largest
-  gap.** The frozen build has no production caller for the publisher and no
-  git/Vercel ports (R35 C4; the P8 ports never landed before the digest
-  froze). Needed: a digest-neutral publication path — a `tools/*.ps1` (or
-  a script outside the repo) that calls the built modules to render the
-  site from the competition journal, plus a manual Vercel deploy — and the
-  SUB-09 clean-browser preflight against the real host (also R37 C-3: the
-  history pin's root-relative href on nested routes, percent-encoded route
-  directory). Thursday work; PM offered to start tonight in parallel.
+- **Judge-facing dashboard — live since 21:20 CEST** at
+  `https://glass-box-trading.vercel.app` (SUB-02 first working version).
+  The digest-neutral path landed on the remote branch: render from the
+  built modules over a journal copy (`submission/publish/render-site.mjs`,
+  `tools/publish-dashboard.ps1`), anonymous probe by hand
+  (`tools/probe-dashboard.ps1`, receipts in `C:\Users\felix\gbt-publish\out`),
+  Vercel deploy/promote by hand; routine and first-setup record in
+  `docs/PUBLISH-RUNBOOK.md`. R37 C-3 is remedied in the deploy tree
+  (host-safe route names, root-absolute pins) and the host was measured to
+  decode paths, so the remedy was necessary. Still open: the nested-route
+  pin check runs on the real host only with the first `-PresentationCutoff`
+  publish after Thursday's close; the Vercel team is still named
+  `glass-box-trading` (owner wants to rename it; the runbook says how and
+  what to re-probe); the SUB-09 preflight rows for the host are drafted,
+  not run.
 - **Submission (SUBMISSION-SPEC):** deck is through anti-slop; still open:
   one-pager, Remotion video, form copy, account evidence (competition
   account creation instant, $100k bootstrap, journal revision), the golden
