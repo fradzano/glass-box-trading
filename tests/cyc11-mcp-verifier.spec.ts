@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildAnalystChildEnv,
   validateAnalystManifest,
@@ -19,9 +19,65 @@ import {
 import type { AnalystManifest, McpLaunchObservation, RuntimeLock } from "../src/core/startup.js";
 import { launchVerifiedAnalystChild } from "../src/shell/analyst-mcp-launcher.js";
 import type { McpChildHandle, McpLaunchPorts } from "../src/shell/analyst-mcp-launcher.js";
+import type { OperationTimers } from "../src/shell/operation-timeout.js";
 import { createEnvironmentPorts, dependencySiteSha256, isolatedMcpTransportEnvironment, mcpPythonBootstrap } from "../src/shell/mcp-environment.js";
 
 const ROOT = process.cwd();
+
+interface ControlledClock {
+  /** Injected into the launcher; the only clock and timer source the bounded operations see. */
+  readonly timers: OperationTimers;
+  /** Move virtual time forward, firing every timer that comes due and draining microtasks around each one. */
+  advance(byMs: number): Promise<void>;
+}
+
+/**
+ * A clock and timer queue the test owns outright. The launcher's timeout bounds
+ * are single-digit milliseconds, and `withOperationTimeout` decides an overrun
+ * by comparing elapsed time against the budget — so on the real clock a machine
+ * under CPU contention can measure a port that resolved in one microtask as an
+ * overrun and surface the wrong timeout label. Nothing here reads wall time:
+ * time only moves when a test calls `advance`, which makes the outcome of every
+ * bound below a property of the code rather than of the machine. Microtasks stay
+ * real, because that is how `withOperationTimeout` starts the work it bounds.
+ */
+function controlledClock(): ControlledClock {
+  interface Scheduled { readonly at: number; readonly handler: () => void }
+  let now = 0;
+  let nextHandle = 0;
+  const queue = new Map<number, Scheduled>();
+  const drainMicrotasks = (): Promise<void> => new Promise<void>(resolve => { setImmediate(resolve); });
+  const dueHandle = (limit: number): number | undefined => {
+    let earliestHandle: number | undefined;
+    let earliestAt = Number.POSITIVE_INFINITY;
+    for (const [handle, entry] of queue) {
+      if (entry.at <= limit && entry.at < earliestAt) { earliestAt = entry.at; earliestHandle = handle; }
+    }
+    return earliestHandle;
+  };
+  return {
+    timers: {
+      now: () => now,
+      setTimeout: (handler, timeoutMs) => { const handle = nextHandle; nextHandle += 1; queue.set(handle, { at: now + timeoutMs, handler }); return handle; },
+      clearTimeout: handle => { if (typeof handle === "number") queue.delete(handle); },
+    },
+    advance: async (byMs: number): Promise<void> => {
+      const target = now + byMs;
+      for (;;) {
+        await drainMicrotasks();
+        const handle = dueHandle(target);
+        if (handle === undefined) break;
+        const entry = queue.get(handle);
+        queue.delete(handle);
+        if (entry === undefined) break;
+        now = entry.at;
+        entry.handler();
+      }
+      now = target;
+      await drainMicrotasks();
+    },
+  };
+}
 
 function trackedManifest(): AnalystManifest {
   const validated = validateAnalystManifest(JSON.parse(readFileSync(path.join(ROOT, "config", "analyst-mcp-readonly.json"), "utf8")));
@@ -300,35 +356,28 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   });
 
   it("bounds a stalled child connect before inventory can be released", async () => {
-    // On a virtual clock, so that CPU contention cannot decide the outcome.
-    // `withOperationTimeout` compares `Date.now()` against its own start, and
-    // with a 5 ms budget a real machine under load can measure a port that
-    // resolved in one microtask as an overrun — that is how this test failed
-    // once in a reviewer's scratch copy. Here the immediate fake ports always
-    // measure 0 ms and the stalled connect can only end through the timer this
-    // test fires itself. `queueMicrotask` deliberately stays real: it is how
-    // `withOperationTimeout` starts the work it bounds.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    try {
-      const { ports } = fakePorts({});
-      let stopCalls = 0;
-      const launched = launchVerifiedAnalystChild({
-        ...ports,
-        operationTimeoutMs: 5,
-        child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
-      });
-      const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
-      // Every pre-spawn port settles on microtasks while the clock stands still;
-      // the only timer still armed at 5 ms is the one bounding connect.
-      await vi.advanceTimersByTimeAsync(5);
-      await rejected;
-      expect(stopCalls).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    // On the controlled clock: every pre-spawn port settles on microtasks while
+    // virtual time stands still, so the only timer still armed at 5 ms is the
+    // one bounding connect, and no amount of CPU contention can change that.
+    const clock = controlledClock();
+    const { ports } = fakePorts({});
+    let stopCalls = 0;
+    const launched = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
+    });
+    const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    await clock.advance(5);
+    await rejected;
+    expect(stopCalls).toBe(1);
   });
 
   it("owns and stops a child attempt whose handle resolves only after the connect timeout", async () => {
+    // The late handle arrives at virtual 20 ms, four times the 5 ms bound, so
+    // the ordering under test is fixed by the queue rather than by scheduling.
+    const clock = controlledClock();
     let resourceActive = true;
     let stopCalls = 0;
     const child: McpChildHandle = {
@@ -336,37 +385,46 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
       stop: () => { stopCalls += 1; resourceActive = false; return Promise.resolve(); },
     };
     const { ports } = fakePorts({});
-    await expect(launchVerifiedAnalystChild({
+    const launched = launchVerifiedAnalystChild({
       ...ports,
       operationTimeoutMs: 5,
+      timers: clock.timers,
       child: {
         spawn: () => ({
-          connected: new Promise<McpChildHandle>(resolve => setTimeout(() => { resolve(child); }, 20)),
+          connected: new Promise<McpChildHandle>(resolve => { clock.timers.setTimeout(() => { resolve(child); }, 20); }),
           stop: () => child.stop(),
         }),
       },
-    })).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    });
+    const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    await clock.advance(5);
+    await rejected;
+    expect(stopCalls).toBe(1);
+    expect(resourceActive).toBe(false);
+    // The abandoned handle still arrives; ownership stays settled, nothing is stopped twice.
+    await clock.advance(20);
     expect(stopCalls).toBe(1);
     expect(resourceActive).toBe(false);
   });
 
   it("preserves both connect timeout and attempt-cleanup timeout", async () => {
+    // Connect stalls to its 5 ms bound, then the cleanup attempt stalls to its
+    // own bound at virtual 10 ms; both bounds are fired by this test.
+    const clock = controlledClock();
     const { ports } = fakePorts({});
-    let caught: unknown;
-    try {
-      await launchVerifiedAnalystChild({
-        ...ports,
-        operationTimeoutMs: 5,
-        child: {
-          spawn: () => ({
-            connected: new Promise<McpChildHandle>(() => undefined),
-            stop: () => new Promise<void>(() => undefined),
-          }),
-        },
-      });
-    } catch (error) {
-      caught = error;
-    }
+    const settled = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: {
+        spawn: () => ({
+          connected: new Promise<McpChildHandle>(() => undefined),
+          stop: () => new Promise<void>(() => undefined),
+        }),
+      },
+    }).then(() => undefined, (error: unknown) => error);
+    await clock.advance(10);
+    const caught = await settled;
     expect(caught).toBeInstanceOf(AggregateError);
     const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
     expect(messages).toContain("MCP_CONNECT_TIMEOUT after 5 ms");
@@ -374,59 +432,70 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   });
 
   it("bounds asynchronous evidence work before spawn and rejects synchronous overruns", async () => {
+    // The only test here that measures REAL wall time, deliberately: the second
+    // half blocks the thread in a busy loop, which a virtual clock cannot model
+    // — a port that never yields is exactly the failure mode under test. Hence a
+    // generous 100 ms bound against a 400 ms block, so that the busy loop stays
+    // multiples longer than the budget even on a heavily loaded machine.
     const stalled = fakePorts({}).ports;
     await expect(launchVerifiedAnalystChild({
       ...stalled,
-      operationTimeoutMs: 5,
+      operationTimeoutMs: 100,
       evidence: { ...stalled.evidence, removeBytecode: () => new Promise<readonly string[]>(() => undefined) },
-    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 5 ms");
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 100 ms");
 
     const overrun = fakePorts({}).ports;
     await expect(launchVerifiedAnalystChild({
       ...overrun,
-      operationTimeoutMs: 5,
+      operationTimeoutMs: 100,
       evidence: {
         ...overrun.evidence,
         removeBytecode: () => {
-          const until = Date.now() + 20;
+          const until = Date.now() + 400;
           while (Date.now() < until) { /* simulate an incorrectly synchronous port */ }
           return Promise.resolve([]);
         },
       },
-    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 5 ms");
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 100 ms");
   });
 
   it("bounds stalled inventory and stalled child cleanup", async () => {
+    // Inventory stalls to its 5 ms bound, cleanup to its own at virtual 10 ms.
+    const clock = controlledClock();
     const { ports } = fakePorts({});
     let stopCalls = 0;
     const child: McpChildHandle = {
       listTools: () => new Promise<readonly string[]>(() => undefined),
       stop: () => { stopCalls += 1; return new Promise<void>(() => undefined); },
     };
-    await expect(launchVerifiedAnalystChild({
+    const rejected = expect(launchVerifiedAnalystChild({
       ...ports,
       operationTimeoutMs: 5,
+      timers: clock.timers,
       child: { spawn: () => connectedAttempt(child) },
     })).rejects.toThrow("MCP inventory failed and child cleanup did not complete");
+    await clock.advance(10);
+    await rejected;
     expect(stopCalls).toBe(1);
   });
 
   it("preserves an invalid inventory finding when child cleanup also stalls", async () => {
+    // Connect and inventory settle on microtasks at virtual 0 ms; the rejected
+    // inventory then meets a cleanup that can only end through the 5 ms bound.
+    const clock = controlledClock();
     const { ports } = fakePorts({});
     const child: McpChildHandle = {
       listTools: () => Promise.resolve([...manifest.allowedTools, "place_order"]),
       stop: () => new Promise<void>(() => undefined),
     };
-    let caught: unknown;
-    try {
-      await launchVerifiedAnalystChild({
-        ...ports,
-        operationTimeoutMs: 5,
-        child: { spawn: () => connectedAttempt(child) },
-      });
-    } catch (error) {
-      caught = error;
-    }
+    const settled = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: { spawn: () => connectedAttempt(child) },
+    }).then(() => undefined, (error: unknown) => error);
+    await clock.advance(5);
+    const caught = await settled;
     expect(caught).toBeInstanceOf(AggregateError);
     const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
     expect(messages.some(message => message.includes("EXTRA_TOOL"))).toBe(true);

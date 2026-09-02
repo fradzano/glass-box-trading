@@ -17,6 +17,7 @@ import {
 } from "../core/startup.js";
 import type { AnalystCredentials, AnalystManifest, McpLaunchObservation, McpViolation, RuntimeLock } from "../core/startup.js";
 import { withOperationTimeout } from "./operation-timeout.js";
+import type { OperationTimers } from "./operation-timeout.js";
 
 export const MCP_CHILD_OPERATION_TIMEOUT_MS = 30_000;
 
@@ -57,6 +58,8 @@ export interface McpLaunchPorts {
   readonly child: McpChildPort;
   /** Test seam; production uses the runtime-digested constant. */
   readonly operationTimeoutMs?: number;
+  /** Test seam; production omits it and every bound below runs on the real clock and the real timers. */
+  readonly timers?: OperationTimers;
 }
 
 export type McpLaunchResult =
@@ -69,11 +72,11 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   if (!agreement.ok) return { ok: false, stage: "agreement", violations: [], issues: agreement.issues };
 
   const patterns = ports.lock.installPolicy.removeBeforeSpawn;
-  await withOperationTimeout(() => ports.evidence.removeBytecode(patterns, timeoutMs), timeoutMs, "MCP_REMOVE_TIMEOUT");
-  const surviving = await withOperationTimeout(() => ports.evidence.scanBytecode(patterns, timeoutMs), timeoutMs, "MCP_SCAN_TIMEOUT");
+  await withOperationTimeout(() => ports.evidence.removeBytecode(patterns, timeoutMs), timeoutMs, "MCP_REMOVE_TIMEOUT", ports.timers);
+  const surviving = await withOperationTimeout(() => ports.evidence.scanBytecode(patterns, timeoutMs), timeoutMs, "MCP_SCAN_TIMEOUT", ports.timers);
 
   const childEnvironment: Readonly<Record<string, string>> = { ...ports.osEnv, ...buildAnalystChildEnv(ports.manifest, ports.credentials) };
-  const gathered = await withOperationTimeout(() => ports.evidence.gather(ports.lock, timeoutMs), timeoutMs, "MCP_EVIDENCE_TIMEOUT");
+  const gathered = await withOperationTimeout(() => ports.evidence.gather(ports.lock, timeoutMs), timeoutMs, "MCP_EVIDENCE_TIMEOUT", ports.timers);
   const observation: McpLaunchObservation = { ...gathered, bytecodeArtifactsPresent: [...gathered.bytecodeArtifactsPresent, ...surviving], childEnvironment };
 
   const preSpawn = verifyMcpLaunch(ports.lock, observation, ports.osEnvAllowlist);
@@ -82,10 +85,10 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   const attempt = ports.child.spawn(childEnvironment, timeoutMs);
   let child: McpChildHandle;
   try {
-    child = await withOperationTimeout(() => attempt.connected, timeoutMs, "MCP_CONNECT_TIMEOUT");
+    child = await withOperationTimeout(() => attempt.connected, timeoutMs, "MCP_CONNECT_TIMEOUT", ports.timers);
   } catch (error) {
     try {
-      await withOperationTimeout(() => attempt.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+      await withOperationTimeout(() => attempt.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "MCP connect failed and child cleanup did not complete", { cause: cleanupError });
     }
@@ -93,10 +96,10 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   }
   let inventory: readonly string[];
   try {
-    inventory = await withOperationTimeout(() => child.listTools(), timeoutMs, "MCP_LIST_TOOLS_TIMEOUT");
+    inventory = await withOperationTimeout(() => child.listTools(), timeoutMs, "MCP_LIST_TOOLS_TIMEOUT", ports.timers);
   } catch (error) {
     try {
-      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "MCP inventory failed and child cleanup did not complete", { cause: cleanupError });
     }
@@ -105,7 +108,7 @@ export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise
   const accepted = verifyMcpInventory(ports.manifest, inventory);
   if (!accepted.ok) {
     try {
-      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT");
+      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
     } catch (cleanupError) {
       const inventoryError = new Error(`MCP_INVENTORY_REJECTED: ${accepted.violations.map(item => `${item.code}: ${item.detail}`).join("; ")}`);
       throw new AggregateError([inventoryError, cleanupError], "MCP inventory was rejected and child cleanup did not complete", { cause: cleanupError });
