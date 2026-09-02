@@ -18,7 +18,7 @@ table{border-collapse:collapse;width:100%;font-size:.9rem;margin:.75rem 0;displa
 .gate--pass strong{color:var(--pass)}.gate--veto{border-color:var(--veto)}.gate--veto strong{color:var(--veto)}
 .candidate,.lifecycle,.cycle{border:1px solid var(--rule);background:#fff;padding:1rem 1.25rem;margin:1rem 0}.candidate header,.lifecycle header{display:flex;gap:.75rem;align-items:baseline;flex-wrap:wrap}
 .candidate header h4,.lifecycle header h3{overflow-wrap:anywhere;min-width:0}
-.rationale{font-style:italic;margin:.5rem 0}.chain{margin:0}.chain div{display:grid;grid-template-columns:8rem minmax(0,1fr);gap:.5rem;padding:.35rem 0;border-top:1px dotted var(--rule)}.chain dt{font-family:Arial,sans-serif;font-size:.78rem;text-transform:uppercase;color:var(--mute)}.chain dd{margin:0;overflow-wrap:anywhere}
+.rationale{font-style:italic;margin:.5rem 0;overflow-wrap:anywhere}.chain{margin:0}.chain div{display:grid;grid-template-columns:8rem minmax(0,1fr);gap:.5rem;padding:.35rem 0;border-top:1px dotted var(--rule)}.chain dt{font-family:Arial,sans-serif;font-size:.78rem;text-transform:uppercase;color:var(--mute)}.chain dd{margin:0;overflow-wrap:anywhere}
 .golden{counter-reset:none;padding-left:0;list-style:none}.golden li{padding:.3rem 0;border-bottom:1px dotted var(--rule)}
 .disclaimer{font-size:.85rem;color:var(--mute);margin-top:3rem;border-top:1px solid var(--rule);padding-top:1rem}
 .discrepancies li{color:var(--veto)}
