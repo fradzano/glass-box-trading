@@ -84,15 +84,18 @@ describe("P9 — a missing, unreadable or empty presentation asset fails closed"
     expect(() => readPresentationAsset("no-such-stylesheet.css")).toThrow(/no-such-stylesheet\.css.*missing or unreadable.*refusing to render an unstyled page/su);
   });
 
-  it("throws rather than returning whitespace for an empty asset file", () => {
-    const probe = `.p9-empty-probe-${String(process.pid)}.css`;
-    const file = path.join(presentationAssetsDir, probe);
-    writeFileSync(file, "\n", "utf8");
+  it("throws rather than returning whitespace for an empty asset file (probed in a scratch directory, never in the committed assets/)", () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "gbt-p9-empty-asset-"));
     try {
-      expect(() => readPresentationAsset(probe)).toThrow(/is empty; refusing to render an unstyled page/u);
+      writeFileSync(path.join(scratch, "empty.css"), "\n", "utf8");
+      expect(() => readPresentationAsset("empty.css", scratch)).toThrow(/is empty; refusing to render an unstyled page/u);
     } finally {
-      rmSync(file, { force: true });
+      rmSync(scratch, { recursive: true, force: true });
     }
+  });
+
+  it("no test writes into the committed assets/ tree: the directory holds exactly the two stylesheets", () => {
+    expect(readdirSync(path.join(REPO_ROOT, "assets")).sort()).toEqual([DASHBOARD_STYLESHEET, DECISION_VIEW_STYLESHEET].sort());
   });
 
   it("refuses to render an unstyled dashboard page even when the shell hands it blank text", () => {
@@ -125,6 +128,43 @@ describe("P9 — assets/ is inside the S-ARM-01 runtime digest (owner ruling 202
       expect(before.map(file => file.path)).toEqual([`assets/${DASHBOARD_STYLESHEET}`]);
       expect(after.map(file => file.path)).toEqual([`assets/${DASHBOARD_STYLESHEET}`]);
       expect(after[0]?.sha256).not.toBe(before[0]?.sha256);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("every file under assets/ is enumerated whatever its directory is called: the walk's skip list does not apply there (R35 C1)", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gbt-assets-walk-"));
+    try {
+      for (const dir of ["artifacts", ".tmp", "node_modules", "img"]) {
+        mkdirSync(path.join(root, "assets", dir), { recursive: true });
+        writeFileSync(path.join(root, "assets", dir, "hidden.css"), ".gate--veto{display:none}\n");
+      }
+      mkdirSync(path.join(root, "artifacts"));
+      writeFileSync(path.join(root, "artifacts", "stale.js"), "// build output, never digest material\n");
+      const enumerated = enumerateRuntimeFiles(root).map(file => file.path).sort();
+      expect(enumerated).toEqual(["assets/.tmp/hidden.css", "assets/artifacts/hidden.css", "assets/img/hidden.css", "assets/node_modules/hidden.css"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a binary asset is bound by its raw bytes, not by a lossy UTF-8 decoding (R35 C2)", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gbt-assets-binary-"));
+    try {
+      mkdirSync(path.join(root, "assets"));
+      writeFileSync(path.join(root, "assets", "logo.png"), Buffer.from([0x41, 0xc0, 0x80, 0x42]));
+      const first = enumerateRuntimeFiles(root)[0]?.sha256;
+      writeFileSync(path.join(root, "assets", "logo.png"), Buffer.from([0x41, 0xc0, 0x81, 0x42]));
+      const second = enumerateRuntimeFiles(root)[0]?.sha256;
+      expect(first).toBeDefined();
+      expect(second).not.toBe(first);
+      // Text assets keep the LF normalization: a CRLF checkout must not change the identity of a stylesheet.
+      writeFileSync(path.join(root, "assets", "a.css"), "body{margin:0}\r\n");
+      const crlf = enumerateRuntimeFiles(root).find(file => file.path === "assets/a.css")?.sha256;
+      writeFileSync(path.join(root, "assets", "a.css"), "body{margin:0}\n");
+      const lf = enumerateRuntimeFiles(root).find(file => file.path === "assets/a.css")?.sha256;
+      expect(crlf).toBe(lf);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

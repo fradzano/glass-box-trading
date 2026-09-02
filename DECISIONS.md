@@ -1830,3 +1830,39 @@ small, no ADR split).
   test touches the committed assets. The `runtimeDigest` of every commit
   before this one differs from the freeze candidate's; no certificate
   existed, so nothing is voided.
+- **2026-09-02 — R35 delta gate at `d693077`: NO-GO (A=0, B=2, C=4); the
+  digest binding holds, two measurement gaps closed, the dashboard gets a
+  reading guide.** The blind reviewer confirmed the owner's option-1 gate
+  end to end: one appended byte, an added file, a rename and a nested file
+  under `assets/` each change `runtimeDigest`, and a certificate computed
+  before such a change is refused at `evaluateArmingGate` with
+  `runtimeDigest mismatch`; the rendered pages are byte-identical to
+  `f18a485` except the render timestamps; every declared-uncaught audit
+  construct was executed and each of them changes the digest. B1: the
+  renderers' `</` assertion had no test of its own (both renderer tests
+  matched a refusal the audit already produces), and that assertion is the
+  only layer for a `</style>` breakout hidden inside a CSS comment or behind
+  a comment opener inside a selector string — fixed by two tests that first
+  prove the audit returns `[]` and then require the renderers' own
+  `style-block breakout` refusal (mutant "drop both assertions" now fails
+  2). B2: one test still wrote a probe file into the committed `assets/`,
+  now digest material — the probe moved to a scratch directory through the
+  injectable, and a test pins the directory listing to exactly the two
+  stylesheets. C1: the walk's skip list (`node_modules`, `.git`, `.tmp`,
+  `artifacts`) no longer applies under `assets/` (tested with all four
+  names). C2: files under the digest are hashed LF-normalized only for text
+  extensions and by raw bytes otherwise, so a binary asset is byte-bound
+  (tested with two byte-different, UTF-8-equal files). C3: the golden
+  journal is journal evidence outside the digest by design (its
+  content-addressed revision is printed on every page); the revision
+  `sha256:343a65ef13ad5f05` is now pinned in the golden-path test so an edit
+  to the demo data is visible. C4: SPEC S-J-07's declared residual names the
+  string-hidden comment opener and the comment-hidden breakout. Separately,
+  the owner reviewed the rendered dashboard before the freeze (the caveat
+  from the option-1 ruling): gate tooltips, a lifecycle identifier running
+  off-screen, and "hard to understand what the page wants to show" —
+  closed by `29cf8d6` (a `#how-to-read` section, one lead sentence per
+  section, `title` tooltips for G1–G8 from a pure constant table,
+  `overflow-wrap:anywhere` and `min-width:0` on the flex headers and table
+  cells; the audit still returns `[]`). Narrow gate R36 covers the R35 fixes
+  and the presentation commit together.

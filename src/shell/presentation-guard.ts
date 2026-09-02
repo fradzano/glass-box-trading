@@ -30,8 +30,12 @@
 // (`</style><script>...`) — `>` stays allowed, it is the child combinator
 // (P9/R34 B2).
 //
-// Declared residual (DECISIONS.md 2026-09-02, R33 B1): the audit reads text,
-// not a rendered page. It does not catch text painted in the ground colour
+// Declared residual (DECISIONS.md 2026-09-02, R33 B1 / R34 / R35): the audit
+// reads text, not a parsed stylesheet. Native nesting, `@container`, the
+// `font` shorthand, `00px`/`0e0` zeros, a brace or a comment opener inside a
+// selector string, and a `</style>` breakout inside a CSS comment all pass it
+// (the last is refused by the renderers' own `</` assertion, the only layer
+// for it). It does not catch text painted in the ground colour
 // (`color:#fff` on `background:#fff`), near-zero sizes (`font-size:1px`,
 // `width:1px`), off-canvas placement through large positive margins or
 // paddings, a zero computed from a `calc()` subtraction on a width, or

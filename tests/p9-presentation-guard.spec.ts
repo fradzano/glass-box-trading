@@ -160,6 +160,24 @@ describe("P9/R34 B2 — a stylesheet cannot break out of its inlined <style> blo
     expect(() => renderDecisionView(result, styles)).toThrow(/stylesheet refused/u);
   });
 
+  // R35 B1: the audit strips CSS comments before it looks, but the renderers inline the RAW
+  // text and an HTML parser closes <style> at the first "</style" regardless of CSS comment
+  // context. The renderers' own "</" assertion is therefore the only layer for these two
+  // payloads; these tests pin that layer by first proving the audit lets them through.
+  const COMMENT_HIDDEN_BREAKOUT = "/* </style><script>for (const e of document.querySelectorAll('.gate--veto,.result--no_trade')) e.remove()</script><style> */";
+  const STRING_HIDDEN_COMMENT_OPENER = ".x[data-a=\"/*\"]{color:red}</style><script>evil()</script><style>/* */";
+
+  for (const [name, payload] of [["inside a CSS comment", COMMENT_HIDDEN_BREAKOUT], ["behind a comment opener hidden in a selector string", STRING_HIDDEN_COMMENT_OPENER]] as const) {
+    it(`the audit does not see a breakout ${name}, and each renderer's own </ assertion refuses it`, () => {
+      expect(auditPresentationStylesheet(payload)).toEqual([]);
+      const dashboardStyles = `${readPresentationAsset(DASHBOARD_STYLESHEET)}\n${payload}`;
+      expect(goldenIndexPage(dashboardStyles)).toThrow(/style-block breakout/u);
+      const viewStyles = `${readPresentationAsset(DECISION_VIEW_STYLESHEET)}\n${payload}`;
+      const result = decide(P1_RECORDED_SNAPSHOT, P1_RECORDED_CANDIDATES, TEST_ONLY_P1_O5_CONFIG, TEST_ONLY_P1_NOW);
+      expect(() => renderDecisionView(result, viewStyles)).toThrow(/style-block breakout/u);
+    });
+  }
+
   it("still allows > as the child combinator", () => {
     expect(auditPresentationStylesheet("ul > li{margin:0}")).toEqual([]);
   });

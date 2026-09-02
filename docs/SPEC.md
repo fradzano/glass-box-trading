@@ -1112,7 +1112,9 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   deadline and terminal appends. "Content may not lie" reaches the
   presentation layer. The gate is the S-ARM-01 runtime digest: every file
   under `assets/` (the stylesheets inlined into every page) is enumerated
-  like source, so a stylesheet change after the certificate voids it
+  like source — recursively, with no directory name skipped there, text
+  files LF-normalized and every other file hashed by its raw bytes — so a
+  stylesheet change after the certificate voids it
   exactly like a code change and the arming gate refuses (owner ruling
   2026-09-02 after R33/R34; the rendered dashboard is reviewed by the owner
   before the certificate run, never restyled after it). Defence in depth,
@@ -1124,9 +1126,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   clipping, CSS escapes, `<`, `@import`, `url(`; also through `var()`
   fallbacks and custom-property definitions); a refused stylesheet is a
   failed build (`DASHBOARD_BUILD_FAILED`) and the previous page stands. The
-  audit is textual and known incomplete (R34: native nesting, `@container`,
-  shorthand zeros, exponent notation, string-embedded braces, and any
-  hiding by colour, near-zero size, or off-canvas spacing), which is why the
+  audit is textual and known incomplete (R34/R35: native nesting,
+  `@container`, shorthand zeros, exponent notation, string-embedded braces
+  and string-embedded comment openers, a `</style>` breakout hidden inside
+  a CSS comment — that one is refused by the renderers' own `</` assertion,
+  which is the only layer for it and is measured as such — and any hiding by
+  colour, near-zero size, or off-canvas spacing), which is why the
   digest, not the audit, carries the guarantee (`src/shell/digests.ts`,
   `src/shell/presentation-guard.ts`, `tests/p9-presentation-assets.spec.ts`,
   `tests/p9-presentation-guard.spec.ts`). (A9, A10, A26)

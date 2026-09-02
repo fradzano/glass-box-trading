@@ -22,12 +22,22 @@ function sha256TextNormalized(file: string): string {
   return sha256Hex(readFileSync(file, "utf8").replace(/\r\n/g, "\n"));
 }
 
+/** Text files are LF-normalized before hashing; every other file is hashed by its raw bytes (R35 C2: UTF-8 decoding is lossy for binary content). */
+const TEXT_EXTENSIONS: ReadonlySet<string> = new Set([".ts", ".js", ".mjs", ".py", ".json", ".css", ".svg", ".html", ".txt", ".md"]);
+
+function sha256Content(file: string): string {
+  return TEXT_EXTENSIONS.has(path.extname(file).toLowerCase()) ? sha256TextNormalized(file) : sha256File(file);
+}
+
+/** Working directories the walk never descends into — except under `assets/`, where every file is digest material whatever its directory is called (R35 C1). */
+const SKIPPED_DIRECTORY_NAMES: ReadonlySet<string> = new Set(["node_modules", ".git", ".tmp", "artifacts"]);
+
 function walk(root: string, directory: string, predicate: (relative: string) => boolean, out: string[]): void {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolute = path.join(directory, entry.name);
     const relative = path.relative(root, absolute).split(path.sep).join("/");
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".tmp" || entry.name === "artifacts") continue;
+      if (SKIPPED_DIRECTORY_NAMES.has(entry.name) && !relative.startsWith("assets/")) continue;
       walk(root, absolute, predicate, out);
     } else if (predicate(relative)) {
       out.push(relative);
@@ -53,7 +63,7 @@ export function enumerateRuntimeFiles(repoRoot: string): readonly { readonly pat
     || (relative.startsWith("tools/") && (relative.endsWith(".mjs") || relative.endsWith(".py")))
     || relative === "package.json" || relative === "package-lock.json" || relative === "tsconfig.json" || relative === "tsconfig.build.json",
   files);
-  return files.sort().map(relative => ({ path: relative, sha256: sha256TextNormalized(path.join(repoRoot, relative)) }));
+  return files.sort().map(relative => ({ path: relative, sha256: sha256Content(path.join(repoRoot, relative)) }));
 }
 
 export function computeRuntimeDigest(repoRoot: string, analystRuntime: RuntimeDigestInput["analystRuntime"]): DigestResult {
