@@ -93,6 +93,23 @@ function metaTags(expectation: PublishExpectation, context: RenderContext): stri
   return Object.entries(meta).map(([name, content]) => `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`).join("\n");
 }
 
+/**
+ * One-sentence tooltip text per gate id, keyed exactly as the id appears in
+ * the journal record's `gate` field (docs/SPEC.md §G1-G8, `fixtures/golden-journal.jsonl`).
+ * An id absent here (unknown or future gate) gets no `title` attribute rather
+ * than a guessed one.
+ */
+const GATE_TOOLTIPS: Readonly<Record<string, string>> = {
+  G1: "G1 — defined risk only: every accepted structure has a maximum loss fixed at order entry; no naked short options.",
+  G2: "G2 — sleeve budgets: a candidate's reserved max loss must fit within its sleeve's remaining budget.",
+  G3: "G3 — max loss per position: a single position's max loss may not exceed the configured fraction of its sleeve budget.",
+  G4: "G4 — per-underlying concentration: total exposure on one underlying may not exceed the configured cap.",
+  G5: "G5 — liquidity: every leg needs a live, non-crossed quote within the allowed spread, size, and age.",
+  G6: "G6 — session and tradability: orders are only possible inside the exchange calendar's actual session, and a stale or frozen quote feed vetoes new entries on that underlying.",
+  G7: "G7 — idempotency: every order and close attempt derives a deterministic id, so a crash replay reconciles instead of duplicating.",
+  G8: "G8 — schema and whitelist: candidates must be valid, schema-conformant JSON constrained to the configured underlying, structure, expiry, strike-distance, and quantity whitelist.",
+};
+
 function gateRail(verdict: Readonly<Record<string, unknown>>): string {
   const vector = Array.isArray(verdict["gateVector"]) ? verdict["gateVector"] : [];
   const cells = vector.map((gate: unknown) => {
@@ -100,7 +117,10 @@ function gateRail(verdict: Readonly<Record<string, unknown>>): string {
     const record = gate as Readonly<Record<string, unknown>>;
     const passed = record["passed"] === true;
     const reasons = Array.isArray(record["reasons"]) ? record["reasons"].map(String).join("; ") : "";
-    return `<li class="gate gate--${passed ? "pass" : "veto"}"><span>${escapeHtml(text(record["gate"]))}</span><strong>${passed ? "PASS" : "VETO"}</strong><small>${escapeHtml(reasons.length === 0 ? (text(record["code"]) || "PASS") : reasons)}</small></li>`;
+    const gateId = text(record["gate"]);
+    const tooltip = GATE_TOOLTIPS[gateId];
+    const titleAttr = tooltip === undefined ? "" : ` title="${escapeHtml(tooltip)}"`;
+    return `<li class="gate gate--${passed ? "pass" : "veto"}"${titleAttr}><span>${escapeHtml(gateId)}</span><strong>${passed ? "PASS" : "VETO"}</strong><small>${escapeHtml(reasons.length === 0 ? (text(record["code"]) || "PASS") : reasons)}</small></li>`;
   });
   return `<ol class="gate-rail" aria-label="Complete deterministic gate vector">${cells.join("")}</ol>`;
 }
@@ -194,6 +214,25 @@ function renderPageHeader(projection: PerformanceProjection, context: RenderCont
 <p class="self" id="self-description">This page renders <strong>only</strong> journal revision <strong><code>${escapeHtml(projection.journalRevision)}</code></strong> at the <strong>${escapeHtml(projection.cutoff.kind)}</strong> evidence cutoff <strong><time>${escapeHtml(projection.cutoff.at)}</time></strong> (${String(projection.entriesFolded)} entries folded, ${String(projection.entriesBeyondCutoff)} rejected as newer than the cutoff). Last journal update <strong><time>${escapeHtml(stamp(projection.lastUpdatedAt))}</time></strong> (seq ${projection.lastSeq === null ? "none" : String(projection.lastSeq)}); rendered at <time>${escapeHtml(context.renderedAt)}</time>; freshness <strong>${escapeHtml(context.freshness.state)}</strong> — ${escapeHtml(context.freshness.explanation)}. Route: ${escapeHtml(context.routeLabel)}.${context.degradation.degraded ? ` <span class="degraded"><strong>Degraded publication:</strong> ${escapeHtml(context.degradation.explanation)}</span>` : ""} Freshness may lag; content may not lie.</p>`;
 }
 
+/**
+ * A short reading guide, placed right after the masthead and before the
+ * first data section (S-J-07/SUBMISSION-SPEC §2/§3 owner review, 2026-09-02:
+ * "hard to understand what the dashboard wants to show"). Static prose,
+ * constant for the module — it describes the page's own construction, not
+ * any journal figure, so it carries no projection data.
+ */
+function renderHowToReadSection(): string {
+  return `<section id="how-to-read" aria-labelledby="how-to-read-title">
+<h2 id="how-to-read-title">How to read this page</h2>
+<p>This page is rendered from one committed revision of the append-only trading journal and nothing else.</p>
+<p>Each cycle below shows what the analyst proposed, which of the eight deterministic gates (G1 through G8) each candidate passed or failed and why, and what the executor actually did.</p>
+<p>Vetoes and no-trade cycles are shown on purpose: they are the evidence that the gates work, not an omission.</p>
+<p>The sleeves table attributes realized and unrealized profit and loss to the income and convex sleeves against their declared budgets.</p>
+<p>The reconciliation section lists any discrepancy between what the broker reports and what the journal can explain.</p>
+<p>The freshness stamp near the top of this page states how stale it is relative to the journal's last recorded entry.</p>
+</section>`;
+}
+
 function kpiTiles(projection: PerformanceProjection): string {
   return `<div class="tiles">
 <div class="tile"><span class="eyebrow">Start equity (BOOTSTRAP)</span><strong>${formatUsd(projection.startEquityCents)}</strong><small>${projection.startEquityMatchesInitialCapital === null ? "no bootstrap at cutoff" : projection.startEquityMatchesInitialCapital ? "equals INITIAL_CAPITAL" : "DOES NOT equal INITIAL_CAPITAL"}</small></div>
@@ -212,6 +251,7 @@ function goldenPathList(goldenPath: readonly (readonly string[])[]): string {
 function renderResultSection(projection: PerformanceProjection, flatLabel: string, goldenPath: readonly (readonly string[])[]): string {
   return `<section id="result" aria-labelledby="result-title">
 <h2 id="result-title">Result at this cutoff</h2>
+<p class="lead">This section reports the account's equity, profit and loss, qualification state, and the control model under which every order is approved.</p>
 <p>Submitted Alpaca paper account <strong><code>${escapeHtml(projection.accountId ?? "unknown")}</code></strong>. ${escapeHtml(flatLabel)}.</p>
 ${kpiTiles(projection)}
 <p id="qualification">${escapeHtml(qualificationLine(projection))}</p>
@@ -228,6 +268,7 @@ function cyclesTable(projection: PerformanceProjection): string {
 function renderCyclesSection(projection: PerformanceProjection, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
   return `<section id="cycles" aria-labelledby="cycles-title">
 <h2 id="cycles-title">Every cycle: proposal or no-trade, gate vector, rationale</h2>
+<p class="lead">This section lists every decision cycle, whether it produced a trade or a deliberate no-trade, and the gate vector each candidate passed or failed.</p>
 <p>${String(projection.cycles.length)} primary entries at this cutoff. A no-trade result is first-class evidence: the analyst proposed nothing usable or every candidate was vetoed.</p>
 ${cyclesTable(projection)}
 ${projection.cycles.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
@@ -237,6 +278,7 @@ ${projection.cycles.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
 function renderLifecyclesSection(projection: PerformanceProjection): string {
   return `<section id="lifecycles" aria-labelledby="lifecycles-title">
 <h2 id="lifecycles-title">Every intent, forward to its broker outcome</h2>
+<p class="lead">This section follows every submitted intent from its broker order through its fill and any close, with its profit and loss contribution.</p>
 ${projection.lifecycles.length === 0 ? "<p>No entry INTENT at this cutoff.</p>" : projection.lifecycles.map(lifecycleCard).join("")}
 ${projection.emergencyCloses.length === 0 ? "" : `<h3 id="emergency-closes">Emergency closes without a prior intent (S-CYC-06)</h3><p>These closes were submitted while the journal could not be appended. They link to their audit-gap reconciliation and are never presented as having had a prior intent.</p><ul>${projection.emergencyCloses.map(close => `<li id="reconciliation-${String(close.reconciliationSeq ?? 0)}"><code>${escapeHtml(close.attemptId)}</code> — ${escapeHtml(close.status)}, filled ${String(close.filledQuantity)} at ${formatPrice(close.avgFillPriceCents)}, cash ${formatUsd(close.cashCents)} — recorded by RECONCILIATION seq ${String(close.reconciliationSeq ?? 0)} (<code>AUDIT_GAP_EMERGENCY_CLOSE</code>, no durable prior INTENT)</li>`).join("")}</ul>`}
 ${projection.humanActions.length === 0 ? "" : `<h3>Human actions detected</h3><ul>${projection.humanActions.map(action => `<li>seq ${String(action.seq)} · <time>${escapeHtml(action.at)}</time> · ${escapeHtml(action.description)}</li>`).join("")}</ul>`}
@@ -246,6 +288,7 @@ ${projection.humanActions.length === 0 ? "" : `<h3>Human actions detected</h3><u
 function renderSourceSection(context: RenderContext, projection: PerformanceProjection): string {
   return `<section id="source" aria-labelledby="source-title">
 <h2 id="source-title">Public source</h2>
+<p class="lead">This section links the pure decision core and the test that exercises one named evidence-debt path, so a reader can verify the code that produced this page.</p>
 <ul>
 <li>Repository: <a href="${escapeHtml(context.source.repositoryUrl)}">${escapeHtml(context.source.repositoryUrl)}</a>${context.source.journalRevisionUrl === null ? "" : ` · journal revision <a href="${escapeHtml(context.source.journalRevisionUrl)}">${escapeHtml(projection.journalRevision)}</a>`}</li>
 <li>The pure core: <code>${escapeHtml(context.source.corePath)}</code> — no I/O, no clock, no randomness; time, configuration, and observations are parameters.</li>
@@ -302,6 +345,7 @@ function haltStateLine(projection: PerformanceProjection): string {
 function renderReconciliationSection(projection: PerformanceProjection): string {
   return `<section id="reconciliation" aria-labelledby="reconciliation-title">
 <h2 id="reconciliation-title">Account reconciliation at this cutoff</h2>
+<p class="lead">This section breaks the account's equity and profit and loss into their components and lists anything the broker reports that the journal cannot explain.</p>
 ${reconciliationComponentsTable(projection)}
 <h3>Sleeve attribution</h3>
 ${sleeveAttributionTable(projection)}
@@ -321,6 +365,7 @@ ${haltStateLine(projection)}
 function renderHistorySection(context: RenderContext): string {
   return `<section id="history" aria-labelledby="history-title">
 <h2 id="history-title">Immutable projections</h2>
+<p class="lead">This section lists the immutable, pinned projections of earlier journal revisions.</p>
 ${context.pinned.length === 0 ? "<p>No pinned projection yet. The presentation-cutoff route is pinned when the uploaded artifacts are rendered.</p>" : `<ul>${context.pinned.map(pin => `<li><a href="${escapeHtml(pin.href)}">${escapeHtml(pin.cutoffKind)} cutoff ${escapeHtml(pin.cutoffAt)} · revision ${escapeHtml(pin.journalRevision)}</a></li>`).join("")}</ul>`}
 </section>`;
 }
@@ -353,6 +398,7 @@ export function renderDashboard(projection: PerformanceProjection, expectation: 
   ];
   const sections = [
     `${renderHead(projection, expectation, context)}\n${renderPageHeader(projection, context)}`,
+    renderHowToReadSection(),
     renderResultSection(projection, flatLabel, goldenPath),
     renderCyclesSection(projection, lifecyclesBySeq),
     renderLifecyclesSection(projection),

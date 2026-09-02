@@ -197,6 +197,39 @@ describe("P9/R33 — the committed stylesheets against the audit", () => {
   });
 });
 
+// P9 — owner review 2026-09-02: a long identifier (an exposure lifecycle id,
+// a contract/leg string) ran off the screen unwrapped. The fix is
+// overflow-wrap:anywhere (plus word-break:break-all where a <code> element
+// is involved), never overflow/visibility/position/transform hiding — the
+// audit above already proves the shipped stylesheet stays clean; these
+// assertions pin down that the actual wrap rules are present on the text.
+describe("P9 — identifier-bearing elements carry the wrap rule (owner review 2026-09-02)", () => {
+  const css = readPresentationAsset(DASHBOARD_STYLESHEET);
+
+  it("still audits clean with the wrap rules present", () => {
+    expect(auditPresentationStylesheet(css)).toEqual([]);
+  });
+
+  it("code elements (candidate ids, lifecycle ids, contract/leg ids, client/broker order ids) break anywhere", () => {
+    expect(css).toMatch(/\bcode\{[^}]*word-break:break-all[^}]*overflow-wrap:anywhere[^}]*\}/u);
+  });
+
+  it("the lifecycle and candidate card headers wrap their long id instead of overflowing the flex row", () => {
+    expect(css).toMatch(/\.candidate header h4,\s*\.lifecycle header h3\{[^}]*overflow-wrap:anywhere/u);
+  });
+
+  it("table cells (positions/orders/closes ids) carry the wrap rule too, alongside the existing overflow-x:auto scroll container", () => {
+    expect(css).toMatch(/\bth,td\{[^}]*overflow-wrap:anywhere/u);
+    expect(css).toMatch(/\btable\{[^}]*overflow-x:auto/u); // the table container itself is unchanged
+  });
+
+  it("carries none of the forbidden hiding constructs anywhere in the stylesheet", () => {
+    for (const forbidden of [/[{;]\s*overflow(?:-x|-y)?\s*:\s*(?:hidden|clip)\b/u, /[{;]\s*visibility\s*:/u, /[{;]\s*opacity\s*:/u, /[{;]\s*display\s*:\s*none\b/u, /[{;]\s*position\s*:\s*absolute\b/u, /[{;]\s*text-indent\s*:/u, /[{;]\s*clip(?:-path)?\s*:/u, /[{;]\s*transform\s*:/u]) {
+      expect(css, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+});
+
 const SOURCE = { repositoryUrl: "https://example.invalid/glass-box-trading", journalRevisionUrl: null, corePath: "src/core/decision.ts", evidenceTestPath: "tests/cyc-runner.spec.ts", evidenceDebtRow: "WIN-1" };
 
 function fakeGit(): GitPort {
