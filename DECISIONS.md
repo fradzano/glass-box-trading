@@ -1460,3 +1460,86 @@ small, no ADR split).
   `AUTH_FAILURE` exactly like rejection of the preceding account-identity read,
   then releases the startup holder. Startup stage names cannot bypass the
   broker-auth safety classification.
+- **2026-09-02 — S-CYC-05 linearization point and the manual-mutation rule
+  (owner ruling).** The interval between the final fresh broker read of the
+  pre-submit revalidation and the broker's acceptance of the submit cannot be
+  closed: Alpaca offers no conditional submit (no book revision, no if-match
+  on orders; only client-order-ID idempotency). A fake-broker interleaving in
+  R28 showed that a manual position landing in exactly that window does not
+  void the submit. Options weighed: (A) declare the completion of the final
+  fresh read as the linearization point and prohibit manual broker mutations
+  during the supervised certificate run and competition operation, except
+  under a durable `HALT` with no writer holding authority; (B) keep P7 blocked
+  until the broker offers an atomic conditional submit. Ruling: A. Reasons: the
+  prohibition already exists for the competition account (2026-08-25, SUB-08
+  provenance latch); the window can only be hit by the owner's own action; a
+  violation is detected by the next cycle's phase 0 (S-G10-02 `RESIDUE` /
+  `HUMAN_ACTION`, halt) instead of passing silently; the agent's own position
+  stays defined-risk, only the aggregate caps can be exceeded for one cycle by
+  the human's quantity. The 2026-08-25 clause "risk-reducing cleanup remains
+  allowed" is narrowed to the halted state so the close side (S-G7 over-close)
+  does not carry the same window. The limitation is stated in the submission
+  deck as a known broker-API limitation. Should Alpaca ship a conditional
+  submit, the declaration becomes an implementation obligation. Regression:
+  `tests/cyc-runner.spec.ts` "S-CYC-05 / linearization point".
+- **2026-09-02 — P8 runtime wiring lands before the P7 certificate, not
+  after.** The certificate's `runtimeDigest` binds every file under `src/`,
+  `dist/`, `config/`, `tools/*.mjs|*.py`, and the package/tsconfig files
+  (`src/shell/digests.ts`), and arming refuses any digest mismatch. A code
+  change after the market-hours run would therefore void the certificate and
+  could only be re-earned in a later session. The plan's "P7 then P8" ordering
+  is corrected to: P8 code (competition provenance port wiring, the arming
+  certificate gate, digest-neutral operator tooling) → owner O5 freeze →
+  clean zero gate → P7 certificate → owner-only P8 steps (account, `.env`,
+  GitHub, Vercel) → arm. The two wiring gaps were found by a cold P8 readiness
+  review and confirmed in code: the composition root never supplied the
+  `provenance` lifecycle dependency (a competition BOOTSTRAP would fail closed
+  on its first cycle), and `validateArmingCertificate` had no shell caller
+  (startup checked file presence only). Digest-neutral surfaces stay editable
+  after the certificate: `*.md`, `.env.example`, `.gitignore`, `tools/*.ps1`,
+  `submission/`.
+- **2026-09-02 — Certificates stay local.** `evidence/` is gitignored: the
+  pre-arm certificate carries the dev account identity and broker evidence
+  that the public repository does not need; the public proof of the live test
+  is the projection, not the raw certificate file.
+- **2026-09-02 — The arming certificate gate (`src/shell/arming-gate.ts`).**
+  A competition runtime arms only under a certificate whose `runtimeDigest`,
+  `policyDigest`, canonical trading origin, typed clauses, evidence digest, and
+  PASS verdict all validate through the pure `validateArmingCertificate`.
+  Design choices: the profile guard lives inside the gate and the call in the
+  composition root is unconditional, so a later edit at the call site cannot
+  let a competition runtime skip it, and "the dev profile never reads the
+  file" is asserted through an injectable read port; a refusal is journaled as
+  `HALT CONFIG_INVALID` with the detail prefixed `ARMING_CERTIFICATE_INVALID`
+  rather than as a new closed-set halt reason (the reason sets are consumed by
+  the journal schema, the renderer, and the certificate core; the refusal is
+  S-CYC-11's "invalid configuration" in substance), and the build stage
+  `arming` is added for the caller; cleanup follows the post-launch pattern
+  (halt first, then the MCP child and the holder). The gate reads
+  `PRE_ARM_CERTIFICATE` from the raw §0 record because `ValidatedStartup`
+  carries no certificate field; startup's presence-only check therefore stays,
+  and the gate refuses non-string, empty, or whitespace values. Known and
+  accepted: the gate is inside its own runtime digest, so every certificate
+  produced before it lands refuses to arm — the market-hours run must follow
+  this change; a dev-account certificate is by design what arms the
+  competition account (account correctness is `verifyActiveAccount`'s job,
+  `EXPECTED_ACCOUNT_ID` is identity-class and outside both digests);
+  `ANALYST_MODEL` is the one policy-digest input sourced from the environment,
+  so it must be identical on the certificate host and in competition
+  operation (documented in `.env.example` and the README runbook, not moved
+  into `config/policy.json` this close to the freeze). Calibration: six
+  mutants of the gate, all caught.
+- **2026-09-02 — A virgin paper account is not activity-empty.** A read-only
+  probe of the dev paper account (`GET /v2/account/activities`) returned
+  exactly one activity on a never-traded account: the opening funding journal
+  (`JNLC`, executed, net `100000`). The competition provenance proof treated
+  any activity as reset/reuse evidence, so every fresh competition account
+  would have latched `PROVENANCE_BROKEN` on its first bootstrap — a class-A
+  defect on the competition path that the fake bundle could not show because
+  it encoded the spec's assumption rather than broker reality. Rule now: the
+  activity ledger may hold nothing but opening funding journals whose
+  exact-cent net sum equals `INITIAL_CAPITAL`; fills stay empty; anything else
+  is reuse evidence. SPEC S-CYC-09 and CONCEPT §9 are corrected; the recorded
+  document is a test fixture. Lesson recorded for the axiom "the artifact under
+  test is not the standard": broker-facing proofs need one recorded document
+  per endpoint before they gate anything.
