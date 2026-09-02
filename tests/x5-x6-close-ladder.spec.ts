@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { integerUnit, lotCount } from "../src/core/domain.js";
 import type { OptionLeg, OptionQuote } from "../src/core/domain.js";
+import { isWorkingBrokerStatus } from "../src/core/execution.js";
 import {
   closeCapFor,
   equityLegExpirySentinel,
@@ -14,9 +15,11 @@ import {
   residueClosingLeg,
 } from "../src/core/lifecycle.js";
 import type { ExpiryHoldEvidence } from "../src/core/lifecycle.js";
+import type { BrokerReadPort } from "../src/shell/fake-broker.js";
 import { leg, quote, candidate as longCandidate, contract } from "./fixtures.js";
 import { LONG_CALL, SHORT_CALL, creditVertical } from "./execution-fixtures.js";
-import { cleanupLifecycleDirs, defaultLifecycleDeps, lifecycleHarness, lifecycleMarket } from "./lifecycle-fixtures.js";
+import { CANDIDATE_JSON, cleanupLifecycleDirs, defaultLifecycleDeps, lifecycleHarness, lifecycleMarket } from "./lifecycle-fixtures.js";
+import type { LifecycleHarness } from "./lifecycle-fixtures.js";
 
 afterEach(() => { cleanupLifecycleDirs(); });
 
@@ -216,6 +219,119 @@ describe("S-X-06 at the runner — the declared expiry hold ends escalation, lif
     const report = await harness.cycle({ lifecycle: noProof, market: lifecycleMarket(() => harness.clock.now, holdMarket) });
     expect(report.declaredHolds).toEqual([]);
     expect(report.managementCloses).toMatchObject([{ route: "residue" }]);
+  });
+});
+
+describe("S-CYC-05 at the management ladder — closes plan and submit against a freshly read book", () => {
+  /** The one resting close attempt at the fake broker; the ladder's next step would adopt or re-price it. */
+  function restingCloseAttempt(harness: LifecycleHarness): string {
+    const resting = harness.fake.allOrders().find(order => order.clientOrderId.startsWith("close:") && isWorkingBrokerStatus(order.status));
+    if (resting === undefined) throw new Error("fixture expects exactly one resting close attempt");
+    return resting.clientOrderId;
+  }
+
+  function closeSubmissions(harness: LifecycleHarness): readonly string[] {
+    return harness.fake.mutations.filter(mutation => mutation.kind === "submit_order" && mutation.clientOrderId.startsWith("close:")).map(mutation => mutation.clientOrderId);
+  }
+
+  /**
+   * A read port that lets one effect land AFTER this cycle's phase-1 snapshot:
+   * the snapshot sees the old world, every later read the new one. That is the
+   * S-CYC-05 window on the close side — the analyst step is minutes wide.
+   */
+  function brokerMovingAfterSnapshot(harness: LifecycleHarness, effect: () => void): BrokerReadPort {
+    let armed = true;
+    return {
+      ...harness.fake.read,
+      positions: async deadlineAtMs => {
+        const value = await harness.fake.read.positions(deadlineAtMs);
+        if (armed) {
+          armed = false;
+          effect();
+        }
+        return value;
+      },
+    };
+  }
+
+  const flattenDay = { tradingDay: "2026-09-03", lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }) };
+  const evictionDay = { lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }) };
+
+  it("A11/A13 route deadline: a resting close that fills during the analyst step ends the ladder instead of opening a new position", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills under the normal calendar
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const first = await harness.cycle(flattenDay);
+    expect(first.managementCloses).toMatchObject([{ route: "deadline", generation: 0 }]);
+    const resting = restingCloseAttempt(harness);
+    // The close fills at the broker while the analyst runs: from here on the phase-1 book is a lie.
+    const second = await harness.cycle({
+      ...flattenDay,
+      analyst: () => { harness.fake.transitionOrder(resting, { status: "filled" }); return Promise.resolve(CANDIDATE_JSON); },
+    });
+    expect(await harness.fake.read.positions()).toEqual([]);
+    expect(second.managementCloses).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([resting]);
+    expect(second.alarmConditions).toEqual([]);
+    expect(harness.entries().some(entry => entry.type === "HALT")).toBe(false);
+  });
+
+  it("A11/A13 route expiry: a resting eviction close that fills during the analyst step ends the ladder too", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const first = await harness.cycle(evictionDay);
+    expect(first.managementCloses).toMatchObject([{ route: "expiry", generation: 0 }]);
+    const resting = restingCloseAttempt(harness);
+    const second = await harness.cycle({
+      ...evictionDay,
+      analyst: () => { harness.fake.transitionOrder(resting, { status: "filled" }); return Promise.resolve(CANDIDATE_JSON); },
+    });
+    expect(await harness.fake.read.positions()).toEqual([]);
+    expect(second.managementCloses).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([resting]);
+    expect(harness.entries().some(entry => entry.type === "HALT")).toBe(false);
+  });
+
+  it("a management book refresh that fails submits no close at all and names the condition", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const report = await harness.cycle({
+      ...flattenDay,
+      analyst: () => { harness.fake.failNextReads(["positions"]); return Promise.resolve(CANDIDATE_JSON); },
+    });
+    expect(report.managementCloses).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([]);
+    expect(report.alarmConditions.some(condition => condition.startsWith("MANAGEMENT_BOOK_UNREADABLE"))).toBe(true);
+    expect(report.ping).toBe("fail");
+  });
+
+  it("S-G12-06 a 401 on the management book refresh goes through the credential fence", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const report = await harness.cycle({
+      ...flattenDay,
+      analyst: () => { harness.fake.setReadHttpFailure(["positions"], 401); return Promise.resolve(CANDIDATE_JSON); },
+    });
+    expect(report.managementCloses).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([]);
+    expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE")).toBe(true);
+  });
+
+  it("S-X-05 the eligibility refusal is load-bearing: a residue close that would open exposure on the fresh book is refused", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    // The short leg was assigned away: at the phase-1 snapshot the orphan long is classified residue …
+    harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 1, avgEntryPriceCents: 100 }]);
+    // … and the orphan itself is gone by the time the ladder plans. Selling it now would OPEN a short.
+    const broker = brokerMovingAfterSnapshot(harness, () => { harness.fake.setPositions([]); });
+    const report = await harness.cycle({ broker });
+    expect(report.managementCloses).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([]);
+    expect(await harness.fake.read.positions()).toEqual([]);
   });
 });
 

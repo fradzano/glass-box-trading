@@ -1581,7 +1581,7 @@ small, no ADR split).
   Known residual: a 401/403 the gateway catches during a close submit is
   treated as a lost acknowledgement (reserved and reconciled), not
   classified as a credential fence — bounded, declared.
-- **2026-09-02 — R29 blind gate at `4403758`: NO-GO (A=1, B=1, C=12), fixes
+- **2026-09-02 — R29 blind gate at `4403758`: NO-GO (A=1, B=1, C=14), fixes
   before the certificate run.** A1: the management-close ladder (eviction,
   flatten, residue) planned and submitted against the phase-1 book snapshot,
   refreshing orders but never positions; a resting close that fills during

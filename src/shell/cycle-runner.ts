@@ -824,9 +824,11 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
    * submission at the generation's escalated price. Every re-price lands as
    * its own close INTENT; reaching the cap halts and alarms while the order
    * rests AT the cap. The ladder never opens exposure: every submission
-   * passes `emergencyCloseEligibility` against broker positions.
+   * passes `emergencyCloseEligibility` against the positions of the book
+   * `book` — which is the caller's freshly read one, never the phase-1
+   * snapshot the analyst step is older than (S-CYC-05 on the close side).
    */
-  async function ladderClose(exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
+  async function ladderClose(book: BrokerBook, exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
     let closesNow = journaledCloses;
     let exposureNow = quantity;
     const lifecycleSnap = await closeLifecycleSnapshot(exposureLifecycleId, route, exposureNow, closesNow);
@@ -881,6 +883,20 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   /** Eviction (S-G9-02), deadline flatten (S-G11-01/02), and residue recovery (S-G10-02/03, S-X-06) — every cycle, also under halt. */
   async function runManagementActions(lifecycle: LifecycleDeps): Promise<void> {
     const step = lifecycle.closeEscalationStepCents;
+    // S-CYC-05 on the close side (A11/A13/A23): the phase-1 snapshot is older
+    // than the analyst step, and a close planned against it can be an OPENING
+    // order once the position it meant to close has filled away meanwhile.
+    // Everything below — eviction targets, the flatten closure, the cancel
+    // pass, and every eligibility check inside the ladder — therefore reads
+    // from `bookNow`, taken here, inside the same deadline budget as every
+    // other read. Without it no close is submitted this cycle at all.
+    const refreshed = await fetchBook();
+    if (!refreshed.ok) {
+      if (isAuthFailure(refreshed)) await haltForAuthFailure(refreshed.error);
+      alarmConditions.push(`MANAGEMENT_BOOK_UNREADABLE:${refreshed.error}`);
+      return;
+    }
+    const bookNow = refreshed.value;
     const journalNow = assembleFold((await gateway.openJournal()).entries);
     const lifecyclesNow = journalNow?.lifecycles ?? lifecycles;
     let closesNow = journalNow?.closes ?? closes;
@@ -888,9 +904,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
 
     if (regime === "normal") {
       // S-G9-02: whole-structure eviction closes, regardless of P&L, tracked to a terminal state via the ladder.
-      const targets = evictionTargets(book, lifecyclesNow, lifecycle.nextTradingDay);
+      const targets = evictionTargets(bookNow, lifecyclesNow, lifecycle.nextTradingDay);
       for (const target of targets) {
-        await ladderClose(target.record.exposureLifecycleId, target.closingLegs, target.quantity, "expiry", closeCapFor(target.record.candidate), closesNow, `expiry eviction of ${target.record.exposureLifecycleId}: expiry at or before the next trading session ${lifecycle.nextTradingDay}`, step);
+        await ladderClose(bookNow, target.record.exposureLifecycleId, target.closingLegs, target.quantity, "expiry", closeCapFor(target.record.candidate), closesNow, `expiry eviction of ${target.record.exposureLifecycleId}: expiry at or before the next trading session ${lifecycle.nextTradingDay}`, step);
         closesNow = await refreshCloses(closesNow);
       }
       if (targets.length > 0 && lifecycle.finalCycleOfSession) {
@@ -903,8 +919,8 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       }
     } else {
       // S-G11-01: cancel every working order that could increase risk; resting closes are re-priced by the ladder itself.
-      for (const order of book.openOrders) {
-        if (!isWorkingBrokerStatus(order.status) || classifyWorkingOrder(order, book.positions) !== "risk_increasing") continue;
+      for (const order of bookNow.openOrders) {
+        if (!isWorkingBrokerStatus(order.status) || classifyWorkingOrder(order, bookNow.positions) !== "risk_increasing") continue;
         await mutate({ kind: "cancel_order", clientOrderId: order.clientOrderId, binding });
         const after = await fetched(() => deps.broker.orderByClientId(order.clientOrderId, deps.cycleDeadlineMs));
         const record = after.ok ? after.value : null;
@@ -916,9 +932,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       }
       // S-G11-01/02: whole-structure closes for every open position — from the first FLATTEN_DATE cycle onward,
       // and on Friday as the journaled failure path when Thursday did not end flat. Never leg-wise on intact structures.
-      const closure = planBookClosure(book, lifecyclesNow);
+      const closure = planBookClosure(bookNow, lifecyclesNow);
       for (const structure of closure.intact) {
-        await ladderClose(structure.record.exposureLifecycleId, structure.closingLegs, structure.quantity, "deadline", closeCapFor(structure.record.candidate), closesNow, `${regime === "flatten" ? "FLATTEN_DATE" : "post-deadline failure-path"} whole-structure close of ${structure.record.exposureLifecycleId}`, step);
+        await ladderClose(bookNow, structure.record.exposureLifecycleId, structure.closingLegs, structure.quantity, "deadline", closeCapFor(structure.record.candidate), closesNow, `${regime === "flatten" ? "FLATTEN_DATE" : "post-deadline failure-path"} whole-structure close of ${structure.record.exposureLifecycleId}`, step);
         closesNow = await refreshCloses(closesNow);
       }
     }
@@ -952,11 +968,11 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
             }
           }
         }
-        await ladderClose(`residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "zero_floor" }, closesNow, `bounded long residue close of ${item.contractId} (zero-floor ladder, S-G10-03)`, step);
+        await ladderClose(bookNow, `residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "zero_floor" }, closesNow, `bounded long residue close of ${item.contractId} (zero-floor ladder, S-G10-03)`, step);
       } else {
         // S-X-06: the realized cost MAY exceed the original maxLoss — the journaled assignment exception to A23's constructive worst case.
         alarmConditions.push(`UNBOUNDED_RESIDUE_RECOVERY:${item.contractId}`);
-        await ladderClose(`residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "uncapped_marketable" }, closesNow, `unbounded short residue of ${item.contractId}: requoted marketable-limit close with no price cap (S-X-06 assignment exception to A23's constructive worst case)`, step);
+        await ladderClose(bookNow, `residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "uncapped_marketable" }, closesNow, `unbounded short residue of ${item.contractId}: requoted marketable-limit close with no price cap (S-X-06 assignment exception to A23's constructive worst case)`, step);
       }
       closesNow = await refreshCloses(closesNow);
     }
