@@ -17,6 +17,8 @@
 // that reach no broker at all.
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -216,6 +218,81 @@ describe("P10 / S-G11-04 — the composed TERMINAL entry ends the run, in writin
     expect(pingRecord(harness.paths)).toContain("fail TERMINAL_REMAINDER_RISK_BEARING");
 
     await composition.release();
+  });
+});
+
+describe("P10 / S-G14-03 — HEALTHCHECK_PING_URL is actually wired to ping delivery", () => {
+  // `pingRecord` above proves only that the URL-less port's local fallback
+  // fires; it says nothing about the environment value actually reaching
+  // `createPingPort`. A mutant that drops the binding (`env["HEALTHCHECK_PING_URL"]
+  // ?? null` replaced by `null`) still passes every assertion in the suites
+  // above, because the URL-less branch also writes the local record and
+  // reports the same `ping: "success" | "fail"` outcome. These two tests
+  // observe the remote delivery instead.
+  async function pingListener(): Promise<{ readonly url: string; readonly hits: { method: string; url: string; body: string }[]; close(): Promise<void> }> {
+    const hits: { method: string; url: string; body: string }[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => { body += String(chunk); });
+      req.on("end", () => {
+        hits.push({ method: req.method ?? "", url: req.url ?? "", body });
+        res.writeHead(200);
+        res.end("ok");
+      });
+    });
+    await new Promise<void>(resolve => { server.listen(0, "127.0.0.1", resolve); });
+    const port = (server.address() as AddressInfo).port;
+    return {
+      url: `http://127.0.0.1:${String(port)}/hc`,
+      hits,
+      async close(): Promise<void> {
+        await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
+      },
+    };
+  }
+
+  it("delivers the DEADLINE_RECONCILIATION success ping to the configured HEALTHCHECK_PING_URL", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = AFTER_TAKEOVER_BOUND;
+    const listener = await pingListener();
+    try {
+      const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot(), env: { HEALTHCHECK_PING_URL: listener.url } });
+      expect(composition.ok).toBe(true);
+      if (!composition.ok) return;
+
+      const report = await runDeadlineReconciliation(composition.deps, REVISION);
+      expect(report.ping).toBe("success");
+      expect(listener.hits).toEqual([{ method: "GET", url: "/hc", body: "" }]);
+      expect(pingRecord(harness.paths)).toContain("success");
+
+      await composition.release();
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("delivers the TERMINAL_REMAINDER_RISK_BEARING fail-ping to the configured HEALTHCHECK_PING_URL", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the 500/505 credit vertical fills and survives to Friday close
+    harness.clock.now = AFTER_TAKEOVER_BOUND;
+    const listener = await pingListener();
+    try {
+      const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot(), env: { HEALTHCHECK_PING_URL: listener.url } });
+      expect(composition.ok).toBe(true);
+      if (!composition.ok) return;
+
+      const report = await runTerminal(composition.deps);
+      expect(report.ping).toBe("fail");
+      expect(listener.hits).toHaveLength(1);
+      expect(listener.hits[0]?.method).toBe("POST");
+      expect(listener.hits[0]?.url).toBe("/hc/fail");
+      expect(listener.hits[0]?.body).toContain("TERMINAL_REMAINDER_RISK_BEARING");
+      expect(pingRecord(harness.paths)).toContain("fail TERMINAL_REMAINDER_RISK_BEARING");
+
+      await composition.release();
+    } finally {
+      await listener.close();
+    }
   });
 });
 

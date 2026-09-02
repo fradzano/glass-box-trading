@@ -1,4 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -65,6 +67,29 @@ function submitMutation(): BrokerMutation {
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(body === null ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+/** A real HTTP listener for HEALTHCHECK_PING_URL wiring tests: proves the environment value actually reaches `fetch`, not only that a local record is written. */
+async function pingListener(): Promise<{ readonly url: string; readonly hits: { method: string; url: string; body: string }[]; close(): Promise<void> }> {
+  const hits: { method: string; url: string; body: string }[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", chunk => { body += String(chunk); });
+    req.on("end", () => {
+      hits.push({ method: req.method ?? "", url: req.url ?? "", body });
+      res.writeHead(200);
+      res.end("ok");
+    });
+  });
+  await new Promise<void>(resolve => { server.listen(0, "127.0.0.1", resolve); });
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${String(port)}/hc`,
+    hits,
+    async close(): Promise<void> {
+      await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
+    },
+  };
 }
 
 describe("P7 launch hardening — independent account identity", () => {
@@ -199,6 +224,102 @@ describe("P7 launch hardening — independent account identity", () => {
       expect(readHolder(resolved.value)).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("delivers the CONFIG_INVALID fail-ping to the configured HEALTHCHECK_PING_URL", async () => {
+    // Same shape as "releases the temporary startup holder after journaling
+    // CONFIG_INVALID" above, but observing the network delivery of the ping
+    // that `runStartup`'s `failPing` callback issues (agent-runtime.ts, the
+    // `createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, ... })`
+    // bound inside `startup.failPing`). That callback is exercised above, but
+    // nothing there proves the environment value actually reaches it: the
+    // URL-less branch of `createPingPort` throws away no assertion this suite
+    // already makes.
+    const stateRoot = temporaryDirectory("gbt-p7-config-ping-");
+    const resolved = resolveStateDir(stateRoot);
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T12:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const listener = await pingListener();
+    try {
+      const built = await buildRuntime({
+        repoRoot: process.cwd(),
+        processEnv: {
+          ALPACA_PROFILE: "invalid-profile",
+          ALPACA_DEV_ACCOUNT_ID: EXPECTED,
+          STATE_DIR: stateRoot,
+          BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+          HEALTHCHECK_PING_URL: listener.url,
+        },
+        clock: () => now,
+        objective: "certificate",
+        instanceId: "config-ping-probe",
+        log: () => undefined,
+      });
+
+      expect(built).toMatchObject({ ok: false, stage: "startup" });
+      expect(listener.hits).toHaveLength(1);
+      expect(listener.hits[0]?.method).toBe("POST");
+      expect(listener.hits[0]?.url).toBe("/hc/fail");
+      expect(listener.hits[0]?.body).toContain("CONFIG_INVALID");
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("delivers the calendar AUTH_FAILURE fail-ping to the configured HEALTHCHECK_PING_URL", async () => {
+    // Same shape as "persists AUTH_FAILURE when the authenticated account read
+    // succeeds but the calendar rejects credentials" above, but observing the
+    // network delivery of `persistBrokerFence`'s ping (agent-runtime.ts'
+    // `startupBrokerPing`, bound from `env["HEALTHCHECK_PING_URL"]`). The
+    // mocked `fetch` still has to serve the Alpaca account/calendar requests,
+    // so it forwards anything addressed to the local listener to the real
+    // fetch instead of answering it itself.
+    const stateRoot = temporaryDirectory("gbt-p7-calendar-auth-ping-");
+    const resolved = resolveStateDir(stateRoot);
+    if (!resolved.ok) throw new Error(resolved.detail);
+    const now = Date.parse("2026-09-01T14:00:00.000Z");
+    writeFileSync(resolved.value.epoch, JSON.stringify({ epoch: 7, holderId: "prior", acquiredAt: new Date(now - 120_000).toISOString(), seedPending: false, resetPending: false }), "utf8");
+    const listener = await pingListener();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith(listener.url)) return originalFetch(input, init);
+      if (url.endsWith("/v2/account")) {
+        return Promise.resolve(jsonResponse(200, { account_number: EXPECTED, cash: "100000.00", equity: "100000.00", created_at: "2026-09-01T12:00:00Z", status: "ACTIVE" }));
+      }
+      if (url.includes("/v2/calendar?")) {
+        return Promise.resolve(jsonResponse(401, { message: "unauthorized" }));
+      }
+      return Promise.resolve(jsonResponse(500, { message: "unexpected request" }));
+    };
+    try {
+      const built = await buildRuntime({
+        repoRoot: process.cwd(),
+        processEnv: {
+          ALPACA_PROFILE: "dev",
+          ALPACA_DEV_KEY_ID: "dummy-key",
+          ALPACA_DEV_SECRET_KEY: "dummy-secret",
+          ALPACA_DEV_ACCOUNT_ID: EXPECTED,
+          STATE_DIR: stateRoot,
+          BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+          ANALYST_MODEL: "claude-sonnet-5",
+          HEALTHCHECK_PING_URL: listener.url,
+        },
+        clock: () => now,
+        objective: "certificate",
+        instanceId: "calendar-auth-ping-probe",
+        log: () => undefined,
+      });
+      expect(built).toMatchObject({ ok: false, stage: "calendar" });
+      expect(listener.hits).toHaveLength(1);
+      expect(listener.hits[0]?.method).toBe("POST");
+      expect(listener.hits[0]?.url).toBe("/hc/fail");
+      expect(listener.hits[0]?.body).toContain("AUTH_FAILURE");
+    } finally {
+      globalThis.fetch = originalFetch;
+      await listener.close();
     }
   });
 

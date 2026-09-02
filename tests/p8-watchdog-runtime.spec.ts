@@ -11,6 +11,8 @@
 // mutation boundary (S-J-06) so no order reaches the broker; and an empty book
 // produces no broker mutation at all.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -276,6 +278,56 @@ describe("P8 / S-G14-03 — a degraded composition still raises the active alarm
       expect(record).toContain("WATCHDOG_TAKEOVER");
     });
   }
+});
+
+describe("P8 / S-G14-03 — HEALTHCHECK_PING_URL is actually wired to the fail-ping delivery", () => {
+  // The suites above prove the port is composed and that a URL-less composition
+  // records locally. Neither reaches the network: a mutant that drops the
+  // environment value at the binding site (`env["HEALTHCHECK_PING_URL"] ?? null`
+  // replaced by `null`) still passes every assertion above, because the
+  // URL-less branch of `createPingPort` also writes the local record. This
+  // proves the wiring itself by observing the remote delivery.
+  it("delivers the takeover fail-ping to the configured HEALTHCHECK_PING_URL and still records it locally", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const hits: { method: string; url: string; body: string }[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => { body += String(chunk); });
+      req.on("end", () => {
+        hits.push({ method: req.method ?? "", url: req.url ?? "", body });
+        res.writeHead(200);
+        res.end("ok");
+      });
+    });
+    await new Promise<void>(resolve => { server.listen(0, "127.0.0.1", resolve); });
+    const port = (server.address() as AddressInfo).port;
+    const url = `http://127.0.0.1:${String(port)}/hc`;
+    try {
+      // Degrade the composition (no role credentials) so `runWatchdog` reaches
+      // exactly the fence-and-halt path: the takeover's fail-ping is the only
+      // ACTIVE alarm this branch raises (S-G14-03).
+      const { composition } = await compose(harness, {
+        repoRoot: fixtureRepoRoot(),
+        env: { HEALTHCHECK_PING_URL: url, ALPACA_DEV_KEY_ID: undefined, ALPACA_DEV_SECRET_KEY: undefined },
+      });
+      expect(composition.degraded).toBe("no credentials for the dev role");
+      expect(composition.deps.broker).toBeNull();
+
+      const report = await runWatchdog(composition.deps);
+      expect(report.halted).toBe(true);
+      expect(report.ping).toBe("fail");
+      expect(hits).toHaveLength(1);
+      expect(hits[0]?.method).toBe("POST");
+      expect(hits[0]?.url).toBe("/hc/fail");
+      expect(hits[0]?.body).toContain("WATCHDOG_TAKEOVER");
+      const record = pingRecord(harness.paths);
+      expect(record).toContain("fail ");
+      expect(record).toContain("WATCHDOG_TAKEOVER");
+    } finally {
+      await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
+    }
+  });
 });
 
 describe("P8 / S-G12-06 — a rejected credential during recovery is fenced, not swallowed", () => {
