@@ -56,6 +56,7 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(haltStateAfter(halted, unhaltEntry(3, { actor: "agent" }))).toEqual(halted);
     const sticky = haltStateAfter(NOT_HALTED, haltEntry(1, { reason: "PROVENANCE_BROKEN", sticky: true }));
     expect(haltStateAfter(sticky, unhaltEntry(2))).toEqual(sticky);
+    expect(haltStateAfter(sticky, haltEntry(2, { reason: "AUTH_FAILURE", sticky: false }))).toEqual(sticky);
     expect(haltStateFrom([haltEntry(1), cycleEntry(2), unhaltEntry(3), cycleEntry(4)])).toEqual(NOT_HALTED);
     expect(haltStateFrom([haltEntry(1), cycleEntry(2)])).toEqual({ halted: true, reason: "MANUAL", sticky: false });
     expect(haltStateFrom([])).toEqual(NOT_HALTED);
@@ -125,6 +126,22 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(stale).toMatchObject({ ok: false, reason: "WRITER_CHANGED_SINCE_RECONCILIATION" });
     expect((await successor.openJournal()).halt).toEqual({ halted: true, reason: "EPOCH_STORE_RESET", sticky: false });
     expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.at(-1)?.type).toBe("HALT");
+  });
+
+  it("retains a sticky halt reason when a rival startup appends a weaker safety interlock", async () => {
+    const paths = resolveStateDir(temporaryStateDir());
+    if (!paths.ok) throw new Error(paths.reason);
+    writeFileSync(paths.value.epoch, JSON.stringify({ epoch: 1, holderId: "prior", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false }), "utf8");
+    const writer = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS, brokerPort: NO_BROKER_PORT, instanceId: "writer", lockTakeoverBoundMs: 60_000 });
+    expect(await writer.acquireAuthority({ account: "unknown" })).toMatchObject({ kind: "WON", epoch: 2 });
+    expect(await writer.dispatch({ class: "authoritative", epoch: 2, action: { kind: "journal_append", entry: draftOf(haltEntry(1, { epoch: 2, reason: "KILL", sticky: true })) } })).toMatchObject({ ok: true });
+
+    const rival = createMutationGateway({ paths: paths.value, secrets: [], clock: () => TEST_ONLY_AT_MS + 1, brokerPort: NO_BROKER_PORT, instanceId: "startup-rival", lockTakeoverBoundMs: 60_000 });
+    expect(await rival.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "startup credential failure" })).toMatchObject({ ok: true });
+
+    expect((await rival.openJournal()).halt).toEqual({ halted: true, reason: "KILL", sticky: true });
+    expect(readHaltState(paths.value)).toEqual({ halted: true, reason: "KILL", sticky: true });
+    expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", reason: "AUTH_FAILURE", sticky: false });
   });
 
   it("S-G12-04 no shell module besides the manual tool and the gateway's refusal mentions UNHALT", () => {

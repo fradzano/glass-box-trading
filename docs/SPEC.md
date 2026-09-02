@@ -751,7 +751,8 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G12-03** Halt flag set → all entry actions veto `HALT`; management
   actions (eviction, residue closes, flatten, kill-switch) still run.
 - **S-G12-04** Un-halt is manual and journaled; no code path clears the
-  flag. (A19)
+  flag. Once a halt is sticky, later HALT entries remain audit evidence but
+  cannot replace its projected reason or reduce its strength. (A19)
 - **S-G12-05** The halt flag is a persisted file, part of the snapshot, and
   a core input — not ambient state read inside the core.
 - **S-G12-06** Credential fence (decision D): an auth failure (401/403) is

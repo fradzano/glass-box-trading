@@ -597,6 +597,9 @@ export function parseJournalText(text: string): ParsedJournal {
 /** HALT sets; a human UNHALT clears unless the halt is sticky; nothing else touches the flag (S-G12-04). */
 export function haltStateAfter(current: HaltState, entry: JournalEntry): HaltState {
   if (entry.type === "HALT") {
+    // Sticky halts are the strongest terminal safety state. Later, weaker
+    // interlocks remain journal evidence but cannot rewrite their cause.
+    if (current.sticky) return current;
     const reason = entry["reason"];
     const sticky = entry["sticky"];
     return { halted: true, reason: typeof reason === "string" ? reason : "UNKNOWN", sticky: (typeof sticky === "boolean" && sticky) || current.sticky };

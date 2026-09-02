@@ -1450,3 +1450,8 @@ small, no ADR split).
   after work resolves. A timer remains the preemptive path for asynchronous
   stalls; the post-check prevents synchronous blocking from returning a late
   success after the timer was unable to run.
+- **2026-09-03 — P7 R27 preserves the first sticky halt cause.** Later HALT
+  entries remain append-only audit evidence, but projection keeps the existing
+  sticky reason. An authority-free startup safety interlock can therefore add
+  its observation without rewriting `KILL`, `PROVENANCE_BROKEN`, or another
+  terminal sticky cause.
