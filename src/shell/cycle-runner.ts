@@ -38,6 +38,7 @@ import {
   priceCloseLimit,
   reconcileCancel,
   reconcileCloseAttempt,
+  remainingCloseExposure,
   revalidateClaimset,
   revalidationVoidDraft,
   skipDraft,
@@ -201,6 +202,23 @@ export interface ManagementCloseReport {
   readonly atCap: boolean;
 }
 
+/**
+ * A management ladder step that planned an attempt and then refused to submit
+ * it. The refusal is the visible half of the S-CYC-05 freshness rule: a close
+ * planned against a stale book is stopped by the eligibility check on the
+ * fresh one, and without this record that stop is indistinguishable from never
+ * having planned the attempt at all. A ladder that plans from the fresh book
+ * produces no refusals — a non-empty list means something older than the
+ * management step's own read decided what to close.
+ */
+export interface ManagementRefusalReport {
+  readonly exposureLifecycleId: string;
+  readonly route: string;
+  /** The generation the refused attempt would have carried; `null` when the close-lifecycle plan itself was vetoed. */
+  readonly generation: number | null;
+  readonly reason: string;
+}
+
 export interface CycleReport {
   readonly primary: "CYCLE" | "SKIP" | "BOOTSTRAP" | "GAP" | null;
   readonly reasonCodes: readonly ReasonCode[];
@@ -216,6 +234,8 @@ export interface CycleReport {
   readonly classification: BookClassification | null;
   readonly lifecycleVetoes: readonly LifecycleVeto[];
   readonly managementCloses: readonly ManagementCloseReport[];
+  /** Ladder steps that planned an attempt and refused to submit it (S-CYC-05 on the close side). */
+  readonly managementRefusals: readonly ManagementRefusalReport[];
   readonly declaredHolds: readonly string[];
   readonly alarmConditions: readonly string[];
   readonly ping: PingPlan["kind"] | null;
@@ -280,6 +300,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   const alarmConditions: string[] = [];
   const lifecycleVetoes: LifecycleVeto[] = [];
   const managementCloses: ManagementCloseReport[] = [];
+  const managementRefusals: ManagementRefusalReport[] = [];
   let classification: BookClassification | null = null;
   let declaredHolds: readonly string[] = [];
   const appended = { durable: false };
@@ -291,7 +312,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   /** Every exit funnels here: the ping decision is pure and fires exactly once per invocation (S-G14-03). */
-  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
+  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "managementRefusals" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
     await heartbeatBoundary("phase 5");
     const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions });
     // A cycle under an aggregate deadline only computes the ping plan here.
@@ -306,7 +327,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         // The check is best-effort delivery; a failed ping never blocks the cycle result.
       }
     }
-    return { ...partial, classification, lifecycleVetoes, managementCloses, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+    return { ...partial, classification, lifecycleVetoes, managementCloses, managementRefusals, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind };
   }
 
   async function append(draft: JournalDraft): Promise<boolean> {
@@ -854,13 +875,21 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
    * passes `emergencyCloseEligibility` against the positions of the book
    * `book` — which is the caller's freshly read one, never the phase-1
    * snapshot the analyst step is older than (S-CYC-05 on the close side).
+   * Every step that plans an attempt and then refuses it is recorded in
+   * `managementRefusals`, so the refusal is measurable evidence rather than a
+   * silent return: a ladder fed from the fresh book never produces one.
    */
   async function ladderClose(book: BrokerBook, exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
     let closesNow = journaledCloses;
     let exposureNow = quantity;
     const lifecycleSnap = await closeLifecycleSnapshot(exposureLifecycleId, route, exposureNow, closesNow);
     let plan = planCloseLifecycle(lifecycleSnap);
-    if (plan.kind === "COMPLETE" || plan.kind === "VETO") return { attemptId: null, atCap: false };
+    // COMPLETE is the ladder's normal end (nothing left to close) and stays silent; a VETO is a refused plan.
+    if (plan.kind === "VETO") {
+      managementRefusals.push({ exposureLifecycleId, route, generation: null, reason: `PLAN_VETO: ${plan.reason}` });
+      return { attemptId: null, atCap: false };
+    }
+    if (plan.kind === "COMPLETE") return { attemptId: null, atCap: false };
     if (plan.kind === "ADOPT") {
       const restingId = plan.attemptId;
       await mutate({ kind: "cancel_order", clientOrderId: restingId, binding });
@@ -874,10 +903,12 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         if (derived !== null) await append(derived.draft);
       }
       // A fill during the cancel reduced the exposure through its own OUTCOME; an unclear cancel keeps the
-      // attempt counted as fillable — no parallel child is ever created (S-G7, S-X-05).
-      if (reconciliation === "CANCEL_UNCLEAR" || reconciliation === "FILLED_DURING_CANCEL") return { attemptId: restingId, atCap: false };
-      const filledMeanwhile = record?.filledQuantity ?? 0;
-      const remaining = Math.max(exposureNow - filledMeanwhile, 0);
+      // attempt counted as fillable — no parallel child is ever created (S-G7, S-X-05). `record === null` is
+      // exactly the CANCEL_UNCLEAR case; naming it here also hands the arithmetic below a present record.
+      if (record === null || reconciliation === "CANCEL_UNCLEAR" || reconciliation === "FILLED_DURING_CANCEL") return { attemptId: restingId, atCap: false };
+      // `exposureNow` is the management step's own fresh reading and is already net of what this attempt filled;
+      // the attempt only bounds the remainder from above, it is never subtracted from it (pure `remainingCloseExposure`).
+      const remaining = remainingCloseExposure(exposureNow, record);
       if (remaining === 0) return { attemptId: restingId, atCap: false };
       exposureNow = integerUnit(remaining, "Quantity");
       closesNow = await refreshCloses(closesNow);
@@ -888,9 +919,17 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const priced = cap.kind === "uncapped_marketable"
       ? marketableCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents)
       : escalateCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents, cap);
-    if (!priced.ok) return { attemptId: null, atCap: false };
+    if (!priced.ok) {
+      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `PRICE_UNAVAILABLE: ${priced.reason}` });
+      return { attemptId: null, atCap: false };
+    }
     const eligibility = emergencyCloseEligibility(book.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
-    if (!eligibility.eligible) return { attemptId: null, atCap: false };
+    if (!eligibility.eligible) {
+      // The attempt was planned against something the fresh book no longer carries: it is refused, and the
+      // refusal is recorded so that planning from a stale book cannot hide behind this gate (S-CYC-05, A11).
+      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `NOT_ELIGIBLE: ${eligibility.reason}` });
+      return { attemptId: null, atCap: false };
+    }
     if (priced.atCap) {
       alarmConditions.push(`CLOSE_LADDER_AT_CAP:${plan.attemptId}`);
       await haltFor("CLOSE_LADDER_CAPPED", `${exposureLifecycleId}: the escalated close rests AT its defined-risk cap; attempts continue at the cap (S-X-05)`);
@@ -967,7 +1006,13 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     }
 
     // G10 residue recovery with the S-X-06 discrimination — leg-wise, because the structure is already broken.
-    for (const item of classification?.positions ?? []) {
+    // The targets are re-derived here by running the same pure classification over `bookNow`: the phase-1
+    // classification is minutes older than this step, so a residue may have vanished, grown, or shrunk since.
+    // The journaled phase-1 RECONCILIATION stays exactly what it was — it reports what phase 1 saw — while what
+    // the ladder acts on is truth at this instant (S-CYC-05 on the close side, A11).
+    const unresolvedNow = entriesBlocked.filter(item => item.startsWith("UNRESOLVED:")).map(item => item.slice("UNRESOLVED:".length));
+    const classificationNow = classifyBook(bookNow, lifecyclesNow, closesNow, unresolvedNow);
+    for (const item of classificationNow.positions) {
       if (item.class === "MATCHED" || holds.has(item.contractId)) continue;
       const position: BrokerPosition = { contractId: item.contractId, quantity: item.quantity, avgEntryPriceCents: 0 };
       const journaledUnderlyings = new Set(lifecyclesNow.map(record => record.underlying));
@@ -980,7 +1025,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         if (contract !== undefined) {
           const quote = Object.hasOwn(snapshot.quotesByContract, item.contractId) ? snapshot.quotesByContract[item.contractId] : undefined;
           const spot = Object.hasOwn(snapshot.spotCentsByUnderlying, contract.underlying) ? snapshot.spotCentsByUnderlying[contract.underlying] : undefined;
-          const paired = (classification?.positions ?? []).some(other => {
+          const paired = classificationNow.positions.some(other => {
             if (other.contractId === item.contractId || other.quantity >= 0) return false;
             const otherContract = Object.hasOwn(snapshot.contractsById, other.contractId) ? snapshot.contractsById[other.contractId] : undefined;
             const otherUnderlying = otherContract?.underlying ?? other.contractId;

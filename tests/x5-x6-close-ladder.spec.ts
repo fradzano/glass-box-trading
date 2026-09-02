@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { integerUnit, lotCount } from "../src/core/domain.js";
 import type { OptionLeg, OptionQuote } from "../src/core/domain.js";
-import { foldLifecycles, isWorkingBrokerStatus } from "../src/core/execution.js";
+import { foldLifecycles, isWorkingBrokerStatus, remainingCloseExposure } from "../src/core/execution.js";
 import {
   closeCapFor,
   equityLegExpirySentinel,
@@ -84,6 +84,30 @@ describe("S-X-05 — the close-escalation ladder is a capped limit order at ever
   it("S-X-05 missing quotes refuse the escalation instead of guessing", () => {
     expect(escalateCloseLimit(closingLegs(), {}, 1, 2, closeCapFor(creditVertical()))).toEqual({ ok: false, reason: "QUOTE_MISSING" });
     expect(escalateCloseLimit(closingLegs(), closeQuotes(), 1, 0, closeCapFor(creditVertical()))).toEqual({ ok: false, reason: "ESCALATION_INPUT_INVALID" });
+  });
+});
+
+describe("S-X-05 — the remainder after a ladder cancel is subtracted from the fresh exposure exactly once", () => {
+  it("a partially filled resting close leaves the fresh exposure alone: what filled is already missing from it", () => {
+    // A resting close for 2 filled 1 during the analyst step; the management step's own book read afterwards
+    // reports the single remaining lot. Subtracting the fill again would defer that lot by a whole cycle.
+    expect(remainingCloseExposure(1, { quantity: 2, filledQuantity: 1 })).toBe(1);
+    expect(remainingCloseExposure(2, { quantity: 2, filledQuantity: 0 })).toBe(2);
+  });
+
+  it("the attempt's unfilled part caps the remainder, so a fill after the book read is never over-closed", () => {
+    // Read at 2, then the resting close filled 1 while it was being canceled: only one lot may still be closed.
+    expect(remainingCloseExposure(2, { quantity: 2, filledQuantity: 1 })).toBe(1);
+    expect(remainingCloseExposure(2, { quantity: 2, filledQuantity: 2 })).toBe(0);
+    // A residue that grew past the attempt is closed up to what the attempt covered; the next generation takes the rest.
+    expect(remainingCloseExposure(3, { quantity: 2, filledQuantity: 0 })).toBe(2);
+  });
+
+  it("numbers the closed shape does not permit plan no close at all", () => {
+    expect(remainingCloseExposure(-1, { quantity: 2, filledQuantity: 0 })).toBe(0);
+    expect(remainingCloseExposure(1.5, { quantity: 2, filledQuantity: 0 })).toBe(0);
+    expect(remainingCloseExposure(2, { quantity: Number.NaN, filledQuantity: 0 })).toBe(0);
+    expect(remainingCloseExposure(2, { quantity: 2, filledQuantity: 3 })).toBe(0);
   });
 });
 
@@ -234,6 +258,18 @@ describe("S-CYC-05 at the management ladder — closes plan and submit against a
     return harness.fake.mutations.filter(mutation => mutation.kind === "submit_order" && mutation.clientOrderId.startsWith("close:")).map(mutation => mutation.clientOrderId);
   }
 
+  /** Every close order that crossed the gateway, with the quantity it actually asked the broker for. */
+  function closePayloads(harness: LifecycleHarness): readonly { readonly clientOrderId: string; readonly quantity: number }[] {
+    return harness.fake.mutations
+      .filter(mutation => mutation.kind === "submit_order" && mutation.clientOrderId.startsWith("close:"))
+      .map(mutation => ({ clientOrderId: mutation.clientOrderId, quantity: (mutation.payload as { readonly quantity: number }).quantity }));
+  }
+
+  /** Close INTENT lines: the ladder writes one per attempt, so their absence proves no attempt was made. */
+  function closeIntents(harness: LifecycleHarness): readonly string[] {
+    return harness.entries().filter(entry => entry.type === "INTENT" && entry["action"] === "close").map(entry => String(entry["route"]));
+  }
+
   /**
    * A read port that lets one effect land AFTER this cycle's phase-1 snapshot:
    * the snapshot sees the old world, every later read the new one. That is the
@@ -320,7 +356,7 @@ describe("S-CYC-05 at the management ladder — closes plan and submit against a
     expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE")).toBe(true);
   });
 
-  it("S-X-05 the eligibility refusal is load-bearing: a residue close that would open exposure on the fresh book is refused", async () => {
+  it("S-G10-03 a residue that vanished after the phase-1 snapshot is never planned: no attempt and no refusal", async () => {
     const harness = await lifecycleHarness();
     await harness.cycle(); // the credit vertical fills
     harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
@@ -330,8 +366,89 @@ describe("S-CYC-05 at the management ladder — closes plan and submit against a
     const broker = brokerMovingAfterSnapshot(harness, () => { harness.fake.setPositions([]); });
     const report = await harness.cycle({ broker });
     expect(report.managementCloses).toEqual([]);
+    // The residue targets are re-derived from the management step's own book, so nothing is planned at all —
+    // the eligibility gate is never asked, and no refused attempt is recorded (iterating the phase-1
+    // classification would plan the vanished lot and land a refusal here).
+    expect(report.managementRefusals).toEqual([]);
     expect(closeSubmissions(harness)).toEqual([]);
+    expect(closeIntents(harness)).toEqual([]);
     expect(await harness.fake.read.positions()).toEqual([]);
+  });
+
+  it("S-G10-03 a residue that shrank after the phase-1 snapshot closes at the fresh quantity only", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    // Phase 1 sees two orphan long lots after the short leg was assigned away …
+    harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 2, avgEntryPriceCents: 100 }]);
+    // … one of which leaves the book before the management step. A close for two would exceed what is held.
+    const broker = brokerMovingAfterSnapshot(harness, () => { harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 1, avgEntryPriceCents: 100 }]); });
+    const report = await harness.cycle({ broker });
+    expect(report.managementRefusals).toEqual([]);
+    expect(report.managementCloses).toMatchObject([{ route: "residue", generation: 0 }]);
+    expect(closePayloads(harness)).toMatchObject([{ quantity: 1 }]);
+  });
+
+  it("A11/A13 route deadline: a structure that vanished after the phase-1 snapshot is never planned", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills under the normal calendar
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    // The whole structure leaves the book between the phase-1 snapshot and the management step.
+    const broker = brokerMovingAfterSnapshot(harness, () => { harness.fake.setPositions([]); });
+    const report = await harness.cycle({ ...flattenDay, broker });
+    expect(report.managementCloses).toEqual([]);
+    // Planning the flatten closure from the phase-1 book would plan a whole-structure close and record its refusal.
+    expect(report.managementRefusals).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([]);
+    expect(closeIntents(harness)).toEqual([]);
+  });
+
+  it("A11/A13 route expiry: an eviction target that vanished after the phase-1 snapshot is never planned", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const broker = brokerMovingAfterSnapshot(harness, () => { harness.fake.setPositions([]); });
+    const report = await harness.cycle({ ...evictionDay, broker });
+    expect(report.managementCloses).toEqual([]);
+    expect(report.managementRefusals).toEqual([]);
+    expect(closeSubmissions(harness)).toEqual([]);
+    expect(closeIntents(harness)).toEqual([]);
+  });
+
+  it("S-X-05 a refused ladder step is recorded, not swallowed: a resting close larger than the fresh exposure vetoes visibly", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills
+    harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 3, avgEntryPriceCents: 100 }]);
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const first = await harness.cycle();
+    expect(first.managementRefusals).toEqual([]);
+    expect(closePayloads(harness)).toMatchObject([{ quantity: 3 }]);
+    // Two of the three lots leave the book while the close for three rests: its child is now larger than the exposure.
+    harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 1, avgEntryPriceCents: 100 }]);
+    const report = await harness.cycle();
+    expect(report.managementCloses).toEqual([]);
+    expect(report.managementRefusals).toMatchObject([{ exposureLifecycleId: `residue:${LONG_CALL}`, route: "residue", generation: null }]);
+    expect(closePayloads(harness)).toHaveLength(1); // the refusal sent nothing new
+  });
+
+  it("S-X-05 a resting close that partially filled before the management read closes its remainder in the same cycle", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the credit vertical fills
+    // Two orphan long lots: the residue route carries a two-lot exposure that the one-lot entry rule never produces.
+    harness.fake.setPositions([{ contractId: LONG_CALL, quantity: 2, avgEntryPriceCents: 100 }]);
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "partial", filledQuantity: 1 } : { kind: "fill" }));
+    const resting = await harness.cycle();
+    expect(resting.managementCloses).toMatchObject([{ route: "residue", generation: 0 }]);
+    expect(closePayloads(harness)).toMatchObject([{ quantity: 2 }]);
+    // One lot filled: the book now holds one, and the resting attempt reports one of two filled.
+    expect(await harness.fake.read.positions()).toMatchObject([{ contractId: LONG_CALL, quantity: 1 }]);
+
+    harness.fake.setSubmitBehaviour(payload => (payload.intent === "close" ? { kind: "accept" } : { kind: "fill" }));
+    const report = await harness.cycle();
+    expect(report.managementRefusals).toEqual([]);
+    // The remainder is the fresh exposure, not the fresh exposure minus the fill it already excludes.
+    expect(report.managementCloses).toMatchObject([{ route: "residue", generation: 1 }]);
+    expect(closePayloads(harness).filter(item => item.clientOrderId.endsWith(":g1"))).toMatchObject([{ quantity: 1 }]);
   });
 });
 

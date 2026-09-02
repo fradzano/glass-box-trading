@@ -1335,6 +1335,29 @@ export function reconcileCancel(order: BrokerOrderRecord | null): CancelReconcil
   return order.filledQuantity > 0 ? "PARTIALLY_FILLED_DURING_CANCEL" : "CANCELED";
 }
 
+/**
+ * S-X-05 after a ladder cancel: how much exposure the next generation may
+ * still close.
+ *
+ * `freshExposureQuantity` comes from the management step's own book read, and
+ * that book already reports the position net of every fill the broker had
+ * booked when it was taken. The canceled attempt's `filledQuantity` is
+ * therefore never subtracted from it a second time — doing so deferred the
+ * remainder of a partially filled resting close by a whole cycle.
+ *
+ * What the attempt still contributes is an upper bound: a fill that landed
+ * between that book read and the cancel is invisible in the fresh exposure, so
+ * the unfilled part of the attempt caps the remainder and the ladder can never
+ * over-close (A11). Anything the closed shape does not permit yields 0 — no
+ * close is planned from numbers the record cannot support.
+ */
+export function remainingCloseExposure(freshExposureQuantity: number, canceledAttempt: { readonly quantity: number; readonly filledQuantity: number }): number {
+  if (!isNonnegativeSafeInteger(freshExposureQuantity)) return 0;
+  if (!isNonnegativeSafeInteger(canceledAttempt.quantity) || !isNonnegativeSafeInteger(canceledAttempt.filledQuantity)) return 0;
+  const unfilled = Math.max(canceledAttempt.quantity - canceledAttempt.filledQuantity, 0);
+  return Math.min(freshExposureQuantity, unfilled);
+}
+
 /** Flat means broker truth shows zero risk-bearing positions and zero working orders that could increase risk. */
 export function isBookFlat(book: BrokerBook): boolean {
   return book.positions.every(position => position.quantity === 0)
