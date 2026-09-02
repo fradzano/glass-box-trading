@@ -1625,8 +1625,9 @@ small, no ADR split).
   one broker lookup per non-terminal close attempt per cycle. SPEC S-CYC-04
   carries the close-side rule.
 - **2026-09-02 — Declared reduced depth after R29 (owner to countersign at
-  the freeze).** Not fixed, stated: presentation CSS (`render-styles.ts`) has
-  no test of its own beyond the byte-identical golden render (C1); a
+  the freeze).** Not fixed, stated: presentation CSS had no test of its own
+  beyond the byte-identical golden render (C1 — superseded the same day by the
+  `assets/` decoupling below, which carries its own tests); a
   countable funding sum that differs from `INITIAL_CAPITAL` latches the
   provenance halt — ruled as intended, since a second funding is a reset and
   a different opening balance is not the prescribed account (C3, SPEC
@@ -1706,3 +1707,25 @@ small, no ADR split).
   watchdog pings nothing and relies on the passive dead-man SLA; every
   takeover path seeds `WATCHDOG_TAKEOVER`, so the watchdog's own ping
   precondition is fixed by construction rather than measured.
+- **2026-09-02 — Presentation lives outside the runtime digest (`assets/`).**
+  The S-ARM-01 runtime digest binds what Node executes and what a reviewer
+  reads as behaviour: `src/**/*.ts`, `dist/**/*.js`, `config/**/*.json`, the
+  tool scripts, the lock files, the tsconfigs. It no longer binds the
+  stylesheet bytes: a colour, a grid or a font stack states nothing about
+  trading behaviour, yet would void the certificate that authorizes
+  competition operation. Presentation assets therefore live in a top-level
+  `assets/` directory that the digest enumeration does not match by
+  construction, so design work during operation cannot invalidate the
+  certificate. Everything that could make the decoupling risky stays bound:
+  the HTML structure, every string and anchor in the renderers, the asset
+  resolution and inlining logic with its fail-closed rule
+  (`dashboard-build.ts`), and the publication decision (`publisher.ts`). The
+  renderers take the stylesheet text as a parameter and stay pure; the shell
+  resolves `assets/` from `import.meta.url`, never from the working
+  directory, normalizes CRLF so a checkout cannot change rendered bytes, and
+  inlines the CSS exactly where the `<style>` block stood, so the published
+  page remains one self-contained file. A missing or empty asset never
+  renders an unstyled page: the render fails, publication reports
+  `DASHBOARD_BUILD_FAILED`, and the previously published page stands
+  ("publication never blocks trading" holds). Output verified byte-identical
+  after normalizing only the two render-time timestamps.

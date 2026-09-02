@@ -33,7 +33,9 @@
 - `tests/p10-deadline-runtime.spec.ts`
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts`
+- `tests/p8-cli-exit-codes.spec.ts`
 - `tests/p8-competition-provenance.spec.ts`
 - `tests/p8-watchdog-runtime.spec.ts`
+- `tests/p9-presentation-assets.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`

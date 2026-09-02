@@ -16,7 +16,7 @@ import { integerUnit } from "../src/core/domain.js";
 import { parseJournalText } from "../src/core/journal.js";
 import { emptyPushState } from "../src/core/publish.js";
 import { GOLDEN_CYCLE_INTERVAL_MS, GOLDEN_DEAD_MAN_BOUND_MS, GOLDEN_SOURCE, TEST_ONLY_GOLDEN_EXPECTATIONS, TEST_ONLY_GOLDEN_NOW_MS, TEST_ONLY_GOLDEN_QUALIFICATION, goldenPresentationCutoffAt } from "../src/fixtures/p6-golden.js";
-import { buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
+import { DASHBOARD_STYLESHEET, buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta, readPresentationAsset } from "../src/shell/dashboard-build.js";
 import { runDeadlineReconciliation, runTerminal } from "../src/shell/deadline.js";
 import { journalContentRevision, sitePagesFor } from "../src/shell/publisher.js";
 import { LONG_CALL, SHORT_CALL, creditVertical } from "./execution-fixtures.js";
@@ -91,6 +91,7 @@ describe("SUBMISSION-SPEC §3 — the golden path over the recorded journal", ()
       entries, revision, nowMs: TEST_ONLY_GOLDEN_NOW_MS + 6 * GOLDEN_CYCLE_INTERVAL_MS, expectations: TEST_ONLY_GOLDEN_EXPECTATIONS,
       cycleIntervalMs: GOLDEN_CYCLE_INTERVAL_MS, deadManBoundMs: GOLDEN_DEAD_MAN_BOUND_MS, source: GOLDEN_SOURCE,
       pins: [{ kind: "presentation", at: presentationAt ?? "" }], pushState: emptyPushState(),
+      styles: readPresentationAsset(DASHBOARD_STYLESHEET),
     });
     const out = path.join(tmpdir(), `gbt-golden-${String(process.pid)}-${String(Date.now())}`);
     buildSiteAtomically(out, pages, "golden");

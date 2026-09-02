@@ -7,6 +7,8 @@
 - `.npmrc`
 - `.nvmrc`
 - `AGENTS.md` — Glass Box Trading — agent instructions
+- `assets/dashboard.css`
+- `assets/decision-view.css`
 - `CLAUDE.md`
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
@@ -57,6 +59,7 @@
 - `src/shell/certificate-cli.ts` — The S-ARM-01 entry point: `node dist/shell/certificate-cli.js --owner-go`.
 - `src/shell/certificate-command-guard.ts` — Pure admission rule for the externally stateful certificate CLI. Runtime
 - `src/shell/certificate-run.ts` — The supervised dev live-test driver (P7, S-ARM-01). It runs the exact
+- `src/shell/cli-exit-codes.ts` — The exit-code tables of the three entry points, as pure functions over a
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
 - `src/shell/cycle-walltime.ts` — Aggregate shell deadline for one cycle. The runner propagates the absolute
 - `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
@@ -78,10 +81,9 @@
 - `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
-- `src/shell/render-decision-view.ts`
+- `src/shell/render-decision-view.ts` — The P1 decision-view renderer: one pure function from a recorded decision
 - `src/shell/render-fixture.ts`
 - `src/shell/render-golden-dashboard.ts` — Local golden-path render (SUB-02 first working version, P6): builds
-- `src/shell/render-styles.ts` — Dashboard and decision-view CSS, extracted verbatim from the previous inline
 - `src/shell/runtime-config.ts` — Configuration assembly for a real run (P7). The role-neutral policy is a
 - `src/shell/startup-broker-fence.ts` — Durable refusal after configuration validation but before the real broker
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
@@ -135,8 +137,10 @@
 - `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
+- `tests/p8-cli-exit-codes.spec.ts` — P8 — the three CLI exit-code tables (S-G12-01). The convention the spec
 - `tests/p8-competition-provenance.spec.ts` — S-CYC-09 at the composition root (P8): the competition provenance port is
 - `tests/p8-watchdog-runtime.spec.ts` — P8 — the scheduled watchdog's composition root (src/shell/watchdog-runtime.ts):
+- `tests/p9-presentation-assets.spec.ts` — P9 — presentation assets live in `assets/`, outside the S-ARM-01 runtime
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy

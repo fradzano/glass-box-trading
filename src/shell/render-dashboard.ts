@@ -9,7 +9,6 @@
 import type { CycleView, FreshnessAssessment, LifecycleLink, PerformanceProjection } from "../core/projection.js";
 import { expectedMeta } from "../core/publish.js";
 import type { PublishDegradation, PublishExpectation } from "../core/publish.js";
-import { DASHBOARD_STYLES } from "./render-styles.js";
 
 export interface PublicSourceLinks {
   readonly repositoryUrl: string;
@@ -34,6 +33,14 @@ export interface RenderContext {
   readonly pinned: readonly PinnedRoute[];
   /** The route this page is served from, for the self-description line. */
   readonly routeLabel: string;
+  /**
+   * The dashboard stylesheet, inlined verbatim into the page's one `<style>`
+   * block so the published page stays a single self-contained HTML file. The
+   * shell reads it from `assets/dashboard.css`
+   * (`readPresentationAsset` in `./dashboard-build.js`); this renderer stays
+   * pure and only receives the text. Empty text is refused, never rendered.
+   */
+  readonly styles: string;
 }
 
 /** Primitive-only stringification: an object in a verdict field is rendered as its JSON, never as `[object Object]`. */
@@ -175,7 +182,7 @@ function renderHead(projection: PerformanceProjection, expectation: PublishExpec
 <title>Glass Box Trading — public evidence at ${escapeHtml(projection.cutoff.kind)} cutoff ${escapeHtml(projection.cutoff.at)}</title>
 ${metaTags(expectation, context)}
 <style>
-${DASHBOARD_STYLES}
+${context.styles}
 </style></head>`;
 }
 
@@ -323,6 +330,7 @@ function renderFooter(): string {
 }
 
 export function renderDashboard(projection: PerformanceProjection, expectation: PublishExpectation, context: RenderContext): string {
+  if (context.styles.trim().length === 0) throw new Error("renderDashboard: no stylesheet supplied; refusing to render an unstyled page");
   const lifecyclesBySeq = new Map(projection.lifecycles.map(link => [link.intentSeq, link] as const));
   const firstVeto = projection.cycles.find(cycle => cycle.candidateVerdicts.some(verdict => verdict["decision"] === "VETO"));
   const firstProposal = projection.cycles.find(cycle => cycle.result === "proposal");

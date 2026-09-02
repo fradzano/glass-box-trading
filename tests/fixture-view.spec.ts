@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { decide } from "../src/core/decision.js";
 import { P1_RECORDED_CANDIDATES, P1_RECORDED_SNAPSHOT, TEST_ONLY_P1_NOW, TEST_ONLY_P1_O5_CONFIG } from "../src/fixtures/p1-recorded-cycle.js";
+import { DECISION_VIEW_STYLESHEET, readPresentationAsset } from "../src/shell/dashboard-build.js";
 import { renderDecisionView } from "../src/shell/render-decision-view.js";
+
+const DECISION_VIEW_STYLES = readPresentationAsset(DECISION_VIEW_STYLESHEET);
 
 describe("P1 recorded glass-box fixture", () => {
   it("renders one complete pass and one reasoned veto from the same core result without a broker adapter", () => {
@@ -9,7 +12,7 @@ describe("P1 recorded glass-box fixture", () => {
     expect(result.candidateVerdicts.map(verdict => verdict.decision)).toEqual(["PASS", "VETO"]);
     expect(result.candidateVerdicts.every(verdict => verdict.gateVector.length === 8)).toBe(true);
     expect(result.actions).toHaveLength(1);
-    const html = renderDecisionView(result);
+    const html = renderDecisionView(result, DECISION_VIEW_STYLES);
     expect(html).toContain("ENTRY_ACTION_PLAN".replace("ENTRY_ACTION_PLAN", result.actions[0]!.clientOrderId));
     expect(html).toContain("the loss is not fixed at entry");
     expect(html).toContain("long option must contain one buy leg and a debit limit");
@@ -27,7 +30,7 @@ describe("P1 recorded glass-box fixture", () => {
         { ...action, clientOrderId: "entry:first" },
         { ...action, clientOrderId: "entry:second" }
       ]
-    });
+    }, DECISION_VIEW_STYLES);
 
     expect(html.split("entry:first")).toHaveLength(2);
     expect(html.split("entry:second")).toHaveLength(2);

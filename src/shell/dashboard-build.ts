@@ -6,8 +6,15 @@
 // forward from the previous output byte-for-byte and are never overwritten:
 // the presentation-cutoff route a video names stays addressable after later
 // snapshots.
+//
+// This module is also the one place the shell reads presentation assets from
+// `assets/` (P9): the stylesheets are inlined into the rendered page, so a
+// published page stays one self-contained HTML file, while the asset bytes
+// themselves sit outside the S-ARM-01 runtime digest (src/shell/digests.ts) —
+// design work during competition operation cannot void the certificate.
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SitePage {
   /** Path relative to the site root, forward slashes (`index.html`, `revisions/<rev>/presentation/index.html`). */
@@ -26,6 +33,39 @@ export interface BuildReport {
   readonly carriedForward: readonly string[];
   /** Pinned routes that already existed and were therefore not overwritten. */
   readonly preservedImmutable: readonly string[];
+}
+
+/** The dashboard stylesheet, relative to `assets/`. */
+export const DASHBOARD_STYLESHEET = "dashboard.css";
+/** The P1 decision-view stylesheet, relative to `assets/`. */
+export const DECISION_VIEW_STYLESHEET = "decision-view.css";
+
+/**
+ * `<repo>/assets`, resolved from this module's own location — never from
+ * `process.cwd()`, so a scheduled task, a test, and `npm run dashboard` all
+ * read the same bytes. `src/shell/` (vitest, in-process) and `dist/shell/`
+ * (the compiled entry points) are both two levels below the repository root.
+ */
+export const presentationAssetsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "assets");
+
+/**
+ * Reads one presentation asset as text, LF-normalized so a checkout's line
+ * endings cannot change the rendered bytes. Fails closed: a missing or
+ * unreadable asset throws instead of yielding an unstyled page. Inside a site
+ * build the throw surfaces as a build failure, and the previous published
+ * page is left fully intact.
+ */
+export function readPresentationAsset(name: string): string {
+  const file = path.join(presentationAssetsDir, name);
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch (error) {
+    throw new Error(`presentation asset "${name}" is missing or unreadable at ${file} (${error instanceof Error ? error.message : String(error)}); refusing to render an unstyled page`, { cause: error });
+  }
+  const text = raw.replace(/\r\n/gu, "\n");
+  if (text.trim().length === 0) throw new Error(`presentation asset "${name}" at ${file} is empty; refusing to render an unstyled page`);
+  return text;
 }
 
 export function immutableRoute(journalRevision: string, cutoffKind: string): string {
