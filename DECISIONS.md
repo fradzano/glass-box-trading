@@ -1749,3 +1749,46 @@ small, no ADR split).
   get an injectable timers port. Presentation: `assets/` outside the digest
   with its own tests. A newly appeared foreign contract is still journaled as
   `HUMAN_ACTION` only by the next phase 1 (the ladder skips it by design).
+- **2026-09-02 — R33 freeze gate at `c36f6f1`: NO-GO (A=0, B=1, C=3); the
+  stylesheet outside the digest gets a content-hiding audit.** The blind
+  reviewer executed every named mutant (all ten caught), re-ran six
+  regression counter-examples green, ran `npm run verify` twice (39/473,
+  exit 0) and reviewed the digest-set diff `258d4c1..HEAD` file by file. B1:
+  appending `.gate--veto,.stamp--veto,.discrepancies,.result--no_trade
+  {display:none}` to `assets/dashboard.css` hid every veto, no-trade result
+  and reconciliation discrepancy on the published page while `runtimeDigest`,
+  the certificate, the arming gate and all tests stayed satisfied — the 12:40
+  decoupling ("everything that could make the decoupling risky stays bound")
+  had removed a safety property and replaced it with nothing; anchors:
+  SUBMISSION-SPEC's anti-criterion "hides unfavorable decisions", SPEC S-J-07
+  "content may not lie". Options weighed: (1) a pure textual audit of the
+  stylesheet in both renderers; (2) a separate, non-voiding digest of
+  `assets/**` reported by the publisher (detects, does not prevent); (3) put
+  the stylesheet back into the runtime digest (reverts the 12:40 ruling:
+  design work during operation would void the certificate again); (4)
+  declare. Ruling (PM, reversible, on the branch): option 1, because it
+  prevents rather than detects, keeps the 12:40 property, and is the only
+  option that clears rather than declares — `src/shell/presentation-guard.ts`
+  (`6df70a0`), run by `renderDashboard` and `renderDecisionView` before
+  rendering; a refused stylesheet is a failed build (`DASHBOARD_BUILD_FAILED`)
+  and the previous page stands. The rule set is enumerated in SPEC S-J-07
+  and the module header; the audit works on value tokens (so `var()`
+  fallbacks, `min()`/`clamp()`/`calc()` arguments, `!important`, case,
+  whitespace and custom-property definitions cannot smuggle a refused value)
+  and refuses any backslash, since a CSS escape can spell `none`.
+  `assets/dashboard.css` drops the page-level `overflow-x:hidden` on `body`
+  (the one declaration the rule refuses; tables keep `overflow-x:auto`); the
+  decision view renders byte-identical, the dashboard differs by that one
+  property. **Declared residual of the audit, stated as such:** text in the
+  ground colour, near-zero sizes, off-canvas placement through positive
+  spacing, a zero computed by `calc()` subtraction on a width, and glyph-less
+  font stacks are not textually decidable; they remain the reviewer's eyes on
+  the golden render, and option 2 stays available if that residual is ever
+  judged too wide. The three C findings were cleared, not declared: both
+  `DASHBOARD_BUILD_FAILED` branches are measured and the module-relative
+  `assets/` test now fails under a cwd-based implementation (`04df95a`); the
+  `HEALTHCHECK_PING_URL` wiring is measured against a local HTTP listener in
+  the watchdog root, both deadline pings and two of the three agent-runtime
+  sites (`50ba4d1`) — the third site, the live cycle's own ping, needs a
+  real analyst child and stays covered by the P7 market-hours run itself.
+  Delta gate R34 on the fix commits decides the freeze.

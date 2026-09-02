@@ -1107,7 +1107,20 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   deployment receipt keyed by journal revision outside the append-only trading
   journal, so acceptance does not create a recursive new journal revision.
   Tests cover candidate rejection, successful promotion, and rollback for the
-  deadline and terminal appends. (A9, A10, A26)
+  deadline and terminal appends. "Content may not lie" reaches the
+  presentation layer: the stylesheet inlined into every page lives outside
+  the S-ARM-01 runtime digest (`assets/`), so the pure renderers audit its
+  text before rendering and refuse any construct that can hide, collapse, or
+  paint away content or load an external resource (`display:none`,
+  `visibility`, `opacity`, zero-alpha colours, zero sizes, negative offsets,
+  `overflow:hidden`, absolute placement, transforms, clipping, CSS escapes,
+  `@import`, `url(`; also through `var()` fallbacks and custom-property
+  definitions). A refused stylesheet is a failed build
+  (`DASHBOARD_BUILD_FAILED`); the previous page stands. Declared residual:
+  text in the ground colour, near-zero sizes, and off-canvas placement
+  through positive spacing are not textually decidable and stay with the
+  reviewer's eyes on the golden render (`src/shell/presentation-guard.ts`,
+  `tests/p9-presentation-guard.spec.ts`). (A9, A10, A26)
 - **S-J-08** Branch isolation is checked, not assumed: the journal writer
   pushes exclusively to the configured journal branch and refuses any other
   ref — a test configures a non-journal target and asserts refusal; the

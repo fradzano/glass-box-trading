@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 13:12 CEST (session paused for the usage-window reset at 14:40; the timers-port deflake and a fence regression fix are committed, verify exit 0; freeze candidate is HEAD; R33 freeze gate not yet run; the supervised market-hours run starts no earlier than 15:30 CEST after Felix's O5 freeze)
+**Last updated:** 2026-09-02 15:40 CEST (R33 freeze gate at `c36f6f1` returned NO-GO A=0/B=1/C=3; B1 stylesheet audit `6df70a0`, C1/C2 `04df95a`, C3 `50ba4d1` landed; delta gate R34 on the new HEAD decides the freeze; the supervised market-hours run waits for R34 GO and Felix's O5 freeze)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; no GitHub remote yet
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
