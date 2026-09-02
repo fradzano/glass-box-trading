@@ -129,7 +129,7 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
     const prompt = [
       `Trading day ${input.tradingDay}, cycle ${String(input.cycleIndex)}. Universe: ${input.underlyings.join(", ")}. Spot (cents): ${spotLine}.`,
       `Policy bounds the core will enforce: structures ${config.structureWhitelist.join("|")}; remainingTradingSessions in [${String(config.expiryMinSessions)}, ${String(config.expiryMaxSessions)}]; max quantity ${String(config.maxCandidateQuantity)}; max strike distance ${String(config.maxStrikeDistanceBps)} bps of spot; income budget ${String(config.incomeBudgetCents)}c, convex budget ${String(config.convexBudgetCents)}c; per-position cap ${String(config.maxLossPerPositionBps)} bps of the sleeve.`,
-      `Qualification brief (S-CYC-12): ${JSON.stringify(input.qualification)}`,
+      `Qualification brief (S-CYC-12): ${JSON.stringify(input.qualification)}${input.qualification.active ? " — while this brief is active the core admits at most ONE live qualification lifecycle of exactly ONE lot (quantity 1) with reservedMaxLoss at or below maxLossCents; any other quantity is vetoed after the gates, so prefer one liquid, fillable one-lot structure over size." : ""}`,
       candidateBrief(options.objective),
       "Observed contracts with live quotes (cents; sizes in contracts). remainingTradingSessions per expiry is given in the header of each expiry group:",
       marketTable(input, options.sessionsUntil, 400),
