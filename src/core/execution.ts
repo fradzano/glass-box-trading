@@ -678,6 +678,11 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     fillTotalLowerBoundTwice: bigint;
   }
   const states = new Map<string, Terminality>();
+  // Close attempts own their own lifecycle (S-G7 close fold); their OUTCOME and
+  // reconciliation lines are not evidence about an entry and must not register
+  // as an unknown, invalid entry. Found live 2026-09-02: every journaled close
+  // fill made the certificate driver refuse its fence drill as "unresolved".
+  const closeAttemptIds = new Set(entries.filter(entry => entry.type === "INTENT" && entry["action"] === "close" && typeof entry["clientOrderId"] === "string").map(entry => entry["clientOrderId"] as string));
   for (const entry of entries) {
     if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
       const id = entry["clientOrderId"];
@@ -688,6 +693,7 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     }
     if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
       const id = entry["clientOrderId"];
+      if (closeAttemptIds.has(id)) continue;
       const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
       const evidence = outcomeEvidenceFrom(entry);
       if (evidence === null) {
@@ -714,6 +720,7 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     for (const item of entry["items"]) {
       if (!isRecord(item) || item["kind"] !== "entry_order" || typeof item["clientOrderId"] !== "string") continue;
       const id = item["clientOrderId"];
+      if (closeAttemptIds.has(id)) continue;
       const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
       const working = item["classification"] === "ACKNOWLEDGED_WORKING" || item["classification"] === "MATCHED_WORKING" ? workingEvidenceFrom(item) : null;
       const observedBrokerOrderId = working?.brokerOrderId ?? null;
