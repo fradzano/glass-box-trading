@@ -2,6 +2,8 @@
 // from the dev paper account on 2026-09-01 (shapes, not secrets). Every
 // parse fails closed; the credit sign convention is the one the broker
 // accepted on the dev account (negative net limit = credit).
+// The account-activity documents were recorded from the same account on
+// 2026-09-02 (see tests/alpaca-fixtures.ts).
 import { describe, expect, it } from "vitest";
 import {
   buildOrderRequest,
@@ -9,14 +11,18 @@ import {
   dollarsToCents,
   dollarsToCentsRounded,
   mapAccount,
+  mapAccountActivity,
   mapLatestQuote,
   mapOptionContract,
   mapOrder,
   mapPosition,
+  nextActivityPageAfter,
   nextOrderPageAfter,
   normalizeBrokerIso,
   spotFromQuote,
 } from "../src/core/alpaca-mapping.js";
+import type { AccountActivityRecord } from "../src/core/alpaca-mapping.js";
+import { RECORDED_OPENING_FUNDING_JOURNAL } from "./alpaca-fixtures.js";
 
 const RECORDED_ORDER = {
   id: "d178a115-a95d-4038-af03-298791751f1e",
@@ -147,5 +153,46 @@ describe("order requests and pagination", () => {
     const tied = full.map((item, index) => ({ ...item, brokerTimestamps: { submitted_at: index === 0 ? "2026-08-24T20:17:00.000Z" : "2026-08-24T20:17:02.000Z" } }));
     expect(nextOrderPageAfter(tied, 3)).toEqual({ kind: "after", after: "2026-08-24T20:17:00.000Z" });
     expect(nextOrderPageAfter(full.map(item => ({ ...item, brokerTimestamps: { submitted_at: "2026-08-24T20:17:02.000Z" } })), 3)).toEqual({ kind: "unpageable" });
+  });
+});
+describe("account activities", () => {
+  it("maps the recorded opening funding journal exactly, cents from the wire decimal", () => {
+    // The single activity a virgin Alpaca paper account carries (recorded 2026-09-02). $100,000 funding, no fills.
+    expect(mapAccountActivity(RECORDED_OPENING_FUNDING_JOURNAL)).toEqual({
+      id: "20260824000000000::f40ccf26-0cef-428c-baab-c0fb403eec56",
+      activityType: "JNLC",
+      status: "executed",
+      netAmountCents: 10_000_000,
+      currency: "USD",
+      occurredAt: "2026-08-24T20:13:41.157Z",
+    });
+  });
+
+  it("maps a trade activity without amount or status and fails closed on anything unusable", () => {
+    // A FILL document carries transaction_time and no net_amount; both absences are mapped, not guessed.
+    expect(mapAccountActivity({ id: "t1", activity_type: "FILL", transaction_time: "2026-09-01T14:31:02.123456789Z", symbol: "SPY260904C00500000", side: "sell", qty: "1", price: "3.00" })).toEqual({
+      id: "t1", activityType: "FILL", status: null, netAmountCents: null, currency: null, occurredAt: "2026-09-01T14:31:02.123Z",
+    });
+    // A present but inexact amount fails the whole document: an unreadable funding amount must never read as an absent one.
+    expect(mapAccountActivity({ ...RECORDED_OPENING_FUNDING_JOURNAL, net_amount: "100000.005" })).toBeNull();
+    expect(mapAccountActivity({ ...RECORDED_OPENING_FUNDING_JOURNAL, net_amount: "abc" })).toBeNull();
+    expect(mapAccountActivity({ ...RECORDED_OPENING_FUNDING_JOURNAL, net_amount: null })).toMatchObject({ netAmountCents: null });
+    expect(mapAccountActivity({ activity_type: "JNLC" })).toBeNull();
+    expect(mapAccountActivity({ id: "   ", activity_type: "JNLC" })).toBeNull();
+    expect(mapAccountActivity({ id: "a1", activity_type: "" })).toBeNull();
+    expect(mapAccountActivity({ id: 17, activity_type: "JNLC" })).toBeNull();
+    expect(mapAccountActivity([])).toBeNull();
+    expect(mapAccountActivity(null)).toBeNull();
+  });
+
+  it("pages the activity ledger at the exclusive last-ID cursor and stops on a short page", () => {
+    const page = (count: number): readonly AccountActivityRecord[] =>
+      Array.from({ length: count }, (_, index) => ({ id: `a-${String(index)}`, activityType: "CSD", status: "executed", netAmountCents: 1, currency: "USD", occurredAt: null }));
+    expect(nextActivityPageAfter(page(3), 100)).toEqual({ kind: "end" });
+    expect(nextActivityPageAfter([], 100)).toEqual({ kind: "end" });
+    // Activity IDs are unique, so - unlike the order cursor - the next page starts strictly after the last ID.
+    expect(nextActivityPageAfter(page(4), 4)).toEqual({ kind: "after", after: "a-3" });
+    // A full page without a usable cursor is unpageable, never complete: a missing page must fail the proof closed.
+    expect(nextActivityPageAfter([{ id: "", activityType: "CSD", status: null, netAmountCents: null, currency: null, occurredAt: null }], 1)).toEqual({ kind: "unpageable" });
   });
 });

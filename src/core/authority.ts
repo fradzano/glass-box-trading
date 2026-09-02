@@ -197,7 +197,8 @@ export function isCanonicalOriginShape(origin: string): boolean {
   return true;
 }
 
-function isPaperTradingHost(origin: string): boolean {
+/** The paper trading host: the canonical origin's host begins with `paper-`. The one place that decides it. */
+export function isPaperTradingHost(origin: string): boolean {
   return origin.slice("https://".length).startsWith("paper-");
 }
 

@@ -6,6 +6,7 @@
 // watchdog staleness assessment, and the ping plan. No I/O, no clock: broker
 // books, journal entries, quotes, calendar facts, and explicit times are
 // inputs; every decision here is applied by the shell, never made there.
+import type { AccountActivityRecord } from "./alpaca-mapping.js";
 import { integerUnit, lotCount } from "./domain.js";
 import type { EntryCandidate, EntryLimitKind, OptionContract, OptionLeg, OptionPriceCents, OptionQuote, Quantity } from "./domain.js";
 import { isWorkingBrokerStatus, netMidTwice, reversedLegs, utcIsoToEpochMs } from "./execution.js";
@@ -276,6 +277,12 @@ export interface PaginatedHistoryEvidence {
   readonly items: number;
 }
 
+/** The activity ledger as the proof classifies it: the mapped records plus the completeness of their pagination. */
+export interface OpeningLedgerEvidence {
+  readonly complete: boolean;
+  readonly activities: readonly AccountActivityRecord[];
+}
+
 export type ProvenanceVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly violations: readonly string[]; readonly reuseEvidence: boolean };
@@ -285,13 +292,83 @@ function historyOf(value: unknown): PaginatedHistoryEvidence | null {
   return { complete: value["complete"], items: value["items"] };
 }
 
+/** The mapped record shape, re-read structurally: the proof trusts the bundle shape no more than the bundle content. */
+function activityRecordOf(value: unknown): AccountActivityRecord | null {
+  if (!isRecord(value)) return null;
+  const id = value["id"];
+  const activityType = value["activityType"];
+  const status = value["status"];
+  const netAmountCents = value["netAmountCents"];
+  const currency = value["currency"];
+  const occurredAt = value["occurredAt"];
+  if (typeof id !== "string" || id.length === 0) return null;
+  if (typeof activityType !== "string" || activityType.length === 0) return null;
+  if (status !== null && typeof status !== "string") return null;
+  if (netAmountCents !== null && !Number.isSafeInteger(netAmountCents)) return null;
+  if (currency !== null && typeof currency !== "string") return null;
+  if (occurredAt !== null && typeof occurredAt !== "string") return null;
+  return { id, activityType, status, netAmountCents: netAmountCents === null ? null : (netAmountCents as number), currency, occurredAt };
+}
+
+function openingLedgerOf(value: unknown): OpeningLedgerEvidence | null {
+  if (!isRecord(value) || typeof value["complete"] !== "boolean") return null;
+  const raw = value["activities"];
+  if (!Array.isArray(raw)) return null;
+  const activities: AccountActivityRecord[] = [];
+  for (const item of raw) {
+    const record = activityRecordOf(item);
+    if (record === null) return null;
+    activities.push(record);
+  }
+  return { complete: value["complete"], activities };
+}
+
+/**
+ * The one activity a virgin competition account legitimately carries: the
+ * broker own opening capital journal. Recorded on the dev paper account on
+ * 2026-09-02 as an executed USD cash journal-in (`JNLC`) with a positive exact
+ * net amount. Only such a journal counts toward the funding sum.
+ */
+function isOpeningFundingJournal(activity: AccountActivityRecord): boolean {
+  return activity.activityType === "JNLC" && activity.status === "executed" && activity.currency === "USD" && activity.netAmountCents !== null && activity.netAmountCents > 0;
+}
+
+/**
+ * Cash that LEFT the account. An executed negative cash journal is prior use,
+ * not merely an uncountable record — it is graded with the foreign activity
+ * types rather than with the benign uncountable journals below.
+ */
+function isCashJournalOut(activity: AccountActivityRecord): boolean {
+  return activity.activityType === "JNLC" && activity.status === "executed" && activity.netAmountCents !== null && activity.netAmountCents < 0;
+}
+
+/** Distinct activity types, so a violation message names what was actually seen. */
+function distinctTypes(activities: readonly AccountActivityRecord[]): readonly string[] {
+  const seen: string[] = [];
+  for (const activity of activities) if (!seen.includes(activity.activityType)) seen.push(activity.activityType);
+  return seen;
+}
+
 /**
  * The fully paginated provenance bundle a competition bootstrap requires
  * before any order: paper role and expected ID, creation at or after
  * COMPETITION_START, opening cash and equity exactly INITIAL_CAPITAL, zero
- * positions and non-terminal orders, and empty complete order/fill/activity
- * history. Missing pages, reset/reuse evidence, or an allowed-looking $100k
- * snapshot without creation/history proof fails closed.
+ * positions and non-terminal orders, an empty complete order and fill history,
+ * and an activity ledger whose ONLY entries are opening funding journals
+ * summing to exactly INITIAL_CAPITAL. A virgin Alpaca paper account is NOT
+ * activity-free: it carries the `JNLC` journal that funded it (recorded on the
+ * dev account 2026-09-02), so an empty ledger is not the virgin state and a
+ * non-empty one is not by itself reuse.
+ *
+ * Deliberately NOT checked: any ordering between the funding journal instant
+ * and the account creation instant. The two timestamps come from different
+ * broker subsystems and no recorded pair establishes their order, so a
+ * tolerance would be an invented constant; it would also add no safety, since
+ * the account creation instant is already bounded by COMPETITION_START and a
+ * journal cannot fund an account that does not exist.
+ *
+ * Missing pages, reset/reuse evidence, or an allowed-looking $100k snapshot
+ * without creation/funding proof fails closed.
  */
 export function validateCompetitionProvenance(bundle: unknown, expectations: ProvenanceExpectations): ProvenanceVerdict {
   const violations: string[] = [];
@@ -310,7 +387,7 @@ export function validateCompetitionProvenance(bundle: unknown, expectations: Pro
   if (bundle["openingEquityCents"] !== expectations.initialCapitalCents) violations.push("opening equity is not exactly INITIAL_CAPITAL");
   if (bundle["positionCount"] !== 0) { violations.push("account holds positions"); reuseEvidence = true; }
   if (bundle["nonTerminalOrderCount"] !== 0) { violations.push("account has non-terminal orders"); reuseEvidence = true; }
-  for (const key of ["orderHistory", "fillHistory", "activityHistory"]) {
+  for (const key of ["orderHistory", "fillHistory"]) {
     const history = historyOf(bundle[key]);
     if (history === null) {
       violations.push(`${key} evidence missing or malformed`);
@@ -318,6 +395,35 @@ export function validateCompetitionProvenance(bundle: unknown, expectations: Pro
     }
     if (!history.complete) violations.push(`${key} pagination is incomplete; missing pages fail closed`);
     if (history.items > 0) { violations.push(`${key} is not empty from creation through the snapshot`); reuseEvidence = true; }
+  }
+  const ledger = openingLedgerOf(bundle["activityLedger"]);
+  if (ledger === null) {
+    violations.push("activityLedger evidence missing or malformed");
+    return { ok: false, violations, reuseEvidence };
+  }
+  if (!ledger.complete) violations.push("activityLedger pagination is incomplete; missing pages fail closed");
+  const funding = ledger.activities.filter(activity => isOpeningFundingJournal(activity));
+  // Graded, not lumped together. A foreign activity type or cash journalled OUT is prior use and latches the
+  // irreversible halt. A cash journal that merely fails to count — cancelled, non-USD, amount absent — blocks
+  // the bootstrap without that latch: it is an unreadable record, not proof that the account was spent, and an
+  // irreversible latch on a benign funding retry would cost the whole competition week.
+  const spent = ledger.activities.filter(activity => activity.activityType !== "JNLC" || isCashJournalOut(activity));
+  const uncountable = ledger.activities.filter(activity => activity.activityType === "JNLC" && !isCashJournalOut(activity) && !isOpeningFundingJournal(activity));
+  if (spent.length > 0) {
+    violations.push(`activity ledger carries entries beyond the opening funding journal: ${distinctTypes(spent).join(", ")}`);
+    reuseEvidence = true;
+  }
+  if (uncountable.length > 0) violations.push(`activity ledger carries ${String(uncountable.length)} cash journal(s) that are not an executed positive USD credit and cannot be counted as funding`);
+  const fundedCents = funding.reduce((sum, activity) => sum + (activity.netAmountCents ?? 0), 0);
+  if (funding.length === 0) {
+    // Incomplete evidence, not proof of reuse: a virgin account ALWAYS carries its opening journal, so its
+    // absence means the ledger was not observed rather than that the account was spent. Retryable (GAP).
+    violations.push("activity ledger carries no opening funding journal; funding evidence is incomplete");
+  } else if (!Number.isSafeInteger(fundedCents)) {
+    violations.push("opening funding journals do not sum within the exact-cent integer range");
+  } else if (fundedCents !== expectations.initialCapitalCents) {
+    violations.push(`opening funding journals sum to ${String(fundedCents)} cents, not exactly INITIAL_CAPITAL`);
+    reuseEvidence = true;
   }
   return violations.length === 0 ? { ok: true } : { ok: false, violations, reuseEvidence };
 }

@@ -3,12 +3,14 @@
 // provenance latch; AUS-1, GV-1, WIN-2), and S-CYC-10 (failed resolution
 // stays blocking) as executed runner behaviour over the real gateway.
 import { describe, afterEach, expect, it } from "vitest";
+import { mapAccountActivity } from "../src/core/alpaca-mapping.js";
 import { utcIsoToEpochMs } from "../src/core/execution.js";
 import { planPrimaryEntry, validateCompetitionProvenance } from "../src/core/lifecycle.js";
 import { runCycle } from "../src/shell/cycle-runner.js";
 import { createFakeBroker } from "../src/shell/fake-broker.js";
 import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import { writeEpochStore } from "../src/shell/epoch-store.js";
+import { RECORDED_OPENING_FUNDING_JOURNAL } from "./alpaca-fixtures.js";
 import { TEST_ONLY_EXECUTION_CONFIG } from "./execution-fixtures.js";
 import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN } from "./journal-fixtures.js";
@@ -28,6 +30,13 @@ afterEach(() => { cleanupLifecycleDirs(); });
 
 const COMPETITION_START_MS = utcIsoToEpochMs("2026-08-28T15:00:00Z") as number;
 
+/**
+ * A virgin Alpaca paper account is NOT activity-free: it carries the `JNLC`
+ * journal that funded it (recorded on the dev account 2026-09-02, P8). An
+ * empty ledger here would encode the spec assumption instead of broker
+ * reality and would let every fresh competition account latch
+ * PROVENANCE_BROKEN on its first bootstrap.
+ */
 function validBundle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     accountRole: "paper",
@@ -39,7 +48,7 @@ function validBundle(overrides: Record<string, unknown> = {}): Record<string, un
     nonTerminalOrderCount: 0,
     orderHistory: { complete: true, items: 0 },
     fillHistory: { complete: true, items: 0 },
-    activityHistory: { complete: true, items: 0 },
+    activityLedger: { complete: true, activities: [mapAccountActivity(RECORDED_OPENING_FUNDING_JOURNAL)] },
     ...overrides,
   };
 }

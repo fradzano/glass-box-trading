@@ -341,10 +341,30 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   before any order it additionally requires a fully paginated provenance bundle:
   paper role and `EXPECTED_ACCOUNT_ID`; broker creation timestamp at or after
   `COMPETITION_START`; opening cash and equity both exactly `INITIAL_CAPITAL`;
-  zero positions and non-terminal orders; and empty order, fill, and trading-
-  activity history from creation through the snapshot. Missing pages, reset/
+  zero positions and non-terminal orders; empty order and fill history from
+  creation through the snapshot; and a complete account-activity ledger that
+  holds nothing but opening capital funding — a virgin paper account carries
+  exactly one such activity (recorded from the dev account 2026-09-02), so
+  "empty" means "no activity other than the opening funding". An activity
+  counts as opening funding exactly when its type is `JNLC`, its status
+  `executed`, its currency `USD`, and its net amount a strictly positive
+  exact cent value; the exact-cent sum of all such journals must equal
+  `INITIAL_CAPITAL` (the rule is the sum, not the count). The remainder is
+  graded: any non-`JNLC` activity, or an executed `JNLC` with a negative
+  amount (cash that left the account), is reset/reuse evidence and latches
+  `PROVENANCE_BROKEN`; a `JNLC` that merely fails to count (cancelled,
+  non-USD, zero, amount absent), a ledger with no funding journal at all, or
+  an incomplete page blocks the bootstrap retryably without the latch —
+  reuse evidence must be positive evidence that the account was spent. No
+  ordering between the funding instant and the creation instant is checked;
+  creation is bounded by `COMPETITION_START` alone. Missing pages, reset/
   reuse evidence, or an allowed-looking $100k snapshot without creation/history
-  proof fails closed. Then the cycle journals
+  proof fails closed. Declared limit: on a fresh `STATE_DIR` nothing can be
+  journaled before the seed `BOOTSTRAP` (S-G12-02 seed rule), so a failed
+  first proof leaves no journal entry and no persisted halt flag; it stays
+  fail-closed (no order path exists without the seed), alarms through the
+  fail ping, and is re-evaluated every cycle, and the first competition cycle
+  is therefore run supervised in a terminal whose report is read. Then the cycle journals
   `BOOTSTRAP` (broker snapshot as the opening baseline; no "state then"
   exists and none is fabricated) and proceeds as a normal cycle. An empty
   journal facing a NON-empty account (lost/corrupted journal, wrong working

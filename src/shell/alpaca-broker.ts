@@ -9,14 +9,17 @@ import type { OptionContract } from "../core/domain.js";
 import {
   buildOrderRequest,
   mapAccount,
+  mapAccountActivity,
   mapLatestQuote,
   mapOptionContract,
   mapOrder,
   mapPosition,
+  nextActivityPageAfter,
   nextOrderPageAfter,
   spotFromQuote,
 } from "../core/alpaca-mapping.js";
-import type { AccountDocument, RawQuoteObservation } from "../core/alpaca-mapping.js";
+import type { AccountActivityRecord, AccountDocument, RawQuoteObservation } from "../core/alpaca-mapping.js";
+import { isPaperTradingHost } from "../core/authority.js";
 import { isWorkingBrokerStatus } from "../core/execution.js";
 import type { BrokerOrderRecord, BrokerPosition, MarketObservation } from "../core/execution.js";
 import { BrokerHttpError } from "./broker-errors.js";
@@ -62,6 +65,46 @@ export interface FullSnapshot {
   readonly consistentReads: number;
 }
 
+/** One fully paginated listing as the S-CYC-09 proof reads it: `complete` is false whenever a page could be missing. */
+export interface HistoryEvidence {
+  readonly complete: boolean;
+  readonly items: number;
+}
+
+export interface ActivityListing {
+  readonly activities: readonly AccountActivityRecord[];
+  readonly pages: number;
+  readonly complete: boolean;
+}
+
+/**
+ * The S-CYC-09 competition provenance bundle exactly as the pure proof
+ * (`validateCompetitionProvenance`) reads it. Every field is observed, none is
+ * assumed: the role follows from the origin the adapter is bound to (only the
+ * canonical paper host arms at all, S-CYC-11), the opening money is the account
+ * document's own cash and equity — meaningful as "opening" precisely because
+ * the same bundle proves the ledger untouched — and each listing carries its
+ * own pagination completeness, so a missing page fails closed instead of
+ * reading as an empty account.
+ *
+ * The activity ledger travels as the mapped records, not as a count: a virgin
+ * Alpaca paper account already carries the `JNLC` journal that funded it, so
+ * only the pure core can tell an opening funding journal from prior use. The
+ * adapter classifies nothing.
+ */
+export interface ProvenanceBundle {
+  readonly accountRole: string;
+  readonly accountId: string;
+  readonly createdAt: string | null;
+  readonly openingCashCents: number;
+  readonly openingEquityCents: number;
+  readonly positionCount: number;
+  readonly nonTerminalOrderCount: number;
+  readonly orderHistory: HistoryEvidence;
+  readonly fillHistory: HistoryEvidence;
+  readonly activityLedger: { readonly complete: boolean; readonly activities: readonly AccountActivityRecord[] };
+}
+
 export interface AlpacaBroker {
   readonly read: BrokerReadPort;
   readonly port: BrokerMutationPort;
@@ -70,11 +113,16 @@ export interface AlpacaBroker {
   readonly calendar: (startDate: string, endDate: string) => Promise<readonly CalendarDay[]>;
   readonly clockIsOpen: () => Promise<boolean>;
   readonly ordersByStatus: (status: "open" | "closed" | "all", deadlineAtMs?: number) => Promise<{ readonly orders: readonly BrokerOrderRecord[]; readonly pages: number; readonly complete: boolean }>;
+  readonly accountActivities: (activityTypes: readonly string[], deadlineAtMs?: number) => Promise<ActivityListing>;
   readonly fullSnapshot: (deadlineAtMs?: number) => Promise<FullSnapshot>;
+  readonly provenanceBundle: (deadlineAtMs?: number) => Promise<ProvenanceBundle>;
 }
 
 const ORDER_PAGE_LIMIT = 500;
+const ACTIVITY_PAGE_LIMIT = 100;
 const QUOTE_BATCH = 100;
+/** Alpaca reports every execution — full or partial — under the `FILL` trade-activity type. */
+const FILL_ACTIVITY_TYPES = ["FILL"];
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -161,6 +209,43 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
       const next = nextOrderPageAfter(page, ORDER_PAGE_LIMIT);
       if (next.kind === "end") return { orders, pages, complete: true };
       if (next.kind === "unpageable" || next.after === after || pages > 200) return { orders, pages, complete: false };
+      after = next.after;
+    }
+  }
+
+  async function activitiesPage(activityTypes: readonly string[], after: string | null, deadlineAtMs?: number): Promise<readonly AccountActivityRecord[]> {
+    const query = new URLSearchParams({ page_size: String(ACTIVITY_PAGE_LIMIT), direction: "asc" });
+    if (activityTypes.length > 0) query.set("activity_types", activityTypes.join(","));
+    if (after !== null) query.set("page_token", after);
+    const json = await get(options.tradingOrigin, `/v2/account/activities?${query.toString()}`, deadlineAtMs);
+    if (!Array.isArray(json)) throw new Error("ACTIVITIES_DOCUMENT_INVALID");
+    const mapped = json.map(item => {
+      const activity = mapAccountActivity(item);
+      if (activity === null) throw new Error("ACTIVITY_DOCUMENT_INVALID");
+      return activity;
+    });
+    assertBeforeDeadline(deadlineAtMs);
+    return mapped;
+  }
+
+  /** The account-activity ledger, paged to the end; an empty `activityTypes` reads every type. */
+  async function accountActivities(activityTypes: readonly string[], deadlineAtMs?: number): Promise<ActivityListing> {
+    const activities: AccountActivityRecord[] = [];
+    const seen = new Set<string>();
+    let after: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const page = await activitiesPage(activityTypes, after, deadlineAtMs);
+      pages += 1;
+      for (const activity of page) {
+        if (seen.has(activity.id)) continue;
+        seen.add(activity.id);
+        activities.push(activity);
+      }
+      assertBeforeDeadline(deadlineAtMs);
+      const next = nextActivityPageAfter(page, ACTIVITY_PAGE_LIMIT);
+      if (next.kind === "end") return { activities, pages, complete: true };
+      if (next.kind === "unpageable" || next.after === after || pages > 200) return { activities, pages, complete: false };
       after = next.after;
     }
   }
@@ -339,5 +424,28 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     throw new Error("FULL_SNAPSHOT_UNSTABLE");
   }
 
-  return { read, port, accountDocument, market, calendar, clockIsOpen, ordersByStatus, fullSnapshot };
+  /**
+   * S-CYC-09: everything the competition bootstrap must prove before its first
+   * order, read fully paginated in one pass. The adapter only fetches; whether
+   * the account is virgin is decided by the pure proof in src/core/lifecycle.ts.
+   */
+  async function provenanceBundle(deadlineAtMs?: number): Promise<ProvenanceBundle> {
+    const snapshot = await fullSnapshot(deadlineAtMs);
+    const [activities, fills] = await Promise.all([accountActivities([], deadlineAtMs), accountActivities(FILL_ACTIVITY_TYPES, deadlineAtMs)]);
+    assertBeforeDeadline(deadlineAtMs);
+    return {
+      accountRole: isPaperTradingHost(options.tradingOrigin) ? "paper" : "unknown",
+      accountId: snapshot.account.accountId,
+      createdAt: snapshot.account.createdAt,
+      openingCashCents: snapshot.account.cashCents,
+      openingEquityCents: snapshot.account.equityCents,
+      positionCount: snapshot.positions.length,
+      nonTerminalOrderCount: snapshot.nonTerminalOrders.length,
+      orderHistory: { complete: snapshot.pagesComplete, items: snapshot.orders.length },
+      fillHistory: { complete: fills.complete, items: fills.activities.length },
+      activityLedger: { complete: activities.complete, activities: activities.activities },
+    };
+  }
+
+  return { read, port, accountDocument, market, calendar, clockIsOpen, ordersByStatus, accountActivities, fullSnapshot, provenanceBundle };
 }

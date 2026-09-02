@@ -301,3 +301,59 @@ export function nextOrderPageAfter(page: readonly BrokerOrderRecord[], pageLimit
   const cursor = earlier.reduce<string | null>((best, value) => (best === null || value > best ? value : best), null);
   return cursor === null ? { kind: "unpageable" } : { kind: "after", after: cursor };
 }
+
+/** One `/v2/account/activities` document reduced to what the S-CYC-09 provenance proof classifies. */
+export interface AccountActivityRecord {
+  /** The broker's activity ID, which doubles as the exclusive `page_token` cursor. */
+  readonly id: string;
+  readonly activityType: string;
+  /** Non-trade activities carry a settlement status (`executed`, `correct`, `canceled`); a trade activity carries none. */
+  readonly status: string | null;
+  /** Exact cents from the wire decimal. `null` only when the document carries no `net_amount` at all (trade activities). */
+  readonly netAmountCents: number | null;
+  readonly currency: string | null;
+  /** `created_at` (non-trade) or `transaction_time` (trade), in the core's UTC ISO grammar; `null` when absent or malformed. */
+  readonly occurredAt: string | null;
+}
+
+/**
+ * A trade or non-trade account activity. A document without a usable ID or type is malformed, never an empty activity.
+ * A present but inexact `net_amount` fails the whole document closed rather than degrading to "no amount": for the
+ * provenance proof an unreadable funding amount must not read as an absent one.
+ */
+export function mapAccountActivity(raw: unknown): AccountActivityRecord | null {
+  if (!isRecord(raw)) return null;
+  const id = raw["id"];
+  const activityType = raw["activity_type"];
+  if (typeof id !== "string" || id.trim().length === 0 || typeof activityType !== "string" || activityType.trim().length === 0) return null;
+  const rawAmount = raw["net_amount"];
+  const amountAbsent = rawAmount === undefined || rawAmount === null;
+  const netAmountCents = amountAbsent ? null : dollarsToCents(rawAmount);
+  if (!amountAbsent && netAmountCents === null) return null;
+  const status = raw["status"];
+  const currency = raw["currency"];
+  return {
+    id: id.trim(),
+    activityType,
+    status: typeof status === "string" && status.length > 0 ? status : null,
+    netAmountCents,
+    currency: typeof currency === "string" && currency.length > 0 ? currency : null,
+    occurredAt: normalizeBrokerIso(raw["created_at"]) ?? normalizeBrokerIso(raw["transaction_time"]),
+  };
+}
+
+export type ActivityPagePlan = { readonly kind: "end" } | { readonly kind: "after"; readonly after: string } | { readonly kind: "unpageable" };
+
+/**
+ * Activity pagination (`page_size` per page, ascending): a short page ends the listing; a full page continues at the
+ * exclusive `page_token` cursor, which is the last record's activity ID. Activity IDs are unique per record, so — unlike
+ * the order cursor, which pages by a shared `submitted_at` instant — no tie group can straddle a page boundary and no
+ * re-read overlap is needed. A full page whose last record carries no usable ID cannot be paged and is reported as
+ * such, never as complete: for the provenance proof a missing page must fail closed (S-CYC-09).
+ */
+export function nextActivityPageAfter(page: readonly AccountActivityRecord[], pageLimit: number): ActivityPagePlan {
+  if (page.length < pageLimit) return { kind: "end" };
+  const last = page[page.length - 1]?.id;
+  if (last === undefined || last.length === 0) return { kind: "unpageable" };
+  return { kind: "after", after: last };
+}

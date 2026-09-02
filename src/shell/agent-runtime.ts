@@ -17,6 +17,7 @@ import type { ValidatedStartup } from "../core/startup.js";
 import { createAlpacaBroker } from "./alpaca-broker.js";
 import type { AlpacaBroker, MarketWindow } from "./alpaca-broker.js";
 import { createAccountBoundBrokerPort, verifyActiveAccount } from "./account-bound-broker.js";
+import { ARMING_CERTIFICATE_INVALID, evaluateArmingGate } from "./arming-gate.js";
 import { createClaudeAnalyst } from "./analyst-claude.js";
 import { launchVerifiedAnalystChild, MCP_CHILD_OPERATION_TIMEOUT_MS } from "./analyst-mcp-launcher.js";
 import { runCycle } from "./cycle-runner.js";
@@ -84,7 +85,7 @@ export interface AgentRuntime {
 
 export type RuntimeBuild =
   | { readonly ok: true; readonly runtime: AgentRuntime }
-  | { readonly ok: false; readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest"; readonly reason: string; readonly startup: StartupOutcome | null };
+  | { readonly ok: false; readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest" | "arming"; readonly reason: string; readonly startup: StartupOutcome | null };
 
 function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
@@ -99,6 +100,52 @@ async function runtimeCleanupErrors(child: Pick<VerifiedChildHandle, "stop">, pa
   if (stopped.status === "rejected") errors.push(stopped.reason as unknown);
   if (released.status === "rejected") errors.push(released.reason as unknown);
   return errors;
+}
+
+/** The read the S-CYC-09 provenance port issues; `AlpacaBroker` satisfies it, and a test double can too. */
+export interface ProvenanceSource {
+  readonly provenanceBundle: (deadlineAtMs?: number) => Promise<unknown>;
+}
+
+/** Every lifecycle value the runner needs, plus the profile and the source that decides whether a provenance port exists. */
+export interface LifecycleComposition {
+  readonly profile: "dev" | "competition";
+  readonly flattenDate: string;
+  readonly nextTradingDay: string;
+  readonly residueMaxSessions: number;
+  readonly closeEscalationStepCents: number;
+  readonly finalCycleOfSession: boolean;
+  /** `COMPETITION_START` as epoch milliseconds — the instant the competition account may not predate. */
+  readonly competitionStartMs: number;
+  /** `INITIAL_CAPITAL_CENTS` — the exact opening cash and equity the proof demands. */
+  readonly initialCapitalCents: number;
+  readonly qualification: NonNullable<LifecycleDeps["qualification"]>;
+  readonly provenanceSource: ProvenanceSource;
+  /** The absolute cycle deadline every provenance request inherits. */
+  readonly cycleDeadlineMs: number;
+}
+
+/**
+ * The lifecycle dependency record for one cycle. Pure: it wires ports, it
+ * calls none. S-CYC-09 lives in the profile branch — only a competition run
+ * carries a `provenance` port at all, so on the dev profile the property is
+ * absent and no bundle read can be issued from any path. The expectations
+ * (competition start, initial capital) come from the already-validated §0
+ * configuration; the expected account ID is the runner's own binding.
+ */
+export function buildLifecycleDeps(input: LifecycleComposition): LifecycleDeps {
+  const base: LifecycleDeps = {
+    flattenDate: input.flattenDate,
+    nextTradingDay: input.nextTradingDay,
+    residueMaxSessions: input.residueMaxSessions,
+    closeEscalationStepCents: input.closeEscalationStepCents,
+    finalCycleOfSession: input.finalCycleOfSession,
+    competitionStartMs: input.competitionStartMs,
+    initialCapitalCents: input.initialCapitalCents,
+    qualification: input.qualification,
+  };
+  if (input.profile !== "competition") return base;
+  return { ...base, provenance: () => input.provenanceSource.provenanceBundle(input.cycleDeadlineMs) };
 }
 
 /** Once a verified child exists, every exceptional construction exit owns its cleanup. */
@@ -317,6 +364,16 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
         return { ok: false, stage: "digest", reason: `${runtime.ok ? "" : runtime.reason} ${policy.ok ? "" : policy.reason}`.trim(), startup };
       }
       log(`runtimeDigest ${runtime.digest} policyDigest ${policy.digest}; analyst inventory ${String(launch.inventory.length)} tools`);
+      // S-ARM-01 (WIN-7, WIN-10): a competition runtime arms only under a certificate that names this exact
+      // runtime and policy. The gate is profile-aware, so the dev runtime reads nothing; a refusal halts
+      // durably under CONFIG_INVALID and releases the child and the holder like every other post-launch exit.
+      const arming = evaluateArmingGate({ profile: config.profile, repoRoot, rawConfig: raw, runtimeDigest: runtime.digest, policyDigest: policy.digest, canonicalTradingOrigin: CANONICAL_PAPER_TRADING_ORIGIN });
+      if (!arming.armed) {
+        const detail = `${ARMING_CERTIFICATE_INVALID}: ${arming.reasons.join("; ")}`;
+        await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "journal_append", entry: haltDraft({ atIso: epochMsToUtcIso(clock()), epoch }, "CONFIG_INVALID", detail) } });
+        await shutdownRuntimeResources(child, paths, options.instanceId);
+        return { ok: false, stage: "arming", reason: detail, startup };
+      }
 
       const oauthToken = env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "";
       if (oauthToken.length === 0) {
@@ -340,7 +397,8 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   });
       const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: path.join(paths.root, "pings.log"), clock, timeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 10_000) });
 
-      const lifecycle = (overrides: CycleOverrides): LifecycleDeps => ({
+      const lifecycle = (overrides: CycleOverrides, cycleDeadlineMs: number): LifecycleDeps => buildLifecycleDeps({
+    profile: config.profile,
     flattenDate: overrides.flattenDate ?? config.flattenDate,
     nextTradingDay: next,
     residueMaxSessions: config.residueMaxSessions,
@@ -350,6 +408,9 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     initialCapitalCents: config.execution.initialCapitalCents,
     // The validated bundle carries ISO instants; the S-CYC-12 core takes epoch milliseconds.
     qualification: { checkpointMs: Date.parse(config.qualification.checkpointIso), windowEndMs: Date.parse(config.qualification.windowEndIso), maxLossCents: config.qualification.maxLossCents },
+    // S-CYC-09: the competition bootstrap's fully paginated bundle comes from the real adapter, bounded by this cycle's deadline.
+    provenanceSource: broker,
+    cycleDeadlineMs,
   });
 
       return {
@@ -379,7 +440,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
           profile: config.profile,
           decisionConfig: config.decision,
           executionConfig: config.execution,
-          lifecycle: lifecycle(overrides),
+          lifecycle: lifecycle(overrides, cycleDeadlineMs),
           ping,
           deferPingDelivery: true,
           });
