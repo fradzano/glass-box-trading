@@ -1672,3 +1672,18 @@ small, no ADR split).
   unreachable under the one-lot rule); C5 the pre-freeze port extraction is
   code motion inside the digest window, behaviour-preserving on reading and
   by the full suite.
+- **2026-09-02 — R31 mini-gate on the provenance seam at `fb2772c`: GO,
+  A=0, B=1, C=2.** Twenty-four independent probe cases (recorded fixtures,
+  funding boundaries at the cent, uncountable classes, malformed amounts,
+  three-page pagination, repeating and unpageable cursors with the 200-page
+  bound, the empty ledger beside every imperfect clause, the dev profile's
+  zero reads) all behaved as S-CYC-09 specifies; five of six mutants caught.
+  B1: the suite measured "negative JNLC latches" and "sum must equal the
+  capital" only separately, so a mutant classifying a cash-out as funding
+  survived when the journals still netted to the capital — closed by one
+  conjunction test. C2: the latch on a creation instant before
+  `COMPETITION_START` was not licensed by the spec sentence — SPEC now says
+  it is (an unfixable ineligibility fact). C1 declared: the MCP verifier test
+  "bounds a stalled child connect before inventory can be released" is
+  timing-sensitive and failed once in about seven full-suite runs in the
+  reviewer's scratch copy; not seen in this session's six verify runs.

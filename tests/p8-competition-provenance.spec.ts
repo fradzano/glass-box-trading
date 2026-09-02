@@ -393,6 +393,10 @@ describe("P8 / S-CYC-09 — the pure opening-ledger classification", () => {
     // An executed NEGATIVE cash journal is money that left the account: prior use, irreversible latch.
     const out = virginBundle(ledger([openingFundingJournal(), openingFundingJournal({ id: "j-out", net_amount: "-500" })]));
     expect(validateCompetitionProvenance(out, EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: true });
+    // R31 gate: the two rules must hold as a conjunction. Money that left the account latches even when the
+    // remaining journals still sum to exactly INITIAL_CAPITAL — a cash-out is never "funding".
+    const nettingBack = virginBundle(ledger([openingFundingJournal({ id: "j-in", net_amount: "150000" }), openingFundingJournal({ id: "j-out-2", net_amount: "-50000" })]));
+    expect(validateCompetitionProvenance(nettingBack, EXPECTATIONS)).toMatchObject({ ok: false, reuseEvidence: true });
   });
 
   it("an EMPTY complete ledger at exactly INITIAL_CAPITAL is virgin evidence: the balance funds the proof", () => {

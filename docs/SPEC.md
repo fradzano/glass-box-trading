@@ -375,7 +375,11 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   amount (cash that left the account), is reset/reuse evidence and latches
   `PROVENANCE_BROKEN`; so does a countable funding sum that differs from
   `INITIAL_CAPITAL` (a second funding is a reset, a different opening
-  balance is not the prescribed account); a `JNLC` that merely fails to count (cancelled,
+  balance is not the prescribed account), and so does a creation instant
+  before `COMPETITION_START` (not spend evidence, but an unfixable fact of
+  ineligibility, so the irreversible latch costs nothing and forces the
+  human); a cash-out latches even when the remaining journals still sum to
+  the initial capital; a `JNLC` that merely fails to count (cancelled,
   non-USD, zero, amount absent) or an incomplete page blocks the bootstrap
   retryably without the latch — reuse evidence must be positive evidence
   that the account was spent. A complete but EMPTY ledger is virgin
