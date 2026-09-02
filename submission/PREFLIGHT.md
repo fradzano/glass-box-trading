@@ -4,7 +4,7 @@ This checklist is run from a clean browser (no session, no login, no
 extensions that could mask a failure) against the actual submission form and
 the frozen presentation-cutoff dataset (the pinned presentation route's
 `revisions/{{JOURNAL_REVISION}}/presentation/projection.json`, produced by the
-dashboard publish pipeline at {{PRESENTATION_CUTOFF_AT}}). Every cross-artifact
+dashboard publish pipeline at {{PRESENTATION_CUTOFF_AT}}; on the host the route directory is spelled `{{JOURNAL_REVISION_SAFE}}`, i.e. `sha256-<hex>`, see README "Publish the judge-facing dashboard"). Every cross-artifact
 number comparison below is only valid between artifacts labelled with the
 *same* cutoff; an unlabeled or cross-cutoff comparison is rejected outright,
 never averaged or rounded into agreement. Results are left blank here and
@@ -29,4 +29,9 @@ and a rerun before Sep 4 12:00 per `docs/SUBMISSION-SPEC.md` §4/§6.
 | Journal revision on dashboard matches the revision cited in every uploaded artifact | Dashboard + one-pager + slides | Read revision string on each surface, compare against `{{JOURNAL_REVISION}}` | | |
 | Cross-artifact number equality at equal cutoffs (P&L, equity, sleeve attribution) | One-pager, slides, dashboard pinned route | Pull the same field from each surface, confirm they cite the same cutoff before comparing values | | |
 | Unlabeled or cross-cutoff number comparison is rejected, not reconciled | All numeric surfaces | Spot-check that no surface presents a number without a cutoff label | | |
+| Demo host: Deployment Protection is off, no login, no redirect on the stable alias | Vercel project settings + dashboard | Open `{{DEMO_URL}}` in a clean browser; `tools\probe-dashboard.ps1` reports no redirect and HTTP 200 on every route | | |
+| Anonymous probe passes against the stable alias with the manifest of the deployed render (SUB-11 receipt) | Dashboard | `tools\probe-dashboard.ps1 -BaseUrl {{DEMO_URL}} -Manifest <out>\publish-manifest.json` exits 0; keep `probe-<utc>.json` with the evidence | | |
+| R37 C-3: the history pin resolves from the nested immutable route, not only from the site root | Dashboard | Open `revisions/{{JOURNAL_REVISION_SAFE}}/latest/` directly, click the pin under "History"; it must open the presentation route (root-absolute href, no `revisions/revisions/` in the address bar) | | |
+| R37 C-3: the served route name is the host-safe spelling, the renderer's percent-encoded spelling is not served | Dashboard | `revisions/{{JOURNAL_REVISION_SAFE}}/presentation/` answers 200; `revisions/sha256%3A…/presentation/index.html` does not answer 200 (the deploy tree carries only the safe spelling) | | |
+| Pinned presentation route is byte-stable across later publishes | Dashboard + `<out>\site` | After a later re-render, the pinned page's `glass-box-rendered-at` is unchanged while `index.html` advances | | |
 | Kickoff-form delta check: added, changed, stricter, or contradictory requirements recorded | Actual submission form vs. `docs/SUBMISSION-SPEC.md` / `docs/HACKATHON-FACTS.md` | Diff the live form's fields/limits against this register; log any delta the same day | | |

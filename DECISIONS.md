@@ -2136,3 +2136,49 @@ small, no ADR split).
   one-lot fix (`c7c7174`); both are applied after the competition, with
   certificate run four, since a rebuild tonight would void the certificate
   under an open position.
+- **2026-09-02 — Digest-neutral publication path for the judge-facing
+  dashboard over the live competition journal (SUB-02, SUB-09, SUB-11; R35
+  C4, R37 C-3).** The frozen build (freeze two, `f464a66`) has no production
+  caller for `runPublish` and no git or Vercel port, and every byte under
+  `src/`, `dist/`, `config/`, `assets/` and `tools/*.mjs|*.py` is bound by
+  the running certificate, so the gap had to be closed from outside the
+  digest while the agent operates. Landed on the branch, all outside
+  `enumerateRuntimeFiles` (measured: the digest lists 138 files, none under
+  `submission/`, `tools/*.ps1` or `tests/`): `submission/publish/render-site.mjs`
+  loads the BUILT modules under `dist/` (never `src/`), reads a COPY of the
+  journal (a journal beside a live `STATE_DIR` marker is refused), takes the
+  projection expectations from `config/policy.json` and the submitted
+  account id from the caller, and renders the page set through the frozen
+  `sitePagesFor` + `buildSiteAtomically`; `tools/publish-dashboard.ps1` is
+  the owner wrapper (never builds, never reads `.env`, refuses an output
+  directory inside the checkout); `tools/probe-dashboard.ps1` is the SUB-11
+  anonymous probe by hand — the `verifyProbe` meta contract of
+  `src/core/publish.ts` re-stated in PowerShell over the manifest the render
+  writes, with a receipt file beside it; deployment and promotion stay
+  manual (`vercel deploy --prod --skip-domain`, probe, `vercel promote`,
+  probe again; README "Publish the judge-facing dashboard"). **R37 C-3
+  ruling:** the renderer's history pin is site-root-relative (wrong from a
+  nested route) and its route directory is percent-encoded
+  (`sha256%3A<hex>`, a literal `%` on disk because `:` is not a legal
+  Windows file name), and whether a host decodes request paths before
+  matching files could not be settled from the Vercel documentation. Rather
+  than depend on host semantics (a `vercel.json` rewrite would mask a
+  broken href and remain unverifiable locally), the render writes two
+  trees: `site/` is the renderer's output byte-for-byte with the
+  immutable-route carry-forward intact, and `deploy/` is derived from it on
+  every run — each segment under `revisions/` percent-decoded and re-spelled
+  in `[A-Za-z0-9._-]` (`sha256-<hex>`), the pin `href` on every page
+  rewritten to the root-absolute form of that route, everything else
+  identical (`tests/publish-dashboard.spec.ts` pins the equality, the
+  byte-stability of a pinned route across re-renders, the meta contract per
+  route, and the refusals). The probe checks the nested route's pin and
+  that the percent-encoded spelling is NOT served; exercised against a
+  decoding static host on the competition journal copy (29 checks PASS on
+  `deploy/`, the expected FAILs on the raw `site/`). Declared: the
+  published page differs from the renderer's page in that one `href`; the
+  route name a video or one-pager cites is the safe spelling; no journal
+  branch is pushed by this path (the page's revision is the journal copy's
+  content hash, the value the fake git port would have produced); the
+  Vercel project, Deployment Protection off, and every promotion are owner
+  steps. `eslint.config.mjs` (outside the digest) ignores `**/*.d.mts` so the
+  hand-written type surface of the JavaScript module can sit beside it.
