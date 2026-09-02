@@ -132,6 +132,17 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     expect(readPageMeta(read(path.join(out, "deploy"), "index.html"))["glass-box-rendered-at"]).toBe("2026-09-03T22:00:00.000Z");
   });
 
+  it("carries the Vercel project link (.vercel/) in the deploy directory forward through a re-render", async () => {
+    const out = scratchDir();
+    const journal = journalCopy();
+    await renderSite(goldenOptions(journal, out));
+    mkdirSync(path.join(out, "deploy", ".vercel"), { recursive: true });
+    writeFileSync(path.join(out, "deploy", ".vercel", "project.json"), '{"projectId":"prj_test","orgId":"team_test"}', "utf8");
+    await renderSite(goldenOptions(journal, out, NOW_MS + 60_000));
+    expect(read(path.join(out, "deploy"), ".vercel/project.json")).toBe('{"projectId":"prj_test","orgId":"team_test"}');
+    expect(existsSync(path.join(out, "site", ".vercel"))).toBe(false);
+  });
+
   it("tolerates a copy taken mid-append (partial last line) without changing the revision", async () => {
     const journal = journalCopy();
     const complete = await renderSite(goldenOptions(journal, scratchDir()));

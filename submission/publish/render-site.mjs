@@ -92,7 +92,8 @@ function listFiles(root, directory = root, out = []) {
  * Derives the deploy tree from the site tree: safe route names, rewritten
  * pin hrefs on `.html` files, every other file copied byte-for-byte, plus a
  * `vercel.json` that pins the static framework and trailing-slash routes.
- * Written aside and swapped in, like the site build itself.
+ * Written aside and swapped in, like the site build itself; an existing
+ * `.vercel/` project link in the deploy directory is carried forward.
  */
 export function deriveDeployTree(siteDir, deployDir, nonce) {
   const staging = `${deployDir}.staging-${nonce}`;
@@ -101,6 +102,11 @@ export function deriveDeployTree(siteDir, deployDir, nonce) {
   mkdirSync(staging, { recursive: true });
   const written = [];
   try {
+    // The Vercel project link (`vercel link` writes `.vercel/project.json` into
+    // the deploy directory; the CLI never uploads that folder) survives a
+    // re-render, so later snapshots deploy to the same project without relinking.
+    const previousLink = path.join(deployDir, ".vercel");
+    if (existsSync(previousLink)) cpSync(previousLink, path.join(staging, ".vercel"), { recursive: true });
     for (const relative of listFiles(siteDir)) {
       const safeRelative = hostSafeRelativePath(relative);
       const target = path.join(staging, ...safeRelative.split("/"));
