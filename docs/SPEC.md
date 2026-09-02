@@ -725,6 +725,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   structure is already broken and each step strictly reduces risk. Bounded
   residue closes via the capped ladder (S-X-05); unbounded residue (short
   stock, orphan short leg) via the discriminated recovery policy S-X-06.
+  The residue set the resolution acts on is re-derived from the book read
+  in the management step, not from the phase-1 classification that the
+  journaled RECONCILIATION reports: a residue that vanished meanwhile is not
+  attempted at all, and one whose quantity changed is closed at its current
+  quantity.
   (A11)
 - **S-G10-04** Intent without outcome: broker queried by client order ID;
   found terminal → outcome journaled now; found still working → identity
@@ -1155,7 +1160,18 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   width − credit; the guarantee is about the net). Non-intact subjects (orphan legs, share residue) do not use this
   cap — they follow the discriminated recovery policy of S-X-06. Every
   re-price is journaled. The ladder never crosses into opening exposure
-  and never legs out of an intact structure (A11).
+  and never legs out of an intact structure (A11): the eviction targets,
+  the flatten closure, the residue targets, and the eligibility check
+  before every submission are all derived from a broker read taken inside
+  the management step itself, never from the phase-1 snapshot the analyst
+  step is older than. A step that plans an attempt and then refuses it
+  records that refusal in the cycle report, so planning from a stale book
+  is measurable instead of being silently absorbed by the eligibility gate.
+  After a ladder cancel, the next generation's quantity is the exposure of
+  that same fresh read, bounded above by the unfilled part of the canceled
+  attempt: a fill the fresh read already excludes is never subtracted from
+  it a second time, and a fill that landed after that read can never be
+  over-closed.
 - **S-X-06** Discriminated recovery policy for unbounded residues (owner
   ruling GV-6, 2026-08-25): a subject that is already outside defined-risk
   construction — an orphan SHORT option leg, or short stock from
