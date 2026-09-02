@@ -969,7 +969,21 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   composes the real account-bound broker, the ping port and a close-oriented
   market window from the validated configuration; any configuration or
   credential problem degrades to fence-only behaviour that still halts and
-  still fail-pings.
+  still fail-pings. Authority is the fence, not the observation: when the
+  epoch acquisition returns anything but `WON` or `GAP_HALT` — a live holder
+  that still heartbeats (`SUPPRESSED`), a rival taker that won the race
+  (`LOST`), or a refusing store (`REFUSED`) — the run may not halt, journal,
+  close or mutate, and therefore does the one thing still open to it: it
+  fail-pings on a closed alarm condition naming the age of the silence
+  (`WATCHDOG_NO_AUTHORITY:staleness <n> ms`) and the reason the fence was
+  denied (`WRITER_HUNG_LOCK_HELD:<holderId>`,
+  `WATCHDOG_AUTHORITY_LOST:<epoch>`, `WATCHDOG_AUTHORITY_REFUSED:<reason>`).
+  A journal stale beyond `DEAD_MAN_BOUND` during a session while someone
+  else holds authority is the developer-must-look state, never a quiet one.
+  A takeover whose HALT append does not land reports `halted: false` with
+  `HALT_NOT_JOURNALED` on its fail ping; the next firing, staleness
+  unchanged, takes over again and lands the halt once the journal is
+  writable, so the residual window is one watchdog interval.
   Witness appends (the S-G12-07 class — `SUPPRESSED`, `FENCED_OUT`) never
   reset this staleness clock.
 - **S-G14-03** External detection (decision C): the agent sends a success

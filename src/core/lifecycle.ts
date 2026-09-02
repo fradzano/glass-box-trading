@@ -766,6 +766,41 @@ export function planPing(input: { readonly durableAppendLanded: boolean; readonl
   return { kind: "none", detail: "no durable authoritative append landed and no alarm condition exists" };
 }
 
+/**
+ * The ways an epoch acquisition can end without authority, mirrored from the
+ * gateway's `AcquisitionResult` (the core cannot import the shell). Only these
+ * three reach the watchdog's refusal branch: `WON` and `GAP_HALT` are the
+ * authoritative outcomes.
+ */
+export type AuthorityRefusal =
+  | { readonly kind: "SUPPRESSED"; readonly holderId: string }
+  | { readonly kind: "LOST"; readonly observedEpoch: number | null }
+  | { readonly kind: "REFUSED"; readonly reason: string };
+
+/**
+ * S-G14-02/03: in-session staleness beyond `DEAD_MAN_BOUND` that could NOT be
+ * fenced. Observing staleness is not authority, and authority comes only from
+ * the atomic epoch increment — so this run may not halt, may not journal and
+ * may not touch the book. What remains is the alarm, and it is the only active
+ * one this state has: a live holder whose heartbeat is fresh while its journal
+ * stopped growing is exactly the hung writer the dead man exists for, and
+ * leaving it to the passive missed-ping SLA is what S-G14-03 refuses. The
+ * conditions are closed (never empty), so `planPing` can only turn them into a
+ * fail-ping, and they name both the age of the silence and who or what denied
+ * the fence.
+ */
+export function authorityRefusalAlarms(refusal: AuthorityRefusal, ageMs: number): readonly string[] {
+  const staleness = `WATCHDOG_NO_AUTHORITY:staleness ${String(ageMs)} ms`;
+  switch (refusal.kind) {
+    case "SUPPRESSED":
+      return [staleness, `WRITER_HUNG_LOCK_HELD:${refusal.holderId}`];
+    case "LOST":
+      return [staleness, `WATCHDOG_AUTHORITY_LOST:${refusal.observedEpoch === null ? "unknown" : String(refusal.observedEpoch)}`];
+    case "REFUSED":
+      return [staleness, `WATCHDOG_AUTHORITY_REFUSED:${refusal.reason}`];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Journal drafts the shell appends verbatim
 // ---------------------------------------------------------------------------

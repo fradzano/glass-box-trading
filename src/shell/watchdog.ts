@@ -24,6 +24,7 @@ import { journalStaleness } from "../core/journal.js";
 import type { AccountBinding, JournalDraft } from "../core/journal.js";
 import {
   assessStaleness,
+  authorityRefusalAlarms,
   classifyBook,
   closeCapFor,
   deploymentTerminal,
@@ -33,7 +34,7 @@ import {
   planPing,
   residueClosingLeg,
 } from "../core/lifecycle.js";
-import type { BookClassification, CloseCap, SessionWindow, StalenessAssessment } from "../core/lifecycle.js";
+import type { BookClassification, CloseCap, PingPlan, SessionWindow, StalenessAssessment } from "../core/lifecycle.js";
 import { closeAttemptId, closeLifecycleId, planCloseLifecycle } from "../core/order-identity.js";
 import type { PingPort } from "./cycle-runner.js";
 import type { BrokerReadPort } from "./fake-broker.js";
@@ -94,10 +95,31 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   const assessment = assessStaleness(deps.clock(), deps.session, lastMs, deps.deadManBoundMs, deploymentTerminal(opened.entries));
   if (assessment.kind === "quiet") return quiet(assessment);
 
+  /** Best-effort delivery of a planned ping; the report carries the plan either way. */
+  async function deliver(plan: PingPlan): Promise<"success" | "fail" | "none" | null> {
+    if (deps.ping === null) return null;
+    try {
+      if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
+      if (plan.kind === "success") await deps.ping.success();
+    } catch {
+      // A ping that could not be delivered is not a reason to abandon the report.
+    }
+    return plan.kind;
+  }
+
   // Fence FIRST (S-G14-02): authority comes only from the atomic epoch increment, never from observing staleness.
   const acquired = await gateway.acquireAuthority({ account: "unknown" });
   if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") {
-    return { assessment, acquired: acquired.kind, epoch: null, halted: false, classification: null, closes: [], alarmConditions: [], ping: null };
+    // The journal is stale past DEAD_MAN_BOUND inside a session and this run
+    // could not fence: a live holder still heartbeats (a hung writer holding
+    // the lock), a rival taker won the race, or the store refused. Without an
+    // epoch nothing may be halted, journaled or closed — so the fail-ping is
+    // the only thing left, and it must fire: "stale AND unfenceable" is the
+    // developer-must-look state of S-G14-02/03, not a quiet one, and silence
+    // here would leave only the passive missed-ping SLA.
+    const alarmConditions = authorityRefusalAlarms(acquired, assessment.ageMs);
+    const ping = await deliver(planPing({ durableAppendLanded: false, alarmConditions }));
+    return { assessment, acquired: acquired.kind, epoch: null, halted: false, classification: null, closes: [], alarmConditions, ping };
   }
   const epoch = acquired.epoch;
   const alarmConditions: string[] = [`WATCHDOG_TAKEOVER:staleness ${String(assessment.ageMs)} ms`];
@@ -205,14 +227,6 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     }
   }
 
-  const plan = planPing({ durableAppendLanded: appended.durable, alarmConditions });
-  if (deps.ping !== null) {
-    try {
-      if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
-      if (plan.kind === "success") await deps.ping.success();
-    } catch {
-      // Best-effort delivery; the report carries the plan either way.
-    }
-  }
-  return { assessment, acquired: acquired.kind, epoch, halted, classification, closes, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+  const ping = await deliver(planPing({ durableAppendLanded: appended.durable, alarmConditions }));
+  return { assessment, acquired: acquired.kind, epoch, halted, classification, closes, alarmConditions, ping };
 }
