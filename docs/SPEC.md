@@ -291,7 +291,24 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   Quote-, calendar-, and chain-facts are not re-fetched here; their
   currency is bounded by S-CORE-02's staleness bound, which still applies
   at submit time. A narrower reading (only the target position) is
-  non-conforming. (A13, #8)
+  non-conforming.
+  **Linearization point (owner ruling 2026-09-02):** the completion of the
+  final fresh broker read in this revalidation is the instant at which the
+  action is deemed checked against broker truth. The broker offers no
+  conditional submit (no book revision, no if-match on orders; only client
+  order ID idempotency), so a book change that occurs after that read and
+  before broker acceptance of the submit is not observable by any claim
+  and does not void the action. Manual broker mutations (Alpaca UI or API)
+  are therefore prohibited during the supervised certificate run and
+  during competition operation, except while a durable `HALT` is in force
+  and no writer holds authority. A violation is never silent: the next
+  cycle's phase 0 classifies the foreign quantity as `RESIDUE` or
+  `HUMAN_ACTION` (S-G10-02) and halts, and on the competition account it
+  breaks the SUB-08 provenance latch irreversibly. The agent's own
+  position stays defined-risk regardless; only the aggregate caps (G3/G4)
+  can be exceeded for one cycle, by the human's quantity, never the
+  agent's. Should the broker ever offer an atomic conditional submit, this
+  declaration becomes an implementation obligation. (A13, #8)
 - **S-CYC-06** Local journal append fails (disk full, lock), then no entry
   order or ordinary close is submitted this cycle. Sole emergency exception:
   if mutation authority remains valid and the action is mechanically proven to

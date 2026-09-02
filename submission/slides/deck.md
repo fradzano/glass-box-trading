@@ -104,10 +104,20 @@ figure here may be typed by hand or diverge from theirs.
 
 - Named failure-path tests exercise reconciliation, kill-switch, watchdog,
   and expiry lifecycle — public alongside the source
-- One week of paper P&L cannot prove a strategy has edge
 - Paper trading only, on a dedicated competition account — never a live
   brokerage account
-- No alpha or risk-adjusted-performance claim is made anywhere in this deck
+- One week of paper P&L cannot prove a strategy has edge; no alpha or
+  risk-adjusted-performance claim is made anywhere in this deck
+
+**Known broker-API limitation: the last-read-to-submit window**
+- Alpaca has no conditional submit — no book revision, no if-match — so the
+  gap between the pre-submit broker re-fetch and broker acceptance can't be
+  closed with today's API
+- That re-fetch's completion is the declared linearization point; manual
+  account mutation is prohibited outside a durable halt
+- Undetected only until the next cycle: phase 0 then classifies it
+  `HUMAN_ACTION`, halts, and irreversibly breaks the provenance latch
+- Ask: an atomic conditional submit from Alpaca would close this window
 
 ---
 

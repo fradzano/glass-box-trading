@@ -64,10 +64,14 @@ at the deadline cutoff.
 
 ## Limitations
 
-One week of paper trading cannot prove a strategy has edge; the result is
-reported honestly as a bounded-risk exercise, not as evidence of alpha. All
-trading is paper (Alpaca sandbox/competition account), never a live
-brokerage account. The two-sleeve allocation is a declared design choice, not
-a backtested optimum. Absence of qualifying trade activity, if it occurs, is
-disclosed as an internal winning-path failure rather than hidden or
-reframed as external ineligibility.
+One week of paper trading cannot prove edge; no result here is evidence of
+alpha. All trading is paper (Alpaca sandbox/competition), never live. The
+two-sleeve split is a declared design choice, not backtested. Absent
+qualifying trade activity is disclosed as an internal winning-path
+failure, not external ineligibility.
+
+**Known limitation.** Alpaca's API has no conditional submit, so the gap
+between the pre-submit broker re-fetch and broker acceptance cannot be
+closed; that re-fetch's completion is the declared linearization point,
+and a manual account change inside the gap is caught next cycle as
+`HUMAN_ACTION`, which halts and irreversibly breaks the provenance latch.

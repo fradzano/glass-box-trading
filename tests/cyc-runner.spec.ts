@@ -27,6 +27,9 @@ import type { StatePaths } from "../src/shell/state-dir.js";
 import { LONG_CALL, SHORT_CALL, TEST_ONLY_EXECUTION_CONFIG, creditVertical } from "./execution-fixtures.js";
 import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN, journalSnapshot } from "./journal-fixtures.js";
+// The P5 harness (real lifecycle deps, so phase 0's HUMAN_ACTION classification actually runs — the
+// plain harness() above passes `lifecycle: null`, which turns that phase off entirely).
+import { cleanupLifecycleDirs, lifecycleHarness } from "./lifecycle-fixtures.js";
 
 const temporaryDirectories: string[] = [];
 const journalsToUnlock: string[] = [];
@@ -403,6 +406,56 @@ describe("S-CYC-05 revalidation against fresh broker truth immediately before su
     expect(report.actions[0]).toMatchObject({ result: "VOIDED", detail: expect.stringContaining("ACCOUNT_BOUND") });
     expect(run.fake.mutations).toHaveLength(0);
   });
+});
+
+describe("S-CYC-05 / linearization point", () => {
+  afterEach(() => { cleanupLifecycleDirs(); });
+
+  // A wholly foreign contract (no journaled structure, no journaled underlying): classifyBook can only
+  // read it as HUMAN_ACTION, never RESIDUE (src/core/lifecycle.ts, the discrimination rule at S-G10-02/03).
+  const FOREIGN_CONTRACT = "TSLA270115C00300000";
+
+  it("S-CYC-05 / linearization point a foreign position appearing between the fresh revalidation read and broker acceptance does not void the submit, and the submitted structure is still defined-risk", async () => {
+    const run = await lifecycleHarness();
+    // The owner ruling (2026-09-02) fixes the linearization point at the completion of the revalidation's
+    // final fresh broker read (fetchBook() at cycle-runner.ts phase 4, immediately before buildClaimset's
+    // fingerprint is compared against it). setSubmitBehaviour's callback only runs inside the fake broker's
+    // port.mutate() -> submit(), which the runner reaches strictly AFTER that fresh read has already been
+    // fetched and the claimset re-checked (S-CYC-05 revalidateClaimset). So mutating positions here mimics a
+    // human broker-UI trade landing exactly in the gap between "checked against broker truth" and "broker
+    // accepted the submit" — the gap the ruling declares unobservable to any claim.
+    run.fake.setSubmitBehaviour(() => {
+      run.fake.setPositions([{ contractId: FOREIGN_CONTRACT, quantity: 2, avgEntryPriceCents: 500 }]);
+      return { kind: "fill" };
+    });
+    const report = await run.cycle();
+    // Submitted, not voided: no REVALIDATION_VOID/RECONCILIATION entry appears in this cycle at all.
+    expect(report.actions).toMatchObject([{ result: "SUBMITTED", status: "filled" }]);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
+    const intent = entriesOf(run.paths)[2]!;
+    // Defined-risk as usual: same credit vertical, same submitted limit and reserved max loss as the ordinary
+    // happy path (S-X-01) — the foreign trade landing after the fresh read changes nothing about this plan.
+    expect(intent).toMatchObject({ action: "entry", submittedLimit: { kind: "credit", priceCents: 198 }, reservedMaxLossCents: 30_200 });
+    expect(entriesOf(run.paths)[3]).toMatchObject({ type: "OUTCOME", status: "filled" });
+    const submitsAfterFirstCycle = run.fake.mutations.filter(mutation => mutation.kind === "submit_order").length;
+    expect(submitsAfterFirstCycle).toBe(1);
+
+    // The following cycle's phase 0 (S-G10-02/S-G10-05) now sees the foreign quantity sitting in the book: it
+    // was never observable to the revalidation that already ran, so it is classified fresh, here, first.
+    const next = await run.cycle();
+    expect(next.classification?.positions.find(item => item.contractId === FOREIGN_CONTRACT)).toMatchObject({ class: "HUMAN_ACTION" });
+    expect(run.entries().some(entry => entry.type === "HUMAN_ACTION" && String(entry["description"]).includes(FOREIGN_CONTRACT))).toBe(true);
+    expect(run.entries().some(entry => entry.type === "HALT" && entry["reason"] === "RESIDUE_UNRESOLVED")).toBe(true);
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "RESIDUE_UNRESOLVED", sticky: false });
+    // Not silent (per the ruling): the violation is journaled, and it halts. Zero new entries this cycle.
+    expect(next.actions).toEqual([]);
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(submitsAfterFirstCycle);
+  });
+
+  // Companion case (already covered above, not duplicated here): "S-CYC-05 / BEQ-3" proves the mirror image —
+  // the same foreign position appearing BEFORE the fresh read (during the analyst step) fails POSITIONS_UNCHANGED
+  // and yields REVALIDATION_VOID with zero broker mutations. The owner ruling's linearization point is exactly
+  // the boundary between that case and this one.
 });
 
 describe("S-G13-01 kill management under the valid fence", () => {

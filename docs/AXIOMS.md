@@ -132,7 +132,12 @@ this file.
   Between core approval and submission, the executor
   revalidates that the decision's preconditions still hold against fresh
   broker state — a concurrent change (a manual human action, an order filled
-  meanwhile) voids the action, journaled as such. The agent writes only the
+  meanwhile) voids the action, journaled as such. The completion of that
+  fresh read is the declared linearization point: a change landing between
+  it and broker acceptance is unobservable without a broker-side conditional
+  submit, so manual mutations are prohibited while the agent operates, and a
+  violation surfaces as a halt in the next cycle's phase 0 rather than
+  passing silently. The agent writes only the
   dedicated journal branch; humans never do — submission work and agent pushes
   cannot collide. (#8 #23 #40 #44)
 
