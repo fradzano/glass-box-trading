@@ -2116,3 +2116,23 @@ small, no ADR split).
   dev journal under a `MANUAL` halt with the account flat; it stays until
   the next dev certificate run, after the resolver fix, clears it by manual
   un-halt.
+- **2026-09-02 — R40 narrow gate at `9b2e155` (worktree `gbt-fix`): GO
+  (A=0, B=0, C=2); the resolver fix and the one-lot brief are gated and
+  parked.** The reviewer reproduced the live abort at HEAD~1 on the golden
+  journal and on `buildCertificate` (failure text "risk-increasing entry
+  lifecycle(s) lack broker-authoritative terminal truth: close:…:g0"), both
+  green at HEAD; foreign OUTCOMEs stay refused, a close INTENT without an
+  OUTCOME never enters the entry states, an id shared by an entry and a
+  close INTENT fails closed; three named mutants caught, the
+  reconciliation-item skip is unreachable defensive code (C-1); the fold
+  functions are byte-identical; the five driver call sites read the full
+  journal and now terminate, the cycle runner, watchdog and deadline
+  runtimes do not import the resolver; `npm run verify` twice 42/555. C-2
+  worth remembering for certificate run four: `buildCertificate` slices the
+  journal to the window, so a close INTENT before the window with its
+  OUTCOME inside still FAILs (fail-closed) — disable the scheduled dev
+  tasks for the duration of a certificate run. Status: `9b2e155` sits in
+  the worktree on top of `8aec1fc`; the branch head carries only the
+  one-lot fix (`c7c7174`); both are applied after the competition, with
+  certificate run four, since a rebuild tonight would void the certificate
+  under an open position.
