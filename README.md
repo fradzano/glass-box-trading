@@ -56,3 +56,19 @@ python tools/check_implementation_phases.py
 ```
 
 Production behavior is defined only by [`docs/SPEC.md`](docs/SPEC.md). Test-only values for thresholds still owned by O5 are conspicuously named `TEST_ONLY_*`; they are not production defaults.
+
+## Competition operation (P8)
+
+The owner runbook from a passed P7 certificate to unattended competition operation ([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) P8/P9). Every step is manual and sequential; none of it is automated by this repository.
+
+1. **Freeze policy.** Rule on the final O5 values in `config/policy.json`; no further edits to that file once the certificate run below starts.
+2. **Verify.** `npm.cmd ci --ignore-scripts && npm.cmd run verify` exits 0 on a clean commit.
+3. **Tag the baseline.** `git tag pre-kickoff-baseline` on that clean commit.
+4. **Run the certificate during market hours.** `npm run certificate` (see "P7 supervised paper certificate" above); require a `PASS` verdict in `evidence/pre-arm/` and a stably flat dev account before moving on.
+5. **Create the competition account.** A new Alpaca paper account, created at or after kickoff (P8 acceptance requires provable $100k / zero positions / zero orders / empty history before its first mutation).
+6. **Bind identity and a fresh deployment.** In `.env`: `ALPACA_COMP_KEY_ID`, `ALPACA_COMP_SECRET_KEY`, `ALPACA_COMP_ACCOUNT_ID`; a new absolute, **empty** `STATE_DIR` distinct from the dev journal (a reused dev `STATE_DIR` yields `GAP` + halt, never a bootstrap, S-CYC-09); a fresh `BOOTSTRAP_DIAGNOSTIC_SINK`. Keep `ANALYST_MODEL` byte-identical to the value used for the certificate run in step 4 — it is policy-classified and enters the S-ARM-01 policy digest (`src/core/certificate.ts`), so a mismatch refuses to arm.
+7. **Set the certificate.** `PRE_ARM_CERTIFICATE` points at the `PASS` file from step 4.
+8. **Switch the profile.** `ALPACA_PROFILE=competition`.
+9. **Run the first cycle by hand.** `node dist/shell/agent-cli.js` in a terminal, with `ALPACA_PROFILE=competition`, before installing anything scheduled — and read its printed report. This is the virgin-account provenance bootstrap (S-CYC-09): on a fresh, empty `STATE_DIR` nothing can be journaled before the seed `BOOTSTRAP`, so a failed provenance proof (wrong account, non-$100k, non-empty history) leaves no journal entry at all. It is fail-closed and reaches the dead-man ping, but the *reason* is only visible in this terminal report — a declared limit, not a bug.
+10. **Install the scheduled tasks.** `tools\install-scheduled-task.ps1` (preview first with `-WhatIf`); see that script's header for the S4U/Interactive login-type tradeoff and for the watchdog's scope — it fences, halts and flattens the open book, and degrades to fence-and-halt-only (with the reason in `watchdog-run.log`) when the configuration, the credentials or the account binding do not compose.
+11. **Never touch the account manually while the agent operates.** Manual activity during the run breaks the reconciliation the agent depends on (S-CYC-05 in [`docs/SPEC.md`](docs/SPEC.md)) and can set the irreversible `PROVENANCE_BROKEN` latch.

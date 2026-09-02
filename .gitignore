@@ -11,3 +11,8 @@ artifacts/
 
 # Local scratch
 .tmp/
+
+# S-ARM-01 pre-arm certificates (owner decision, DECISIONS.md 2026-09-02:
+# "Certificates stay local" — the certificate carries the dev account ID and
+# broker evidence the public repository does not need).
+evidence/
