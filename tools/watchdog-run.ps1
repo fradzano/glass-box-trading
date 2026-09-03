@@ -154,8 +154,24 @@ $instanceId = "watchdog-$($env:COMPUTERNAME)-$PID"
 Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir"
 
 $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "$closesAtMs", "$deadManBoundMs")
-$output = & $NodePath @arguments 2>&1
-$exitCode = $LASTEXITCODE
+# Windows PowerShell 5.1 wraps every stderr line of a native command in an
+# ErrorRecord when the stream is redirected. Under the script-wide
+# $ErrorActionPreference = 'Stop' the FIRST such line -- and watchdog-cli.js
+# writes its composition log line to stderr before it assesses anything --
+# terminated this script and killed the child, so no scheduled firing ever
+# reached the staleness assessment, the fence, or the recovery. Measured
+# 2026-09-03 on the competition deployment: 54 firings logged "run:", none
+# logged "output:" or "exit:", every task result was 1. The native call
+# therefore runs under 'Continue'; the CLI's exit code, not its stderr, is
+# the verdict, and its stderr lines are logged as output below.
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $output = & $NodePath @arguments 2>&1
+    $exitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
 $output | ForEach-Object { Write-RunLog "output: $_" }
 Write-RunLog "exit: $exitCode"
 exit $exitCode
