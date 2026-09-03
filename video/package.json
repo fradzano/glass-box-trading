@@ -1,0 +1,26 @@
+{
+  "name": "glass-box-trading-video",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SUB-04: the sub-five-minute submission video, rendered with Remotion from the frozen presentation-cutoff dataset. Its own package on purpose: the repository root package.json is S-ARM-01 digest material.",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dataset:check": "node scripts/check-dataset.mjs",
+    "render": "npm run typecheck && node scripts/check-dataset.mjs --frozen && remotion render src/index.ts GlassBoxTrading ../submission/glass-box-trading.mp4 --codec h264",
+    "render:dev": "npm run typecheck && node scripts/check-dataset.mjs && remotion render src/index.ts GlassBoxTrading out/dev-preview.mp4 --codec h264"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.520",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.520"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "typescript": "6.0.3"
+  }
+}

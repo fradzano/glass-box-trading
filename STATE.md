@@ -441,12 +441,21 @@ One phase per session; every session ends with the handoff protocol in
   operating checkout, then the `-DeadlineCutoff` publish per runbook (with
   `--scope`, see runbook). Never `npm run …` variants that rebuild. The
   09-04 expiry is moot: nothing is held.
+- **Video (SUB-04) — Remotion scaffold landed 2026-09-02 22:30 CEST** under
+  `video/` as its own package (root `package.json` is digest material):
+  nine scenes along the SPEC section 5 table, every figure and URL read
+  from `video/public/dataset/{meta,projection}.json`, a dataset gate that
+  refuses placeholders, an unfrozen dataset and missing captures for the
+  deliverable render, a DEV watermark meanwhile. Stills of every scene were
+  rendered and reviewed. Open: after Thursday's close produce the frozen
+  dataset (README in `video/`), record the five captures against the pinned
+  presentation route, `npm run render` to `submission/glass-box-trading.mp4`.
 - **Submission (SUBMISSION-SPEC), Friday 12:00 CEST internal, 17:00
   external:** the route to cite is
   `https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/`;
   still open: one-pager, Remotion video (scaffold on worktree `gbt-publish`,
-  branch `p7/publish-dashboard`, `637d430`/`2fa9ba5` from a parallel session
-  — not yet on this branch), form copy (`submission/COPY.md` draft), account
+  branch `p7/publish-dashboard`, `637d430`/`2fa9ba5` from a parallel session,
+  merged into this branch 2026-09-03 22:30 CEST), form copy (`submission/COPY.md` draft), account
   evidence (creation instant 2026-09-02T09:54:41Z, $100k bootstrap seq 1,
   journal revision), the golden demo link, preflight `submission/PREFLIGHT.md`
   on the host; the Vercel team is still named `glass-box-trading` (rename is

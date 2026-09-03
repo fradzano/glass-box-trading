@@ -66,3 +66,41 @@ single block of the timeline.
   stays reproducible after publication even as later snapshots accrue.
 - Output target: `submission/glass-box-trading.mp4`, under five minutes and
   under 300 MB.
+
+## Scaffold (2026-09-02) — how this package works
+
+`video/` is its own npm package on purpose: the repository root
+`package.json` is S-ARM-01 digest material, so Remotion and React live here,
+installed with `npm install` inside `video/` (the root `eslint .` ignores
+`video/**`; this package type-checks with its own `tsconfig.json`).
+
+- `src/timeline.ts` — the §5 timing table as frame slots (total 299 s).
+- `src/dataset.ts` — the dataset types, the loader (`calculateMetadata`
+  fetches `public/dataset/{meta,projection}.json` once), the validation, and
+  the pure selectors that decide which journal facts the scenes show
+  (featured lifecycle, its cycle, a vetoed candidate).
+- `src/scenes/*.tsx` — one component per scene of the list above; every
+  figure and URL on screen is read from the dataset. Scenes 2–5 and 8 have a
+  capture slot: with `meta.captures.<scene>` naming a file under
+  `public/captures/`, the recording plays; with `null`, a data-driven
+  stand-in renders behind a red "capture pending" border.
+- `scripts/check-dataset.mjs` — the gate before the bundler: no `{{`
+  placeholder, presentation cutoff kind, cutoff and account equal between
+  meta and projection, route URL names the pinned revision, finite result
+  figures; with `--frozen` additionally `meta.frozen === true`, a risk-flat
+  projection and a recording in every capture slot.
+
+Commands (inside `video/`): `npm run studio` (Remotion Studio),
+`npm run dataset:check`, `npm run render:dev` (writes `out/dev-preview.mp4`,
+DEV watermark burned in while `meta.frozen` is false), `npm run render`
+(the deliverable `submission/glass-box-trading.mp4`; refuses an unfrozen
+dataset).
+
+Producing the frozen dataset after the Sep 3 close: publish with
+`-PresentationCutoff` (docs/PUBLISH-RUNBOOK.md), copy the pinned route's
+`projection.json` from `<out>\site\revisions\sha256%3A<hex>\presentation\`
+to `public/dataset/projection.json`, set `presentationCutoffAt`,
+`presentationRouteUrl` (safe spelling `sha256-<hex>`) and `frozen: true` in
+`meta.json`, record the five captures against the pinned route in a clean
+browser (1920×1080, no audio needed), name them in `meta.captures`, then
+`npm run render`.
