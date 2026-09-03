@@ -436,11 +436,34 @@ One phase per session; every session ends with the handoff protocol in
   `WATCHDOG_TAKEOVER` halt (non-sticky) stands; Friday is journaling-only
   either way, a manual un-halt with the stand-down reason is the owner's
   choice (`dist/shell/manual-unhalt.js`).
-- **Friday 2026-09-04 — owner CLI after the US close (22:00 CEST),
-  digest-neutral:** `node dist/shell/deadline-cli.js terminal` from the
-  operating checkout, then the `-DeadlineCutoff` publish per runbook (with
-  `--scope`, see runbook). Never `npm run …` variants that rebuild. The
-  09-04 expiry is moot: nothing is held.
+- **Friday 2026-09-04 — session plan (PM ruling 2026-09-03 22:50 CEST, owner
+  to confirm by starting the sessions):**
+  1. *Submission session, 09:00–12:00 CEST*, PM with at most five agents
+     (ahoy `Desktop/ahoys/2026-09-04-glass-box-trading-submission.md`):
+     freeze the video dataset from the pinned presentation route, record
+     the five captures, render `submission/glass-box-trading.mp4`
+     (`video/README.md`); one-pager PDF; final form copy; account evidence;
+     cover and deck check; preflight `submission/PREFLIGHT.md` executed
+     against the host. Internal cut 12:00, the owner reviews, then submits
+     the lablab form by hand well before 17:00. The spec's nominal Friday
+     17:00 `DEADLINE_RECONCILIATION` slot (S-G11-03) is already covered by
+     seq 77 (written Thursday after the pin, before the submission,
+     referencing the submitted revision); a second entry would only
+     duplicate it and is not planned.
+  2. *Close session, after the US close 22:00 CEST* (ahoy
+     `…-2026-09-04-glass-box-trading-close.md`), digest-neutral:
+     `node dist/shell/deadline-cli.js terminal` from the operating checkout
+     (exit 0 only when the entry landed; the watchdog stands down after
+     TERMINAL by design), then the `-DeadlineCutoff` publish per runbook
+     (with `--scope`), probe, promote, probe; archive the journal in the
+     verification store; DECISIONS/STATE; the owner disables both scheduled
+     tasks from an elevated shell (`Disable-ScheduledTask`, the PM lacks the
+     elevation). Never `npm run …` variants that rebuild. The 09-04 expiry
+     is moot: nothing is held.
+  3. *Release session, weekend* (ahoy `…-2026-09-05-glass-box-trading-release.md`):
+     see "After the competition" below; the certificate run four needs
+     market hours and Monday 2026-09-07 is Labor Day, so the earliest live
+     run is Tuesday 2026-09-08.
 - **Video (SUB-04) — Remotion scaffold landed 2026-09-02 22:30 CEST** under
   `video/` as its own package (root `package.json` is digest material):
   nine scenes along the SPEC section 5 table, every figure and URL read
