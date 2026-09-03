@@ -45,18 +45,24 @@ freeze two only in the analyst brief, which the projection never calls.
 Copy-Item C:\Users\felix\glass-box-state\competition-2\journal.jsonl C:\Users\felix\gbt-publish\journal-copy.jsonl -Force
 C:\Users\felix\source\worktrees\gbt-publish\tools\publish-dashboard.ps1 -RepoRoot C:\Users\felix\source\worktrees\gbt-publish -JournalCopy C:\Users\felix\gbt-publish\journal-copy.jsonl -OutDir C:\Users\felix\gbt-publish\out -AccountId PA376WIK2ATL [-PresentationCutoff <ISO>] [-DeadlineCutoff <ISO>]
 cd C:\Users\felix\gbt-publish\out\deploy
-vercel deploy --prod --skip-domain
+vercel deploy --prod --skip-domain --scope team_XHvR3OjF9qbiuR0Sea514xMX
 C:\Users\felix\source\worktrees\gbt-publish\tools\probe-dashboard.ps1 -BaseUrl <candidate URL> -Manifest C:\Users\felix\gbt-publish\out\publish-manifest.json
-vercel promote <candidate URL>
+vercel promote <candidate URL> --scope team_XHvR3OjF9qbiuR0Sea514xMX
 C:\Users\felix\source\worktrees\gbt-publish\tools\probe-dashboard.ps1 -BaseUrl https://glass-box-trading.vercel.app -Manifest C:\Users\felix\gbt-publish\out\publish-manifest.json
 ```
+
+`--scope` names the team by id (the `orgId` in `.vercel\project.json`). Measured 2026-09-03 from a non-interactive shell: without it `vercel deploy` fails with `"reason": "deploy_failed", "message": "Not authorized"` although `vercel whoami` answers and the folder is linked; with it the same command deploys. In an interactive terminal the CLI may resolve the scope from the link on its own, so the flag is harmless there and necessary here.
 
 1. **Render.** The wrapper prints the journal revision, the last seq, the routes and the discrepancy count. Read `out\deploy\index.html` locally once before uploading anything new.
 2. **Candidate.** `vercel deploy --prod --skip-domain` prints an immutable URL of the form `https://glass-box-trading-<hash>-<team slug>.vercel.app`. The team slug is part of that hostname; the stable alias is not moved yet. (The first deployment of a new project also prints an `Aliased` line — that is Vercel's per-team production URL, not the stable alias.)
 3. **Probe the candidate.** Every line `[PASS]`, final line `PROBE PASSED`. A receipt `probe-<utc>.json` lands beside the manifest. Failure modes: HTTP 404 on every route means the URL was typed with the wrong team slug (the CLI's output is authoritative); a redirect or 401 on every route means Deployment Protection is on again; a 404 only under `/revisions/...` would be a host-semantics change — stop and report, do not promote.
 4. **Promote.** `vercel promote <candidate URL>`; the stable alias now serves that deployment.
 5. **Probe the alias.** Same command against `https://glass-box-trading.vercel.app`; keep this receipt with the submission evidence. If it fails, `vercel rollback` (to the previously accepted deployment) and alarm — SUBMISSION-SPEC §4.
-6. **Cutoffs.** After Thursday's close, once the journal is reconciled and risk-flat, pass `-PresentationCutoff <ISO of the last entry at that cutoff>`; the pinned route `/revisions/sha256-<hex>/presentation/` is then byte-stable across later runs and is the route the video, one-pager and slides cite. After the Friday cut pass `-DeadlineCutoff` as well. The first pinned publish is also the first run of the probe's nested-route pin check on the real host (R37 C-3 remains unmeasured there until then).
+6. **Cutoffs.** After Thursday's close, once the journal is reconciled and risk-flat, pass `-PresentationCutoff <ISO of the last entry at that cutoff>`; the pinned route `/revisions/sha256-<hex>/presentation/` is then byte-stable across later runs and is the route the video, one-pager and slides cite. After the Friday cut pass `-DeadlineCutoff` as well. The first pinned publish was also the first run of the probe's nested-route pin check on the real host: measured 2026-09-03 (see below), R37 C-3 is closed there.
+
+## Second snapshot — the presentation pin (2026-09-03, 22:00–22:04 CEST)
+
+Run by the PM session from a non-interactive shell after the Thursday session closed flat. Journal copy at seq 76 (the 22:00 cycle), `-PresentationCutoff 2026-09-03T20:00:14.787Z`. Render: revision `sha256:7b82959a344a7c7e`, routes `/`, `/revisions/sha256-7b82959a344a7c7e/latest/`, `/revisions/sha256-7b82959a344a7c7e/presentation/`; the previous revision's route `/revisions/sha256-c1c8e14ea4035034/latest/` was carried forward into the deploy tree and answers 200 on the new deployment. One discrepancy on the page, left visible on purpose: `UNATTRIBUTED: -241 cents of the equity delta are not explained by joined fills and marks` (the same order of magnitude as the $2.10 the certificate round trip cost; a fee-shaped residual, not a fill the journal lacks). Candidate `https://glass-box-trading-36tmdc9fm-glass-box-trading.vercel.app`, probe 29/29 PASS including the nested-route pin and the percent-encoded-spelling-not-served checks on the real host; promoted (`dpl_8qBNHaMrPd9FuJ89X6PdLHXrpjvd`); alias probe 29/29 PASS, receipt `probe-20260903T200341Z.json` (copied into the verification store's `evidence/`). The `DEADLINE_RECONCILIATION` entry (seq 77) was written after the pin and references `sha256:7b82959a344a7c7e`, so the pinned route stays byte-stable and the reference resolves on the dashboard. The route the video, one-pager and slides cite is `https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/`.
 
 ## What the host was measured to do (2026-09-02, anonymous `curl`)
 

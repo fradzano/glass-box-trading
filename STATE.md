@@ -6,7 +6,7 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-02 22:05 CEST (**competition day one closed**: twelve scheduled cycles on freeze two, six filled defined-risk structures, equity $100,092.15, no open orders; tasks stay enabled for tomorrow's FLATTEN_DATE regime; the running build is `dist` from `f464a66` with two source files restored to `f464a66` on the working tree (staged, uncommitted); branch head and worktree `gbt-fix` carry the gated one-lot and resolver fixes for after the competition; dev journal under MANUAL halt, dev account flat; remaining work listed under Open threads; **judge dashboard live** at `https://glass-box-trading.vercel.app` over the real competition journal, revision `sha256:c1c8e14ea4035034`, published through the digest-neutral path of `docs/PUBLISH-RUNBOOK.md`; branch pushed to `origin/p7/dev-live-certificate` while the operating checkout stays at `796c9b0` — fast-forward it there after the competition. **Competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
+**Last updated:** 2026-09-03 22:15 CEST (**competition day two closed, book flat**: the FLATTEN_DATE regime closed the three structures expiring 09-08 at 15:30; the three expiring 09-04 could not be priced by the runner (its quote window starts at `EXPIRY_MIN_SESSIONS`, a defect recorded in DECISIONS 2026-09-03), so on the PM's recommendation the owner stood the AgentCycle task down at 18:00 and the certified watchdog took over at 18:55 (`HALT WATCHDOG_TAKEOVER` seq 59, three whole-structure closes seq 60–62, all filled within a second); the task was re-enabled 19:19, the runner journaled the OUTCOMEs (seq 63–65), the final cycle's flatten assertion passed silently, `DEADLINE_RECONCILIATION` seq 77 references the pinned revision; account `PA376WIK2ATL` at cash = equity $100,583.59, zero positions, zero orders, non-sticky `WATCHDOG_TAKEOVER` halt standing; second finding fixed digest-neutrally: the watchdog wrapper had killed the CLI on its first stderr line since arming (`e1576fb`); **dashboard republished** with the presentation pin — revision `sha256:7b82959a344a7c7e`, route `/revisions/sha256-7b82959a344a7c7e/presentation/`, probe 29/29 on candidate and alias, R37 C-3 measured on the host; the running build is still `dist` from `f464a66` with the two source files at `f464a66` content on the working tree (uncommitted); worktree `gbt-publish` is on branch `p7/publish-dashboard` and carries a Remotion video scaffold (`637d430`, `2fa9ba5`) from a parallel session; tomorrow: `deadline-cli.js terminal` after the Friday US close, `-DeadlineCutoff` publish, submission parts, merge). Previous cursor, 2026-09-02 22:05 CEST: competition day one closed — twelve scheduled cycles on freeze two, six filled defined-risk structures, equity $100,092.15, no open orders; **judge dashboard live** at `https://glass-box-trading.vercel.app`, first revision `sha256:c1c8e14ea4035034`, published through the digest-neutral path of `docs/PUBLISH-RUNBOOK.md`. **Competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
 **Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; remote `origin` = `https://github.com/fradzano/glass-box-trading` (public). The operating checkout is at the branch head (rebased docs only): its digest set is byte-identical to freeze two `f464a66`, because the two one-lot-fix sources are kept at their `f464a66` content on the working tree (uncommitted) — never commit or reset those two files while the competition runs, and never rebuild `dist/`.
 **Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
@@ -420,50 +420,52 @@ One phase per session; every session ends with the handoff protocol in
 
 ## Open threads
 
-### Remaining work from the competition day (2026-09-02 20:20 CEST), in due order
+### Remaining work after competition day two (2026-09-03 22:15 CEST), in due order
 
-- **Tonight until 22:00 CEST — nothing for the owner.** Scheduled tasks run
-  the 15-minute cycles and the 5-minute watchdog on the freeze-two build;
-  the PM monitors both journals and pushes a notification only for a halt
-  that needs a human (credential fence, provenance) or a deviation. Open
-  book at 20:16: SPY 762/757 put credit vertical (exp 2026-09-08, filled
-  106 ¢, max loss $395) and a resting SPY iron condor 768/769C + 762/761P
-  (exp 2026-09-04, 3 lots, credit 63 ¢, max loss $111).
-- **Thursday 2026-09-03 (FLATTEN_DATE) — automatic.** Entries are vetoed,
-  the deadline regime closes the book during the session; owner watches the
-  fail pings only.
-- **Thursday evening / Friday — owner CLIs from the README runbook,
-  digest-neutral:** `node dist/shell/deadline-cli.js reconciliation`
-  (names the submitted revision), then `… terminal` after the Friday cut.
-  Never `npm run …` variants that rebuild.
-- **Judge-facing dashboard — live since 21:20 CEST** at
-  `https://glass-box-trading.vercel.app` (SUB-02 first working version).
-  The digest-neutral path landed on the remote branch: render from the
-  built modules over a journal copy (`submission/publish/render-site.mjs`,
-  `tools/publish-dashboard.ps1`), anonymous probe by hand
-  (`tools/probe-dashboard.ps1`, receipts in `C:\Users\felix\gbt-publish\out`),
-  Vercel deploy/promote by hand; routine and first-setup record in
-  `docs/PUBLISH-RUNBOOK.md`. R37 C-3 is remedied in the deploy tree
-  (host-safe route names, root-absolute pins) and the host was measured to
-  decode paths, so the remedy was necessary. Still open: the nested-route
-  pin check runs on the real host only with the first `-PresentationCutoff`
-  publish after Thursday's close; the Vercel team is still named
-  `glass-box-trading` (owner wants to rename it; the runbook says how and
-  what to re-probe); the SUB-09 preflight rows for the host are drafted,
-  not run.
-- **Submission (SUBMISSION-SPEC):** deck is through anti-slop; still open:
-  one-pager, Remotion video, form copy, account evidence (competition
-  account creation instant, $100k bootstrap, journal revision), the golden
-  demo link, preflight. Friday 12:00 CEST internal, 17:00 external.
+- **Done today (details in DECISIONS 2026-09-03 and `docs/PUBLISH-RUNBOOK.md`
+  "Second snapshot"):** book flat at 18:55 through the owner-invoked watchdog
+  takeover after the runner's flatten path could not price the 09-04
+  structures; the wrapper defect that had kept the dead-man inert since
+  arming fixed (`e1576fb`); final-cycle flatten assertion passed;
+  `DEADLINE_RECONCILIATION` seq 77 referencing `sha256:7b82959a344a7c7e`;
+  dashboard republished with the presentation pin, both probes 29/29, the
+  nested-route pin check measured on the real host (R37 C-3 closed);
+  journal, watchdog log, pings, alias receipt and the quote-gap simulation
+  archived in the verification store's `evidence/`. Scheduled tasks are
+  both enabled; the watchdog stays quiet outside sessions. The
+  `WATCHDOG_TAKEOVER` halt (non-sticky) stands; Friday is journaling-only
+  either way, a manual un-halt with the stand-down reason is the owner's
+  choice (`dist/shell/manual-unhalt.js`).
+- **Friday 2026-09-04 — owner CLI after the US close (22:00 CEST),
+  digest-neutral:** `node dist/shell/deadline-cli.js terminal` from the
+  operating checkout, then the `-DeadlineCutoff` publish per runbook (with
+  `--scope`, see runbook). Never `npm run …` variants that rebuild. The
+  09-04 expiry is moot: nothing is held.
+- **Submission (SUBMISSION-SPEC), Friday 12:00 CEST internal, 17:00
+  external:** the route to cite is
+  `https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/`;
+  still open: one-pager, Remotion video (scaffold on worktree `gbt-publish`,
+  branch `p7/publish-dashboard`, `637d430`/`2fa9ba5` from a parallel session
+  — not yet on this branch), form copy (`submission/COPY.md` draft), account
+  evidence (creation instant 2026-09-02T09:54:41Z, $100k bootstrap seq 1,
+  journal revision), the golden demo link, preflight `submission/PREFLIGHT.md`
+  on the host; the Vercel team is still named `glass-box-trading` (rename is
+  the owner's choice; the runbook says what to re-probe).
 - **After the competition:** merge `p7/dev-live-certificate` `--no-ff` into
-  `main` (owner ruling 12:40: the PASS is the acceptance event), release tag;
-  clear the dev journal's `MANUAL` halt by manual un-halt; land the two gated
-  fixes (`c7c7174` one-lot brief on the branch, `9b2e155` resolver in
-  worktree `gbt-fix`, R39/R40 GO) and, if a live test is still wanted,
-  certificate run four with the scheduled dev tasks disabled (R40 C-2);
-  restore the two `f464a66` source files on the working tree to the branch
-  head at that moment (they are staged, uncommitted, and keep the running
-  digest equal to certificate two until then).
+  `main` (owner ruling 2026-09-02 12:40: the PASS is the acceptance event),
+  release tag; clear the dev journal's `MANUAL` halt by manual un-halt; land
+  the two gated fixes (`c7c7174` one-lot brief on the branch, `9b2e155`
+  resolver in worktree `gbt-fix`, R39/R40 GO) and, if a live test is still
+  wanted, certificate run four with the scheduled dev tasks disabled (R40
+  C-2); restore the two `f464a66` source files on the working tree to the
+  branch head at that moment (they keep the running digest equal to
+  certificate two until then). New A-class backlog from today (DECISIONS
+  2026-09-03): the runner's management step must use the closing market
+  window (zero remaining sessions) that the watchdog and the deadline
+  runtime already use, from one shared builder; management refusals must
+  reach the journal or a kept log; the cycle task should capture the printed
+  report. The one-lot brief, the resolver fix and this window fix belong in
+  the same post-competition certificate run.
 - **Backlog recorded today (C class, DECISIONS 2026-09-02):** driver
   reconciliation cycle after un-halt; `Object.hasOwn` on the tooltip table;
   composition-root virgin bootstrap (`SEED_BOOTSTRAP` for an absent store

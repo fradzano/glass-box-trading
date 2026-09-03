@@ -2230,3 +2230,54 @@ small, no ADR split).
   journals of the day are archived in the verification store. Not swapped,
   as ruled: the one-lot brief and the resolver fix wait for after the
   competition.
+- **2026-09-03 — FLATTEN_DATE: the runner could not price the closes of the
+  structures expiring next session; the owner stood the writer down and the
+  certified watchdog flattened the book.** The deadline regime closed the
+  three structures expiring 2026-09-08 in the 15:30 CEST cycle (INTENT seq
+  43–45, all filled, OUTCOME seq 46–48). The three structures expiring
+  2026-09-04 — the iron condor 768/769C + 762/761P ×3, the 762/761 put
+  vertical ×3 and the 762/760 put vertical ×3 — were planned as intact
+  flatten targets in every later cycle (`planBookClosure` consumes the
+  shared 762 put leg correctly) and never submitted: `ladderClose` refused
+  each with `PRICE_UNAVAILABLE: QUOTE_MISSING`, because the runner's
+  `MarketWindow` (`src/shell/agent-runtime.ts`) takes its expiries from
+  `EXPIRY_MIN_SESSIONS` (2) upward, so on `FLATTEN_DATE` the next-session
+  expiry drops out of the quote universe and the phase-1 snapshot carries no
+  quote for any held 09-04 contract (every snapshot before today quoted all
+  five; every snapshot today quoted none). The refusal lives only in
+  `managementRefusals` of the printed cycle report, which the scheduled task
+  discards, so the journal shows seven silent cycles with five positions and
+  no intent (seq 49–58). Reproduced outside the checkout by a pure simulation
+  over the built `dist/core` modules on the real journal. The watchdog's and
+  the deadline runtime's windows start at zero remaining sessions on purpose
+  (their comments say why); the runner's management step uses the entry
+  window. Second finding, fixed digest-neutrally (`e1576fb`):
+  `tools/watchdog-run.ps1` ran the CLI under `$ErrorActionPreference =
+  'Stop'` with `2>&1`, so the composition line the CLI writes to stderr
+  killed the child before the staleness assessment — 54 scheduled firings
+  since arming logged `run:` and nothing else; the dead-man had never been
+  able to act. **Ruling (owner, 18:00 CEST, on the PM's recommendation):**
+  invoke the safety net deliberately rather than do nothing (halt
+  `DEADLINE_FLATTEN_FAILED` at 21:45 and Friday expiry mechanics on the
+  competition account), close by hand (a manual mutation on the competition
+  account), or write a one-off composition script at the money boundary
+  without a gate. The owner disabled the AgentCycle task at 18:00 (the 18:00
+  cycle, seq 58 at 16:01:12Z, was already running and completed); the
+  journal crossed `DEAD_MAN_BOUND_MS` at 16:51:12Z; the 16:55:02Z watchdog
+  firing fenced the writer at epoch 27, journaled `HALT WATCHDOG_TAKEOVER`
+  (seq 59) and submitted the three whole-structure closes (seq 60–62) at
+  debit limits of 100 ¢ (the condor, at its width cap: the call side was
+  fully in the money), 7 ¢ and 7 ¢; the broker filled all three within one
+  second at 92 ¢, 4 ¢ and 6 ¢. Read through the real adapter at 18:55: zero
+  positions, cash equal to equity at $100,583.59 (day one closed at
+  $100,092.15). Re-enabling the task needs an elevated shell (owner step);
+  the next agent cycle journals the three OUTCOMEs through phase 0 and the
+  session's final cycle runs the S-G11-01 flatten assertion. Declared: the
+  `WATCHDOG_TAKEOVER` halt records an owner-invoked stand-down, not a hung
+  writer; Friday is journaling-only either way, and a manual un-halt with
+  that reason is the owner's choice. Backlog for the next digest-changing
+  window (A): the runner's management step must observe the market through
+  the closing window the watchdog and the deadline runtime already use, from
+  one shared window builder; management refusals must reach the journal or
+  at least a log the scheduled task keeps; the cycle task should capture the
+  printed report.
