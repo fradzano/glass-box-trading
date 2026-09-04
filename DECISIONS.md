@@ -2308,3 +2308,35 @@ small, no ADR split).
   one shared window builder; management refusals must reach the journal or
   at least a log the scheduled task keeps; the cycle task should capture the
   printed report.
+- **2026-09-04 — Submission material is rendered from one frozen dataset;
+  the rendered video and its screen captures are not committed.** The
+  presentation dataset under `video/public/dataset/` is the byte-identical
+  copy of the pinned route's `projection.json` (revision
+  `sha256:7b82959a344a7c7e`, cutoff `2026-09-03T20:00:14.787Z`, seq 76),
+  fetched from the host and compared with the owner's publish tree; every
+  figure in the one-pager, the deck, the form copy and the preflight is
+  derived from it by `submission/render/inject.mjs` (an unknown or
+  unresolved token fails the run), and `submission/render/render.mjs`
+  renders the one-pager PDF (one A4 page, 11 pt), the deck PDF (ten slides,
+  a small Marp style block spliced into the injected copy so slide nine
+  fits) and the 1920×1080 cover from `submission/render/cover.html`. The
+  texts state the result with the unattributed −$2.41 residual next to
+  realized and unrealized (otherwise the figures do not reconcile), and name
+  both competition-week defects and the watchdog takeover in the one-pager
+  limitations, deck slide nine and the long description — the wrapper fix
+  (`e1576fb`, 17:41 CEST) landed an hour before the 18:55 takeover, so the
+  texts say "an hour before the takeover" rather than "the same afternoon".
+  Dropped from the one-pager: the sentence on absent qualifying activity,
+  moot with six qualifying fills. The form has a dedicated paper-account-ID
+  field (`HACKATHON-FACTS.md`), so `COPY.md` carries `PA376WIK2ATL` as its
+  own section. Tracked: the one-pager, deck and cover (small, cited by the
+  form); ignored: `submission/render/out/`, `submission/*.mp4` and
+  `video/public/captures/` — the video deliverable and the five recordings
+  go to the form upload and the verification store's `evidence/`, not into a
+  public git history (`.gitignore` explains; the owner can force-add later).
+  Recorded, not resolved: GitHub's default branch `main` is still at the P6
+  merge `bce890a`; the plain repository URL therefore shows Monday's state,
+  and the owner decides between merging `p7/dev-live-certificate` `--no-ff`
+  into `main` from a separate worktree before the form (recommended; the
+  operating checkout stays untouched so the running digest holds), submitting
+  the branch URL, or switching the default branch.

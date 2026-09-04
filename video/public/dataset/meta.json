@@ -10,10 +10,10 @@
   "evidenceTestPath": "tests/cyc-runner.spec.ts (S-CYC-06)",
   "featuredCycleSeq": null,
   "captures": {
-    "dashboardOpen": null,
-    "decisionCycle": null,
-    "gateVector": null,
-    "orderToOutcome": null,
-    "sourceAndTests": null
+    "dashboardOpen": "dashboard-open.mp4",
+    "decisionCycle": "decision-cycle.mp4",
+    "gateVector": "gate-vector.mp4",
+    "orderToOutcome": "order-to-outcome.mp4",
+    "sourceAndTests": "source-and-tests.mp4"
   }
 }

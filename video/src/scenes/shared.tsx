@@ -56,7 +56,12 @@ export const Stamp: React.FC<{ readonly tone: "pass" | "veto" | "accent"; readon
  */
 export const Capture: React.FC<{ readonly file: string | null; readonly standIn: ReactNode; readonly label: string }> = ({ file, standIn, label }) => {
   if (file !== null) {
-    return <OffthreadVideo src={staticFile(`captures/${file}`)} muted style={{ width: "100%", height: "100%", objectFit: "contain", border: `1px solid ${color.rule}`, background: color.white }} />;
+    // The slot must take the remaining height of the frame's column, not 100% of the column (which ran the recording over the footer rule).
+    return (
+      <div style={{ flex: 1, minHeight: 0, border: `1px solid ${color.rule}`, background: color.white, display: "flex" }}>
+        <OffthreadVideo src={staticFile(`captures/${file}`)} muted style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+      </div>
+    );
   }
   return (
     <div style={{ flex: 1, border: `2px dashed ${color.veto}`, background: color.white, padding: 28, display: "flex", flexDirection: "column", gap: 16, minHeight: 0, overflow: "hidden" }}>

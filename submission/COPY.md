@@ -26,8 +26,8 @@ checks this).
 ## Long description
 
 > Glass Box Trading is an autonomous options trading agent built for the
-> Alpaca AI Trading Agents Hackathon, run against a dedicated $100k paper
-> competition account. Its central claim is architectural, not predictive:
+> Alpaca AI Trading Agents Hackathon, run against the dedicated $100k paper
+> competition account PA376WIK2ATL. Its central claim is architectural, not predictive:
 > the LLM analyst can propose a trade candidate but has no code path to an
 > order, and the deterministic decision core can place an order but evaluates
 > only structured, whitelist-constrained fields — the LLM's free-text
@@ -69,9 +69,16 @@ checks this).
 > closed all three remaining structures and left the account flat — the
 > safety-net path doing the job it was built for.
 
-- [x] Word count: 454 (≥100 required); 2837 characters including spaces.
+- [x] Word count: 460 (≥100 required); 2870 characters including spaces.
       All three counts measured on the field text as pasted (quote markers and
       line wrapping stripped), not estimated.
+
+## Alpaca paper-account ID (required form field, docs/HACKATHON-FACTS.md)
+
+> PA376WIK2ATL
+
+- [x] Equals `accountId` in the frozen dataset and the pinned dashboard page
+      (`video/public/dataset/projection.json`, `submission/ACCOUNT-EVIDENCE.md`).
 
 ## Proposed tags
 
