@@ -15,5 +15,16 @@
     "gateVector": "gate-vector.mp4",
     "orderToOutcome": "order-to-outcome.mp4",
     "sourceAndTests": "source-and-tests.mp4"
+  },
+  "narration": {
+    "coldOpen": false,
+    "dashboardOpen": false,
+    "decisionCycle": false,
+    "gateVector": false,
+    "orderToOutcome": false,
+    "architecture": false,
+    "pnlAndLimits": false,
+    "sourceAndTests": false,
+    "close": false
   }
 }

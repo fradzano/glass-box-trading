@@ -23,7 +23,7 @@ export const PnlAndLimits: React.FC<{ readonly dataset: Dataset }> = ({ dataset 
       <Steps stepFrames={60} items={[
         <Lead key="a">Every figure is an integer-cent fold of the journal against broker snapshots at the labelled cutoff. A remainder the joined fills cannot explain is shown as <span style={{ fontFamily: font.mono }}>UNATTRIBUTED</span>, not hidden.</Lead>,
         <Lead key="b">Maximum loss is reserved at order entry for every lifecycle; the sleeve budgets bound what unattended operation can lose before a kill switch or the watchdog acts.</Lead>,
-        <Lead key="c"><strong style={{ fontFamily: font.sans, color: color.veto }}>What one week cannot prove:</strong> that this strategy has edge. The result is a bounded, auditable exercise on paper, and it is presented as nothing more.</Lead>,
+        <Lead key="c"><strong style={{ fontFamily: font.sans, color: color.veto }}>What two sessions cannot prove:</strong> that this strategy has edge. The result is a bounded, auditable exercise on paper, and it is presented as nothing more.</Lead>,
       ]} />
     </Frame>
   );

@@ -2,6 +2,7 @@
 marp: true
 theme: default
 paginate: true
+footer: 'Alpaca AI Trading Agents Hackathon (lablab.ai) · Team Glass Box Trading · presentation cutoff {{PRESENTATION_CUTOFF_AT}}'
 ---
 
 <!--
@@ -51,7 +52,8 @@ figure here may be typed by hand or diverge from theirs.
   free-form order
 - A pure, tested decision core owns every risk gate; time/config/account
   state are parameters, not ambient calls
-- Executor places only core-approved actions via Alpaca CLI/API — the LLM
+- Executor places only core-approved actions through the Alpaca REST API
+  (multi-leg limit orders, client order id as idempotency key) — the LLM
   has no code path to an order
 
 ---
@@ -66,14 +68,19 @@ figure here may be typed by hand or diverge from theirs.
 
 ---
 
-## Risk gates and bounded unattended worst case
+## The cycle and its gates, in order
 
-- Entry gates: defined-risk only, sleeve budgets, per-position max loss,
-  concentration cap, liquidity floor, session gate, idempotency, schema gate
-- Lifecycle gates: expiry eviction, assignment reconciliation, deadline
-  flatten by Sep 3 close
-- State/failure gates: single-instance epoch + halt flag, drawdown
-  kill-switch, dead-man watchdog
+1. Phase 0: reconcile the journal against broker truth; anything foreign halts
+2. Fresh broker snapshot and quotes; the analyst proposes candidates (read-only MCP)
+3. The pure core prices each candidate from its own quotes and runs
+   **G1** defined risk only · **G2** sleeve budgets · **G3** max loss per position ·
+   **G4** per-underlying concentration · **G5** liquidity · **G6** session and
+   tradability · **G7** idempotency · **G8** schema and whitelist
+4. Executor: limit order, revalidated against a fresh broker read, INTENT before,
+   OUTCOME after
+- Lifecycle and failure gates run every cycle: **G9** expiry eviction, **G10**
+  reconciliation, **G11** deadline flatten, **G12** single instance and halt,
+  **G13** drawdown kill-switch, **G14** dead-man watchdog
 - Worst case is bounded by design, not by monitoring diligence
 
 ---
@@ -86,10 +93,14 @@ figure here may be typed by hand or diverge from theirs.
 - Realized {{REALIZED_PNL}} · Unrealized {{UNREALIZED_PNL}} · Unattributed
   {{UNATTRIBUTED}} — a fee-shaped residual the journal cannot explain, shown
   and never assigned to a sleeve
-- Realized only, by sleeve: income {{INCOME_SLEEVE_PNL}} · convex
-  {{CONVEX_SLEEVE_PNL}}
-- Max drawdown {{MAX_DRAWDOWN}} ({{MAX_DRAWDOWN_PCT}} of peak
-  {{PEAK_EQUITY}}); book flat, zero positions, zero orders
+- Realized only, by sleeve: income {{INCOME_SLEEVE_PNL}} ({{INCOME_FILLED}} filled
+  spreads) · convex {{CONVEX_SLEEVE_PNL}} ({{CONVEX_FILLED}} filled call of
+  {{CONVEX_ATTEMPTED}} attempted)
+- Concentration: one {{BEST_LIFECYCLE_LABEL}} on an overnight gap =
+  {{BEST_LIFECYCLE_SHARE_PCT}} of the result — path, not skill
+- Peak simultaneous defined worst case {{PEAK_RESERVED_MAX_LOSS}}
+  ({{PEAK_RESERVED_MAX_LOSS_PCT}}), carried overnight; max drawdown {{MAX_DRAWDOWN}} on
+  cycle-spaced samples, the overnight move not sampled; book flat
 
 ---
 
@@ -119,7 +130,7 @@ figure here may be typed by hand or diverge from theirs.
   before the takeover
 - **API limit:** no conditional submit at Alpaca; the pre-submit re-fetch is
   the declared linearization point, a manual mutation halts the next cycle
-- Paper only; one week of paper P&L cannot prove edge — no alpha claim
+- Paper only; two sessions of paper P&L cannot prove edge — no alpha claim
 
 ---
 

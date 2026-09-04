@@ -92,7 +92,7 @@ const onePagerMdRaw = readFileSync(onePagerInjected, "utf8");
 const onePagerMd = onePagerMdRaw.replace(/^<!--[\s\S]*?-->\s*/, "");
 const onePagerBodyHtml = marked.parse(onePagerMd);
 
-const ONE_PAGER_FONT_PT = 11; // ~11pt serif body per spec; content currently
+const ONE_PAGER_FONT_PT = 10.5; // ~11pt serif body per spec; content currently
 // fills well under one A4 page at this size (see render report for margin).
 
 const onePagerHtml = `<!doctype html>
@@ -123,6 +123,8 @@ const onePagerHtml = `<!doctype html>
     font-size: 1.05em;
   }
   h1 + p strong { font-weight: 700; }
+  footer { display: block; margin-top: 14px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 0.72em; color: #5c6066; border-top: 1px solid #c9ccd1; padding-top: 4px; }
+
   h2 {
     font-size: 1.05em;
     margin: 10px 0 3px 0;

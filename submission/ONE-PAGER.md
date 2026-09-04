@@ -39,7 +39,8 @@ dashboard needs no login.
 
 **P&L:** account {{ACCOUNT_ID}}, revision {{JOURNAL_REVISION}}, every fill
 linked to its intent and outcome. **Technology:** one end-to-end cycle in the
-video, MCP/CLI/API calls in the journal, core source and tests public.
+video; the analyst's candidates, every gate verdict and every broker order id
+in the journal; core source and tests public.
 **Originality:** vetoes and no-trade cycles shown at the fidelity of
 executions. **Presentation:** demo at {{DEMO_URL}}, video, deck, preflight
 record.
@@ -51,14 +52,18 @@ Start equity {{START_EQUITY}}; equity at cutoff {{CURRENT_EQUITY}}; P&L
 {{UNREALIZED_PNL}}; unattributed {{UNATTRIBUTED}} — a fee-shaped residual the
 journal cannot explain, so it is displayed and never assigned to a sleeve.
 Sleeve attribution covers realized P&L only: income {{INCOME_SLEEVE_PNL}} over
-{{INCOME_LIFECYCLES}} lifecycles, convex {{CONVEX_SLEEVE_PNL}} over
-{{CONVEX_LIFECYCLES}}. Max drawdown {{MAX_DRAWDOWN}} ({{MAX_DRAWDOWN_PCT}} of
-peak {{PEAK_EQUITY}}). The book is flat: zero positions, zero open orders.
-All figures are broker-derived.
+{{INCOME_FILLED}} filled spreads, convex {{CONVEX_SLEEVE_PNL}} from
+{{CONVEX_FILLED}} filled call of {{CONVEX_ATTEMPTED}} attempted. Concentration: one
+{{BEST_LIFECYCLE_LABEL}} that caught an overnight gap made {{BEST_LIFECYCLE_PNL}},
+{{BEST_LIFECYCLE_SHARE_PCT}} of the result. Peak simultaneous defined worst case
+{{PEAK_RESERVED_MAX_LOSS}} ({{PEAK_RESERVED_MAX_LOSS_PCT}} of the account), carried
+overnight; the measured max drawdown of {{MAX_DRAWDOWN}} comes from cycle-spaced
+samples across {{TRADING_SESSIONS}} sessions and does not sample the overnight move.
+The book is flat: zero positions, zero open orders. All figures are broker-derived.
 
 ## Limitations
 
-One week of paper trading cannot prove edge, and no result here is evidence
+Two sessions of paper trading cannot prove edge, and no result here is evidence
 of alpha. Trading is paper only, never live; the sleeve split is declared,
 not backtested.
 
@@ -78,3 +83,5 @@ between the pre-submit broker re-fetch and broker acceptance stays open; that
 re-fetch's completion is the declared linearization point. Manual account
 changes outside a durable halt are prohibited, and one that lands anyway is
 caught next cycle as `RESIDUE` or `HUMAN_ACTION`.
+
+<footer>Alpaca AI Trading Agents Hackathon (lablab.ai) · Team Glass Box Trading (solo) · presentation cutoff {{PRESENTATION_CUTOFF_AT}} · journal revision {{JOURNAL_REVISION}} · one-pager rendered 2026-09-04</footer>

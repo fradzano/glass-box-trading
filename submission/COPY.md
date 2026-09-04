@@ -55,11 +55,13 @@ checks this).
 > tests, a live demo dashboard, a sub-five-minute video walking one decision
 > from candidate to broker fill, and a broker-reconciled P&L record at a
 > labelled presentation cutoff. The project makes no alpha or
-> risk-adjusted-performance claim: one week of paper trading cannot prove a
+> risk-adjusted-performance claim: two sessions of paper trading cannot prove a
 > strategy has edge, and every result shown is explicitly framed as a bounded,
 > auditable exercise rather than proof of trading skill. The broker-reconciled
 > result at the presentation cutoff (2026-09-03T20:00:14.787Z) is +$583.59 on
-> $100,000.00, or 0.58%, with the book flat. Two defects from the competition
+> $100,000.00, or 0.58%, with the book flat; 61% of it came from a single
+> four-contract QQQ call that caught an overnight gap, against a peak
+> simultaneous fixed worst case of $3,421.00. Two defects from the competition
 > week are named in the submission rather than left out: on the final trading
 > day the runner could not price the structures expiring the next session and
 > so never submitted their closes, and the watchdog's wrapper had been killing

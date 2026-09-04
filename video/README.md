@@ -99,6 +99,37 @@ DEV watermark burned in while `meta.frozen` is false), `npm run render`
 (the deliverable `submission/glass-box-trading.mp4`; refuses an unfrozen
 dataset).
 
+## Narration (voice-over and captions)
+
+Both narration artefacts live under `public/narration/` and both are optional:
+the composition renders identically when neither exists, so the picture can be
+cut before a word is written.
+
+`script.json` carries the spoken text and the caption cues, keyed by the scene
+ids of `src/timeline.ts`:
+
+```json
+{ "scenes": { "gateVector": { "text": "the full spoken text of the scene",
+  "cues": [ { "at": 0, "text": "shown from 0 s into the scene" },
+            { "at": 7.5, "text": "shown from 7.5 s into the scene" } ] } } }
+```
+
+`at` is seconds **from the start of that scene**, not of the video. The
+caption strip shows the cue with the latest `at` at or before the current
+scene time, fades it in over six frames and clamps it to two lines; it is
+drawn by `GlassBoxVideo.tsx` for every scene, so no scene knows about it.
+`src/narration.ts` loads the file once in `calculateMetadata` and keeps only
+well-formed cues — a missing, unreadable or malformed script degrades to no
+captions and never fails a render.
+
+The voice-over itself is produced outside this package (TTS over each scene's
+`text`) and dropped in as `public/narration/<sceneId>.mp3`. Nothing probes the
+disk for it: a scene plays audio only when `meta.narration.<sceneId>` is
+`true`, so flip that flag in the same commit that adds the file. The flags
+default to `false` for every scene, and `scripts/check-dataset.mjs --frozen`
+does not look at narration at all — a frozen render is valid with no audio.
+The mp3s are small and stay tracked in git like the captures.
+
 Producing the frozen dataset after the Sep 3 close: publish with
 `-PresentationCutoff` (docs/PUBLISH-RUNBOOK.md), copy the pinned route's
 `projection.json` from `<out>\site\revisions\sha256%3A<hex>\presentation\`

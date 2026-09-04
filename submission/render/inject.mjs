@@ -39,6 +39,25 @@ export function deriveValues(meta, projection) {
     vetoes += cycle.candidateVerdicts.filter(v => v.decision === "VETO").length;
     if (cycle.result === "no_trade") noTrade += 1;
   }
+  // Peak simultaneous defined worst case: the sum of reserved max loss over
+  // lifecycles open at the same journal seq (open from the entry OUTCOME to
+  // the last close OUTCOME; released lifecycles never reserve).
+  const filled = projection.lifecycles.filter(l => l.resolution === "filled" && l.outcomeSeq !== null);
+  const points = new Set(filled.map(l => l.outcomeSeq));
+  let peakReserved = 0;
+  for (const s of points) {
+    let sum = 0;
+    for (const l of filled) {
+      const closedAt = Math.max(0, ...l.closes.map(c => c.outcomeSeq ?? Number.MAX_SAFE_INTEGER));
+      if (l.outcomeSeq <= s && (l.closes.length === 0 || closedAt > s)) sum += l.reservedMaxLossCents;
+    }
+    peakReserved = Math.max(peakReserved, sum);
+  }
+  const best = filled.reduce((a, l) => (l.realizedCents > (a?.realizedCents ?? -Infinity) ? l : a), null);
+  const bestShareBps = best === null || projection.pnlAbsoluteCents === 0 ? 0 : Math.round((best.realizedCents / projection.pnlAbsoluteCents) * 10000);
+  const convexAttempted = projection.lifecycles.filter(l => l.sleeve === "convex").length;
+  const convexFilled = filled.filter(l => l.sleeve === "convex").length;
+  const incomeFilled = filled.filter(l => l.sleeve === "income").length;
   const safe = projection.journalRevision.replace(":", "-");
   if (!meta.presentationRouteUrl.includes(`/revisions/${safe}/presentation/`)) throw new Error("route URL does not name the pinned revision");
   return {
@@ -76,6 +95,16 @@ export function deriveValues(meta, projection) {
     BOOTSTRAP_AT: projection.milestones.firstArmAt,
     LAST_SEQ: String(projection.lastSeq),
     HALT_REASON: projection.halt?.reason ?? "none",
+    PEAK_RESERVED_MAX_LOSS: usd(peakReserved),
+    PEAK_RESERVED_MAX_LOSS_PCT: pct(Math.round((peakReserved / projection.startEquityCents) * 10000)),
+    BEST_LIFECYCLE_PNL: usd(best?.realizedCents ?? 0),
+    BEST_LIFECYCLE_SHARE_PCT: `${String(Math.round(bestShareBps / 100))}%`,
+    BEST_LIFECYCLE_LABEL: best === null ? "n/a" : `${String(best.filledQuantity)}x ${best.underlying} ${best.structureType.replace("_", " ")}`,
+    CONVEX_FILLED: String(convexFilled),
+    CONVEX_ATTEMPTED: String(convexAttempted),
+    INCOME_FILLED: String(incomeFilled),
+    FILLED_LIFECYCLES: String(filled.length),
+    TRADING_SESSIONS: String(new Set(projection.cycles.map(c => c.tradingDay).filter(d => d !== null)).size),
   };
 }
 

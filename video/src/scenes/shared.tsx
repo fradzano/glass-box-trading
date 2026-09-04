@@ -1,19 +1,35 @@
 // Layout primitives shared by the scenes: a titled frame with the cutoff
 // stamp, KPI tiles, key/value chains, a capture slot, and the DEV watermark.
-import { AbsoluteFill, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import type { CSSProperties, ReactNode } from "react";
 import type { Dataset } from "../dataset";
 import { formatInstant } from "../format";
+import { activeCue } from "../narration";
+import type { NarrationCue } from "../narration";
 import { color, font } from "../theme";
+
+/**
+ * The band between a Frame's content and its footer that CaptionStrip draws
+ * into. Reserved unconditionally — the caption bar is absolutely positioned
+ * and drawn from the composition, so the scenes must not lay content out
+ * there whether a cue is showing or not. The Frame's bottom padding shrinks
+ * by two thirds of it in exchange, so a scene loses about fifty pixels of
+ * content height rather than the full band.
+ */
+export const CAPTION_RESERVE = 96;
+const FRAME_PAD_BOTTOM = 24;
+/** Footer type (22 px) plus its rule and padding; the caption bar clears it. */
+const FOOTER_BLOCK = 43;
+const CAPTION_BOTTOM = FRAME_PAD_BOTTOM + FOOTER_BLOCK + 8;
 
 export const Frame: React.FC<{ readonly dataset: Dataset; readonly eyebrow: string; readonly title: string; readonly children: ReactNode }> = ({ dataset, eyebrow, title, children }) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 12], [0, 1], { extrapolateRight: "clamp" });
   return (
-    <AbsoluteFill style={{ background: color.paper, color: color.ink, fontFamily: font.serif, padding: "72px 96px", opacity }}>
+    <AbsoluteFill style={{ background: color.paper, color: color.ink, fontFamily: font.serif, padding: `72px 96px ${String(FRAME_PAD_BOTTOM)}px`, opacity }}>
       <div style={{ fontFamily: font.sans, fontSize: 22, letterSpacing: "0.12em", textTransform: "uppercase", color: color.mute }}>{eyebrow}</div>
       <h1 style={{ fontFamily: font.sans, fontSize: 60, letterSpacing: "-0.01em", margin: "8px 0 32px", lineHeight: 1.1 }}>{title}</h1>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 24, minHeight: 0 }}>{children}</div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 24, minHeight: 0, paddingBottom: CAPTION_RESERVE }}>{children}</div>
       <div style={{ fontFamily: font.sans, fontSize: 22, color: color.mute, borderTop: `1px solid ${color.rule}`, paddingTop: 16, display: "flex", justifyContent: "space-between" }}>
         <span>Paper account <span style={{ fontFamily: font.mono, color: color.ink }}>{dataset.projection.accountId ?? "unknown"}</span> · presentation cutoff {formatInstant(dataset.projection.cutoff.at)}</span>
         <span>journal revision <span style={{ fontFamily: font.mono }}>{dataset.projection.journalRevision}</span></span>
@@ -67,6 +83,42 @@ export const Capture: React.FC<{ readonly file: string | null; readonly standIn:
     <div style={{ flex: 1, border: `2px dashed ${color.veto}`, background: color.white, padding: 28, display: "flex", flexDirection: "column", gap: 16, minHeight: 0, overflow: "hidden" }}>
       <div style={{ fontFamily: font.sans, fontSize: 22, color: color.veto, textTransform: "uppercase", letterSpacing: "0.08em" }}>capture pending — {label}</div>
       {standIn}
+    </div>
+  );
+};
+
+/**
+ * The caption bar: the cue whose `at` is the latest at or before the current
+ * scene time, on a bar sitting in CAPTION_RESERVE between a Frame's content
+ * and its footer rule. Drawn from GlassBoxVideo for every scene, so scenes
+ * neither know about it nor lay out around it beyond that reserved band.
+ */
+export const CaptionStrip: React.FC<{ readonly cues: readonly NarrationCue[]; readonly invert?: boolean }> = ({ cues, invert = false }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const cue = activeCue(cues, frame / fps);
+  if (cue === null) return null;
+  const startFrame = Math.round(cue.at * fps);
+  const opacity = interpolate(frame, [startFrame, startFrame + 6], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 96,
+        right: 96,
+        bottom: CAPTION_BOTTOM,
+        paddingTop: 12,
+        borderTop: `1px solid ${invert ? color.mute : color.rule}`,
+        background: invert ? color.ink : color.paper,
+        color: invert ? color.paper : color.ink,
+        fontFamily: font.sans,
+        fontSize: 30,
+        lineHeight: 1.25,
+        opacity,
+      }}
+    >
+      {/* The clamp lives on the inner box: a -webkit-box with a block child does not clamp. */}
+      <div style={{ maxWidth: 1600, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden" }}>{cue.text}</div>
     </div>
   );
 };

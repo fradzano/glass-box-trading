@@ -5,6 +5,7 @@
 // scripts/check-dataset.mjs (which runs before the bundler) so a placeholder
 // or an unfrozen dataset fails inside the studio as well.
 import { staticFile } from "remotion";
+import type { SceneSlot } from "./timeline";
 
 export interface GateResult {
   readonly gate: string;
@@ -119,6 +120,12 @@ export interface Meta {
   readonly featuredCycleSeq: number | null;
   /** Screen recordings under public/captures/, by scene; null renders the data-driven stand-in (dev only). */
   readonly captures: Readonly<Record<"dashboardOpen" | "decisionCycle" | "gateVector" | "orderToOutcome" | "sourceAndTests", string | null>>;
+  /**
+   * Which scenes have a voice-over file at public/narration/<sceneId>.mp3.
+   * Optional and false by default: the TTS step lands after the picture is
+   * cut, and neither the dataset gate nor the render requires any of it.
+   */
+  readonly narration?: Readonly<Partial<Record<SceneSlot["id"], boolean>>>;
 }
 
 export interface Dataset {

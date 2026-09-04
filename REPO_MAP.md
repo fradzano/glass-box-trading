@@ -175,14 +175,18 @@
 - `video/package.json`
 - `video/public/dataset/meta.json`
 - `video/public/dataset/projection.json`
+- `video/public/narration/script.json`
 - `video/README.md` — Video plan — SUB-04
 - `video/remotion.config.ts` — Remotion project configuration (video/ is its own package; nothing here
 - `video/scripts/check-dataset.mjs` — Dataset gate for the video render (SUB-04, video/README.md): every URL and
+- `video/scripts/check-narration.mjs` — Every narration mp3 must fit its scene slot with a margin (timeline.ts):
 - `video/scripts/record-captures.mjs` — Screen-capture recorder for the five capture slots (video/README.md).
+- `video/scripts/tts-elevenlabs.mjs` — Voice-over for the submission video: one mp3 per scene from
 - `video/src/dataset.ts` — The single frozen presentation-cutoff dataset (video/README.md): the
 - `video/src/format.ts` — Integer-cent formatting, no float arithmetic on money: the same rules the
 - `video/src/GlassBoxVideo.tsx` — The composition: one Sequence per SUBMISSION-SPEC §5 slot, in order. Every
 - `video/src/index.ts`
+- `video/src/narration.ts` — Voice-over and captions (SUB-04). Two artefacts are produced outside this
 - `video/src/Root.tsx` — A type alias, not an interface: Remotion's Composition props must be assignable to Record<string, unknown>.
 - `video/src/scenes/Architecture.tsx` — 2:45–3:40 — the architecture boundary and why the LLM cannot place an order.
 - `video/src/scenes/Close.tsx` — 4:55–4:59 — demo URL and project name.
