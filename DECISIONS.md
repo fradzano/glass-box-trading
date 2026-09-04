@@ -2376,3 +2376,23 @@ small, no ADR split).
   their own sessions rather than invented: Vigil was a C# market-making bot
   on OKX perpetual swaps killed by the retail fee floor (2 bp per side
   against a 1.3 bp inside spread).
+- **2026-09-04 — Submitted; the form differed from the register in three
+  places and the register was corrected, not argued with.** The lablab form
+  (three steps, team leader only) caps the long description at 2000
+  characters, has no one-pager upload, and offers predefined lists for
+  categories (`Finance`, `Investment` chosen), tracks (`Options Alpha
+  Agents`) and technologies (`Alpaca`, `Anthropic Claude`, `Claude Code`,
+  `Vercel`; no TypeScript, Node, React, Remotion or generic MCP entry). The
+  long description was cut to 1,980 characters keeping the architectural
+  claim, the gate order, the barbell, the result with its concentration and
+  worst case, both defects and the no-alpha line; the one-pager went as a
+  link to `main` in the optional Additional Information field together with
+  the pinned route, the deck, the account evidence and the decision log;
+  `main` was merged `--no-ff` from the branch in a separate worktree
+  (`1951a44`, then `32313eb`, `b660987`, `fe9953b`) so the plain repository
+  URL shows the submitted state. Verified after submission by anonymous
+  fetch: the video and the deck served by the platform are byte-identical to
+  the repository files; the cover is re-encoded to JPG at 1920×1080. Project
+  page: https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon/glass-box-trading/glass-box-trading. One agent-caused form edit is on record: while reading the
+  dropdown options the agent's click selected `Options Alpha Agents` in the
+  track field; the owner kept it.
