@@ -76,7 +76,7 @@
       ]
     },
     "gateVector": {
-      "text": "The core prices every candidate from its own quotes, never from the analyst's numbers. Then eight gates run, in a fixed order. Defined risk first: if maximum loss is not fixed at entry, the candidate dies there. Then sleeve budget, max loss per position, concentration in one underlying, liquidity, session and tradability, idempotency, schema and whitelist. In cycle two, a SPY credit spread failed gate five, liquidity. One leg's quote size was below the minimum. Vetoed, with the reason recorded.",
+      "text": "The core prices every candidate from its own quotes, not the analyst's. Then eight gates run in a fixed order. Defined risk first: if maximum loss is not fixed at entry, the candidate dies there. Then sleeve budget, max loss per position, concentration, liquidity, session, idempotency, schema and whitelist. In cycle two, a SPY credit spread failed gate five, liquidity: one leg's quote size was below the minimum. Vetoed, reason recorded.",
       "cues": [
         {
           "at": 0,
@@ -105,7 +105,7 @@
       ]
     },
     "orderToOutcome": {
-      "text": "An approved plan becomes a multi-leg limit order, revalidated against fresh broker truth before it goes to the Alpaca REST API under a client order id. Intent is journaled before, outcome after. Intent eight: one SPY put credit spread, filled at one dollar six cents, three hundred ninety-five dollars of maximum loss reserved. Closed by the deadline route at fifty-eight cents. Forty-eight dollars realized.",
+      "text": "An approved plan becomes a multi-leg limit order, revalidated against fresh broker truth, then sent to the Alpaca REST API under a client order id. Intent is journaled before, outcome after. Intent eight: one SPY put credit spread, filled at one dollar six, three hundred ninety-five dollars of max loss reserved. Closed by the deadline route at fifty-eight cents. Forty-eight dollars realized.",
       "cues": [
         {
           "at": 0,
@@ -134,30 +134,30 @@
       ]
     },
     "architecture": {
-      "text": "Two earlier projects of mine, TradeScan-AI and Vigil, tried to make a model predict the market, and neither paid for itself. That is why this build inverts the usual shape. The model is not asked to predict anything. It is asked to propose, inside a whitelist of underlyings, structures and expiries. The strategy is a declared barbell rather than a forecast: about eighty percent of the account sits in reserve, roughly twelve percent is the income sleeve on a maximum loss basis, and about eight percent is the convex sleeve on premium paid. And the boundary is enforced in continuous integration: the pure core cannot import anything that does input or output, and it cannot read the clock.",
+      "text": "Two earlier bots of mine died on economics, not on bugs: TradeScan-AI's predicted edge on a cTrader FIX feed was smaller than retail costs, and Vigil's market making on OKX sat below the fee floor. So this build inverts the shape. The model is not asked to predict. It proposes, inside a whitelist of underlyings, structures and expiries. The strategy is a declared barbell, reserve, income sleeve, convex sleeve, not a forecast. And the boundary is enforced in continuous integration: the pure core cannot import anything that does input or output, and it cannot read the clock.",
       "cues": [
         {
           "at": 0,
-          "text": "Earlier prediction-driven projects, TradeScan-AI and Vigil, did not pay for themselves."
+          "text": "Two earlier bots died on economics: TradeScan-AI (cTrader FIX) and Vigil (OKX)."
         },
         {
           "at": 7,
-          "text": "The model is not asked to predict. It is asked to propose."
+          "text": "Predicted edge below retail costs; market making below the fee floor."
         },
         {
           "at": 13,
+          "text": "So this build inverts the shape: the model proposes, it does not predict."
+        },
+        {
+          "at": 19,
           "text": "Proposals stay inside a whitelist of underlyings, structures and expiries."
         },
         {
-          "at": 20,
-          "text": "A declared barbell, not a forecast."
+          "at": 25,
+          "text": "A declared barbell: reserve, income sleeve, convex sleeve. Not a forecast."
         },
         {
-          "at": 26,
-          "text": "About 80% reserve, ~12% income on max loss, ~8% convex on premium paid."
-        },
-        {
-          "at": 40,
+          "at": 33,
           "text": "CI forbids I/O imports and clock reads inside the pure core."
         }
       ]

@@ -13,9 +13,10 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pkg = path.join(here, "..");
-const envPath = path.join(pkg, ".env");
+// video/.env first, then the repository root .env (read-only; the key is never logged).
+const envPath = [path.join(pkg, ".env"), path.join(pkg, "..", ".env")].find(candidate => existsSync(candidate));
 const env = Object.fromEntries(
-  (existsSync(envPath) ? readFileSync(envPath, "utf8") : "")
+  (envPath !== undefined ? readFileSync(envPath, "utf8") : "")
     .split(/\r?\n/).filter(line => line.includes("=") && !line.trim().startsWith("#"))
     .map(line => { const i = line.indexOf("="); return [line.slice(0, i).trim(), line.slice(i + 1).trim().replace(/^"|"$/g, "")]; }),
 );

@@ -175,7 +175,16 @@
 - `video/package.json`
 - `video/public/dataset/meta.json`
 - `video/public/dataset/projection.json`
+- `video/public/narration/architecture.mp3`
+- `video/public/narration/close.mp3`
+- `video/public/narration/coldOpen.mp3`
+- `video/public/narration/dashboardOpen.mp3`
+- `video/public/narration/decisionCycle.mp3`
+- `video/public/narration/gateVector.mp3`
+- `video/public/narration/orderToOutcome.mp3`
+- `video/public/narration/pnlAndLimits.mp3`
 - `video/public/narration/script.json`
+- `video/public/narration/sourceAndTests.mp3`
 - `video/README.md` — Video plan — SUB-04
 - `video/remotion.config.ts` — Remotion project configuration (video/ is its own package; nothing here
 - `video/scripts/check-dataset.mjs` — Dataset gate for the video render (SUB-04, video/README.md): every URL and

@@ -2340,3 +2340,39 @@ small, no ADR split).
   into `main` from a separate worktree before the form (recommended; the
   operating checkout stays untouched so the running digest holds), submitting
   the branch URL, or switching the default branch.
+- **2026-09-04 — Owner review of the submission material: voice-over,
+  ordered gate sequence, honest P&L decomposition; three cold-read lenses
+  before the second cut.** The owner's review (11:05 CEST) found the four
+  assets clean but hard to follow: nothing explained the architecture and
+  the order of the checks, the video scrolled the dashboard for two minutes
+  in silence, and Alpaca's role read like any broker API. Three cold-read
+  lenses ran on the gate tier before anything was rewritten. The judge lens
+  found "one week of paper trading" against a two-session journal (every
+  entry opened 2026-09-02, every close 2026-09-03) and no artifact naming
+  G1–G8 in order. The quant lens decomposed the +$583.59: one four-contract
+  QQQ long call on an overnight gap made $356.00, 61% of the result; six
+  structures were open at once against $3,421.00 of reserved worst case,
+  carried overnight; the $33.15 max drawdown is measured on cycle-spaced
+  samples and never sampled the overnight move, so pairing it with the
+  overall peak overstated the point. The Alpaca lens showed from the code
+  that the executor uses the REST API (multi-leg limit orders, client order
+  id), not the CLI the texts named, that analyst tool calls are not
+  journaled (candidates, verdicts and broker order ids are), and that the
+  analyst child process holds read-only market-data credentials and 32
+  allowed MCP tools with no account, position or order access. **Rulings:**
+  every text says "two sessions"; the injector derives the peak reserved
+  worst case, the best lifecycle's share and the convex fill ratio (1 of 4)
+  from the dataset and the one-pager, deck slide seven and the long
+  description state them; deck slide six and the one-pager give the cycle
+  and G1–G8 in order plus G9–G14; "CLI" is gone from the order path; both
+  PDFs carry a hackathon footer. The video gets a voice-over: a 650-word
+  script (`video/public/narration/script.json`, per-scene cues also drawn as
+  a caption strip) synthesized per scene through ElevenLabs
+  (`video/scripts/tts-elevenlabs.mjs`, voice "Matilda", key in the root
+  `.env`, credit line on the closing card), with `check-narration.mjs`
+  refusing an mp3 longer than its slot minus one second; the narrator speaks
+  about 122 words per minute, so two scenes were trimmed to fit. The prior
+  attempts the owner wanted named (TradeScan-AI, Vigil) were asked from
+  their own sessions rather than invented: Vigil was a C# market-making bot
+  on OKX perpetual swaps killed by the retail fee floor (2 bp per side
+  against a 1.3 bp inside spread).
