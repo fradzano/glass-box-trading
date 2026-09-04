@@ -84,6 +84,9 @@ installed with `npm install` inside `video/` (the root `eslint .` ignores
   capture slot: with `meta.captures.<scene>` naming a file under
   `public/captures/`, the recording plays; with `null`, a data-driven
   stand-in renders behind a red "capture pending" border.
+- `scripts/record-captures.mjs` — the recorder that produced the five
+  captures on 2026-09-04 (playwright-core, headless Chrome, scripted scrolls;
+  header comment says how to run it outside this package).
 - `scripts/check-dataset.mjs` — the gate before the bundler: no `{{`
   placeholder, presentation cutoff kind, cutoff and account equal between
   meta and projection, route URL names the pinned revision, finite result
