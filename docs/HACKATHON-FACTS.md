@@ -126,3 +126,17 @@ Do not repeatedly re-research unchanged generic pages.
   through a plain fetch, so nothing beyond titles is recorded here.
 - The vote ranking is not the jury; O4 (no social solicitation, DECISIONS
   2026-08-24) stands unless the owner reopens it.
+
+## Actual submission form, read 2026-09-04 13:55 CEST (step 1 of 3, logged in)
+
+- Fields and limits: Submission Title 5–50 characters; Short Description 50–255
+  characters; Long Description **600–2000 characters** (the page text also
+  says "100 words min"); Categories (required, predefined list — `Finance`,
+  `Investment` fit; there is no trading category); Event Tracks (optional,
+  single option `Options Alpha Agents`); Technologies Used (required,
+  predefined list — present: `Alpaca`, `Anthropic Claude`, `Claude Code`,
+  `Vercel`; absent: TypeScript, Node, React, Remotion, a generic MCP entry);
+  five optional Social Media Post Link fields. Steps 2 and 3 (uploads, URLs,
+  account ID) were not opened by the agent.
+- Delta against the register: the long-description ceiling of 2000
+  characters was not in the earlier facts; COPY.md was cut to fit.
