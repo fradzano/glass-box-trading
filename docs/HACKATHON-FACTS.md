@@ -113,3 +113,16 @@ ask the organisers for the P&L window/formula. Record the observed form version
 and any answer by appending a dated correction here and a project decision in
 `DECISIONS.md`. A material page/form conflict blocks submission until clarified.
 Do not repeatedly re-research unchanged generic pages.
+
+## Observed on the live page, 2026-09-04 12:30 CEST (read-only scan before the form)
+
+- The `/live` page lists 207 submissions from 1,236 teams, ranked by community
+  votes; 174 of them sit in a track named **"Options Alpha Agents"**. The
+  track is a form-time choice to check for (SUB-09 delta row): if the form
+  asks for a track, this project belongs there.
+- Titles cluster on "Autonomous", "Options", "AI Trading Agent"; one entry
+  ("VegaGuard: Auditable AI Options Agent") claims auditability in the
+  title. None names a mechanism. Individual pitch texts were not readable
+  through a plain fetch, so nothing beyond titles is recorded here.
+- The vote ranking is not the jury; O4 (no social solicitation, DECISIONS
+  2026-08-24) stands unless the owner reopens it.
