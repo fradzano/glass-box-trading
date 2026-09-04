@@ -4,9 +4,9 @@ import { color, font } from "../theme";
 import { Frame, Lead, Steps } from "./shared";
 
 const Box: React.FC<{ readonly title: string; readonly lines: readonly string[]; readonly tone: "accent" | "pass" | "ink" }> = ({ title, lines, tone }) => (
-  <div style={{ flex: 1, border: `2px solid ${color[tone]}`, background: color.white, padding: "24px 28px", minHeight: 320 }}>
+  <div style={{ flex: 1, border: `2px solid ${color[tone]}`, background: color.white, padding: "16px 24px", minHeight: 0 }}>
     <div style={{ fontFamily: font.sans, fontSize: 34, color: color[tone], marginBottom: 12 }}>{title}</div>
-    {lines.map(line => <div key={line} style={{ fontSize: 26, lineHeight: 1.4 }}>{line}</div>)}
+    {lines.map(line => <div key={line} style={{ fontSize: 24, lineHeight: 1.3 }}>{line}</div>)}
   </div>
 );
 
