@@ -97,9 +97,9 @@ Role boundaries, enforced structurally:
 - **Executor** performs only core-approved actions. The LLM has no code path to an
   order.
 
-Auth for the analyst: Claude subscription via Agent SDK preferred; `ANTHROPIC_API_KEY`
-as configured fallback if unattended plan-auth token refresh proves brittle
-(open point O2).
+Auth for the analyst: Claude subscription via Agent SDK setup-token OAuth. P7
+requires `CLAUDE_CODE_OAUTH_TOKEN`; the earlier `ANTHROPIC_API_KEY` fallback
+idea (O2) was not implemented and is superseded by the fail-closed runtime.
 
 ## 4. Risk gate catalog (second cut after cold read — final list frozen before go-live Aug 31)
 
@@ -184,8 +184,9 @@ State & failure gates (findings #2/#4/#6/#11):
   to finish the market-hours dev tests before kickoff so the first eligible Friday
   partial session remains available, but a failed test delays arming rather than
   weakening a gate. Before any competition order, bootstrap records creation at
-  or after kickoff, exact $100k opening cash/equity, and fully paginated empty
-  order/fill/activity history. Later manual activity irreversibly fails the
+  or after kickoff, exact $100k opening cash/equity, fully paginated empty
+  order/fill history, and an activity ledger holding nothing but the opening
+  funding journal. Later manual activity irreversibly fails the
   competition provenance and submission gate.
 - Both roles bind their explicit profile and independent expected account ID to
   the exact canonical `https://paper-api.alpaca.markets` trading origin at

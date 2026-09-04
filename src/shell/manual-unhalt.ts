@@ -14,6 +14,12 @@ export interface ManualUnhaltOptions {
   readonly secrets: readonly string[];
   readonly instanceId: string;
   readonly lockTakeoverBoundMs: number;
+  readonly expectedHaltSeq?: number;
+  readonly expectedHaltReason?: string;
+  /** Optional certificate CAS: the reconciled writer and journal tail must still be exact. */
+  readonly expectedEpoch?: number;
+  readonly expectedHolderId?: string;
+  readonly expectedJournalSeq?: number;
 }
 
 export async function manualUnhalt(options: ManualUnhaltOptions): Promise<DispatchResult> {
@@ -25,5 +31,13 @@ export async function manualUnhalt(options: ManualUnhaltOptions): Promise<Dispat
     instanceId: options.instanceId,
     lockTakeoverBoundMs: options.lockTakeoverBoundMs,
   });
-  return gateway.dispatchManualUnhalt({ operator: options.operator, reason: options.reason });
+  return gateway.dispatchManualUnhalt({
+    operator: options.operator,
+    reason: options.reason,
+    ...(options.expectedHaltSeq === undefined ? {} : { expectedHaltSeq: options.expectedHaltSeq }),
+    ...(options.expectedHaltReason === undefined ? {} : { expectedHaltReason: options.expectedHaltReason }),
+    ...(options.expectedEpoch === undefined ? {} : { expectedEpoch: options.expectedEpoch }),
+    ...(options.expectedHolderId === undefined ? {} : { expectedHolderId: options.expectedHolderId }),
+    ...(options.expectedJournalSeq === undefined ? {} : { expectedJournalSeq: options.expectedJournalSeq }),
+  });
 }

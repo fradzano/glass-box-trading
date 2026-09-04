@@ -6,6 +6,7 @@
 // watchdog staleness assessment, and the ping plan. No I/O, no clock: broker
 // books, journal entries, quotes, calendar facts, and explicit times are
 // inputs; every decision here is applied by the shell, never made there.
+import type { AccountActivityRecord } from "./alpaca-mapping.js";
 import { integerUnit, lotCount } from "./domain.js";
 import type { EntryCandidate, EntryLimitKind, OptionContract, OptionLeg, OptionPriceCents, OptionQuote, Quantity } from "./domain.js";
 import { isWorkingBrokerStatus, netMidTwice, reversedLegs, utcIsoToEpochMs } from "./execution.js";
@@ -276,6 +277,12 @@ export interface PaginatedHistoryEvidence {
   readonly items: number;
 }
 
+/** The activity ledger as the proof classifies it: the mapped records plus the completeness of their pagination. */
+export interface OpeningLedgerEvidence {
+  readonly complete: boolean;
+  readonly activities: readonly AccountActivityRecord[];
+}
+
 export type ProvenanceVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly violations: readonly string[]; readonly reuseEvidence: boolean };
@@ -285,13 +292,95 @@ function historyOf(value: unknown): PaginatedHistoryEvidence | null {
   return { complete: value["complete"], items: value["items"] };
 }
 
+/** The mapped record shape, re-read structurally: the proof trusts the bundle shape no more than the bundle content. */
+function activityRecordOf(value: unknown): AccountActivityRecord | null {
+  if (!isRecord(value)) return null;
+  const id = value["id"];
+  const activityType = value["activityType"];
+  const status = value["status"];
+  const netAmountCents = value["netAmountCents"];
+  const currency = value["currency"];
+  const occurredAt = value["occurredAt"];
+  if (typeof id !== "string" || id.length === 0) return null;
+  if (typeof activityType !== "string" || activityType.length === 0) return null;
+  if (status !== null && typeof status !== "string") return null;
+  if (netAmountCents !== null && !Number.isSafeInteger(netAmountCents)) return null;
+  if (currency !== null && typeof currency !== "string") return null;
+  if (occurredAt !== null && typeof occurredAt !== "string") return null;
+  return { id, activityType, status, netAmountCents: netAmountCents === null ? null : (netAmountCents as number), currency, occurredAt };
+}
+
+function openingLedgerOf(value: unknown): OpeningLedgerEvidence | null {
+  if (!isRecord(value) || typeof value["complete"] !== "boolean") return null;
+  const raw = value["activities"];
+  if (!Array.isArray(raw)) return null;
+  const activities: AccountActivityRecord[] = [];
+  for (const item of raw) {
+    const record = activityRecordOf(item);
+    if (record === null) return null;
+    activities.push(record);
+  }
+  return { complete: value["complete"], activities };
+}
+
+/**
+ * The one activity a virgin competition account legitimately carries: the
+ * broker own opening capital journal. Recorded on the dev paper account on
+ * 2026-09-02 as an executed USD cash journal-in (`JNLC`) with a positive exact
+ * net amount. Only such a journal counts toward the funding sum. It is not
+ * guaranteed to exist yet — see `validateCompetitionProvenance`.
+ */
+function isOpeningFundingJournal(activity: AccountActivityRecord): boolean {
+  return activity.activityType === "JNLC" && activity.status === "executed" && activity.currency === "USD" && activity.netAmountCents !== null && activity.netAmountCents > 0;
+}
+
+/**
+ * Cash that LEFT the account. An executed negative cash journal is prior use,
+ * not merely an uncountable record — it is graded with the foreign activity
+ * types rather than with the benign uncountable journals below.
+ */
+function isCashJournalOut(activity: AccountActivityRecord): boolean {
+  return activity.activityType === "JNLC" && activity.status === "executed" && activity.netAmountCents !== null && activity.netAmountCents < 0;
+}
+
+/** Distinct activity types, so a violation message names what was actually seen. */
+function distinctTypes(activities: readonly AccountActivityRecord[]): readonly string[] {
+  const seen: string[] = [];
+  for (const activity of activities) if (!seen.includes(activity.activityType)) seen.push(activity.activityType);
+  return seen;
+}
+
 /**
  * The fully paginated provenance bundle a competition bootstrap requires
  * before any order: paper role and expected ID, creation at or after
  * COMPETITION_START, opening cash and equity exactly INITIAL_CAPITAL, zero
- * positions and non-terminal orders, and empty complete order/fill/activity
- * history. Missing pages, reset/reuse evidence, or an allowed-looking $100k
- * snapshot without creation/history proof fails closed.
+ * positions and non-terminal orders, an empty complete order and fill history,
+ * and an activity ledger whose ONLY entries are opening funding journals.
+ * A non-empty ledger is not by itself reuse: an Alpaca paper account carries
+ * the `JNLC` journal that funded it (recorded on the dev account 2026-09-02),
+ * so the countable journals present must sum to exactly INITIAL_CAPITAL.
+ *
+ * The funding journal is posted ASYNCHRONOUSLY, though, not at account
+ * creation: read-only probes of the competition account minutes after its
+ * creation (`PA376WIK2ATL`, created 2026-09-02T09:54:41Z) returned an empty
+ * activity ledger under every filter while cash and equity already stood at
+ * exactly $100,000. Requiring the journal would therefore block arming for as
+ * long as the broker takes to post it. So an EMPTY, complete ledger is itself
+ * accepted as virgin evidence — but only when every other clause of this proof
+ * already holds, above all opening cash AND equity at exactly INITIAL_CAPITAL
+ * with complete, empty order and fill histories: on a virgin snapshot the
+ * balance is the funding evidence. Where that snapshot is off in any way, the
+ * empty ledger proves nothing and the funding evidence stays incomplete.
+ *
+ * Deliberately NOT checked: any ordering between the funding journal instant
+ * and the account creation instant. The two timestamps come from different
+ * broker subsystems and no recorded pair establishes their order, so a
+ * tolerance would be an invented constant; it would also add no safety, since
+ * the account creation instant is already bounded by COMPETITION_START and a
+ * journal cannot fund an account that does not exist.
+ *
+ * Missing pages, reset/reuse evidence, or an allowed-looking $100k snapshot
+ * without creation/funding proof fails closed.
  */
 export function validateCompetitionProvenance(bundle: unknown, expectations: ProvenanceExpectations): ProvenanceVerdict {
   const violations: string[] = [];
@@ -310,7 +399,7 @@ export function validateCompetitionProvenance(bundle: unknown, expectations: Pro
   if (bundle["openingEquityCents"] !== expectations.initialCapitalCents) violations.push("opening equity is not exactly INITIAL_CAPITAL");
   if (bundle["positionCount"] !== 0) { violations.push("account holds positions"); reuseEvidence = true; }
   if (bundle["nonTerminalOrderCount"] !== 0) { violations.push("account has non-terminal orders"); reuseEvidence = true; }
-  for (const key of ["orderHistory", "fillHistory", "activityHistory"]) {
+  for (const key of ["orderHistory", "fillHistory"]) {
     const history = historyOf(bundle[key]);
     if (history === null) {
       violations.push(`${key} evidence missing or malformed`);
@@ -318,6 +407,44 @@ export function validateCompetitionProvenance(bundle: unknown, expectations: Pro
     }
     if (!history.complete) violations.push(`${key} pagination is incomplete; missing pages fail closed`);
     if (history.items > 0) { violations.push(`${key} is not empty from creation through the snapshot`); reuseEvidence = true; }
+  }
+  const ledger = openingLedgerOf(bundle["activityLedger"]);
+  if (ledger === null) {
+    violations.push("activityLedger evidence missing or malformed");
+    return { ok: false, violations, reuseEvidence };
+  }
+  if (!ledger.complete) violations.push("activityLedger pagination is incomplete; missing pages fail closed");
+  const funding = ledger.activities.filter(activity => isOpeningFundingJournal(activity));
+  // Graded, not lumped together. A foreign activity type or cash journalled OUT is prior use and latches the
+  // irreversible halt. A cash journal that merely fails to count — cancelled, non-USD, amount absent — blocks
+  // the bootstrap without that latch: it is an unreadable record, not proof that the account was spent, and an
+  // irreversible latch on a benign funding retry would cost the whole competition week.
+  const spent = ledger.activities.filter(activity => activity.activityType !== "JNLC" || isCashJournalOut(activity));
+  const uncountable = ledger.activities.filter(activity => activity.activityType === "JNLC" && !isCashJournalOut(activity) && !isOpeningFundingJournal(activity));
+  if (spent.length > 0) {
+    violations.push(`activity ledger carries entries beyond the opening funding journal: ${distinctTypes(spent).join(", ")}`);
+    reuseEvidence = true;
+  }
+  if (uncountable.length > 0) violations.push(`activity ledger carries ${String(uncountable.length)} cash journal(s) that are not an executed positive USD credit and cannot be counted as funding`);
+  const fundedCents = funding.reduce((sum, activity) => sum + (activity.netAmountCents ?? 0), 0);
+  if (funding.length === 0) {
+    // An empty COMPLETE ledger is the virgin state the broker shows before it posts the opening journal, but it
+    // carries that meaning only on an otherwise perfect snapshot: `violations.length === 0` here means opening cash
+    // and equity are exactly INITIAL_CAPITAL, both histories are complete and empty, there are no positions and no
+    // non-terminal orders, the role/ID/creation clauses hold, and the ledger page itself is complete. Then the
+    // balance IS the funding evidence and nothing is missing. Otherwise the funding evidence is incomplete — which
+    // is not proof of reuse either way (a ledger that was not observed is not a spent account), so this blocks
+    // retryably (GAP) and never latches PROVENANCE_BROKEN. The two leading conjuncts are subsumed by that same
+    // `violations.length === 0` today — an incomplete page and any non-empty ledger without a countable journal
+    // each push their own violation above — and are kept deliberately: they state the rule at its own site, so a
+    // later reordering of the checks above cannot silently widen what counts as the virgin empty ledger.
+    const balanceIsFundingEvidence = ledger.complete && ledger.activities.length === 0 && violations.length === 0;
+    if (!balanceIsFundingEvidence) violations.push("activity ledger carries no opening funding journal; funding evidence is incomplete");
+  } else if (!Number.isSafeInteger(fundedCents)) {
+    violations.push("opening funding journals do not sum within the exact-cent integer range");
+  } else if (fundedCents !== expectations.initialCapitalCents) {
+    violations.push(`opening funding journals sum to ${String(fundedCents)} cents, not exactly INITIAL_CAPITAL`);
+    reuseEvidence = true;
   }
   return violations.length === 0 ? { ok: true } : { ok: false, violations, reuseEvidence };
 }
@@ -566,6 +693,23 @@ export function assertFlattened(book: BrokerBook, declaredHoldContractIds: reado
   return { satisfied: violations.length === 0, holdVisible, violations };
 }
 
+/**
+ * The `TERMINAL` entry, if one stands (S-G11-04). It is the controlled end of
+ * the run: after it the scheduler stops, the artifacts are frozen, and a
+ * journal that no longer grows is the intended outcome rather than evidence of
+ * a hung writer. The fold is here so that every consumer — the watchdog's
+ * staleness assessment, the deadline CLI's once-only admission — reads the
+ * same fact from the same entries instead of re-deciding what "ended" means.
+ */
+export function terminalEntry(entries: readonly JournalEntry[]): JournalEntry | null {
+  return entries.find(entry => entry.type === "TERMINAL") ?? null;
+}
+
+/** Whether the controlled end already stands; the boolean form the staleness assessment takes. */
+export function deploymentTerminal(entries: readonly JournalEntry[]): boolean {
+  return terminalEntry(entries) !== null;
+}
+
 // ---------------------------------------------------------------------------
 // G14 — watchdog staleness and the ping plan
 // ---------------------------------------------------------------------------
@@ -577,7 +721,7 @@ export interface SessionWindow {
 }
 
 export type StalenessAssessment =
-  | { readonly kind: "quiet"; readonly reason: "OUTSIDE_SESSION" | "FRESH" | "NO_JOURNAL" }
+  | { readonly kind: "quiet"; readonly reason: "OUTSIDE_SESSION" | "FRESH" | "NO_JOURNAL" | "DEPLOYMENT_TERMINAL" }
   | { readonly kind: "stale"; readonly ageMs: number };
 
 /**
@@ -588,8 +732,16 @@ export type StalenessAssessment =
  * watchdog stays quiet on it (decision in DECISIONS.md P5). Witness appends
  * never feed `lastAuthoritativeAtMs` (the caller derives it via
  * `journalStaleness`, which is witness-neutral).
+ *
+ * `deploymentTerminal` outranks every other reason (S-G11-04): once the
+ * `TERMINAL` entry stands, the run ended on purpose and its silence is the
+ * expected outcome. Treating that as a hung writer would fence a writer that
+ * finished, halt an account that is flat, and fail-ping an owner whose story
+ * already closed in writing. The caller derives the flag from the journal fold
+ * (`deploymentTerminal`); this function never reads a journal.
  */
-export function assessStaleness(nowMs: number, session: SessionWindow, lastAuthoritativeAtMs: number | null, deadManBoundMs: number): StalenessAssessment {
+export function assessStaleness(nowMs: number, session: SessionWindow, lastAuthoritativeAtMs: number | null, deadManBoundMs: number, deploymentTerminal: boolean): StalenessAssessment {
+  if (deploymentTerminal) return { kind: "quiet", reason: "DEPLOYMENT_TERMINAL" };
   if (!session.isTradingDay || nowMs < session.opensAt || nowMs >= session.closesAt) return { kind: "quiet", reason: "OUTSIDE_SESSION" };
   if (lastAuthoritativeAtMs === null) return { kind: "quiet", reason: "NO_JOURNAL" };
   const ageMs = nowMs - lastAuthoritativeAtMs;
@@ -612,6 +764,41 @@ export function planPing(input: { readonly durableAppendLanded: boolean; readonl
   if (input.alarmConditions.length > 0) return { kind: "fail", conditions: input.alarmConditions };
   if (input.durableAppendLanded) return { kind: "success" };
   return { kind: "none", detail: "no durable authoritative append landed and no alarm condition exists" };
+}
+
+/**
+ * The ways an epoch acquisition can end without authority, mirrored from the
+ * gateway's `AcquisitionResult` (the core cannot import the shell). Only these
+ * three reach the watchdog's refusal branch: `WON` and `GAP_HALT` are the
+ * authoritative outcomes.
+ */
+export type AuthorityRefusal =
+  | { readonly kind: "SUPPRESSED"; readonly holderId: string }
+  | { readonly kind: "LOST"; readonly observedEpoch: number | null }
+  | { readonly kind: "REFUSED"; readonly reason: string };
+
+/**
+ * S-G14-02/03: in-session staleness beyond `DEAD_MAN_BOUND` that could NOT be
+ * fenced. Observing staleness is not authority, and authority comes only from
+ * the atomic epoch increment — so this run may not halt, may not journal and
+ * may not touch the book. What remains is the alarm, and it is the only active
+ * one this state has: a live holder whose heartbeat is fresh while its journal
+ * stopped growing is exactly the hung writer the dead man exists for, and
+ * leaving it to the passive missed-ping SLA is what S-G14-03 refuses. The
+ * conditions are closed (never empty), so `planPing` can only turn them into a
+ * fail-ping, and they name both the age of the silence and who or what denied
+ * the fence.
+ */
+export function authorityRefusalAlarms(refusal: AuthorityRefusal, ageMs: number): readonly string[] {
+  const staleness = `WATCHDOG_NO_AUTHORITY:staleness ${String(ageMs)} ms`;
+  switch (refusal.kind) {
+    case "SUPPRESSED":
+      return [staleness, `WRITER_HUNG_LOCK_HELD:${refusal.holderId}`];
+    case "LOST":
+      return [staleness, `WATCHDOG_AUTHORITY_LOST:${refusal.observedEpoch === null ? "unknown" : String(refusal.observedEpoch)}`];
+    case "REFUSED":
+      return [staleness, `WATCHDOG_AUTHORITY_REFUSED:${refusal.reason}`];
+  }
 }
 
 // ---------------------------------------------------------------------------

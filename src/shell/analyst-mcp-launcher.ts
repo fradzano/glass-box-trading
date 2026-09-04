@@ -16,15 +16,19 @@ import {
   verifyMcpLaunch,
 } from "../core/startup.js";
 import type { AnalystCredentials, AnalystManifest, McpLaunchObservation, McpViolation, RuntimeLock } from "../core/startup.js";
+import { withOperationTimeout } from "./operation-timeout.js";
+import type { OperationTimers } from "./operation-timeout.js";
+
+export const MCP_CHILD_OPERATION_TIMEOUT_MS = 30_000;
 
 /** Evidence about the dedicated environment, computed by the port against the lock's expectations. */
 export interface McpEvidencePort {
   /** Digest and identity evidence; `hashProvenance` must state where the EXPECTED values came from. */
-  gather(lock: RuntimeLock): Promise<Omit<McpLaunchObservation, "childEnvironment">>;
+  gather(lock: RuntimeLock, operationTimeoutMs: number): Promise<Omit<McpLaunchObservation, "childEnvironment">>;
   /** Remove every artifact matching the lock's removeBeforeSpawn patterns; returns the paths removed. */
-  removeBytecode(patterns: readonly string[]): Promise<readonly string[]>;
+  removeBytecode(patterns: readonly string[], operationTimeoutMs: number): Promise<readonly string[]>;
   /** Recursive scan for surviving artifacts after removal; must return an empty list for the launch to proceed. */
-  scanBytecode(patterns: readonly string[]): Promise<readonly string[]>;
+  scanBytecode(patterns: readonly string[], operationTimeoutMs: number): Promise<readonly string[]>;
 }
 
 export interface McpChildHandle {
@@ -32,8 +36,15 @@ export interface McpChildHandle {
   stop(): Promise<void>;
 }
 
+export interface McpChildSpawnAttempt {
+  /** The connect result. Ownership of cleanup exists before this promise is awaited. */
+  readonly connected: Promise<McpChildHandle>;
+  /** Cancel or close the attempt even when connect has not produced a handle yet. */
+  stop(): Promise<void>;
+}
+
 export interface McpChildPort {
-  spawn(env: Readonly<Record<string, string>>): Promise<McpChildHandle>;
+  spawn(env: Readonly<Record<string, string>>, operationTimeoutMs: number): McpChildSpawnAttempt;
 }
 
 export interface McpLaunchPorts {
@@ -45,6 +56,10 @@ export interface McpLaunchPorts {
   readonly osEnv: Readonly<Record<string, string>>;
   readonly evidence: McpEvidencePort;
   readonly child: McpChildPort;
+  /** Test seam; production uses the runtime-digested constant. */
+  readonly operationTimeoutMs?: number;
+  /** Test seam; production omits it and every bound below runs on the real clock and the real timers. */
+  readonly timers?: OperationTimers;
 }
 
 export type McpLaunchResult =
@@ -52,25 +67,52 @@ export type McpLaunchResult =
   | { readonly ok: false; readonly stage: "agreement" | "pre_spawn" | "inventory"; readonly violations: readonly McpViolation[]; readonly issues: readonly string[] };
 
 export async function launchVerifiedAnalystChild(ports: McpLaunchPorts): Promise<McpLaunchResult> {
+  const timeoutMs = ports.operationTimeoutMs ?? MCP_CHILD_OPERATION_TIMEOUT_MS;
   const agreement = verifyManifestLockAgreement(ports.manifest, ports.lock);
   if (!agreement.ok) return { ok: false, stage: "agreement", violations: [], issues: agreement.issues };
 
   const patterns = ports.lock.installPolicy.removeBeforeSpawn;
-  await ports.evidence.removeBytecode(patterns);
-  const surviving = await ports.evidence.scanBytecode(patterns);
+  await withOperationTimeout(() => ports.evidence.removeBytecode(patterns, timeoutMs), timeoutMs, "MCP_REMOVE_TIMEOUT", ports.timers);
+  const surviving = await withOperationTimeout(() => ports.evidence.scanBytecode(patterns, timeoutMs), timeoutMs, "MCP_SCAN_TIMEOUT", ports.timers);
 
   const childEnvironment: Readonly<Record<string, string>> = { ...ports.osEnv, ...buildAnalystChildEnv(ports.manifest, ports.credentials) };
-  const gathered = await ports.evidence.gather(ports.lock);
+  const gathered = await withOperationTimeout(() => ports.evidence.gather(ports.lock, timeoutMs), timeoutMs, "MCP_EVIDENCE_TIMEOUT", ports.timers);
   const observation: McpLaunchObservation = { ...gathered, bytecodeArtifactsPresent: [...gathered.bytecodeArtifactsPresent, ...surviving], childEnvironment };
 
   const preSpawn = verifyMcpLaunch(ports.lock, observation, ports.osEnvAllowlist);
   if (!preSpawn.ok) return { ok: false, stage: "pre_spawn", violations: preSpawn.violations, issues: [] };
 
-  const child = await ports.child.spawn(childEnvironment);
-  const inventory = await child.listTools();
+  const attempt = ports.child.spawn(childEnvironment, timeoutMs);
+  let child: McpChildHandle;
+  try {
+    child = await withOperationTimeout(() => attempt.connected, timeoutMs, "MCP_CONNECT_TIMEOUT", ports.timers);
+  } catch (error) {
+    try {
+      await withOperationTimeout(() => attempt.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "MCP connect failed and child cleanup did not complete", { cause: cleanupError });
+    }
+    throw error;
+  }
+  let inventory: readonly string[];
+  try {
+    inventory = await withOperationTimeout(() => child.listTools(), timeoutMs, "MCP_LIST_TOOLS_TIMEOUT", ports.timers);
+  } catch (error) {
+    try {
+      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "MCP inventory failed and child cleanup did not complete", { cause: cleanupError });
+    }
+    throw error;
+  }
   const accepted = verifyMcpInventory(ports.manifest, inventory);
   if (!accepted.ok) {
-    await child.stop();
+    try {
+      await withOperationTimeout(() => child.stop(), timeoutMs, "MCP_STOP_TIMEOUT", ports.timers);
+    } catch (cleanupError) {
+      const inventoryError = new Error(`MCP_INVENTORY_REJECTED: ${accepted.violations.map(item => `${item.code}: ${item.detail}`).join("; ")}`);
+      throw new AggregateError([inventoryError, cleanupError], "MCP inventory was rejected and child cleanup did not complete", { cause: cleanupError });
+    }
     return { ok: false, stage: "inventory", violations: accepted.violations, issues: [] };
   }
   return { ok: true, child, inventory };

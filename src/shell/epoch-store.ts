@@ -2,7 +2,10 @@
 // (S-G12-07). The mutex only serializes local gateway and acquisition work;
 // authority is decided by the pure core against the epoch the store holds.
 // Writes are atomic: temp file, fsync, rename.
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import { createServer } from "node:net";
+import type { Server } from "node:net";
 import type { EpochStoreState } from "../core/authority.js";
 import type { StatePaths } from "./state-dir.js";
 
@@ -100,49 +103,68 @@ export function removeHolder(paths: StatePaths): void {
   rmSync(paths.holder, { force: true });
 }
 
-const MUTEX_STALE_MS = 15_000;
-const MUTEX_TIMEOUT_MS = 20_000;
+/** Release only the caller's lease; a stale predecessor must never delete a successor's holder record. */
+export async function releaseHolder(paths: StatePaths, holderId: string): Promise<boolean> {
+  return withMutex(paths, () => {
+    const current = readHolder(paths);
+    if (current === null || current.holderId !== holderId) return false;
+    removeHolder(paths);
+    return true;
+  });
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
 /**
- * Exclusive-create mutex (`wx`): the OS guarantees that of concurrent
- * creators exactly one succeeds. A mutex older than MUTEX_STALE_MS belongs to
- * a crashed holder and is removed; the mutex is held only for the duration of
- * one gateway operation and is never an authority.
+ * Kernel-owned, single-host mutex. Windows named-pipe names and Linux abstract
+ * sockets are exclusive while their server process lives and are released by
+ * the OS on close or crash. There is therefore no stale-file deletion, lease
+ * timeout, or recovery CAS window. The mutex serializes one gateway operation;
+ * epoch fencing, not holding this endpoint, grants mutation authority.
  */
 export async function withMutex<T>(paths: StatePaths, work: () => Promise<T> | T): Promise<T> {
-  const startedAt = Date.now();
+  const endpoint = mutexEndpoint(paths);
+  let server: Server;
   for (;;) {
-    let descriptor: number;
     try {
-      descriptor = openSync(paths.mutex, "wx");
+      server = await listenMutex(endpoint);
+      break;
     } catch (error) {
-      // EEXIST is the normal contention signal; on Windows a concurrent creator can also surface EPERM/EBUSY/EACCES
-      // for the same file. All of them mean "held right now" and are retried until the timeout.
       const code = error instanceof Error && "code" in error ? error.code : undefined;
-      if (code !== "EEXIST" && code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw error;
-      try {
-        const age = Date.now() - statSync(paths.mutex).mtimeMs;
-        if (age > MUTEX_STALE_MS) unlinkSync(paths.mutex);
-      } catch {
-        // The mutex vanished between the checks; retry.
-      }
-      if (Date.now() - startedAt > MUTEX_TIMEOUT_MS) throw new Error("writer mutex timeout", { cause: error });
+      if (code !== "EADDRINUSE") throw error;
       await sleep(2 + Math.floor(Math.random() * 6));
-      continue;
-    }
-    try {
-      writeSync(descriptor, String(process.pid), null, "utf8");
-    } finally {
-      closeSync(descriptor);
-    }
-    try {
-      return await work();
-    } finally {
-      rmSync(paths.mutex, { force: true });
     }
   }
+  try {
+    return await work();
+  } finally {
+    await closeMutex(server);
+  }
+}
+
+function mutexEndpoint(paths: StatePaths): string {
+  const identity = process.platform === "win32" ? paths.root.toLowerCase() : paths.root;
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex");
+  if (process.platform === "win32") return `\\\\.\\pipe\\glass-box-trading-${digest}`;
+  if (process.platform === "linux") return `\0glass-box-trading-${digest}`;
+  throw new Error(`writer mutex unsupported on ${process.platform}; production requires Windows or Linux`);
+}
+
+function listenMutex(endpoint: string): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = createServer(socket => { socket.destroy(); });
+    server.once("error", reject);
+    server.listen(endpoint, () => {
+      server.removeListener("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+function closeMutex(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close(error => { if (error === undefined) resolve(); else reject(error); });
+  });
 }

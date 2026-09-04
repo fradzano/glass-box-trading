@@ -7,31 +7,21 @@
 //
 // Honesty note on the model: cash and equity are set by the test, not derived
 // from fills — the paper environment's own accounting is what P7 observes.
-import type { EntryLimitKind, OptionLeg } from "../core/domain.js";
+import type { EntryLimitKind } from "../core/domain.js";
 import { isWorkingBrokerStatus } from "../core/execution.js";
 import type { BrokerOrderRecord, BrokerPosition } from "../core/execution.js";
+import { MAX_CLIENT_ORDER_ID_LENGTH } from "../core/order-identity.js";
 import { BrokerHttpError } from "./broker-errors.js";
+import { readSubmitPayload } from "./broker-ports.js";
+import type { BrokerReadPort, SubmitPayload } from "./broker-ports.js";
 import type { BrokerMutation, BrokerMutationPort, BrokerMutationResult } from "./mutation-gateway.js";
 
-export interface SubmitPayload {
-  readonly legs: readonly OptionLeg[];
-  readonly quantity: number;
-  readonly limit: { readonly kind: EntryLimitKind; readonly priceCents: number };
-  readonly intent: "entry" | "close";
-}
-
-export interface AccountView {
-  readonly accountId: string;
-  readonly cashCents: number;
-  readonly equityCents: number;
-}
-
-export interface BrokerReadPort {
-  account(): Promise<AccountView>;
-  positions(): Promise<readonly BrokerPosition[]>;
-  openOrders(): Promise<readonly BrokerOrderRecord[]>;
-  orderByClientId(clientOrderId: string): Promise<BrokerOrderRecord | null>;
-}
+// The port contracts (`BrokerReadPort`, `SubmitPayload`, `AccountView`) and
+// the pure `readSubmitPayload` guard now live in `broker-ports.ts`, shared
+// with the real Alpaca adapter; re-exported here so every existing importer
+// of this module keeps compiling unchanged.
+export { readSubmitPayload } from "./broker-ports.js";
+export type { AccountView, BrokerReadPort, SubmitPayload } from "./broker-ports.js";
 
 export type SubmitBehaviour =
   | { readonly kind: "fill"; readonly avgFillPriceCents?: number }
@@ -83,6 +73,7 @@ interface MutableOrder {
   status: string;
   filledQuantity: number;
   avgFillPriceCents: number | null;
+  avgFillPriceRaw: string | null;
   brokerTimestamps: Record<string, string>;
   brokerReason: string | null;
   legs: readonly { contractId: string; side: "buy" | "sell"; ratio: number }[];
@@ -92,22 +83,9 @@ interface MutableOrder {
   onNextRead: { status: string; reason: string | null; fill?: { quantity: number; priceCents: number } } | null;
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function readSubmitPayload(payload: unknown): SubmitPayload | null {
-  if (!isRecord(payload)) return null;
-  const legs = payload["legs"];
-  const quantity = payload["quantity"];
-  const limit = payload["limit"];
-  const intent = payload["intent"];
-  if (!Array.isArray(legs) || legs.length === 0 || !Number.isSafeInteger(quantity) || (quantity as number) < 1 || !isRecord(limit) || (intent !== "entry" && intent !== "close")) return null;
-  if ((limit["kind"] !== "debit" && limit["kind"] !== "credit") || !Number.isSafeInteger(limit["priceCents"])) return null;
-  for (const optionLeg of legs) {
-    if (!isRecord(optionLeg) || typeof optionLeg["contractId"] !== "string" || (optionLeg["side"] !== "buy" && optionLeg["side"] !== "sell") || !Number.isSafeInteger(optionLeg["ratio"])) return null;
-  }
-  return { legs: legs as readonly OptionLeg[], quantity: quantity as number, limit: { kind: limit["kind"], priceCents: limit["priceCents"] as number }, intent };
+function exactDollarsFromCents(cents: number): string {
+  const whole = Math.floor(cents / 100);
+  return `${String(whole)}.${String(cents % 100).padStart(2, "0")}`;
 }
 
 export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
@@ -132,6 +110,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
     }
     order.filledQuantity += quantity;
     order.avgFillPriceCents = priceCents;
+    order.avgFillPriceRaw = exactDollarsFromCents(priceCents);
     order.brokerTimestamps["filled_at"] = stamp();
     order.status = order.filledQuantity >= order.quantity ? "filled" : "partially_filled";
   }
@@ -153,6 +132,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
       status: order.status,
       filledQuantity: order.filledQuantity,
       avgFillPriceCents: order.avgFillPriceCents,
+      avgFillPriceRaw: order.avgFillPriceRaw,
       brokerTimestamps: { ...order.brokerTimestamps },
       brokerReason: order.brokerReason,
       legs: order.legs.map(optionLeg => ({ ...optionLeg })),
@@ -173,6 +153,9 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
   function submit(mutation: BrokerMutation): BrokerMutationResult {
     const payload = readSubmitPayload(mutation.payload);
     if (payload === null) return { ok: false, reason: "REJECTED:malformed order payload" };
+    // Alpaca's synchronous limit, observed live on 2026-09-02 (the first dev certificate run): the
+    // hex-encoded structure identity produced a 190-character id and every entry was rejected.
+    if (mutation.clientOrderId.length > MAX_CLIENT_ORDER_ID_LENGTH) return { ok: false, reason: "REJECTED:client_order_id must be <= 128 characters" };
     if (orders.has(mutation.clientOrderId)) return { ok: false, reason: "DUPLICATE_CLIENT_ORDER_ID" };
     const behaviour = onSubmit(payload, mutation.clientOrderId);
     if (behaviour.kind === "reject") return { ok: false, reason: `REJECTED:${behaviour.reason}` };
@@ -183,6 +166,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
       status: "accepted",
       filledQuantity: 0,
       avgFillPriceCents: null,
+      avgFillPriceRaw: null,
       brokerTimestamps: { submitted_at: stamp() },
       brokerReason: null,
       legs: payload.legs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, ratio: optionLeg.ratio })),

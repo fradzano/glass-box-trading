@@ -44,12 +44,14 @@ export function position(overrides: Partial<BrokerPosition> = {}): BrokerPositio
 }
 
 export function brokerOrder(overrides: Partial<BrokerOrderRecord> = {}): BrokerOrderRecord {
+  const avgFillPriceCents = overrides.avgFillPriceCents ?? null;
   return {
     brokerOrderId: "broker-1",
     clientOrderId: "entry:2026-08-31:7:x",
     status: "accepted",
     filledQuantity: 0,
-    avgFillPriceCents: null,
+    avgFillPriceCents,
+    avgFillPriceRaw: overrides.avgFillPriceRaw ?? (avgFillPriceCents === null ? null : `${String(Math.floor(avgFillPriceCents / 100))}.${String(avgFillPriceCents % 100).padStart(2, "0")}`),
     brokerTimestamps: { submitted_at: "2026-08-31T13:30:00.123456789Z" },
     brokerReason: null,
     legs: [{ contractId: SHORT_CALL, side: "sell", ratio: 1 }, { contractId: LONG_CALL, side: "buy", ratio: 1 }],

@@ -2,6 +2,7 @@
 marp: true
 theme: default
 paginate: true
+footer: 'Alpaca AI Trading Agents Hackathon (lablab.ai) · Team Glass Box Trading · presentation cutoff {{PRESENTATION_CUTOFF_AT}}'
 ---
 
 <!--
@@ -27,10 +28,10 @@ figure here may be typed by hand or diverge from theirs.
 ## The auditability problem
 
 - "Autonomous trading agent" claims are easy to make, hard to verify
-- Most demos show a happy path; the losing/vetoed decisions stay private
 - Target user: a trader or allocator who wants unattended execution but
   distrusts opaque bot claims
-- This entry publishes the whole decision trail, not just the wins
+- This entry publishes the whole decision trail — proposals, vetoes, and
+  fills alike — not just the wins
 
 ---
 
@@ -51,7 +52,8 @@ figure here may be typed by hand or diverge from theirs.
   free-form order
 - A pure, tested decision core owns every risk gate; time/config/account
   state are parameters, not ambient calls
-- Executor places only core-approved actions via Alpaca CLI/API — the LLM
+- Executor places only core-approved actions through the Alpaca REST API
+  (multi-leg limit orders, client order id as idempotency key) — the LLM
   has no code path to an order
 
 ---
@@ -66,14 +68,19 @@ figure here may be typed by hand or diverge from theirs.
 
 ---
 
-## Risk gates and bounded unattended worst case
+## The cycle and its gates, in order
 
-- Entry gates: defined-risk only, sleeve budgets, per-position max loss,
-  concentration cap, liquidity floor, session gate, idempotency, schema gate
-- Lifecycle gates: expiry eviction, assignment reconciliation, deadline
-  flatten by Sep 3 close
-- State/failure gates: single-instance epoch + halt flag, drawdown
-  kill-switch, dead-man watchdog
+1. Phase 0: reconcile the journal against broker truth; anything foreign halts
+2. Fresh broker snapshot and quotes; the analyst proposes candidates (read-only MCP)
+3. The pure core prices each candidate from its own quotes and runs
+   **G1** defined risk only · **G2** sleeve budgets · **G3** max loss per position ·
+   **G4** per-underlying concentration · **G5** liquidity · **G6** session and
+   tradability · **G7** idempotency · **G8** schema and whitelist
+4. Executor: limit order, revalidated against a fresh broker read, INTENT before,
+   OUTCOME after
+- Lifecycle and failure gates run every cycle: **G9** expiry eviction, **G10**
+  reconciliation, **G11** deadline flatten, **G12** single instance and halt,
+  **G13** drawdown kill-switch, **G14** dead-man watchdog
 - Worst case is bounded by design, not by monitoring diligence
 
 ---
@@ -81,10 +88,19 @@ figure here may be typed by hand or diverge from theirs.
 ## Broker-reconciled P&L and sleeve attribution
 
 - Account {{ACCOUNT_ID}}, journal revision {{JOURNAL_REVISION}}
-- Start equity {{START_EQUITY}} → {{PNL_ABS}} ({{PNL_PCT}}) at
-  {{PRESENTATION_CUTOFF_AT}}
-- Realized {{REALIZED_PNL}} · Unrealized {{UNREALIZED_PNL}}
-- Income sleeve {{INCOME_SLEEVE_PNL}} · Convex sleeve {{CONVEX_SLEEVE_PNL}}
+- Start equity {{START_EQUITY}} · Equity at cutoff {{CURRENT_EQUITY}} ·
+  P&L {{PNL_ABS}} ({{PNL_PCT}}) at {{PRESENTATION_CUTOFF_AT}}
+- Realized {{REALIZED_PNL}} · Unrealized {{UNREALIZED_PNL}} · Unattributed
+  {{UNATTRIBUTED}} — a fee-shaped residual the journal cannot explain, shown
+  and never assigned to a sleeve
+- Realized only, by sleeve: income {{INCOME_SLEEVE_PNL}} ({{INCOME_FILLED}} filled
+  spreads) · convex {{CONVEX_SLEEVE_PNL}} ({{CONVEX_FILLED}} filled call of
+  {{CONVEX_ATTEMPTED}} attempted)
+- Concentration: one {{BEST_LIFECYCLE_LABEL}} on an overnight gap =
+  {{BEST_LIFECYCLE_SHARE_PCT}} of the result — path, not skill
+- Peak simultaneous defined worst case {{PEAK_RESERVED_MAX_LOSS}}
+  ({{PEAK_RESERVED_MAX_LOSS_PCT}}), carried overnight; max drawdown {{MAX_DRAWDOWN}} on
+  cycle-spaced samples, the overnight move not sampled; book flat
 
 ---
 
@@ -100,14 +116,21 @@ figure here may be typed by hand or diverge from theirs.
 
 ---
 
-## Failure drills, tests, and explicit limitations
+## Failure drills, two defects found, and limitations
 
-- Named failure-path tests exercise reconciliation, kill-switch, watchdog,
-  and expiry lifecycle — public alongside the source
-- One week of paper P&L cannot prove a strategy has edge
-- Paper trading only, on a dedicated competition account — never a live
-  brokerage account
-- No alpha or risk-adjusted-performance claim is made anywhere in this deck
+- Failure-path tests cover reconciliation, kill-switch, watchdog, expiry
+- **Defect 1:** on flatten day the runner could not price the structures
+  expiring next session (quote window starts at `EXPIRY_MIN_SESSIONS`); the
+  refusal reached only a discarded report, so no close was submitted
+- **Response:** owner stood the writer down, the certified dead-man watchdog
+  took over — `HALT WATCHDOG_TAKEOVER`, all three structures closed and
+  filled within a second, book flat at the deadline
+- **Defect 2:** that watchdog's wrapper had killed the CLI on its first
+  stderr line since arming — inert for a day, fixed at 17:41 CEST, an hour
+  before the takeover
+- **API limit:** no conditional submit at Alpaca; the pre-submit re-fetch is
+  the declared linearization point, a manual mutation halts the next cycle
+- Paper only; two sessions of paper P&L cannot prove edge — no alpha claim
 
 ---
 

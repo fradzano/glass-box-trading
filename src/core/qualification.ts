@@ -154,9 +154,11 @@ export interface QualificationBrief {
   readonly active: boolean;
   readonly maxLossCents: number | null;
   readonly windowEndMs: number | null;
+  /** The one-lot bound the core enforces on a qualification entry (S-CYC-12); stated to the analyst because it vetoed a passing five-lot candidate live on 2026-09-02. */
+  readonly quantityBound: 1 | null;
 }
 
 export function qualificationBrief(projection: QualificationProjection, config: QualificationConfig | null): QualificationBrief {
-  if (!projection.windowOpen || config === null) return { active: false, maxLossCents: null, windowEndMs: null };
-  return { active: true, maxLossCents: config.maxLossCents, windowEndMs: config.windowEndMs };
+  if (!projection.windowOpen || config === null) return { active: false, maxLossCents: null, windowEndMs: null, quantityBound: null };
+  return { active: true, maxLossCents: config.maxLossCents, windowEndMs: config.windowEndMs, quantityBound: 1 };
 }

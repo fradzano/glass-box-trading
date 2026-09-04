@@ -7,17 +7,21 @@
 - `.npmrc`
 - `.nvmrc`
 - `AGENTS.md` — Glass Box Trading — agent instructions
+- `assets/dashboard.css`
+- `assets/decision-view.css`
 - `CLAUDE.md`
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
 - `config/implementation-phases.json`
+- `config/policy.json`
 - `DECISIONS.md` — DECISIONS
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
-- `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
+- `docs/COLD-READ-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
+- `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
 - `docs/SUBMISSION-SPEC.md` — Submission and winning-path spec
@@ -28,7 +32,9 @@
 - `package-lock.json`
 - `package.json`
 - `README.md` — Glass Box Trading
+- `src/core/alpaca-mapping.ts` — Pure Alpaca wire mapping (P7): broker JSON in, the closed P3 record shapes
 - `src/core/authority.ts` — Pure writer-authority core (S-G12-01/02/07, S-J-06): epoch acquisition
+- `src/core/certificate.ts` — Pure S-ARM-01 core (P7): the versioned configuration field classification,
 - `src/core/decision.ts`
 - `src/core/domain.ts`
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
@@ -38,37 +44,74 @@
 - `src/core/projection.ts` — Pure public-evidence projection (P6: S-J-07 content, S-J-09, the S-CYC-12
 - `src/core/publish.ts` — Pure publication core (P6: S-J-07 candidate/probe/promotion/rollback,
 - `src/core/qualification.ts` — Pure qualification core (P6: S-CYC-12). A qualifying options activity is a
+- `src/core/sha256.ts` — Pure SHA-256 over UTF-8 text (P7: S-ARM-01 digests). The core may not import
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
 - `src/fixtures/p6-golden.ts` — The P6 golden-path fixture contract: the expectations, the qualification
+- `src/shell/account-bound-broker.ts` — S-J-06 at the real mutation boundary: the configured account identity and
+- `src/shell/agent-cli.ts` — One scheduled invocation of the agent: `node dist/shell/agent-cli.js`.
+- `src/shell/agent-runtime.ts` — The composition root for a real run (P7): validate the configuration
+- `src/shell/alpaca-broker.ts` — The real Alpaca adapter (P7): the read side the runner fetches from, the
+- `src/shell/analyst-claude.ts` — The real analyst (P7): a Claude session through the Agent SDK whose only
 - `src/shell/analyst-mcp-launcher.ts` — The pinned MCP build/launch verifier (S-CYC-11, WIN-6, WIN-10, WIN-19).
+- `src/shell/arming-gate.ts` — The competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10). Startup
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
+- `src/shell/broker-ports.ts` — The broker port contracts shared by every broker adapter (P3 fake, P7
+- `src/shell/certificate-cli.ts` — The S-ARM-01 entry point: `node dist/shell/certificate-cli.js --owner-go`.
+- `src/shell/certificate-command-guard.ts` — Pure admission rule for the externally stateful certificate CLI. Runtime
+- `src/shell/certificate-run.ts` — The supervised dev live-test driver (P7, S-ARM-01). It runs the exact
+- `src/shell/cli-exit-codes.ts` — The exit-code tables of the three entry points, as pure functions over a
 - `src/shell/cycle-runner.ts` — The cycle runner (CONCEPT §3 phases 0–5, tested against fakes in P3):
+- `src/shell/cycle-walltime.ts` — Aggregate shell deadline for one cycle. The runner propagates the absolute
 - `src/shell/dashboard-build.ts` — Atomic site build (S-J-07, UNF-2): render aside, then swap. Pages are
+- `src/shell/deadline-cli.ts` — The S-G11-03/04 entry point — the two Friday entries as their own one-shot
+- `src/shell/deadline-runtime.ts` — The composition root for one Friday deadline entry (S-G11-03/04). It builds
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
+- `src/shell/digests.ts` — Digest material for S-ARM-01 (P7): the shell enumerates and hashes the
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
 - `src/shell/fake-broker.ts` — A deterministic fake broker for P3 (fills, partial fills, synchronous and
 - `src/shell/gateway-cli.ts` — Process-level driver for the fencing and serialization tests: each
 - `src/shell/halt-state.ts` — The persisted halt flag (S-G12-05): a file in STATE_DIR, written only as
 - `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
 - `src/shell/manual-unhalt.ts` — The one human path that clears the halt flag (S-G12-04). It is not
+- `src/shell/market-calendar.ts` — Exchange calendar arithmetic for the shell (S-G6-03: session boundaries come
+- `src/shell/mcp-environment.ts` — The real ports behind the pinned MCP launcher (P7, S-CYC-11): evidence
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
+- `src/shell/operation-timeout.ts` — Bound an external lifecycle operation without trusting it to honor cancellation.
+- `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
+- `src/shell/presentation-guard.ts` — P9 / R33 (B1) — the stylesheet is inlined verbatim into the published
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
-- `src/shell/render-decision-view.ts`
+- `src/shell/render-decision-view.ts` — The P1 decision-view renderer: one pure function from a recorded decision
 - `src/shell/render-fixture.ts`
 - `src/shell/render-golden-dashboard.ts` — Local golden-path render (SUB-02 first working version, P6): builds
+- `src/shell/runtime-config.ts` — Configuration assembly for a real run (P7). The role-neutral policy is a
+- `src/shell/startup-broker-fence.ts` — Durable refusal after configuration validation but before the real broker
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
-- `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests: the watchdog as its own OS
+- `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests and for the scheduled
+- `src/shell/watchdog-runtime.ts` — The composition root for one scheduled watchdog invocation (P8). It builds
 - `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
 - `STATE.md` — STATE — live cursor
+- `submission/ACCOUNT-EVIDENCE.md` — Account Evidence (SUB-08)
 - `submission/COPY.md` — Form copy — SUB-07
 - `submission/COVER.md` — Cover image brief — SUB-06
+- `submission/cover.png`
+- `submission/glass-box-trading-one-pager.pdf`
+- `submission/glass-box-trading.pdf`
 - `submission/ONE-PAGER.md`
 - `submission/PREFLIGHT.md` — Submission preflight — SUB-09
+- `submission/publish/render-site.d.mts` — Type surface of render-site.mjs for the test suite (tests/publish-dashboard.spec.ts).
+- `submission/publish/render-site.mjs` — Digest-neutral publication path for the judge-facing dashboard (SUB-02,
+- `submission/render/cover.html`
+- `submission/render/inject.mjs` — Placeholder injection for the submission texts (SUB-03/05/07/09): every
+- `submission/render/render.mjs` — Reproducible render pipeline for the three submission artifacts:
 - `submission/slides/deck.md`
+- `tests/alpaca-fixtures.ts` — Alpaca wire documents recorded from the paper accounts, shared by the suites
+- `tests/alpaca-mapping.spec.ts` — P7 — the pure Alpaca wire mapping, exercised against documents recorded
+- `tests/arm01-certificate.spec.ts` — S-ARM-01 — the dev live-test certificate (P7): the pure evidence
+- `tests/arm01-fixtures.ts` — Shared S-ARM-01 certificate fixtures: one coherent dev live-test run
 - `tests/core-contract.spec.ts`
 - `tests/cyc-recovery-bootstrap.spec.ts` — S-CYC-03 (total connectivity loss), S-CYC-08 (first cycle after a gap),
 - `tests/cyc-runner.spec.ts` — The cycle runner against the real P2 gateway in a temporary STATE_DIR and
@@ -91,6 +134,7 @@
 - `tests/g5-liquidity.spec.ts`
 - `tests/g6-session-tradability.spec.ts`
 - `tests/g7-idempotency.spec.ts`
+- `tests/g7-order-id-length.spec.ts` — G7 / S-G7-01 — every client order id the core derives stays within Alpaca's
 - `tests/g8-schema-whitelist.spec.ts`
 - `tests/g9-expiry-eviction.spec.ts` — G9 — expiry eviction (S-G9-01..03): the entry veto for an
 - `tests/global-setup.ts` — Compiles src/** once per test run into a scratch directory so that the
@@ -102,15 +146,68 @@
 - `tests/j9-projection.spec.ts` — S-J-09 — the judge-facing performance projection is a pure fold over one
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
+- `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
+- `tests/p7-launch-hardening.spec.ts`
+- `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
+- `tests/p8-cli-exit-codes.spec.ts` — P8 — the three CLI exit-code tables (S-G12-01). The convention the spec
+- `tests/p8-competition-provenance.spec.ts` — S-CYC-09 at the composition root (P8): the competition provenance port is
+- `tests/p8-watchdog-runtime.spec.ts` — P8 — the scheduled watchdog's composition root (src/shell/watchdog-runtime.ts):
+- `tests/p9-presentation-assets.spec.ts` — P9 — presentation assets live in `assets/` and are inlined into the
+- `tests/p9-presentation-guard.spec.ts` — P9 / R33 (B1) — the presentation stylesheets in `assets/` sit outside the
+- `tests/publish-dashboard.spec.ts` — The digest-neutral publication path (submission/publish/render-site.mjs;
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`
+- `tools/derive_mcp_dependency_digest.py` — Derive the MCP dependency-site digest from a hash-locked clean wheel install.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
+- `tools/install-scheduled-task.ps1`
+- `tools/probe-dashboard.ps1`
+- `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
+- `tools/scan-secrets.ps1`
+- `tools/watchdog-run.ps1`
 - `tsconfig.build.json`
 - `tsconfig.json`
+- `video/package-lock.json`
+- `video/package.json`
+- `video/public/dataset/meta.json`
+- `video/public/dataset/projection.json`
+- `video/public/narration/architecture.mp3`
+- `video/public/narration/close.mp3`
+- `video/public/narration/coldOpen.mp3`
+- `video/public/narration/dashboardOpen.mp3`
+- `video/public/narration/decisionCycle.mp3`
+- `video/public/narration/gateVector.mp3`
+- `video/public/narration/orderToOutcome.mp3`
+- `video/public/narration/pnlAndLimits.mp3`
+- `video/public/narration/script.json`
+- `video/public/narration/sourceAndTests.mp3`
 - `video/README.md` — Video plan — SUB-04
+- `video/remotion.config.ts` — Remotion project configuration (video/ is its own package; nothing here
+- `video/scripts/check-dataset.mjs` — Dataset gate for the video render (SUB-04, video/README.md): every URL and
+- `video/scripts/check-narration.mjs` — Every narration mp3 must fit its scene slot with a margin (timeline.ts):
+- `video/scripts/record-captures.mjs` — Screen-capture recorder for the five capture slots (video/README.md).
+- `video/scripts/tts-elevenlabs.mjs` — Voice-over for the submission video: one mp3 per scene from
+- `video/src/dataset.ts` — The single frozen presentation-cutoff dataset (video/README.md): the
+- `video/src/format.ts` — Integer-cent formatting, no float arithmetic on money: the same rules the
+- `video/src/GlassBoxVideo.tsx` — The composition: one Sequence per SUBMISSION-SPEC §5 slot, in order. Every
+- `video/src/index.ts`
+- `video/src/narration.ts` — Voice-over and captions (SUB-04). Two artefacts are produced outside this
+- `video/src/Root.tsx` — A type alias, not an interface: Remotion's Composition props must be assignable to Record<string, unknown>.
+- `video/src/scenes/Architecture.tsx` — 2:45–3:40 — the architecture boundary and why the LLM cannot place an order.
+- `video/src/scenes/Close.tsx` — 4:55–4:59 — demo URL and project name.
+- `video/src/scenes/ColdOpen.tsx` — 0:00–0:30 — the auditability problem, the glass-box answer, the result.
+- `video/src/scenes/DashboardOpen.tsx` — 0:30–1:00 — the public dashboard opens with no login: result, exposure,
+- `video/src/scenes/DecisionCycle.tsx` — 1:00–1:40 — one completed decision cycle: market context, the analyst's
+- `video/src/scenes/GateVector.tsx` — 1:40–2:15 — the complete deterministic gate vector, with at least one
+- `video/src/scenes/OrderToOutcome.tsx` — 2:15–2:45 — one approved intent to its Alpaca order, fill and P&L
+- `video/src/scenes/PnlAndLimits.tsx` — 3:40–4:25 — P&L, both sleeves, budgets at risk, drawdown, and what one
+- `video/src/scenes/shared.tsx` — Layout primitives shared by the scenes: a titled frame with the cutoff
+- `video/src/scenes/SourceAndTests.tsx` — 4:25–4:55 — the public repository at the pure core and the test that
+- `video/src/theme.ts` — The dashboard's own palette and type (assets/dashboard.css), so the video
+- `video/src/timeline.ts` — The SUBMISSION-SPEC §5 timing table as frames. Total 299 s: under the
+- `video/tsconfig.json`
 - `vitest.config.ts`

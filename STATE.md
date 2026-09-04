@@ -6,13 +6,12 @@
 > [`docs/SCENARIOS.md`](docs/SCENARIOS.md). Update on every session close and
 > every decision.
 
-**Last updated:** 2026-09-01 ~02:00 CEST (P6 built and verified on `p6/public-evidence`; merge awaits the owner word — see the P6 paragraph under "Next")
-**Branch:** `p6/public-evidence` from the P5 merge `4e20de8` on local `main`; no GitHub remote yet
-**Last accepted phase artifact:** P5 — merge commit `4e20de8` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merged `main` (216 tests).
+**Last updated:** 2026-09-04 12:20 CEST (**second cut after the owner's review**: three cold-read lenses (judge, quant, Alpaca) drove a text pass — "two sessions" instead of "one week", REST API instead of CLI, the P&L decomposed (one 4x QQQ call on an overnight gap = 61% of the result, peak reserved worst case $3,421.00, the $33.15 drawdown cycle-sampled), the cycle and G1–G8 stated in order on deck slide six and in the one-pager, hackathon footers on both PDFs; the video got a voice-over: 650-word script in `video/public/narration/script.json`, nine mp3s synthesized through ElevenLabs (voice Matilda, key in the root `.env`), caption strip and credit line in the composition, every scene checked against its slot; the narrated render replaces `submission/glass-box-trading.mp4` (see the preflight video row for the measured facts); DECISIONS 2026-09-04 second entry has the rulings. First cut, 11:00 CEST: **submission material complete, internal cut met**: the presentation dataset is frozen under `video/public/dataset/` as the byte-identical copy of the pinned route's projection (revision `sha256:7b82959a344a7c7e`, cutoff `2026-09-03T20:00:14.787Z`); `submission/render/inject.mjs` derives every figure the texts show, `submission/render/render.mjs` renders the one-pager PDF (one page), the deck PDF (ten slides) and the 1920×1080 cover; the five screen captures were recorded headless against the pinned route and the branch's GitHub blob view, and `npm run render` in `video/` produced `submission/glass-box-trading.mp4` (299.05 s, 55 MB, h264 1080p; captures and the mp4 are gitignored and archived in the verification store's `evidence/submission-2026-09-04/`); `COPY.md` is final with measured counts and the account-ID field; `ACCOUNT-EVIDENCE.md` is the SUB-08 record; `PREFLIGHT.md` carries the host-side run (probe 29/29, receipt `probe-20260904T082629Z.json`), the cross-artifact number check and the local upload facts, with the form-side rows left to the owner; the texts name both competition-week defects and the watchdog takeover (DECISIONS 2026-09-04). Known weak spot: the source-and-tests capture shows `tests/cyc-runner.spec.ts` from the top, not the S-CYC-06 block at line 552 (GitHub's virtualised blob view under zoom). **Open owner decision:** GitHub's default branch `main` is still at the P6 merge `bce890a` — merge `p7/dev-live-certificate` `--no-ff` into `main` from a separate worktree before the form (recommended), or submit the branch URL. Then the owner fills the lablab form by hand (well before 17:00 CEST), the close session runs after the US close (`deadline-cli.js terminal`, `-DeadlineCutoff` publish). Previous cursor, 2026-09-03 22:15 CEST: **competition day two closed, book flat**: the FLATTEN_DATE regime closed the three structures expiring 09-08 at 15:30; the three expiring 09-04 could not be priced by the runner (its quote window starts at `EXPIRY_MIN_SESSIONS`, a defect recorded in DECISIONS 2026-09-03), so on the PM's recommendation the owner stood the AgentCycle task down at 18:00 and the certified watchdog took over at 18:55 (`HALT WATCHDOG_TAKEOVER` seq 59, three whole-structure closes seq 60–62, all filled within a second); the task was re-enabled 19:19, the runner journaled the OUTCOMEs (seq 63–65), the final cycle's flatten assertion passed silently, `DEADLINE_RECONCILIATION` seq 77 references the pinned revision; account `PA376WIK2ATL` at cash = equity $100,583.59, zero positions, zero orders, non-sticky `WATCHDOG_TAKEOVER` halt standing; second finding fixed digest-neutrally: the watchdog wrapper had killed the CLI on its first stderr line since arming (`e1576fb`); **dashboard republished** with the presentation pin — revision `sha256:7b82959a344a7c7e`, route `/revisions/sha256-7b82959a344a7c7e/presentation/`, probe 29/29 on candidate and alias, R37 C-3 measured on the host; the running build is still `dist` from `f464a66` with the two source files at `f464a66` content on the working tree (uncommitted); worktree `gbt-publish` is on branch `p7/publish-dashboard` and carries a Remotion video scaffold (`637d430`, `2fa9ba5`) from a parallel session; tomorrow: `deadline-cli.js terminal` after the Friday US close, `-DeadlineCutoff` publish, submission parts, merge). Previous cursor, 2026-09-02 22:05 CEST: competition day one closed — twelve scheduled cycles on freeze two, six filled defined-risk structures, equity $100,092.15, no open orders; **judge dashboard live** at `https://glass-box-trading.vercel.app`, first revision `sha256:c1c8e14ea4035034`, published through the digest-neutral path of `docs/PUBLISH-RUNBOOK.md`. **Competition live on freeze two**: first fill 20:05 CEST — SPY 762/757 put credit vertical, one lot, filled 106 ¢, max loss $395; scheduled tasks on; the running build is `dist` from `f464a66` with the two one-lot-fix sources restored to `f464a66` on the working tree (staged, uncommitted) so runtimeDigest equals certificate two; branch head `c7c7174` and worktree `gbt-fix` `9b2e155` carry the one-lot and resolver fixes for AFTER the competition; dev journal under MANUAL halt, dev account flat; tomorrow: FLATTEN_DATE regime closes the position, Friday deadline CLIs, submission)
+**Branch:** `p7/dev-live-certificate` from the P6 merge `bce890a` on local `main`; remote `origin` = `https://github.com/fradzano/glass-box-trading` (public). The operating checkout is at the branch head (rebased docs only): its digest set is byte-identical to freeze two `f464a66`, because the two one-lot-fix sources are kept at their `f464a66` content on the working tree (uncommitted) — never commit or reset those two files while the competition runs, and never rebuild `dist/`.
+**Last accepted phase artifact:** P6 — merge commit `bce890a` on local `main` (2026-09-01; owner acceptance of the declared reduced depth, see DECISIONS.md). `npm run verify` exit 0 on the merge plus the lint erratum fix `3c82d89` (250 tests); the erratum is recorded in DECISIONS.md.
 **P0 release baseline:** local `main` at `598f43e`
-**Current implementation phase:** P6 — public evidence pipeline
-([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p6--public-evidence-pipeline)) — implemented at `10a8e66`, `npm run verify` exit 0 (250 tests), mutation probe 17/17, blind gate CONFIRMED at `802b335`; **next action is Felix's:** merge `p6/public-evidence` into local `main` (`--no-ff`), or not; P7 then branches from the merge
-
+**Current implementation phase:** P7 — supervised dev live certificate
+([`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md#p7--supervised-dev-live-certificate)) — base implementation at `256dc2d`; pre-live adversarial review reached R28 (history of R2–R28 in the P7 bullet under "Next"). **2026-09-02 session (Felix as owner, Claude as PM over a team of at most five agents):** Felix ruled S-CYC-05 option A — the completion of the final fresh broker read is the linearization point; manual broker mutations are prohibited while the agent operates except under a durable HALT with no writer; the limitation is stated in the submission deck (SPEC, AXIOMS A13, SCENARIOS #8, DECISIONS, `tests/cyc-runner.spec.ts` "S-CYC-05 / linearization point"). A cold P8 readiness review then showed that the certificate's `runtimeDigest` covers every file under `src/`, `dist/`, `config/`, `tools/*.mjs|*.py` and the package files, so P8 code had to land BEFORE the market-hours run (DECISIONS 2026-09-02). Landed in this session: the competition provenance port wiring in the composition root plus the account-activities read (a live read-only probe showed a virgin paper account carries the opening `JNLC` funding journal, which the proof had treated as reuse evidence — corrected in SPEC S-CYC-09/CONCEPT and the core), the arming certificate gate (`src/shell/arming-gate.ts`, competition profile only), the real broker/market composition for the watchdog CLI, the renderer split into named template functions (byte-identical output), the Scheduled Task installer and secret scanner under `tools/*.ps1`, `evidence/` gitignored, `.env.example`/README runbook completed. R29 (`prompts/R29-blind-zero-go-no-go.md`) returned NO-GO: A1 the management-close ladder planned against the stale phase-1 book (fixed `962225c`, plus phase-0 reconciliation of close attempts `f2e214d`), B1 the watchdog raised no fail ping under degraded composition (fixed `e1ee586`); the Friday deadline entries got their one-shot CLI (`6bb1bdb`), never end in silence, and stand the watchdog down after TERMINAL (`28ad934`); five unmeasured proof components now have tests (`e1aa41b`); repository cleanup `b46706e`. R30 (`f2e214d`) confirmed the fixes and found two unmeasured invariants (fixed `4259a55`); the competition account `PA376WIK2ATL` was created 09:54Z and a live read showed an empty activity ledger, so the proof now accepts an empty complete ledger at exact capital (`fb2772c`, R31 GO, conjunction test `258d4c1`); R32 GO on the watchdog seams. Felix then ruled (12:40): decouple the dashboard CSS from the digest (`assets/`, `ce63170`), clear the C-class residuals instead of declaring them (`c6804c8`, `96412e2`, `e9c3ca7`, `d45d220`, `4afec4a`; the timers-port deflake of the remaining 5 ms stall tests is the last in-flight piece), merge P7 to `main` only after the PASS (acceptance event), freeze tag on the branch before the run. Competition account `PA376WIK2ATL` created 09:54Z; read-only probes at 12:12 and 12:42 through the real adapter: virgin, verdict ok, no funding journal posted yet. `.tmp/` scratch removed. **Next action (14:41):** run the R33 freeze gate (`prompts/R33-freeze-gate.md`) in an isolated worktree on HEAD; at A=0/B=0 Felix freezes O5 (`config/policy.json` as committed) and countersigns DECISIONS; tag `p7-freeze` on the branch; repeat the competition-account probe; from 15:30 `npm run certificate --owner-go` under supervision on the dev account; after PASS merge `--no-ff` to `main`, release tag, then the owner steps in the README runbook with no `src/` edits. Felix's explicit O5 freeze of `config/policy.json` as is, `git tag pre-kickoff-baseline`, then `npm run certificate --owner-go` under supervision from 15:30 CEST; afterwards only owner steps (competition account, `.env`, GitHub, Vercel, first competition cycle by hand) — no `src/` edits after the certificate.
 ## Done
 
 - Hackathon registered (lablab.ai, user `fradzano`, team **Glass Box Trading**,
@@ -24,7 +23,7 @@
   `ALPACA_TOOLSETS`), CLI v0.0.13 (`~/tools/alpaca-cli/`, mleg + client-order-id
   + dry-run). CONCEPT §10.
 - CONCEPT baseline → single-round cold read (6A/6B/3C, all folded in,
-  `docs/cold-read-2026-08-24.md`) → initial 48-scenario catalog derived cold,
+  `docs/COLD-READ-2026-08-24.md`) → initial 48-scenario catalog derived cold,
   since extended to 71 (`docs/SCENARIOS.md`).
 - **External contract frozen:** `docs/HACKATHON-FACTS.md` records the rendered
   event page, source authority rules, account rules, judging criteria, deliverables,
@@ -224,7 +223,7 @@ One phase per session; every session ends with the handoff protocol in
   recorded in DECISIONS.md (entry of 2026-08-31, "Verification depth for
   P2–P6 is reduced by declaration").
 
-## Next (after P4)
+## Phase record (P5–P7)
 
 - **P5 — recovery and lifecycle — implemented at `c4d055c` (2026-08-31,
   branch `p5/recovery-lifecycle` from the P4 merge `43e7170`).** All 21
@@ -340,18 +339,178 @@ One phase per session; every session ends with the handoff protocol in
   live market data are wired at P7's dev certificate), the Windows
   event-log diagnostic sink (pre-arming), S-ARM-01 certificate content
   validation (P7; WIN-7/WIN-10/WIN-17 remainders).
+- **P7 — supervised dev live certificate — implemented and in the final
+  pre-live zero gate (2026-09-01, branch `p7/dev-live-certificate` from the P6
+  merge `bce890a`; R23 fix counterverified, clean blind gate pending).**
+  Pure core: `src/core/certificate.ts` (versioned field classification with
+  the new `deployment` class, `policyDigest`, `runtimeDigest`, evidence
+  extraction from the journal plus broker observations, PASS/FAIL
+  evaluation, `validateArmingCertificate`), `src/core/alpaca-mapping.ts`
+  (exact-cent money, nanosecond truncation, credit = negative net limit,
+  order request bodies, pagination), `src/core/sha256.ts`. Shell: the real
+  Alpaca adapter (`alpaca-broker.ts`), the exchange calendar
+  (`market-calendar.ts`), the dedicated MCP environment ports
+  (`mcp-environment.ts`: git-blob comparison of the installed package, lock
+  coverage, interpreter digests, bytecode removal/scan, stdio child), the
+  Agent SDK analyst over an in-process proxy of the verified child
+  (`analyst-claude.ts`), the composition root (`agent-runtime.ts`), the
+  certificate driver (`certificate-run.ts`), the CLIs (`certificate-cli.ts`
+  with `--preflight` / `--smoke-cycle` / `--owner-go`, `agent-cli.ts` = one
+  scheduled cycle), config assembly and `.env` loading, the healthchecks
+  ping port, digests. `config/policy.json` holds the proposed O5 values; Felix's
+  freeze remains pending. The R28 `npm run verify` passed 33 files / 345 tests
+  plus build, architecture, dashboard, sandbox, and phase gates. The sandbox
+  gate executes the certificate core. Evidence-debt rows WIN-7, WIN-10, WIN-17
+  are closed.
+  Verified against the dev account off-hours (02:51–02:54 CEST): the
+  preflight passes every S-CYC-11 check (the first attempt caught a CRLF
+  clone and a name-normalization defect, both fixed), two smoke cycles
+  produced BOOTSTRAP + CYCLE with a schema-valid analyst candidate vetoed
+  by G5/G6 as it must be outside the session. The dev STATE_DIR
+  (`glass-box-state/dev` under the user profile) carries that smoke
+  journal (2 entries, epoch 3); the live run will open with an S-CYC-08 GAP
+  cycle. Adversarial rounds R2–R14 closed account binding, fence persistence,
+  journal/projection crash recovery, exact lifecycle evidence, stable broker
+  snapshots, aggregate deadlines, kernel writer serialization, lost-ack abort
+  recovery, physical state identity, and exact MCP child-environment isolation.
+  The R14 cold-read found four B defects; R15 now binds PASS to the exact final
+  halt transition, releases the holder even if MCP shutdown fails, uses one
+  effective terminal OUTCOME for lifecycle selection, and repairs operative
+  documentation. R16 independently anchors the MCP dependency site and closes
+  the certificate end instant; R17 binds fill evidence to its exact terminal
+  OUTCOME; R18 refuses any unresolved sibling entry and requires unchanged
+  journal truth across every flat-snapshot bracket; R19 blocks all same-batch
+  siblings after a lost acknowledgement and gives MCP lifecycle operations a
+  hard bound while releasing the holder independently; R20 keeps every
+  negative lost-ack lookup reserved and repeatedly reconciled, and makes MCP
+  evidence scans/hashes/Git reads asynchronous and deadline-aware; R21 keeps a
+  lost-ack order entry-blocking even after it appears as working, while a
+  normal acknowledgement is durably recorded separately; R22 rejects any
+  out-of-order acknowledgement or broker-order identity change; R23 enforces
+  monotonicity across duplicate INTENT, VOID, OUTCOME, and evidence shapes;
+  R24 binds every long certificate snapshot to a deadline below writer
+  takeover and makes the human un-halt an exact authority/journal CAS; R25
+  owns MCP attempt cleanup before connect waiting so a late handle cannot
+  leak a child; R26 rejects cycle results observed after the absolute
+  walltime; R27 keeps the first sticky halt cause stable; R28 applies the
+  credential fence to the startup calendar too. The remaining release question
+  is the unavoidable interval between the final S-CYC-05 broker read and the
+  submit: accept the read as the explicit linearization point with no manual
+  account activity during the supervised run, or keep the gate closed pending
+  broker-side atomic conditional submission. **Next action:** record Felix's
+  ruling, align the spec and tests, complete a fresh clean A/B-zero gate, obtain
+  Felix's explicit O5 freeze, then run
+  `npm run certificate` during the session under supervision. The command may
+  reach only the bound dev paper account. P7 acceptance requires its real PASS
+  certificate and a stably flat account. The Scheduled Task installer, real
+  git/Vercel ports, and competition-arming wiring are P8; the
+  `validateArmingCertificate` core is ready.
 - Continue P4–P7 in `docs/IMPLEMENTATION-PLAN.md`; a phase advances only after
   its shared and phase-specific gates pass. A waiver counts only where the
   owning SPEC explicitly permits it; otherwise the phase and arming stay blocked.
 - Aug 26–27 target: reach the P7 market-hours dev certificate if every earlier
   phase passes; schedule pressure delays arming rather than collapsing phases.
+  **Superseded:** the certificate run is today, 2026-09-02 from 15:30 CEST.
 - Fri Aug 28 kickoff 17:00 CEST: inspect the real submission form, create the
   competition account (owner), put its keys in `.env` (`ALPACA_COMP_*`),
   publish GitHub + Vercel, and arm in the partial session only if pre-arm gates
   are green.
+  **Superseded:** kickoff happened on 2026-08-28; owner steps now live in the
+  README competition runbook.
 
 ## Open threads
 
+### Remaining work after competition day two (2026-09-03 22:15 CEST), in due order
+
+- **Done today (details in DECISIONS 2026-09-03 and `docs/PUBLISH-RUNBOOK.md`
+  "Second snapshot"):** book flat at 18:55 through the owner-invoked watchdog
+  takeover after the runner's flatten path could not price the 09-04
+  structures; the wrapper defect that had kept the dead-man inert since
+  arming fixed (`e1576fb`); final-cycle flatten assertion passed;
+  `DEADLINE_RECONCILIATION` seq 77 referencing `sha256:7b82959a344a7c7e`;
+  dashboard republished with the presentation pin, both probes 29/29, the
+  nested-route pin check measured on the real host (R37 C-3 closed);
+  journal, watchdog log, pings, alias receipt and the quote-gap simulation
+  archived in the verification store's `evidence/`. Scheduled tasks are
+  both enabled; the watchdog stays quiet outside sessions. The
+  `WATCHDOG_TAKEOVER` halt (non-sticky) stands; Friday is journaling-only
+  either way, a manual un-halt with the stand-down reason is the owner's
+  choice (`dist/shell/manual-unhalt.js`).
+- **Friday 2026-09-04 — session plan (PM ruling 2026-09-03 22:50 CEST, owner
+  to confirm by starting the sessions):**
+  1. *Submission session — DONE 11:00 CEST (see the cursor above and DECISIONS
+     2026-09-04; the form itself and the default-branch decision are the
+     owner's steps).* Original plan: *Submission session, 09:00–12:00 CEST*, PM with at most five agents
+     (ahoy `Desktop/ahoys/2026-09-04-glass-box-trading-submission.md`):
+     freeze the video dataset from the pinned presentation route, record
+     the five captures, render `submission/glass-box-trading.mp4`
+     (`video/README.md`); one-pager PDF; final form copy; account evidence;
+     cover and deck check; preflight `submission/PREFLIGHT.md` executed
+     against the host. Internal cut 12:00, the owner reviews, then submits
+     the lablab form by hand well before 17:00. The spec's nominal Friday
+     17:00 `DEADLINE_RECONCILIATION` slot (S-G11-03) is already covered by
+     seq 77 (written Thursday after the pin, before the submission,
+     referencing the submitted revision); a second entry would only
+     duplicate it and is not planned.
+  2. *Close session, after the US close 22:00 CEST* (ahoy
+     `…-2026-09-04-glass-box-trading-close.md`), digest-neutral:
+     `node dist/shell/deadline-cli.js terminal` from the operating checkout
+     (exit 0 only when the entry landed; the watchdog stands down after
+     TERMINAL by design), then the `-DeadlineCutoff` publish per runbook
+     (with `--scope`), probe, promote, probe; archive the journal in the
+     verification store; DECISIONS/STATE; the owner disables both scheduled
+     tasks from an elevated shell (`Disable-ScheduledTask`, the PM lacks the
+     elevation). Never `npm run …` variants that rebuild. The 09-04 expiry
+     is moot: nothing is held.
+  3. *Release session, weekend* (ahoy `…-2026-09-05-glass-box-trading-release.md`):
+     see "After the competition" below; the certificate run four needs
+     market hours and Monday 2026-09-07 is Labor Day, so the earliest live
+     run is Tuesday 2026-09-08.
+- **Video (SUB-04) — Remotion scaffold landed 2026-09-02 22:30 CEST** under
+  `video/` as its own package (root `package.json` is digest material):
+  nine scenes along the SPEC section 5 table, every figure and URL read
+  from `video/public/dataset/{meta,projection}.json`, a dataset gate that
+  refuses placeholders, an unfrozen dataset and missing captures for the
+  deliverable render, a DEV watermark meanwhile. Stills of every scene were
+  rendered and reviewed. Open: after Thursday's close produce the frozen
+  dataset (README in `video/`), record the five captures against the pinned
+  presentation route, `npm run render` to `submission/glass-box-trading.mp4`.
+- **Submission (SUBMISSION-SPEC), Friday 12:00 CEST internal, 17:00
+  external:** the route to cite is
+  `https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/`;
+  still open: one-pager, Remotion video (scaffold on worktree `gbt-publish`,
+  branch `p7/publish-dashboard`, `637d430`/`2fa9ba5` from a parallel session,
+  merged into this branch 2026-09-03 22:30 CEST), form copy (`submission/COPY.md` draft), account
+  evidence (creation instant 2026-09-02T09:54:41Z, $100k bootstrap seq 1,
+  journal revision), the golden demo link, preflight `submission/PREFLIGHT.md`
+  on the host; the Vercel team is still named `glass-box-trading` (rename is
+  the owner's choice; the runbook says what to re-probe).
+- **After the competition:** merge `p7/dev-live-certificate` `--no-ff` into
+  `main` (owner ruling 2026-09-02 12:40: the PASS is the acceptance event),
+  release tag; clear the dev journal's `MANUAL` halt by manual un-halt; land
+  the two gated fixes (`c7c7174` one-lot brief on the branch, `9b2e155`
+  resolver in worktree `gbt-fix`, R39/R40 GO) and, if a live test is still
+  wanted, certificate run four with the scheduled dev tasks disabled (R40
+  C-2); restore the two `f464a66` source files on the working tree to the
+  branch head at that moment (they keep the running digest equal to
+  certificate two until then). New A-class backlog from today (DECISIONS
+  2026-09-03): the runner's management step must use the closing market
+  window (zero remaining sessions) that the watchdog and the deadline
+  runtime already use, from one shared builder; management refusals must
+  reach the journal or a kept log; the cycle task should capture the printed
+  report. The one-lot brief, the resolver fix and this window fix belong in
+  the same post-competition certificate run.
+- **Backlog recorded today (C class, DECISIONS 2026-09-02):** driver
+  reconciliation cycle after un-halt; `Object.hasOwn` on the tooltip table;
+  composition-root virgin bootstrap (`SEED_BOOTSTRAP` for an absent store
+  with an empty journal and virginity `unknown`) plus a test through
+  `buildRuntime`; prompt-builder unit test; timing-sensitive wall-clock
+  test; the `analyst-claude.ts` comment still saying "~190".
+
+
+- The verification store paths cited in this file (`C:/Users/felix/verify-runs/...`
+  and its `prompts/`) are a local, unpublished record; a public reader of this
+  repository cannot resolve them.
 - P1 adversarial run is paused at R5 of 8 (store `R5.md`, `LEDGER.md`);
   resumable from R6 (prompts staged in the store) if time allows after P8.
   Preserve the store and its errata (`E-R1-01`, `E-R2-01`, `E-R4-01..04`,

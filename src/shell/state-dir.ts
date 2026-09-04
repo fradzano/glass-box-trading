@@ -1,8 +1,9 @@
 // STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 // writable directory that every instance on the host resolves identically.
 // All durable P2 state lives here: the journal, the halt flag, the epoch
-// store, the writer holder record, the short-lived mutex, and the quarantine.
-import { accessSync, constants, mkdirSync, statSync } from "node:fs";
+// store, the writer holder record, and the quarantine. The kernel mutex is
+// named from `root` but is deliberately not a durable file.
+import { accessSync, constants, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export interface StatePaths {
@@ -11,7 +12,6 @@ export interface StatePaths {
   readonly halt: string;
   readonly epoch: string;
   readonly holder: string;
-  readonly mutex: string;
   readonly quarantineDir: string;
 }
 
@@ -21,9 +21,12 @@ export function resolveStateDir(raw: string): StateDirResolution {
   if (typeof raw !== "string" || raw.trim().length === 0 || !path.isAbsolute(raw)) {
     return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR must be an absolute path literal" };
   }
-  const root = path.resolve(raw);
+  const resolved = path.resolve(raw);
   try {
-    if (!statSync(root).isDirectory()) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR is not a directory" };
+    if (!statSync(resolved).isDirectory()) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR is not a directory" };
+    // Durable paths and the mutex use physical filesystem identity, not an
+    // accepted alias spelling (for example C:\x versus \\?\C:\x).
+    const root = realpathSync.native(resolved);
     accessSync(root, constants.W_OK | constants.R_OK);
     const quarantineDir = path.join(root, "quarantine");
     mkdirSync(quarantineDir, { recursive: true });
@@ -35,7 +38,6 @@ export function resolveStateDir(raw: string): StateDirResolution {
         halt: path.join(root, "halt.json"),
         epoch: path.join(root, "epoch.json"),
         holder: path.join(root, "holder.json"),
-        mutex: path.join(root, "writer.mutex"),
         quarantineDir,
       },
     };

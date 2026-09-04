@@ -1,0 +1,30 @@
+{
+  "frozen": true,
+  "datasetNote": "Frozen presentation-cutoff dataset (SUB-04): projection.json is the byte-identical copy of the pinned route /revisions/sha256-7b82959a344a7c7e/presentation/projection.json fetched from the host on 2026-09-04 (journal revision sha256:7b82959a344a7c7e, cutoff 2026-09-03T20:00:14.787Z, seq 76). The same two files feed the one-pager, the deck, the form copy and the preflight through submission/render/inject.mjs.",
+  "demoUrl": "https://glass-box-trading.vercel.app",
+  "presentationRouteUrl": "https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/",
+  "repositoryUrl": "https://github.com/fradzano/glass-box-trading",
+  "accountId": "PA376WIK2ATL",
+  "presentationCutoffAt": "2026-09-03T20:00:14.787Z",
+  "corePath": "src/core/decision.ts",
+  "evidenceTestPath": "tests/cyc-runner.spec.ts (S-CYC-06)",
+  "featuredCycleSeq": null,
+  "captures": {
+    "dashboardOpen": "dashboard-open.mp4",
+    "decisionCycle": "decision-cycle.mp4",
+    "gateVector": "gate-vector.mp4",
+    "orderToOutcome": "order-to-outcome.mp4",
+    "sourceAndTests": "source-and-tests.mp4"
+  },
+  "narration": {
+    "coldOpen": true,
+    "dashboardOpen": true,
+    "decisionCycle": true,
+    "gateVector": true,
+    "orderToOutcome": true,
+    "architecture": true,
+    "pnlAndLimits": true,
+    "sourceAndTests": true,
+    "close": true
+  }
+}

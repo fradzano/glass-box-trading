@@ -1,0 +1,167 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Glass Box Trading — Cover</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: #14171c;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  .stage {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: #14171c;
+  }
+
+  /* left panel — proposal (AI) */
+  .panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 110px;
+  }
+  .panel.proposal {
+    background: linear-gradient(135deg, #1a1d24 0%, #1e2128 100%);
+  }
+  .panel.decision {
+    background: linear-gradient(135deg, #14181b 0%, #10161a 100%);
+  }
+
+  /* faint ledger-line texture */
+  .panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.025) 0px,
+      rgba(255,255,255,0.025) 1px,
+      transparent 1px,
+      transparent 54px
+    );
+    pointer-events: none;
+  }
+
+  .tag {
+    font-size: 22px;
+    letter-spacing: 0.28em;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 26px;
+  }
+  .proposal .tag { color: #c9a24b; }
+  .decision .tag { color: #4fae8f; }
+
+  .panel-line {
+    font-size: 34px;
+    line-height: 1.5;
+    color: #aeb4bd;
+    font-weight: 400;
+    max-width: 620px;
+  }
+  .panel-line .verb {
+    font-weight: 600;
+  }
+  .proposal .verb { color: #e4c878; }
+  .decision .verb { color: #7fd0b3; }
+
+  /* boundary motif: the visible gate between the two panels */
+  .boundary {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 100%;
+    width: 6px;
+    z-index: 5;
+    background: linear-gradient(
+      to bottom,
+      rgba(255,255,255,0) 0%,
+      rgba(255,255,255,0.85) 18%,
+      rgba(255,255,255,0.85) 82%,
+      rgba(255,255,255,0) 100%
+    );
+    box-shadow: 0 0 40px 6px rgba(220,225,235,0.28);
+  }
+  .boundary::before, .boundary::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 22px;
+    height: 22px;
+    border: 2px solid rgba(230,233,240,0.9);
+    background: #14171c;
+  }
+  .boundary::before { top: 30%; transform: translate(-50%, -50%) rotate(45deg); }
+  .boundary::after { top: 70%; transform: translate(-50%, -50%) rotate(45deg); }
+
+  /* headline block, centered across both panels */
+  .headline {
+    position: absolute;
+    top: 122px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    z-index: 6;
+  }
+  .headline h1 {
+    font-size: 92px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #f2f3f5;
+  }
+  .headline .rule {
+    width: 210px;
+    height: 4px;
+    background: linear-gradient(to right, #e4c878, #7fd0b3);
+    margin: 30px auto 0;
+  }
+
+  .control-line {
+    position: absolute;
+    bottom: 92px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    z-index: 6;
+    font-size: 36px;
+    color: #cfd3d9;
+    font-weight: 400;
+    letter-spacing: 0.005em;
+  }
+  .control-line .accent-a { color: #e4c878; font-weight: 600; }
+  .control-line .accent-b { color: #7fd0b3; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="panel proposal">
+      <div class="tag">Proposal</div>
+      <div class="panel-line"><span class="verb">An analyst proposes</span> defined-risk candidates from read-only market data — schema-validated, whitelist-constrained, never an order.</div>
+    </div>
+    <div class="panel decision">
+      <div class="tag">Decision</div>
+      <div class="panel-line"><span class="verb">A pure gate catalog disposes</span> — every candidate approved or vetoed against fixed risk rules, reasons journaled either way.</div>
+    </div>
+    <div class="boundary"></div>
+    <div class="headline">
+      <h1>Glass Box Trading</h1>
+      <div class="rule"></div>
+    </div>
+    <div class="control-line">
+      <span class="accent-a">AI proposes</span>; <span class="accent-b">deterministic gates dispose.</span>
+    </div>
+  </div>
+</body>
+</html>

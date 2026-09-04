@@ -1,4 +1,5 @@
 import { integerUnit } from "./domain.js";
+import { sha256Text } from "./sha256.js";
 import type {
   CloseAttemptSnapshot,
   CloseLifecyclePlan,
@@ -35,24 +36,36 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+/**
+ * Alpaca refuses a `client_order_id` longer than 128 characters synchronously
+ * (observed live on 2026-09-02 in the first dev certificate run, when the
+ * hex-encoded structure identity produced a 190-character id and every entry
+ * was rejected). Every id this module derives — entry, exposure lifecycle,
+ * close lifecycle, close attempt — must stay below this bound for the longest
+ * structures the whitelist admits.
+ */
+export const MAX_CLIENT_ORDER_ID_LENGTH = 128;
+
+/** Hex digits of the structure digest kept in an entry id: 96 bits, no realistic collision inside one (trading day, cycle). */
+const STRUCTURE_DIGEST_LENGTH = 24;
+
+/**
+ * S-G7-01: a deterministic function of (trading day, cycle index, structure
+ * identity, action kind). The structure identity — every leg's contract id,
+ * side and ratio, order-independent — enters as a truncated SHA-256 so the
+ * id stays short and charset-safe whatever the contract ids contain; the
+ * legs themselves are journaled on the INTENT, the id never needs decoding.
+ */
 export function entryClientOrderId(snapshot: DecisionSnapshot, candidate: EntryCandidate): string {
   const structureIdentity = candidate.legs
     .map(optionLeg => [
-      encodeIdentityPart(optionLeg.contractId),
+      optionLeg.contractId,
       optionLeg.side,
       String(optionLeg.ratio),
     ].join("."))
     .sort()
     .join("|");
-  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${structureIdentity}`;
-}
-
-function encodeIdentityPart(value: string): string {
-  let encoded = "";
-  for (let index = 0; index < value.length; index += 1) {
-    encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
-  }
-  return encoded;
+  return `entry:${snapshot.tradingDay}:${String(snapshot.cycleIndex)}:${sha256Text(structureIdentity).slice(0, STRUCTURE_DIGEST_LENGTH)}`;
 }
 
 export function closeLifecycleId(exposureLifecycleId: string, route: CloseRoute): string {

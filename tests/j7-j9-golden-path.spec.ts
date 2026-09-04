@@ -16,7 +16,7 @@ import { integerUnit } from "../src/core/domain.js";
 import { parseJournalText } from "../src/core/journal.js";
 import { emptyPushState } from "../src/core/publish.js";
 import { GOLDEN_CYCLE_INTERVAL_MS, GOLDEN_DEAD_MAN_BOUND_MS, GOLDEN_SOURCE, TEST_ONLY_GOLDEN_EXPECTATIONS, TEST_ONLY_GOLDEN_NOW_MS, TEST_ONLY_GOLDEN_QUALIFICATION, goldenPresentationCutoffAt } from "../src/fixtures/p6-golden.js";
-import { buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
+import { DASHBOARD_STYLESHEET, buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta, readPresentationAsset } from "../src/shell/dashboard-build.js";
 import { runDeadlineReconciliation, runTerminal } from "../src/shell/deadline.js";
 import { journalContentRevision, sitePagesFor } from "../src/shell/publisher.js";
 import { LONG_CALL, SHORT_CALL, creditVertical } from "./execution-fixtures.js";
@@ -85,12 +85,16 @@ describe("SUBMISSION-SPEC §3 — the golden path over the recorded journal", ()
     const text = readFileSync(GOLDEN_PATH, "utf8");
     const entries = parseJournalText(text).entries;
     const revision = journalContentRevision(text);
+    // R35 C3: the golden journal is journal evidence outside the runtime digest; its content
+    // revision is pinned here so an edit to the demo data is visible in the suite.
+    expect(revision).toBe("sha256:0deeb1f42e01e19b");
     const presentationAt = goldenPresentationCutoffAt(entries);
     expect(presentationAt).not.toBeNull();
     const { pages, latest } = sitePagesFor({
       entries, revision, nowMs: TEST_ONLY_GOLDEN_NOW_MS + 6 * GOLDEN_CYCLE_INTERVAL_MS, expectations: TEST_ONLY_GOLDEN_EXPECTATIONS,
       cycleIntervalMs: GOLDEN_CYCLE_INTERVAL_MS, deadManBoundMs: GOLDEN_DEAD_MAN_BOUND_MS, source: GOLDEN_SOURCE,
       pins: [{ kind: "presentation", at: presentationAt ?? "" }], pushState: emptyPushState(),
+      styles: readPresentationAsset(DASHBOARD_STYLESHEET),
     });
     const out = path.join(tmpdir(), `gbt-golden-${String(process.pid)}-${String(Date.now())}`);
     buildSiteAtomically(out, pages, "golden");
@@ -134,5 +138,38 @@ describe("SUBMISSION-SPEC §3 — the golden path over the recorded journal", ()
     expect(latest.milestones.terminalAt).not.toBeNull();
     expect(latest.milestones.flattenAt).not.toBeNull();
     expect(latest.qualification.state).toBe("QUALIFIED");
+  });
+
+  // Owner review 2026-09-02: (1) tooltips over the gate rail's G1-G8 cells,
+  // and (2) a reading guide before the first data section, so a first-time
+  // reader knows what the page is showing without decoding it from the data.
+  it("every gate <li> for a known gate id carries a title naming the gate, and the reading guide precedes the first data section exactly once", () => {
+    const text = readFileSync(GOLDEN_PATH, "utf8");
+    const entries = parseJournalText(text).entries;
+    const revision = journalContentRevision(text);
+    const { pages } = sitePagesFor({
+      entries, revision, nowMs: TEST_ONLY_GOLDEN_NOW_MS + 6 * GOLDEN_CYCLE_INTERVAL_MS, expectations: TEST_ONLY_GOLDEN_EXPECTATIONS,
+      cycleIntervalMs: GOLDEN_CYCLE_INTERVAL_MS, deadManBoundMs: GOLDEN_DEAD_MAN_BOUND_MS, source: GOLDEN_SOURCE,
+      pins: [], pushState: emptyPushState(), styles: readPresentationAsset(DASHBOARD_STYLESHEET),
+    });
+    const index = pages.find(page => page.relativePath === "index.html")?.render() ?? "";
+
+    // Every rendered gate cell for a known id (G1-G8, the ids the golden journal actually uses) carries a title.
+    const gateCells = [...index.matchAll(/<li class="gate gate--(?:pass|veto)"([^>]*)><span>(G\d)<\/span>/gu)];
+    expect(gateCells.length).toBeGreaterThan(0); // the golden journal exercises the gate rail
+    for (const [, attrs, gateId] of gateCells) {
+      expect(attrs, `gate ${gateId as string} <li> attributes: ${attrs as string}`).toContain(`title="${gateId as string}`);
+    }
+
+    // The how-to-read section exists exactly once, mentions the journal, and precedes the first data section (#result).
+    expect((index.match(/<section id="how-to-read"/gu) ?? [])).toHaveLength(1);
+    expect(index).toMatch(/How to read this page/u);
+    expect(index).toContain("journal");
+    const howToReadAt = index.indexOf('<section id="how-to-read"');
+    const resultAt = index.indexOf('<section id="result"');
+    expect(howToReadAt).toBeGreaterThan(-1);
+    expect(resultAt).toBeGreaterThan(-1);
+    expect(howToReadAt).toBeLessThan(resultAt);
+    expect(howToReadAt).toBeLessThan(index.indexOf("<table")); // precedes the first data table too
   });
 });

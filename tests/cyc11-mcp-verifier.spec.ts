@@ -3,7 +3,8 @@
 // artifacts are validated as shipped; the launch variants run against fake
 // evidence/child ports and must fail BEFORE spawn (pre-spawn violations) or
 // before any analyst release (inventory violations).
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -18,8 +19,65 @@ import {
 import type { AnalystManifest, McpLaunchObservation, RuntimeLock } from "../src/core/startup.js";
 import { launchVerifiedAnalystChild } from "../src/shell/analyst-mcp-launcher.js";
 import type { McpChildHandle, McpLaunchPorts } from "../src/shell/analyst-mcp-launcher.js";
+import type { OperationTimers } from "../src/shell/operation-timeout.js";
+import { createEnvironmentPorts, dependencySiteSha256, isolatedMcpTransportEnvironment, mcpPythonBootstrap } from "../src/shell/mcp-environment.js";
 
 const ROOT = process.cwd();
+
+interface ControlledClock {
+  /** Injected into the launcher; the only clock and timer source the bounded operations see. */
+  readonly timers: OperationTimers;
+  /** Move virtual time forward, firing every timer that comes due and draining microtasks around each one. */
+  advance(byMs: number): Promise<void>;
+}
+
+/**
+ * A clock and timer queue the test owns outright. The launcher's timeout bounds
+ * are single-digit milliseconds, and `withOperationTimeout` decides an overrun
+ * by comparing elapsed time against the budget — so on the real clock a machine
+ * under CPU contention can measure a port that resolved in one microtask as an
+ * overrun and surface the wrong timeout label. Nothing here reads wall time:
+ * time only moves when a test calls `advance`, which makes the outcome of every
+ * bound below a property of the code rather than of the machine. Microtasks stay
+ * real, because that is how `withOperationTimeout` starts the work it bounds.
+ */
+function controlledClock(): ControlledClock {
+  interface Scheduled { readonly at: number; readonly handler: () => void }
+  let now = 0;
+  let nextHandle = 0;
+  const queue = new Map<number, Scheduled>();
+  const drainMicrotasks = (): Promise<void> => new Promise<void>(resolve => { setImmediate(resolve); });
+  const dueHandle = (limit: number): number | undefined => {
+    let earliestHandle: number | undefined;
+    let earliestAt = Number.POSITIVE_INFINITY;
+    for (const [handle, entry] of queue) {
+      if (entry.at <= limit && entry.at < earliestAt) { earliestAt = entry.at; earliestHandle = handle; }
+    }
+    return earliestHandle;
+  };
+  return {
+    timers: {
+      now: () => now,
+      setTimeout: (handler, timeoutMs) => { const handle = nextHandle; nextHandle += 1; queue.set(handle, { at: now + timeoutMs, handler }); return handle; },
+      clearTimeout: handle => { if (typeof handle === "number") queue.delete(handle); },
+    },
+    advance: async (byMs: number): Promise<void> => {
+      const target = now + byMs;
+      for (;;) {
+        await drainMicrotasks();
+        const handle = dueHandle(target);
+        if (handle === undefined) break;
+        const entry = queue.get(handle);
+        queue.delete(handle);
+        if (entry === undefined) break;
+        now = entry.at;
+        entry.handler();
+      }
+      now = target;
+      await drainMicrotasks();
+    },
+  };
+}
 
 function trackedManifest(): AnalystManifest {
   const validated = validateAnalystManifest(JSON.parse(readFileSync(path.join(ROOT, "config", "analyst-mcp-readonly.json"), "utf8")));
@@ -42,6 +100,7 @@ function matchingObservation(lock: RuntimeLock, manifest: AnalystManifest, overr
     packageName: lock.source.package,
     packageVersion: lock.source.version,
     dependencyLockMatchesPin: true,
+    dependencyContentMatchesPin: true,
     interpreterLauncherSha256: lock.interpreter.launcherSha256,
     interpreterRuntimeSha256: lock.interpreter.runtimeSha256,
     hashProvenance: "runtime_lock",
@@ -54,12 +113,72 @@ function matchingObservation(lock: RuntimeLock, manifest: AnalystManifest, overr
 }
 
 describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree", () => {
+  it("neutralizes the SDK default host environment and scrubs it before MCP package import", () => {
+    const transport = isolatedMcpTransportEnvironment({ EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows" });
+    expect(transport).toMatchObject({ EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows", APPDATA: "", PATH: "", USERPROFILE: "" });
+    const bootstrap = mcpPythonBootstrap("alpaca_mcp_server", { EXPLICIT_ONLY: "yes", SYSTEMROOT: "C:\\Windows", PYTHONPATH: "PINNED_SITE", ALPACA_API_KEY: "TEST_ONLY_SECRET_VALUE", ALPACA_SECRET_KEY: "TEST_ONLY_SECRET_VALUE_2" });
+    expect(bootstrap).toContain("os.environ.clear()");
+    expect(bootstrap).toContain("PINNED_SITE");
+    expect(bootstrap).not.toContain("TEST_ONLY_SECRET_VALUE");
+    expect(bootstrap.indexOf("os.environ.clear()")).toBeLessThan(bootstrap.indexOf("from alpaca_mcp_server.cli import main"));
+    expect(() => mcpPythonBootstrap("bad;import host", {})).toThrow("invalid MCP package module name");
+  });
+
+  it("binds dependency bytes while excluding project and installer-only files", () => {
+    const site = mkdtempSync(path.join(tmpdir(), "gbt-mcp-site-digest-"));
+    try {
+      mkdirSync(path.join(site, "dependency"));
+      mkdirSync(path.join(site, "alpaca_mcp_server"));
+      mkdirSync(path.join(site, "dependency-1.0.dist-info"));
+      mkdirSync(path.join(site, "bin"));
+      writeFileSync(path.join(site, "dependency", "module.py"), "trusted\n", "utf8");
+      writeFileSync(path.join(site, "alpaca_mcp_server", "server.py"), "project-a\n", "utf8");
+      writeFileSync(path.join(site, "dependency-1.0.dist-info", "RECORD"), "installer-a\n", "utf8");
+      writeFileSync(path.join(site, "bin", "tool.exe"), "installer-a\n", "utf8");
+      writeFileSync(path.join(site, ".lock"), "installer-a\n", "utf8");
+      const expected = dependencySiteSha256(site);
+      writeFileSync(path.join(site, "alpaca_mcp_server", "server.py"), "project-b\n", "utf8");
+      writeFileSync(path.join(site, "dependency-1.0.dist-info", "RECORD"), "installer-b\n", "utf8");
+      writeFileSync(path.join(site, "bin", "tool.exe"), "installer-b\n", "utf8");
+      expect(dependencySiteSha256(site)).toBe(expected);
+      writeFileSync(path.join(site, "dependency", "module.py"), "patched\n", "utf8");
+      expect(dependencySiteSha256(site)).not.toBe(expected);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the installer bin tree before Python can import its scripts", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gbt-mcp-bin-removal-"));
+    const site = path.join(root, "site");
+    const source = path.join(root, "source");
+    try {
+      mkdirSync(path.join(site, "bin"), { recursive: true });
+      mkdirSync(path.join(site, "dependency", "bin"), { recursive: true });
+      mkdirSync(path.join(source, "bin"), { recursive: true });
+      writeFileSync(path.join(site, "bin", "helper.py"), "raise RuntimeError('must not import')\n", "utf8");
+      writeFileSync(path.join(site, "kept.py"), "VALUE = 1\n", "utf8");
+      writeFileSync(path.join(site, "dependency", "bin", "module.py"), "VALUE = 2\n", "utf8");
+      writeFileSync(path.join(source, "bin", "tracked.py"), "VALUE = 3\n", "utf8");
+      const ports = createEnvironmentPorts({ root, site, source, runtime: path.join(root, "python.exe"), launcher: path.join(root, "launcher.exe") });
+      await ports.evidence.removeBytecode(["site/bin/**"], 1_000);
+      expect(existsSync(path.join(site, "bin"))).toBe(false);
+      expect(existsSync(path.join(site, "kept.py"))).toBe(true);
+      expect(existsSync(path.join(site, "dependency", "bin", "module.py"))).toBe(true);
+      expect(existsSync(path.join(source, "bin", "tracked.py"))).toBe(true);
+      await expect(ports.evidence.scanBytecode(["site/bin/**"], 1_000)).resolves.toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("the shipped config artifacts pass their schemas and name the same server identity", () => {
     const manifest = trackedManifest();
     const lock = trackedLock();
     expect(manifest.allowedTools).toHaveLength(32);
     expect(manifest.inventoryPolicy).toBe("exact");
     expect(lock.installPolicy.learnHashesFromInstalledEnvironment).toBe(false);
+    expect(lock.installPolicy.removeBeforeSpawn).toContain("site/bin/**");
     expect(verifyManifestLockAgreement(manifest, lock)).toEqual({ ok: true });
   });
 
@@ -77,7 +196,10 @@ describe("S-CYC-11 — the tracked manifest and runtime lock are valid and agree
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, learnHashesFromInstalledEnvironment: true } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, disableBytecodeWritesInChild: false } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, installPolicy: { ...policy, requireRemovedFilesAbsentBeforeSpawn: false } }).ok).toBe(false);
+    const interpreter = raw["interpreter"] as Record<string, unknown>;
+    expect(validateRuntimeLock({ ...raw, interpreter: { ...interpreter, wheelPlatformTag: "win-amd64;linux" } }).ok).toBe(false);
     const source = raw["source"] as Record<string, unknown>;
+    expect(validateRuntimeLock({ ...raw, source: { ...source, dependencySiteSha256: "self-learned" } }).ok).toBe(false);
     expect(validateRuntimeLock({ ...raw, source: { ...source, commit: "872abbf" } }).ok).toBe(false);
   });
 
@@ -116,6 +238,7 @@ describe("S-CYC-11 pre-spawn gate — every identity drift fails before any chil
 
   it("WIN-19: unpinned dependencies, patched immutable files, surviving bytecode, enabled bytecode writes, and self-learned hashes all fail", () => {
     expect(violationCodes({ dependencyLockMatchesPin: false })).toContain("DEPENDENCY_LOCK_DRIFT");
+    expect(violationCodes({ dependencyContentMatchesPin: false })).toContain("DEPENDENCY_CONTENT_MISMATCH");
     expect(violationCodes({ immutableFileMismatches: ["src/alpaca_mcp_server/server.py"] })).toContain("IMMUTABLE_CONTENT_MISMATCH");
     expect(violationCodes({ bytecodeArtifactsPresent: ["src/__pycache__/server.cpython-314.pyc"] })).toContain("BYTECODE_PRESENT");
     expect(violationCodes({ bytecodeWritesDisabled: false })).toContain("BYTECODE_WRITES_ENABLED");
@@ -159,11 +282,15 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
   const lock = trackedLock();
   const manifest = trackedManifest();
 
-  function fakePorts(options: { readonly observation?: Partial<McpLaunchObservation>; readonly offeredTools?: readonly string[]; readonly surviving?: readonly string[] }): { readonly ports: McpLaunchPorts; readonly calls: readonly string[]; readonly stopped: { count: number } } {
+  function connectedAttempt(child: McpChildHandle) {
+    return { connected: Promise.resolve(child), stop: () => child.stop() };
+  }
+
+  function fakePorts(options: { readonly observation?: Partial<McpLaunchObservation>; readonly offeredTools?: readonly string[]; readonly surviving?: readonly string[]; readonly inventoryError?: Error }): { readonly ports: McpLaunchPorts; readonly calls: readonly string[]; readonly stopped: { count: number } } {
     const calls: string[] = [];
     const stopped = { count: 0 };
     const child: McpChildHandle = {
-      listTools: () => { calls.push("listTools"); return Promise.resolve(options.offeredTools ?? manifest.allowedTools); },
+      listTools: () => { calls.push("listTools"); return options.inventoryError === undefined ? Promise.resolve(options.offeredTools ?? manifest.allowedTools) : Promise.reject(options.inventoryError); },
       stop: () => { stopped.count += 1; return Promise.resolve(); },
     };
     const ports: McpLaunchPorts = {
@@ -181,7 +308,7 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
         removeBytecode: () => { calls.push("removeBytecode"); return Promise.resolve([]); },
         scanBytecode: () => { calls.push("scanBytecode"); return Promise.resolve(options.surviving ?? []); },
       },
-      child: { spawn: () => { calls.push("spawn"); return Promise.resolve(child); } },
+      child: { spawn: () => { calls.push("spawn"); return connectedAttempt(child); } },
     };
     return { ports, calls, stopped };
   }
@@ -220,6 +347,159 @@ describe("S-CYC-11 launcher — order of operations and the no-release-before-ac
     expect(result.stage).toBe("inventory");
     expect(result.violations.map(item => item.code)).toContain("EXTRA_TOOL");
     expect(stopped.count).toBe(1);
+  });
+
+  it("stops the spawned child when inventory transport fails exceptionally", async () => {
+    const { ports, stopped } = fakePorts({ inventoryError: new Error("inventory transport lost") });
+    await expect(launchVerifiedAnalystChild(ports)).rejects.toThrow("inventory transport lost");
+    expect(stopped.count).toBe(1);
+  });
+
+  it("bounds a stalled child connect before inventory can be released", async () => {
+    // On the controlled clock: every pre-spawn port settles on microtasks while
+    // virtual time stands still, so the only timer still armed at 5 ms is the
+    // one bounding connect, and no amount of CPU contention can change that.
+    const clock = controlledClock();
+    const { ports } = fakePorts({});
+    let stopCalls = 0;
+    const launched = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: { spawn: () => ({ connected: new Promise<McpChildHandle>(() => undefined), stop: () => { stopCalls += 1; return Promise.resolve(); } }) },
+    });
+    const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    await clock.advance(5);
+    await rejected;
+    expect(stopCalls).toBe(1);
+  });
+
+  it("owns and stops a child attempt whose handle resolves only after the connect timeout", async () => {
+    // The late handle arrives at virtual 20 ms, four times the 5 ms bound, so
+    // the ordering under test is fixed by the queue rather than by scheduling.
+    const clock = controlledClock();
+    let resourceActive = true;
+    let stopCalls = 0;
+    const child: McpChildHandle = {
+      listTools: () => Promise.resolve(manifest.allowedTools),
+      stop: () => { stopCalls += 1; resourceActive = false; return Promise.resolve(); },
+    };
+    const { ports } = fakePorts({});
+    const launched = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: {
+        spawn: () => ({
+          connected: new Promise<McpChildHandle>(resolve => { clock.timers.setTimeout(() => { resolve(child); }, 20); }),
+          stop: () => child.stop(),
+        }),
+      },
+    });
+    const rejected = expect(launched).rejects.toThrow("MCP_CONNECT_TIMEOUT after 5 ms");
+    await clock.advance(5);
+    await rejected;
+    expect(stopCalls).toBe(1);
+    expect(resourceActive).toBe(false);
+    // The abandoned handle still arrives; ownership stays settled, nothing is stopped twice.
+    await clock.advance(20);
+    expect(stopCalls).toBe(1);
+    expect(resourceActive).toBe(false);
+  });
+
+  it("preserves both connect timeout and attempt-cleanup timeout", async () => {
+    // Connect stalls to its 5 ms bound, then the cleanup attempt stalls to its
+    // own bound at virtual 10 ms; both bounds are fired by this test.
+    const clock = controlledClock();
+    const { ports } = fakePorts({});
+    const settled = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: {
+        spawn: () => ({
+          connected: new Promise<McpChildHandle>(() => undefined),
+          stop: () => new Promise<void>(() => undefined),
+        }),
+      },
+    }).then(() => undefined, (error: unknown) => error);
+    await clock.advance(10);
+    const caught = await settled;
+    expect(caught).toBeInstanceOf(AggregateError);
+    const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
+    expect(messages).toContain("MCP_CONNECT_TIMEOUT after 5 ms");
+    expect(messages).toContain("MCP_STOP_TIMEOUT after 5 ms");
+  });
+
+  it("bounds asynchronous evidence work before spawn and rejects synchronous overruns", async () => {
+    // The only test here that measures REAL wall time, deliberately: the second
+    // half blocks the thread in a busy loop, which a virtual clock cannot model
+    // — a port that never yields is exactly the failure mode under test. Hence a
+    // generous 100 ms bound against a 400 ms block, so that the busy loop stays
+    // multiples longer than the budget even on a heavily loaded machine.
+    const stalled = fakePorts({}).ports;
+    await expect(launchVerifiedAnalystChild({
+      ...stalled,
+      operationTimeoutMs: 100,
+      evidence: { ...stalled.evidence, removeBytecode: () => new Promise<readonly string[]>(() => undefined) },
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 100 ms");
+
+    const overrun = fakePorts({}).ports;
+    await expect(launchVerifiedAnalystChild({
+      ...overrun,
+      operationTimeoutMs: 100,
+      evidence: {
+        ...overrun.evidence,
+        removeBytecode: () => {
+          const until = Date.now() + 400;
+          while (Date.now() < until) { /* simulate an incorrectly synchronous port */ }
+          return Promise.resolve([]);
+        },
+      },
+    })).rejects.toThrow("MCP_REMOVE_TIMEOUT after 100 ms");
+  });
+
+  it("bounds stalled inventory and stalled child cleanup", async () => {
+    // Inventory stalls to its 5 ms bound, cleanup to its own at virtual 10 ms.
+    const clock = controlledClock();
+    const { ports } = fakePorts({});
+    let stopCalls = 0;
+    const child: McpChildHandle = {
+      listTools: () => new Promise<readonly string[]>(() => undefined),
+      stop: () => { stopCalls += 1; return new Promise<void>(() => undefined); },
+    };
+    const rejected = expect(launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: { spawn: () => connectedAttempt(child) },
+    })).rejects.toThrow("MCP inventory failed and child cleanup did not complete");
+    await clock.advance(10);
+    await rejected;
+    expect(stopCalls).toBe(1);
+  });
+
+  it("preserves an invalid inventory finding when child cleanup also stalls", async () => {
+    // Connect and inventory settle on microtasks at virtual 0 ms; the rejected
+    // inventory then meets a cleanup that can only end through the 5 ms bound.
+    const clock = controlledClock();
+    const { ports } = fakePorts({});
+    const child: McpChildHandle = {
+      listTools: () => Promise.resolve([...manifest.allowedTools, "place_order"]),
+      stop: () => new Promise<void>(() => undefined),
+    };
+    const settled = launchVerifiedAnalystChild({
+      ...ports,
+      operationTimeoutMs: 5,
+      timers: clock.timers,
+      child: { spawn: () => connectedAttempt(child) },
+    }).then(() => undefined, (error: unknown) => error);
+    await clock.advance(5);
+    const caught = await settled;
+    expect(caught).toBeInstanceOf(AggregateError);
+    const messages = caught instanceof AggregateError ? caught.errors.map(error => error instanceof Error ? error.message : String(error)) : [];
+    expect(messages.some(message => message.includes("EXTRA_TOOL"))).toBe(true);
+    expect(messages).toContain("MCP_STOP_TIMEOUT after 5 ms");
   });
 
   it("an ambiguous manifest/lock identity refuses before any port is touched", async () => {

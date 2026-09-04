@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkPushTarget, planPromotion, planPush, planStableVerification, pushStateAfter, stateAfterPromotion, verifyProbe } from "../src/core/publish.js";
 import type { DeploymentState, ProbeObservation, PublishExpectation } from "../src/core/publish.js";
-import { buildSiteAtomically, immutableRoute, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
+import { buildSiteAtomically, DASHBOARD_STYLESHEET, immutableRoute, presentationAssetsDir, readBuiltPage, readPageMeta } from "../src/shell/dashboard-build.js";
 import { runDeadlineReconciliation, runTerminal } from "../src/shell/deadline.js";
 import { journalContentRevision, readDeploymentState, readPushState, runPublish } from "../src/shell/publisher.js";
 import type { DeployPort, GitPort, PublishDependencies } from "../src/shell/publisher.js";
@@ -136,7 +136,7 @@ describe("S-J-07 — the anonymous probe contract", () => {
   it("accepts an unauthenticated 200 with every self-description equal, and rejects a mismatch, a missing tag, an auth wall, a non-200, or a failure", () => {
     expect(verifyProbe(expectation, good)).toEqual({ ok: true });
     expect(verifyProbe(expectation, { ...good, meta: { ...good.meta, "glass-box-journal-revision": "rev-B" } })).toMatchObject({ ok: false, reasons: [expect.stringContaining("META_MISMATCH: glass-box-journal-revision")] });
-    const { "glass-box-last-seq": _dropped, ...withoutSeq } = good.meta;
+    const withoutSeq = Object.fromEntries(Object.entries(good.meta).filter(([name]) => name !== "glass-box-last-seq"));
     expect(verifyProbe(expectation, { ...good, meta: withoutSeq })).toMatchObject({ ok: false, reasons: ["META_MISSING: glass-box-last-seq"] });
     expect(verifyProbe(expectation, { ...good, authenticated: true })).toMatchObject({ ok: false, reasons: ["PROBE_REQUIRED_AUTHENTICATION"] });
     expect(verifyProbe(expectation, { ...good, httpStatus: 404 })).toMatchObject({ ok: false, reasons: ["PROBE_HTTP_404"] });
@@ -218,6 +218,54 @@ describe("S-CYC-07 — push failure: trading and journaling continue, push retri
     expect(third.push).toBe("skipped");
     expect(planPush(third.pushState, third.revision)).toEqual({ kind: "skip", reason: "ALREADY_PUSHED" });
     expect(pushStateAfter(third.pushState, { ok: false, error: "x" }, "t").consecutiveFailures).toBe(1);
+  });
+});
+
+describe("R33 C1 — a site build failure (unreadable asset, or a failing write) pushes DASHBOARD_BUILD_FAILED and leaves the previously published page untouched", () => {
+  it("a presentation asset that goes missing between publishes fails the build closed", async () => {
+    // R34 B3 — readPresentationAsset() is called inline in runPublish (src/shell/publisher.ts),
+    // not imported once at module load, so removing the file between publishes is observable
+    // here — without touching the committed assets/dashboard.css: presentationAssetsDir points
+    // the read at a scratch copy instead.
+    const assetsDir = scratchDir();
+    mkdirSync(assetsDir, { recursive: true });
+    const assetCopy = path.join(assetsDir, DASHBOARD_STYLESHEET);
+    writeFileSync(assetCopy, readFileSync(path.join(presentationAssetsDir, DASHBOARD_STYLESHEET), "utf8"), "utf8");
+
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const deps = publishDeps(harness, fakeGit(), fakeDeploy(), { presentationAssetsDir: assetsDir });
+    const first = await runPublish(deps);
+    expect(first.build).not.toBeNull();
+    const standing = readBuiltPage(deps.siteDir, "index.html");
+    expect(standing).not.toBeNull();
+
+    rmSync(assetCopy, { force: true });
+    const second = await runPublish(deps);
+    expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
+    expect(second.build).toBeNull();
+    expect(second.buildError).toMatch(/dashboard\.css.*missing or unreadable.*refusing to render an unstyled page/su);
+    expect(readBuiltPage(deps.siteDir, "index.html")).toBe(standing);
+  });
+
+  it("a write that fails mid-build (the atomic swap itself) fails the build closed", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const git = fakeGit();
+    const deploy = fakeDeploy();
+    const first = await runPublish(publishDeps(harness, git, deploy));
+    expect(first.build).not.toBeNull();
+    const standing = readBuiltPage(path.join(harness.paths.root, "site"), "index.html");
+    expect(standing).not.toBeNull();
+
+    harness.clock.now += 900_000;
+    await harness.cycle(); // a new journal entry so the second publish has a fresh revision to build
+    const failingSink = { writeFile: () => { throw new Error("disk full (probe)"); } };
+    const second = await runPublish(publishDeps(harness, git, deploy, { buildSink: failingSink }));
+    expect(second.alarms).toContain("DASHBOARD_BUILD_FAILED");
+    expect(second.build).toBeNull();
+    expect(second.buildError).toBe("disk full (probe)");
+    expect(readBuiltPage(path.join(harness.paths.root, "site"), "index.html")).toBe(standing);
   });
 });
 

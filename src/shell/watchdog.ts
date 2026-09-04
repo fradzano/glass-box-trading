@@ -9,6 +9,7 @@
 // decision lives in the pure core; this shell fetches, appends, and submits
 // through the gateway under the epoch it won.
 import { integerUnit } from "../core/domain.js";
+import { httpStatusOf } from "./broker-errors.js";
 import type { OptionLeg, Quantity } from "../core/domain.js";
 import {
   assembleDecisionSnapshot,
@@ -19,20 +20,22 @@ import {
   outcomeFromSubmit,
   utcIsoToEpochMs,
 } from "../core/execution.js";
-import type { BrokerBook, CloseAttemptRecord, MarketObservation, SubmitObservation } from "../core/execution.js";
-import { journalStaleness } from "../core/journal.js";
+import type { BrokerBook, CloseAttemptRecord, MarketObservation, SnapshotAssemblyResult, SubmitObservation } from "../core/execution.js";
+import { journalStaleness, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, JournalDraft } from "../core/journal.js";
 import {
   assessStaleness,
+  authorityRefusalAlarms,
   classifyBook,
   closeCapFor,
+  deploymentTerminal,
   escalateCloseLimit,
   marketableCloseLimit,
   planBookClosure,
   planPing,
   residueClosingLeg,
 } from "../core/lifecycle.js";
-import type { BookClassification, CloseCap, SessionWindow, StalenessAssessment } from "../core/lifecycle.js";
+import type { BookClassification, CloseCap, PingPlan, SessionWindow, StalenessAssessment } from "../core/lifecycle.js";
 import { closeAttemptId, closeLifecycleId, planCloseLifecycle } from "../core/order-identity.js";
 import type { PingPort } from "./cycle-runner.js";
 import type { BrokerReadPort } from "./fake-broker.js";
@@ -74,6 +77,10 @@ function quiet(assessment: StalenessAssessment): WatchdogReport {
   return { assessment, acquired: null, epoch: null, halted: false, classification: null, closes: [], alarmConditions: [], ping: null };
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogReport> {
   const gateway: MutationGateway = createMutationGateway({
     paths: deps.paths,
@@ -87,13 +94,37 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   const opened = await gateway.openJournal();
   const staleness = journalStaleness(opened.entries);
   const lastMs = staleness.lastAuthoritativeAt === null ? null : utcIsoToEpochMs(staleness.lastAuthoritativeAt);
-  const assessment = assessStaleness(deps.clock(), deps.session, lastMs, deps.deadManBoundMs);
+  // S-G11-04: a run that ended on purpose is not a hung writer. The fold is
+  // taken from the same journal read the staleness clock uses, so the two can
+  // never disagree about which entries they saw.
+  const assessment = assessStaleness(deps.clock(), deps.session, lastMs, deps.deadManBoundMs, deploymentTerminal(opened.entries));
   if (assessment.kind === "quiet") return quiet(assessment);
+
+  /** Best-effort delivery of a planned ping; the report carries the plan either way. */
+  async function deliver(plan: PingPlan): Promise<"success" | "fail" | "none" | null> {
+    if (deps.ping === null) return null;
+    try {
+      if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
+      if (plan.kind === "success") await deps.ping.success();
+    } catch {
+      // A ping that could not be delivered is not a reason to abandon the report.
+    }
+    return plan.kind;
+  }
 
   // Fence FIRST (S-G14-02): authority comes only from the atomic epoch increment, never from observing staleness.
   const acquired = await gateway.acquireAuthority({ account: "unknown" });
   if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") {
-    return { assessment, acquired: acquired.kind, epoch: null, halted: false, classification: null, closes: [], alarmConditions: [], ping: null };
+    // The journal is stale past DEAD_MAN_BOUND inside a session and this run
+    // could not fence: a live holder still heartbeats (a hung writer holding
+    // the lock), a rival taker won the race, or the store refused. Without an
+    // epoch nothing may be halted, journaled or closed — so the fail-ping is
+    // the only thing left, and it must fire: "stale AND unfenceable" is the
+    // developer-must-look state of S-G14-02/03, not a quiet one, and silence
+    // here would leave only the passive missed-ping SLA.
+    const alarmConditions = authorityRefusalAlarms(acquired, assessment.ageMs);
+    const ping = await deliver(planPing({ durableAppendLanded: false, alarmConditions }));
+    return { assessment, acquired: acquired.kind, epoch: null, halted: false, classification: null, closes: [], alarmConditions, ping };
   }
   const epoch = acquired.epoch;
   const alarmConditions: string[] = [`WATCHDOG_TAKEOVER:staleness ${String(assessment.ageMs)} ms`];
@@ -106,8 +137,16 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     return result.ok;
   }
 
-  if (!opened.halt.halted) {
-    await append(haltDraft(context(), "WATCHDOG_TAKEOVER", `journal stale for ${String(assessment.ageMs)} ms during a session; writer fenced at epoch ${String(epoch)}; phase-0 recovery follows`));
+  // `halted` is a claim about durable state, not about intent: the CLI prints
+  // this report as the operator-facing line, and a halt nothing journaled must
+  // never be reported as one. It is true when a halt already stood before the
+  // takeover, or when this run's HALT append landed. An append that did not
+  // land also raises its own alarm condition, so the fail-ping says which of
+  // the two things the fence produced is missing.
+  let halted = opened.halt.halted;
+  if (!halted) {
+    halted = await append(haltDraft(context(), "WATCHDOG_TAKEOVER", `journal stale for ${String(assessment.ageMs)} ms during a session; writer fenced at epoch ${String(epoch)}; phase-0 recovery follows`));
+    if (!halted) alarmConditions.push("HALT_NOT_JOURNALED");
   }
 
   let classification: BookClassification | null = null;
@@ -116,28 +155,43 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   if (deps.broker !== null && deps.market !== null && deps.binding !== null) {
     const binding = deps.binding;
     const brokerRead = deps.broker.read;
-    const [account, positions, openOrders, market] = await Promise.all([
-      brokerRead.account(),
-      brokerRead.positions(),
-      brokerRead.openOrders(),
-      deps.market(),
-    ]);
-    const book: BrokerBook = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
-    const reopened = await gateway.openJournal();
-    const assembled = assembleDecisionSnapshot({
-      broker: book,
-      market,
-      journal: reopened.entries,
-      halt: true,
-      profile: deps.profile,
-      calendar: { isTradingDay: deps.calendar.isTradingDay, opensAt: integerUnit(Number(deps.calendar.opensAt), "EpochMilliseconds"), closesAt: integerUnit(Number(deps.calendar.closesAt), "EpochMilliseconds") },
-      tradingDay: deps.tradingDay,
-      cycleIndex: 0,
-    });
-    if (assembled.ok) {
+    // A refused snapshot (bad quotes, unreconstructable lifecycles, ...) or a
+    // broker/market read that throws must not surface as a silent no-op: the
+    // fence and halt above already stand, but nothing here closed anything,
+    // and the operator sees only the takeover unless this names the reason.
+    let book: BrokerBook | null = null;
+    let assembled: SnapshotAssemblyResult;
+    try {
+      const [account, positions, openOrders, market] = await Promise.all([
+        brokerRead.account(),
+        brokerRead.positions(),
+        brokerRead.openOrders(),
+        deps.market(),
+      ]);
+      book = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
+      const reopened = await gateway.openJournal();
+      assembled = assembleDecisionSnapshot({
+        broker: book,
+        market,
+        journal: reopened.entries,
+        halt: true,
+        profile: deps.profile,
+        calendar: { isTradingDay: deps.calendar.isTradingDay, opensAt: integerUnit(Number(deps.calendar.opensAt), "EpochMilliseconds"), closesAt: integerUnit(Number(deps.calendar.closesAt), "EpochMilliseconds") },
+        tradingDay: deps.tradingDay,
+        cycleIndex: 0,
+      });
+    } catch (error) {
+      // A credential rejection is the fence, not a skipped recovery: it must escape to the
+      // composition's recordCredentialFence (S-G12-06) exactly as before this guard existed.
+      const status = httpStatusOf(error);
+      if (status === 401 || status === 403) throw error;
+      assembled = { ok: false, reason: `RECOVERY_READ_FAILED:${messageOf(error)}` };
+    }
+    if (assembled.ok && book !== null) {
+      const activeBook = book;
       const { snapshot, lifecycles, closes: journaledCloses } = assembled;
-      classification = classifyBook(book, lifecycles, journaledCloses, []);
-      const closure = planBookClosure(book, lifecycles);
+      classification = classifyBook(activeBook, lifecycles, journaledCloses, []);
+      const closure = planBookClosure(activeBook, lifecycles);
 
       async function submitWatchdogClose(exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, cap: CloseCap, reason: string): Promise<void> {
         // Adoption before submission: an existing active attempt is never duplicated (S-G7, WIN-8 "no duplicate action").
@@ -161,7 +215,7 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
           ? marketableCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, deps.closeEscalationStepCents)
           : escalateCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, deps.closeEscalationStepCents, cap);
         if (!priced.ok) return;
-        const eligibility = emergencyCloseEligibility(book.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
+        const eligibility = emergencyCloseEligibility(activeBook.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
         if (!eligibility.eligible) return;
         if (!await append(closeIntentDraft(context(), { exposureLifecycleId, route: "watchdog", generation: plan.generation, closingLegs, quantity: plan.quantity, limit: priced.limit, reason }, binding))) return;
         const dispatched = await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "broker_mutation", mutation: { kind: "submit_order", clientOrderId: plan.attemptId, binding, payload: { legs: closingLegs, quantity: plan.quantity, limit: priced.limit, intent: "close" } } } });
@@ -190,17 +244,11 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
         if (residue.quantity < 0) alarmConditions.push(`UNBOUNDED_RESIDUE_RECOVERY:${residue.contractId}`);
         await submitWatchdogClose(`residue:${residue.contractId}`, [closingLeg], integerUnit(Math.abs(residue.quantity), "Quantity"), cap, residue.quantity < 0 ? `watchdog uncapped marketable-limit close of unbounded residue ${residue.contractId} (S-X-06)` : `watchdog zero-floor close of bounded residue ${residue.contractId} (S-G10-03)`);
       }
+    } else if (!assembled.ok) {
+      alarmConditions.push(`WATCHDOG_RECOVERY_SKIPPED:${redactSecrets(assembled.reason, deps.secrets)}`);
     }
   }
 
-  const plan = planPing({ durableAppendLanded: appended.durable, alarmConditions });
-  if (deps.ping !== null) {
-    try {
-      if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
-      if (plan.kind === "success") await deps.ping.success();
-    } catch {
-      // Best-effort delivery; the report carries the plan either way.
-    }
-  }
-  return { assessment, acquired: acquired.kind, epoch, halted: true, classification, closes, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+  const ping = await deliver(planPing({ durableAppendLanded: appended.durable, alarmConditions }));
+  return { assessment, acquired: acquired.kind, epoch, halted, classification, closes, alarmConditions, ping };
 }

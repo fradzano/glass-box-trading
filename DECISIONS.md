@@ -576,8 +576,10 @@ small, no ADR split).
   OUTCOME and keeps counting as fillable exposure from its INTENT until phase
   0 of a later cycle sees its terminal status (S-X-04). Phase 0 re-reads
   every `intent`, `confirmation_unclear`, and `fillable` lifecycle by client
-  order ID; a never-confirmed order the broker does not know is released as
-  `RECONCILIATION` `NOT_SUBMITTED`, a formerly working order that vanished
+  order ID. The earlier rule that a negative lookup released a never-confirmed
+  order is superseded by R20: after a lost acknowledgement, `RECONCILIATION`
+  `NOT_SUBMITTED` remains uncertain, reserved, and entry-blocking because the
+  request may appear later; a formerly working order that vanished likewise
   blocks entries instead of releasing (fail closed). (c) *The revalidation
   claimset has eight claims and no narrower reading*: account bound, equity
   not below the kill threshold, positions fingerprint, open-orders
@@ -1027,3 +1029,1350 @@ small, no ADR split).
   `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p6-public-evidence/LEDGER.md`.
   Merge into local `main` only on Felix's word; P7 (dev live certificate)
   starts from the accepted P6 on its own branch.
+- **2026-09-01 — P6 accepted and merged (`bce890a`); P7 starts on
+  `p7/dev-live-certificate`.** Felix's word on the P6 merge and the P7 go
+  came in the same session. The merge exposed an erratum in the P6 ledger:
+  `npm run verify` could not have been exit 0 at `10a8e66` for the lint step
+  (`tests/j7-j8-publication.spec.ts` bound an unused rest-omit variable,
+  `no-unused-vars`); the file, the eslint config, and the lockfile were
+  unchanged since that commit. Fixed on the P7 branch at `3c82d89` (the
+  first commit after the merge, because `main` is not committed to without
+  the owner's word); the P6 ledger line stays as written and this entry is
+  the erratum. Two clean `verify` runs on the merge plus the fix (exit 0,
+  250 tests) are the merged baseline.
+- **2026-09-01 — P7 design: the configuration field classification has a
+  third class, `deployment`, outside the policy digest.** S-ARM-01 named
+  the identity fields and the credentials as the digest's only exclusions.
+  `STATE_DIR` cannot be role-neutral policy: S-CYC-09's competition
+  bootstrap requires an empty journal, so the competition deployment must
+  use a different STATE_DIR than the dev run by construction, and a digest
+  that included it would invalidate every dev certificate at the role
+  switch — the exact failure scenario 69 describes. `STATE_DIR`,
+  `BOOTSTRAP_DIAGNOSTIC_SINK`, and `PRE_ARM_CERTIFICATE` are therefore
+  classified `deployment` (versioned classification, version 1, in
+  `src/core/certificate.ts`); SPEC S-ARM-01 is amended in the same commit.
+  Everything else in the closed field set is policy; unknown fields are
+  rejected, never assigned.
+- **2026-09-01 — P7 design: the dedicated MCP environment is a
+  target-directory install run by the pinned runtime with `-S`, not a
+  venv.** The tracked runtime lock names two interpreter digests: the
+  install manager's launcher shim (`bin/python.exe`) and the CPython 3.14.1
+  runtime (`python.exe`). A venv's `python.exe` is a third binary the lock
+  does not name, so the environment is built as `uv pip install --target
+  <root>/site` from the frozen `uv.lock` of the pinned upstream commit
+  (clone at `<root>/src`, `core.autocrlf=false` — the immutable-file check
+  compares installed bytes against the commit's git blobs, and a CRLF
+  checkout fails it, as the first preflight showed), and the child is
+  spawned as `<runtime> -S -c "from alpaca_mcp_server.cli import main;
+  main()" --transport stdio` with `PYTHONPATH` naming the target directory
+  and the pywin32 subdirectories its `.pth` would add (`-S` processes no
+  `.pth`). `PYTHONPATH` is on the child's OS allowlist as an interpreter
+  necessity; the base installation's site-packages are never importable.
+  The dependency-lock check compares every installed distribution (PEP 503
+  normalized) against the lock content read from git objects, never from
+  the working tree. The launcher shim is verified but not exercised: the
+  child runs the runtime directly, which is the more deterministic of the
+  two.
+- **2026-09-01 — P7 design: `runtimeDigest` and `policyDigest` are
+  computed by a pure core with its own SHA-256.** The shell enumerates and
+  hashes the bytes that run (`src/**/*.ts`, `config/*.json`, `package.json`,
+  `package-lock.json`, `tsconfig*.json`, `tools/*`; LF-normalized so a
+  checkout's line endings cannot change the identity) and gathers the
+  analyst runtime identity (lock and manifest digests, upstream repository
+  and commit, package name and version, both interpreter digests, a digest
+  over the installed launch artifacts); the core canonicalizes (sorted
+  keys, sorted paths) and hashes with `src/core/sha256.ts`, checked against
+  `node:crypto` on multi-byte vectors in tests and in the sandbox gate. A
+  certificate is validated for arming only against digests the same core
+  computed for the deployment at hand; nothing is learned from the
+  certificate.
+- **2026-09-01 — P7 observation: a negative net `limit_price` is a credit
+  on Alpaca mleg orders.** Probed on the disposable dev account before the
+  session with two throwaway 1-lot credit verticals (`limit_price` -0.01
+  and +0.01, both accepted, both canceled within seconds; they are dev
+  history, not competition activity). `buildOrderRequest` therefore sends
+  the negated net for a credit and the net for a debit; `mapOrder` reads
+  the sign back into the limit kind. Money is exact cents from decimal
+  strings; the only rounding is half away from zero on broker average fill
+  prices; nanosecond broker timestamps are truncated to milliseconds,
+  never rounded.
+- **2026-09-01 — P7 design: the analyst is an Agent SDK session over an
+  in-process proxy of the verified child.** The session gets `tools: []`
+  (no file, shell, or web tool), one MCP server whose tools forward every
+  call to the exact child the launcher accepted (so the model can never
+  reach a second spawn), `settingSources: []`, a constructed environment
+  (the subscription token and the OS necessities, no broker key), a
+  scratch working directory under STATE_DIR, and a hard abort at
+  `ANALYST_TIMEOUT` minus five seconds. Its answer is text; the core's
+  `parseAnalystOutput` is the only validator. `AnalystInput` gains
+  `market` — the very contracts, quotes, and spot the gates will judge —
+  an additive change to the P3/P5/P6 runner: a candidate outside that set
+  is vetoed for a missing quote (S-G5-03), so the analyst gains no gate
+  influence by seeing it. The certificate run adds a prompt-level
+  objective (one minimal, fillable SPY credit vertical) exactly like the
+  S-CYC-12 brief: a letter to the analyst, never a gate parameter. The
+  default model is `claude-sonnet-5` (a breadth role on a subscription
+  budget; `ANALYST_MODEL` overrides). Verified off-hours at 02:53 CEST: the
+  analyst returned a schema-valid SPY 766/764 put credit vertical, G1-G4
+  passed, G5/G6 vetoed it (stale quotes, closed session) — no order.
+- **2026-09-01 — P7 design: the observed market is a shell selection.** The
+  runner's market observation covers the universe's nearest three expiries
+  inside `[EXPIRY_MIN_SESSIONS, EXPIRY_MAX_SESSIONS]` and strikes within
+  `min(MAX_STRIKE_DISTANCE, 300 bps)` of spot, quoted from the indicative
+  options feed, plus the equity pseudo-contract per underlying (P5
+  decision) quoted from IEX; contracts without a quote are dropped. A cycle
+  currently records ~550 quote samples (~90 KB per entry); the window may
+  narrow in P9 if the public journal grows too heavy.
+- **2026-09-01 — P7 design: the certificate driver sequences four phases
+  and the pure core judges them.** Entry cycles every three minutes until a
+  defined-risk entry fills (S-G6-05 needs a prior sample, so the first
+  possible entry is cycle two; a resting credit is harness-canceled after
+  three cycles and recorded as such), one more cycle to reconcile the fill
+  through the snapshot; a flatten pass through the S-G11 deadline regime
+  with `FLATTEN_DATE` overridden to today for the supervised run (the same
+  ladder Thursday will use, exercised live, one-minute cadence); the
+  S-G12-06 fence drill (a read port with an invalid secret, the journaled
+  `AUTH_FAILURE` halt, the working-order check and cancel through the
+  gateway, the manual un-halt with the drill as reason); the final fully
+  paginated snapshot. `buildCertificate` derives every clause from the
+  journal plus the driver's broker observations (order records by client
+  ID), and any broker rejection in the window FAILs. The certificate is
+  written to `evidence/pre-arm/<endedAt>.json`. The CLI refuses without
+  `--owner-go`, outside the dev profile, and outside the session;
+  `--preflight` stops before the first order, `--smoke-cycle` runs one cycle
+  only outside the session.
+- **2026-09-01 — P7 scope notes.** The production entry is `agent-cli`
+  (one cycle per invocation); the Windows Scheduled Task installer and the
+  real git/Vercel ports belong to P8's release session. The composition
+  root releases the holder record on a clean shutdown (a crash still ages
+  out through `LOCK_TAKEOVER_BOUND`). The O5 values live in the tracked
+  `config/policy.json` as a proposal (per-position cap 25% of the sleeve,
+  underlying exposure $10,000, relative spread 20%, quote size 5, quote age
+  90 s, staleness 300 s, kill at $90,000, qualification cap $500, strike
+  distance 10%, quantity 5, tolerance and step 2 c, analyst timeout 180 s,
+  walltime 300 s, takeover 400 s) — **the owner's freeze is still pending**;
+  because `policyDigest` binds them, a later change invalidates the
+  certificate and requires a new market-hours run.
+- **2026-09-01 — P7 design: a filled record proves acceptance; the
+  supervised run holds proposals while an entry rests.** The driver observes
+  order records after each cycle; a fast fill can precede the first
+  observation, so no `new`/`accepted` state would ever be seen for it. The
+  certificate core therefore counts `filled` and `partially_filled` records
+  as positive acceptance (the broker cannot fill what it did not accept;
+  the `submitted_at` timestamp is the acceptance instant) — a rejection
+  still FAILs, and an unrequested cancel still FAILs. Separately, while an
+  entry lifecycle has no terminal OUTCOME, the certificate driver hands the
+  analyst an empty batch (a harness decision for the supervised run, not a
+  gate): the live test exercises exactly one structure at a time, and the
+  runner's own vetoes stay untouched.
+- **2026-09-01 — P7 verification: five blind gate calls, sixteen closed
+  findings, one structural change, a declared residual.** Mutation probe
+  16/16 caught at `9777c05` (certificate core, digests, Alpaca mapping,
+  SHA-256). The blind gate on the certificate evaluation, the digests, the
+  arming validation, and the Alpaca wire mapping ran five times (Codex jobs
+  `task-mthyknel-obafmc`, `task-mthz2vfj-ryn88r`, `task-mthztizi-me994z`,
+  `task-mti0hzjn-dgopi1`, `task-mti1bgu0-3edjmm`; every call executed its
+  counter-examples). Every closure held at its own counter-example on the
+  following call; each call then found adjacent cases, all of one
+  generator: the certificate accepted values that were well-typed but
+  semantically unchecked, and arming trusted the file's content beyond the
+  two digests. Closed in order (`23a1921`, `2f2639a`, `2cf27c0`, `2742393`,
+  `7423fe8`): per-leg liquidity coverage; acceptance before the terminal
+  instant, compared as instants; `undefined`, non-finite numbers, boxed and
+  keyless objects refused from digest material; every evidence instant
+  inside the test window, quote instants equal to the broker's; the
+  defined-risk shape (one underlying, one expiry, exact BigInt ratio sums,
+  per-right cover, G1 passed) on the credit INTENT and on the fill's INTENT;
+  OUTCOME after INTENT; signed reconciliation; broker timestamps required,
+  observations must agree on them; blank or empty identities absent;
+  `mapOrder`/`mapPosition` fail-closed on non-positive quantities, 60-minute
+  offsets, `mleg` without legs, unknown sides; order pagination re-reads
+  timestamp ties and reports a single-tie page unpageable; the runner hands
+  the analyst copies of the market, the universe, and the brief. **The
+  structural change:** the arming validator moved from ad-hoc checks to an
+  exact typed schema with window-checked instants and semantic re-checks,
+  and the certificate now carries `evidenceDigest` over its canonical body
+  (except verdict and failures) which arming recomputes — any post-hoc edit
+  of the file is refused independently of the enumerated rules. The
+  documented threat model: the certificate proves the honesty of the run,
+  not resistance to a forger who recomputes the digest. **Residual,
+  declared:** the G5 closures (`7423fe8`) are verified by their red-first
+  tests and the repository gates only — the fifth call was the last blind
+  call of this phase's reduced depth, capped before it ran so the loop
+  could not become the 32-round case; an offset (`+HH:MM`) broker quote
+  timestamp is refused fail-closed (the broker sends `Z`); sparse arrays
+  and circular objects are outside the JSON boundary of the digests.
+  Record: `C:/Users/felix/verify-runs/fradzano/glass-box-trading/p7-dev-live-certificate/LEDGER.md`.
+- **2026-09-01 — P7 closing state on the branch: built, verified off-hours,
+  the market-hours run is the acceptance event.** Final code commit
+  `7423fe8` on `p7/dev-live-certificate` (`npm run verify` exit 0, 278
+  tests, sandbox gate executing the certificate core). Executed against the
+  dev account: preflight (S-CYC-11 through the verified MCP child and both
+  digests) and two off-hours cycles with a schema-valid analyst candidate
+  vetoed by G5/G6. Not yet executed: the market-hours certificate run
+  itself (`npm run certificate`, owner go given for 2026-09-01 from 15:30
+  CEST; O5 freeze of `config/policy.json` still pending — it binds
+  `policyDigest`). Merge into local `main` only on Felix's word, after the
+  certificate exists; P8 (kickoff release: real git/Vercel ports, Scheduled
+  Task, competition-arming wiring of `validateArmingCertificate` into
+  `runStartup`) starts from the accepted P7.
+- **2026-09-01 — P7 launch hardening after pre-live adversarial review.**
+  The active broker account is now observed before authority and re-observed
+  before every broker mutation; configured identity alone is never accepted as
+  binding evidence. The certificate fence clears only the exact newly-created
+  `AUTH_FAILURE` halt after every working order is observed canceled and a
+  stable flat snapshot is reconciled; the human approval is compare-and-set on
+  halt sequence and reason, so it cannot clear a pre-existing or replacement
+  halt. Full broker snapshots require two consecutive identical complete reads,
+  and all broker/health calls have finite timeouts. The certificate's
+  `evidenceDigest` now covers verdict and failures as well as observations, and
+  the MCP launch artifact digest binds every importable installed dependency
+  byte. We retain the earlier trusted-local-operator decision: this digest
+  detects file edits and supports deterministic semantic validation, but is not
+  an external signature against an operator who modifies the verifier or
+  deliberately regenerates synthetic evidence. Documentation must state that
+  boundary and must not claim independent live-run attestation.
+- **2026-09-01 — P7 R3 hardening after the launch Go/No-Go cold read.**
+  A post-config, pre-runtime broker identity refusal uses a brokerless local
+  gateway solely to persist `AUTH_FAILURE` or `ACCOUNT_BINDING_MISMATCH`, send
+  the fail ping, and release its holder; it never gains an order port. The
+  certificate now binds every acceptance observation to the INTENT's exact
+  broker identity, leg sides/ratios, one-lot quantity, and limit kind/price,
+  and the fill clause requires the later position quantities to equal that
+  exact one-lot fill with no unrelated non-zero position. A sign-only match is
+  not reconciliation. The cycle walltime is an aggregate shell deadline:
+  phase-boundary heartbeats run in production, gateway appends and mutations
+  inherit the absolute deadline, Alpaca requests cap themselves to the time
+  remaining, and the transport timeout covers response-body consumption as
+  well as headers. The caller regains control at the hard budget; no local
+  effect begins past the propagated deadline. Because a remote broker effect
+  begun before the boundary cannot be revoked, an answer settling afterward
+  is reported as confirmation-unclear and reconciled, never as success. R3's
+  red counterexamples and the complete
+  repository gate pass with 296 tests; a first otherwise-green gate attempt
+  hit a transient Windows `EPERM` during the unchanged atomic dashboard rename
+  and the immediate complete rerun passed.
+- **2026-09-01 — P7 R4 closes the suppressed-startup halt race.** A startup
+  broker-identity/auth refusal is safety-relevant even when another process
+  owns a fresh lease. The gateway therefore exposes one narrow monotonic
+  interlock: under its existing mutex it may append only `AUTH_FAILURE` or
+  `ACCOUNT_BINDING_MISMATCH`, using the current persisted epoch, without a
+  broker port, authority acquisition, holder change, or un-halt capability.
+  A final persisted-halt read at the broker boundary rejects a stale entry
+  after such an interlock lands, while cancel and explicit-close mutations
+  remain available for reconciliation. This is not a general third mutation
+  class; it is a denial-only safety fuse for the two mandatory startup fences.
+- **2026-09-01 — P7 R5 closes the adjacent cold-scan findings.** Certificate
+  acceptance and fill are now one identity: the builder prefers a filled
+  credit lifecycle, requires its exact client and broker order IDs for the
+  one-lot fill, and reconciles signed quantities only on the bound account;
+  arming validates the same cross-clause identity. Runtime authority is
+  acquired before the first broker read. A fresh rival therefore produces one
+  staleness-neutral `SUPPRESSED` witness and exit 0 in the scheduled CLI with
+  no account/calendar/position/order call. Temporary `CONFIG_INVALID`
+  authority is released in `finally`. Deadline cycles defer their ping plan
+  until aggregate work wins the outer race; the concrete adapter refuses
+  expired delivery and non-2xx HTTP. Finally, any exceptional certificate exit
+  sends a failure signal and repeatedly invokes the ordinary S-G11 flatten
+  cycle until broker truth is flat or recovery is explicitly unresolved.
+- **2026-09-01 — P7 R6 makes the journal authoritative across halt-projection
+  crashes.** `halt.json` remains the snapshot-friendly projection, but every
+  gateway read and final risk-increasing broker boundary now folds the valid
+  journal's latest `HALT`/human `UNHALT` transition under the gateway mutex and
+  repairs a missing, stale, or unreadable projection before continuing. Thus a
+  crash after the fsynced journal line can neither bypass a durable halt nor
+  strand a durable human un-halt. If the journal contains no halt transition,
+  an unreadable projection remains fail-closed.
+- **2026-09-01 — P7 R8 closes live-lock theft and late-success reporting.**
+  The filesystem mutex now records process and owner token. Age can trigger
+  abandoned-lock cleanup only when that process is no longer alive, and final
+  removal is token-checked; a long but live broker observation therefore
+  cannot be overlapped by a safety halt. A broker result arriving at or after
+  the aggregate deadline is classified as broker-side confirmation uncertainty
+  rather than success, preserving the reservation and next-cycle reconciliation.
+- **2026-09-01 — P7 R10 removes stale-lock recovery and restart identity
+  classes.** The file mutex is replaced by a kernel-owned Windows named pipe
+  (Linux abstract socket): exclusivity survives arbitrary operation duration,
+  waiters do not time out, and the OS releases ownership on process death, so
+  no path-level recovery unlink or CAS exists. Certificate attempts derive the
+  next global cycle identity from the journal maximum rather than restarting at
+  one. All post-launch runtime construction is failure-cleaned: exceptional
+  digest or adapter construction stops the verified child and releases only
+  the caller's holder.
+- **2026-09-01 — P7 R11 closes recovery quiescence and state-path identity.**
+  Exceptional certificate recovery crosses the live gateway mutex and proves
+  continued writer authority before any flat snapshot can succeed; an order
+  request admitted before an aggregate timeout must therefore settle before
+  the recovery observes broker truth. `STATE_DIR` is canonicalized with the
+  host filesystem before any durable child path or kernel mutex name is
+  derived, so Windows extended-path aliases of the same directory cannot open
+  independent serialization domains.
+- **2026-09-01 — P7 R12 treats lost acknowledgement as a protocol state, not
+  a timing delay.** A local mutex drain cannot prove that an aborted HTTP
+  request will not appear later at the broker. Exceptional certificate recovery
+  now ensures a durable halt (without replacing an existing stronger halt) and refuses `recovered: true` until
+  every pre-abort entry identity has broker-terminal evidence; a not-found read
+  or `confirmation_unclear` remains unresolved, while the journal's
+  `partially_filled` OUTCOME is terminal by construction and its filled portion
+  must still vanish from the flat snapshot. Atomic writer-epoch/heartbeat/
+  journal checks bracket the stable flat snapshot, so a takeover or human
+  halt change during the read also prevents a false proof.
+- **2026-09-01 — P7 R13 closes ambient harness inputs and exact recovery
+  bracketing.** The
+  certificate attempt/recovery bounds are positive code constants covered by
+  `runtimeDigest`; ambient `CERTIFICATE_*` variables can no longer disable the
+  abort path. Recovery compares the exact terminal HALT journal sequence across
+  its flat snapshot, not merely the projected boolean.
+- **2026-09-01 — P7 R14 reconstructs the exact MCP child environment.** The pinned MCP SDK's
+  implicit Windows environment is neutralized with explicit empty overrides,
+  then a `-S` Python bootstrap reconstructs the exact validated environment
+  before any verified package import. Secrets are captured in-process and never
+  enter argv; exact non-secret literals undo interpreter rewrites such as a
+  prefixed `PYTHONPATH`.
+- **2026-09-01 — P7 R15 closes final certificate state, shutdown, lifecycle
+  selection, and operative truth.** Fence evidence names the exact halt/un-halt journal
+  sequences produced by the supervised run. Atomic writer reads bracket the
+  final stable broker snapshot and require that exact human un-halt to remain
+  the terminal halt transition with no active halt. Verified-child stop and
+  holder release are attempted independently, so a transport close failure
+  cannot retain writer ownership. Certificate lifecycle ranking and validation
+  now share the latest broker-terminal OUTCOME, so a reconciled fill after a
+  lost acknowledgement outranks an earlier harness-canceled attempt. README and
+  STATE now name the real dev-paper reachability, the owner/O5/P8 boundaries,
+  the current verification count, and the same R13–R15 decision sequence.
+- **2026-09-01 — P7 R16 closes the certificate end instant and independently
+  anchors MCP dependency bytes.** The certificate window ends immediately
+  after the stable broker snapshot and before its final atomic writer/journal
+  read; every halt through that historical end is therefore observed, while a
+  later halt is outside the claim. `dependencySiteSha256` was derived by
+  `tools/derive_mcp_dependency_digest.py` from a clean CPython 3.14 Windows
+  install of the 69-package production graph read with `git show` from the
+  exact official upstream commit, using only SHA-256-authenticated wheels named
+  by that pinned `uv.lock`; the tool rejects origin/HEAD/worktree or installed-
+  closure drift, independently verifies every downloaded wheel identity/hash,
+  requires its signed compatibility tags to match the tracked `win_amd64`
+  CPython target, evaluates the supported marker set fail-closed without an
+  external marker library, and extracts importable payload itself rather than
+  trusting installer output.
+  The resulting 3,985 canonical importable files
+  byte-matched the deployment site. The tracked digest is
+  `05697dac3f1cdf3e3d96d0da6879c4b1ffef96d2b4f345de4278e65c58abc6e4` and
+  is enforced before child spawn. Installer metadata is excluded because it is
+  not executable content; the installer-created `site/bin` tree is excluded
+  from this digest only because pre-spawn cleanup removes it recursively and
+  verifies its absence before Python can resolve its scripts as modules. The
+  canonical paper origin remains solely in `config/policy.json`; stale
+  `ALPACA_*_BASE_URL` examples were removed. P7 auth is OAuth-only and
+  fail-closed; the unimplemented API-key fallback decision is superseded.
+- **2026-09-01 — P7 R17 uses one canonical terminal OUTCOME for both
+  acceptance and fill.** `creditAcceptance.outcomeSeq` is now the sole fill
+  source. The fill must be that exact `filled` OUTCOME and must retain the same
+  intent, client-order, and broker-order identities. An earlier fill cannot be
+  combined with a later fill or harness cancel, even when the client ID is
+  reused in the journal. The builder therefore refuses the same contradictions
+  that the arming validator checks instead of writing an internally invalid
+  PASS artifact.
+- **2026-09-01 — P7 R18 makes lifecycle finality part of every flat proof.**
+  A successful credit lifecycle cannot hide a sibling risk-increasing INTENT
+  whose broker result remains `NOT_AT_BROKER` or `confirmation_unclear`.
+  Certificate construction now rejects every such lifecycle in the test
+  window, and the supervised driver requires broker-authoritative terminal
+  truth for all entries before the fence and final snapshots. Atomic writer
+  reads also require the complete terminal journal sequence to remain
+  unchanged across each stable broker snapshot, including exceptional
+  recovery, so a late lifecycle transition cannot be certified against an
+  earlier flat view.
+- **2026-09-01 — P7 R19 applies lost-ack blocking inside a batch and bounds
+  MCP lifecycle cleanup.** A `confirmation_unclear` submit immediately blocks
+  every later risk-increasing plan in the same phase-4 batch; reconciliation
+  by that exact client-order ID remains phase 0 work for a later cycle. MCP
+  evidence, connect, inventory, tool-call, and stop operations use a fixed
+  runtime-covered deadline. Runtime cleanup starts holder release independently
+  of child stop and preserves timeout/cleanup errors, so a stalled stdio
+  transport cannot retain writer authority indefinitely.
+- **2026-09-01 — P7 R20 unifies lost-ack terminality and makes evidence
+  deadlines real.** `NOT_AT_BROKER` after an ambiguous submit never maps to a
+  released lifecycle: the fold retains `confirmation_unclear`, phase 0 blocks
+  entries and re-queries the same client-order ID on every later cycle, and a
+  broker order that appears late is adopted and terminally journaled. Only
+  broker-terminal truth or a pre-submit `REVALIDATION_VOID` releases risk.
+  MCP filesystem scans, hashing, cleanup, and Git reads now yield through
+  asynchronous ports with cooperative aggregate deadlines; Git subprocesses
+  carry their remaining timeout explicitly. The launcher starts timeout
+  measurement before invoking a port and rejects even a synchronously
+  misbehaving port that returns only after its bound.
+- **2026-09-01 — P7 R21 requires terminal truth after a lost acknowledgement
+  and aligns the normative acceptance states.** Matching the exact client-order
+  ID proves identity but a still-working broker status does not terminate
+  lost-ack uncertainty. `intent`/`confirmation_unclear` therefore remain
+  entry-blocking through `MATCHED_WORKING` and are re-queried until a terminal
+  fill, rejection, cancel, or expiry is journaled; normally acknowledged
+  working orders retain the ordinary fillable-risk behavior. S-ARM-01 now names
+  the fast-fill acceptance states already required by the certificate decision.
+- **2026-09-01 — P7 R22 makes acknowledgement evidence state- and
+  identity-monotonic.** `ACKNOWLEDGED_WORKING` may establish `fillable` only
+  directly from a pristine `intent`, or repeat idempotently for the same broker
+  order already `fillable`. It cannot follow `confirmation_unclear` or any
+  terminal state, cannot name a terminal broker status, and cannot change an
+  already bound broker-order ID; violations invalidate lifecycle reconstruction
+  and therefore block all new entries.
+- **2026-09-01 — P7 R23 closes the complete entry-lifecycle transition
+  generator.** Duplicate entry INTENT IDs are invalid instead of resetting
+  state. Working, absence, void, and outcome evidence each enforce their source
+  state; broker-order identity never changes once known; terminal truth cannot
+  be weakened or overwritten. Filled/canceled/rejected evidence also carries a
+  status-consistent broker ID, quantity, and price shape. Runtime reconstruction
+  rejects a violation, while certificate/recovery terminality independently
+  keeps every malformed identity unresolved. Observed fill evidence is
+  monotonic too: later working or terminal evidence cannot erase or reduce a
+  partial fill, rewrite its price without a new fill, or imply a decreasing
+  cumulative fill value. The broker's exact decimal average is retained beside
+  its half-away rounded cent display, the pair must agree, and exact cumulative
+  deltas classify each new fill increment against the submitted limit. Filled
+  risk uses the conservative edge of the cent-rounding interval. Terminal
+  remainder resolution must retain the filled quantity.
+- **2026-09-02 — P7 R24 binds long certificate operations to writer
+  authority.** A full snapshot has one absolute deadline, inherited by every
+  stability read and order-history page, below the takeover bound. The human
+  fence checkpoint refreshes the holder heartbeat and is aborted if authority
+  is lost. Approval is followed by a new writer-bracketed stable-flat proof;
+  manual UNHALT then atomically requires the same epoch, holder, AUTH_FAILURE
+  HALT, and journal tail. A successor takeover or any intervening journal
+  transition therefore preserves the halt instead of applying stale approval.
+- **2026-09-02 — P7 R25 owns MCP cleanup before connect begins.** The MCP
+  child port returns a spawn-attempt object synchronously: its connect result
+  may settle later, but its stop operation is available immediately. The
+  launcher therefore closes the attempt before propagating connect timeout or
+  failure, so a late child handle cannot become an unowned process during
+  runtime-construction failure.
+- **2026-09-03 — P7 R26 rejects late cycle results after event-loop
+  blocking.** The aggregate cycle wrapper checks its absolute deadline again
+  after work resolves. A timer remains the preemptive path for asynchronous
+  stalls; the post-check prevents synchronous blocking from returning a late
+  success after the timer was unable to run.
+- **2026-09-03 — P7 R27 preserves the first sticky halt cause.** Later HALT
+  entries remain append-only audit evidence, but projection keeps the existing
+  sticky reason. An authority-free startup safety interlock can therefore add
+  its observation without rewriting `KILL`, `PROVENANCE_BROKEN`, or another
+  terminal sticky cause.
+- **2026-09-03 — P7 R28 applies the credential fence to every authenticated
+  startup read.** A 401/403 from the exchange calendar now persists and signals
+  `AUTH_FAILURE` exactly like rejection of the preceding account-identity read,
+  then releases the startup holder. Startup stage names cannot bypass the
+  broker-auth safety classification.
+- **2026-09-02 — S-CYC-05 linearization point and the manual-mutation rule
+  (owner ruling).** The interval between the final fresh broker read of the
+  pre-submit revalidation and the broker's acceptance of the submit cannot be
+  closed: Alpaca offers no conditional submit (no book revision, no if-match
+  on orders; only client-order-ID idempotency). A fake-broker interleaving in
+  R28 showed that a manual position landing in exactly that window does not
+  void the submit. Options weighed: (A) declare the completion of the final
+  fresh read as the linearization point and prohibit manual broker mutations
+  during the supervised certificate run and competition operation, except
+  under a durable `HALT` with no writer holding authority; (B) keep P7 blocked
+  until the broker offers an atomic conditional submit. Ruling: A. Reasons: the
+  prohibition already exists for the competition account (2026-08-25, SUB-08
+  provenance latch); the window can only be hit by the owner's own action; a
+  violation is detected by the next cycle's phase 0 (S-G10-02 `RESIDUE` /
+  `HUMAN_ACTION`, halt) instead of passing silently; the agent's own position
+  stays defined-risk, only the aggregate caps can be exceeded for one cycle by
+  the human's quantity. The 2026-08-25 clause "risk-reducing cleanup remains
+  allowed" is narrowed to the halted state so the close side (S-G7 over-close)
+  does not carry the same window. The limitation is stated in the submission
+  deck as a known broker-API limitation. Should Alpaca ship a conditional
+  submit, the declaration becomes an implementation obligation. Regression:
+  `tests/cyc-runner.spec.ts` "S-CYC-05 / linearization point".
+- **2026-09-02 — P8 runtime wiring lands before the P7 certificate, not
+  after.** The certificate's `runtimeDigest` binds every file under `src/`,
+  `dist/`, `config/`, `tools/*.mjs|*.py`, and the package/tsconfig files
+  (`src/shell/digests.ts`), and arming refuses any digest mismatch. A code
+  change after the market-hours run would therefore void the certificate and
+  could only be re-earned in a later session. The plan's "P7 then P8" ordering
+  is corrected to: P8 code (competition provenance port wiring, the arming
+  certificate gate, digest-neutral operator tooling) → owner O5 freeze →
+  clean zero gate → P7 certificate → owner-only P8 steps (account, `.env`,
+  GitHub, Vercel) → arm. The two wiring gaps were found by a cold P8 readiness
+  review and confirmed in code: the composition root never supplied the
+  `provenance` lifecycle dependency (a competition BOOTSTRAP would fail closed
+  on its first cycle), and `validateArmingCertificate` had no shell caller
+  (startup checked file presence only). Digest-neutral surfaces stay editable
+  after the certificate: `*.md`, `.env.example`, `.gitignore`, `tools/*.ps1`,
+  `submission/`.
+- **2026-09-02 — Certificates stay local.** `evidence/` is gitignored: the
+  pre-arm certificate carries the dev account identity and broker evidence
+  that the public repository does not need; the public proof of the live test
+  is the projection, not the raw certificate file.
+- **2026-09-02 — The arming certificate gate (`src/shell/arming-gate.ts`).**
+  A competition runtime arms only under a certificate whose `runtimeDigest`,
+  `policyDigest`, canonical trading origin, typed clauses, evidence digest, and
+  PASS verdict all validate through the pure `validateArmingCertificate`.
+  Design choices: the profile guard lives inside the gate and the call in the
+  composition root is unconditional, so a later edit at the call site cannot
+  let a competition runtime skip it, and "the dev profile never reads the
+  file" is asserted through an injectable read port; a refusal is journaled as
+  `HALT CONFIG_INVALID` with the detail prefixed `ARMING_CERTIFICATE_INVALID`
+  rather than as a new closed-set halt reason (the reason sets are consumed by
+  the journal schema, the renderer, and the certificate core; the refusal is
+  S-CYC-11's "invalid configuration" in substance), and the build stage
+  `arming` is added for the caller; cleanup follows the post-launch pattern
+  (halt first, then the MCP child and the holder). The gate reads
+  `PRE_ARM_CERTIFICATE` from the raw §0 record because `ValidatedStartup`
+  carries no certificate field; startup's presence-only check therefore stays,
+  and the gate refuses non-string, empty, or whitespace values. Known and
+  accepted: the gate is inside its own runtime digest, so every certificate
+  produced before it lands refuses to arm — the market-hours run must follow
+  this change; a dev-account certificate is by design what arms the
+  competition account (account correctness is `verifyActiveAccount`'s job,
+  `EXPECTED_ACCOUNT_ID` is identity-class and outside both digests);
+  `ANALYST_MODEL` is the one policy-digest input sourced from the environment,
+  so it must be identical on the certificate host and in competition
+  operation (documented in `.env.example` and the README runbook, not moved
+  into `config/policy.json` this close to the freeze). Calibration: six
+  mutants of the gate, all caught.
+- **2026-09-02 — A virgin paper account is not activity-empty.** A read-only
+  probe of the dev paper account (`GET /v2/account/activities`) returned
+  exactly one activity on a never-traded account: the opening funding journal
+  (`JNLC`, executed, net `100000`). The competition provenance proof treated
+  any activity as reset/reuse evidence, so every fresh competition account
+  would have latched `PROVENANCE_BROKEN` on its first bootstrap — a class-A
+  defect on the competition path that the fake bundle could not show because
+  it encoded the spec's assumption rather than broker reality. Rule now: the
+  activity ledger may hold nothing but opening funding journals whose
+  exact-cent net sum equals `INITIAL_CAPITAL`; fills stay empty; anything else
+  is reuse evidence. SPEC S-CYC-09 and CONCEPT §9 are corrected; the recorded
+  document is a test fixture. Lesson recorded for the axiom "the artifact under
+  test is not the standard": broker-facing proofs need one recorded document
+  per endpoint before they gate anything.
+- **2026-09-02 — Pre-freeze cleanup rulings.** `docs/COLD-READ-2026-08-24.md`
+  stays: CONCEPT cites its finding numbers in four places, and a glass-box
+  repository publishes the design's own failure modes. The broker port
+  contracts move out of the fake into `src/shell/broker-ports.ts` so the real
+  adapter no longer imports a fake module (pure extraction). The map generator
+  skips `.claude` and `tmp`, and `.claude/worktrees/` is ignored, after one
+  ephemeral agent worktree leaked into REPO_MAP.md. `dist/` is inside the
+  certificate digest but gitignored, so the certificate binds bytes no clone
+  reproduces; the operator builds right before the run and never rebuilds
+  between the certificate and competition operation. The dev account
+  identifier already appears in tracked text and is not treated as a secret;
+  `evidence/` stays local for the raw certificate, not for the identifier.
+- **2026-09-02 — The Friday deadline entries get a one-shot CLI now, not on
+  Friday.** S-G11-03/04 (`DEADLINE_RECONCILIATION`, `TERMINAL`) existed only
+  as functions without a runtime caller. Because the certificate digest binds
+  `src/`, `deadline-runtime.ts` / `deadline-cli.ts` land before the
+  market-hours run. The CLI takes `STATE_DIR` from the validated configuration
+  only, acquires writer authority through the gateway like the agent, appends
+  nothing when a live writer holds the epoch (no witness line either: a
+  one-shot owner action is not a scheduled cycle whose absence needs
+  explaining), and refuses a second `TERMINAL` by a pure admission rule over
+  the journal. Exit codes: 0 appended, 2 usage, 3 live writer, 4 TERMINAL
+  already standing, 1 otherwise.
+- **2026-09-02 — The scheduled watchdog composes the real broker.**
+  `watchdog-cli.ts` had always passed null broker and market ports, so the
+  scheduled watchdog could fence, halt and ping but never flatten an open
+  book. `watchdog-runtime.ts` composes the validated configuration, the
+  account-bound Alpaca port, the ping port and a close-oriented market window
+  (expiries from zero remaining sessions, the full configured strike band)
+  from the existing factories, without acquiring writer authority up front
+  and without launching the analyst; any configuration or credential problem
+  degrades to the previous null-port behaviour with the reason logged, and a
+  401/403 escaping the run records the `AUTH_FAILURE` fence. The watchdog
+  submits closes only and is deliberately not gated on the arming
+  certificate: gating recovery on a certificate would fail open on risk.
+  Known residual: a 401/403 the gateway catches during a close submit is
+  treated as a lost acknowledgement (reserved and reconciled), not
+  classified as a credential fence — bounded, declared.
+- **2026-09-02 — R29 blind gate at `4403758`: NO-GO (A=1, B=1, C=14), fixes
+  before the certificate run.** A1: the management-close ladder (eviction,
+  flatten, residue) planned and submitted against the phase-1 book snapshot,
+  refreshing orders but never positions; a resting close that fills during
+  the analyst step made the ladder submit a further close against a flat
+  account, opening a reversed and partly unbounded exposure (reproduced with
+  the fake broker on the routes `deadline` and `expiry`; the mutant
+  "disable the eligibility refusal in ladderClose" survived all 388 tests
+  while the analogous entry-side mutant is caught). Fix: one fresh book read
+  at the head of the management actions, used by every close-planning input;
+  no close submits when that read fails. B1: the watchdog composition
+  carried `ping: null` into every degraded path, so a takeover under
+  degraded composition raised no active alarm. Fix: the ping port is built
+  before the first degrade branch. C-class: coverage gaps without a
+  demonstrated defect (one-lot INTENT half, deadline inheritance beyond the
+  first page, the UNHALT CAS epoch and journal-tail components, the
+  recovery-loop flatness gate, presentation CSS untested), the deck naming
+  only `HUMAN_ACTION`, the watchdog decision missing here, and the
+  certificate CLI exiting 1 on a suppressed rival. Ruling on the last:
+  S-G12-01's exit-0 rule is for the scheduled agent process; the certificate
+  CLI is an owner-driven one-shot and exits non-zero on suppression so the
+  owner learns the run did not happen — declared, not changed. The gate
+  reviewer disclosed that a scratch write of its own briefly mutated
+  `cycle-runner.ts` inside its isolated worktree and was reverted within a
+  minute; its verify ran clean afterwards, the main worktree was never
+  touched, and the A1/B1 fix diffs are reviewed hunk by hunk before commit.
+- **2026-09-02 — R29 fix set: fresh book for management closes, close
+  attempts reconciled in phase 0.** A1 is closed by one fresh book read at
+  the head of the management actions that feeds every close-planning input;
+  `ladderClose` takes the book as a parameter so the phase-1 snapshot is
+  unreachable inside the ladder, a failed refresh submits nothing and raises
+  `MANAGEMENT_BOOK_UNREADABLE`, a 401/403 goes through the credential fence.
+  The adjacent gap the fix exposed — a resting close that fills, cancels or is
+  rejected while the ladder no longer visits it never received an OUTCOME, so
+  the journal/account bijection broke silently — is closed in the pure core
+  (`closeAttemptsAwaitingOutcome`, `reconcileCloseAttempt`, reusing the entry
+  side's terminal mapping) and in phase 0 of the runner, before any management
+  or entry action, with S-CYC-04's lost-acknowledgement discipline: unknown,
+  failed or unsettled lookups invent nothing, stay reserved, and block
+  entries transiently as `CONFIRMATION_UNCLEAR`; `partially_filled` is not
+  re-queued because its remainder is the next generation's business. Cost:
+  one broker lookup per non-terminal close attempt per cycle. SPEC S-CYC-04
+  carries the close-side rule.
+- **2026-09-02 — Declared reduced depth after R29 (owner to countersign at
+  the freeze).** Not fixed, stated: presentation CSS had no test of its own
+  beyond the byte-identical golden render (C1 — superseded the same day by the
+  `assets/` decoupling below, which carries its own tests); a
+  countable funding sum that differs from `INITIAL_CAPITAL` latches the
+  provenance halt — ruled as intended, since a second funding is a reset and
+  a different opening balance is not the prescribed account (C3, SPEC
+  S-CYC-09 amended); the certificate CLI exits 1 and the deadline CLI exits 3
+  on a suppressed rival while the scheduled agent exits 0 (C11, SPEC
+  S-G12-01 amended); the MCP launch-artifact digest's walk of the full site
+  tree is traced as wiring, not confirmed by a test that plants a file deep in
+  the tree (C12). The R29 gate also named a structural lesson: the launch
+  class taxonomy used for P7 gates had no class for the management/close
+  path, where A1 lived; R30 and any later gate carry that class explicitly.
+- **2026-09-02 — The competition account exists; an empty activity ledger is
+  virgin evidence.** Felix created the dedicated paper account
+  `PA376WIK2ATL` (login alias for the hackathon, created
+  2026-09-02T09:54:41Z, options level 3, keys bound in `.env` as
+  `ALPACA_COMP_*`). A read-only probe through the real adapter minutes later
+  showed cash and equity at exactly $100,000 and an activity ledger with no
+  entry at all — the opening `JNLC` funding journal the dev account carries is
+  posted by the broker later than creation. The proof's "no funding journal
+  → incomplete, retry" rule from earlier today would therefore have blocked
+  arming until the broker's batch ran. Ruling: a complete, empty ledger with
+  cash and equity equal to `INITIAL_CAPITAL` and empty, complete order and
+  fill history is virgin evidence; present funding journals must still sum
+  exactly. Second instance today of the same lesson: the fake encoded an
+  assumption, the live read corrected it. The recorded competition account
+  document is a fixture (account number and instants only).
+- **2026-09-02 — R30 delta gate at `f2e214d`: A=0, B=2, C=5; the R29 fixes
+  hold.** Every named mutant on A1, the close reconciliation, B1, the deadline
+  entries, and the coverage closures is caught; the deadline CLI has no order
+  path; a partial fill can never over-close (`EXCEEDS_HELD_QUANTITY`). New:
+  B1 the runner's "success ping only after a durable append" wiring is
+  unmeasured (the mutant `durableAppendLanded: true` survives; paths with no
+  durable append and no alarm exist) — closed by tests; B2 the watchdog
+  reports `halted: true` regardless of whether its HALT append landed, and
+  the operator tooling reads that line as "halted" — closed by reporting the
+  append's durability and alarming on an unjournaled halt; C4 the
+  environment-unreadable branch of the watchdog composition left the takeover
+  without even the local ping recorder the fence uses — closed. Declared:
+  C1/C2 the freshness of the close-planning inputs is redundant with the
+  eligibility gate on the fresh book and not measured separately, and the
+  residue loop still iterates the phase-1 classification (every submission
+  passes the fresh eligibility check); C3 after a partial fill of a resting
+  close the remainder is deferred one cycle (under-close direction only,
+  unreachable under the one-lot rule); C5 the pre-freeze port extraction is
+  code motion inside the digest window, behaviour-preserving on reading and
+  by the full suite.
+- **2026-09-02 — R31 mini-gate on the provenance seam at `fb2772c`: GO,
+  A=0, B=1, C=2.** Twenty-four independent probe cases (recorded fixtures,
+  funding boundaries at the cent, uncountable classes, malformed amounts,
+  three-page pagination, repeating and unpageable cursors with the 200-page
+  bound, the empty ledger beside every imperfect clause, the dev profile's
+  zero reads) all behaved as S-CYC-09 specifies; five of six mutants caught.
+  B1: the suite measured "negative JNLC latches" and "sum must equal the
+  capital" only separately, so a mutant classifying a cash-out as funding
+  survived when the journals still netted to the capital — closed by one
+  conjunction test. C2: the latch on a creation instant before
+  `COMPETITION_START` was not licensed by the spec sentence — SPEC now says
+  it is (an unfixable ineligibility fact). C1 declared: the MCP verifier test
+  "bounds a stalled child connect before inventory can be released" is
+  timing-sensitive and failed once in about seven full-suite runs in the
+  reviewer's scratch copy; not seen in this session's six verify runs.
+- **2026-09-02 — R32 narrow gate at `258d4c1`: GO, A=0, B=1, C=2; declared
+  residual of the watchdog takeover.** All four named mutants (watchdog
+  `halted` literal, null ping in the environment-unreadable branch,
+  `durableAppendLanded: true`, cash-out classified as funding) are caught;
+  `npm run verify` passed twice in the reviewer's worktree, the
+  timing-sensitive MCP verifier test included. Declared, not patched: when a
+  watchdog takeover's HALT append fails transiently, the epoch fence locks out
+  only the fenced writer; the next scheduled agent cycle acquires its own
+  epoch, finds no standing halt, and may enter until the operator reacts to
+  the immediate `HALT_NOT_JOURNALED` fail ping (two to three cycles against
+  the alert SLA). Under a persistent journal failure the runner is fail-closed
+  by its own rule (no order whose INTENT append did not land). A second
+  authority in `halt.json` would contradict the single-authority rule of the
+  journal transition (2026-08-25) and be erased by the next projection
+  reconciliation, so the remedy is this declaration plus the operator's
+  response to the fail ping. Notes: the authority-refused branch of the
+  watchdog pings nothing and relies on the passive dead-man SLA; every
+  takeover path seeds `WATCHDOG_TAKEOVER`, so the watchdog's own ping
+  precondition is fixed by construction rather than measured.
+- **2026-09-02 — Presentation lives outside the runtime digest (`assets/`).**
+  The S-ARM-01 runtime digest binds what Node executes and what a reviewer
+  reads as behaviour: `src/**/*.ts`, `dist/**/*.js`, `config/**/*.json`, the
+  tool scripts, the lock files, the tsconfigs. It no longer binds the
+  stylesheet bytes: a colour, a grid or a font stack states nothing about
+  trading behaviour, yet would void the certificate that authorizes
+  competition operation. Presentation assets therefore live in a top-level
+  `assets/` directory that the digest enumeration does not match by
+  construction, so design work during operation cannot invalidate the
+  certificate. Everything that could make the decoupling risky stays bound:
+  the HTML structure, every string and anchor in the renderers, the asset
+  resolution and inlining logic with its fail-closed rule
+  (`dashboard-build.ts`), and the publication decision (`publisher.ts`). The
+  renderers take the stylesheet text as a parameter and stay pure; the shell
+  resolves `assets/` from `import.meta.url`, never from the working
+  directory, normalizes CRLF so a checkout cannot change rendered bytes, and
+  inlines the CSS exactly where the `<style>` block stood, so the published
+  page remains one self-contained file. A missing or empty asset never
+  renders an unstyled page: the render fails, publication reports
+  `DASHBOARD_BUILD_FAILED`, and the previously published page stands
+  ("publication never blocks trading" holds). Output verified byte-identical
+  after normalizing only the two render-time timestamps.
+- **2026-09-02 — The C-class residuals of R29–R32 are cleared, not
+  declared (owner ruling: technical excellence is a judging criterion).**
+  Management ladder: refusals are a report artifact (`managementRefusals`),
+  residues are re-classified from the fresh book, the remainder after a
+  ladder cancel is `min(fresh exposure, unfilled part)` from the pure
+  `remainingCloseExposure`; the `emergencyCloseEligibility` refusal inside
+  the ladder is thereby unreachable from tests and stands as
+  defence-in-depth against a race between the management read and the
+  submit. Watchdog: the authority-refused branch fail-pings on closed
+  conditions; the retry after a failed HALT append is pinned (one watchdog
+  interval); eligibility and adoption are measured; the `halted` flag needs
+  no "already stood" distinction because no consumer parses it and
+  `HALT_NOT_JOURNALED` carries the meaning for a human reader. CLIs: exit
+  codes are pure tables tested exhaustively by stage. MCP: the
+  launch-artifact digest walk is exported and tested to depth three with the
+  exact skip set (`__pycache__`, `.pyc`). Tests: the stalled-connect verifier
+  test runs on a virtual clock (30/30), the remaining 5 ms-budget siblings
+  get an injectable timers port. Presentation: `assets/` outside the digest
+  with its own tests. A newly appeared foreign contract is still journaled as
+  `HUMAN_ACTION` only by the next phase 1 (the ladder skips it by design).
+- **2026-09-02 — R33 freeze gate at `c36f6f1`: NO-GO (A=0, B=1, C=3); the
+  stylesheet outside the digest gets a content-hiding audit.** The blind
+  reviewer executed every named mutant (all ten caught), re-ran six
+  regression counter-examples green, ran `npm run verify` twice (39/473,
+  exit 0) and reviewed the digest-set diff `258d4c1..HEAD` file by file. B1:
+  appending `.gate--veto,.stamp--veto,.discrepancies,.result--no_trade
+  {display:none}` to `assets/dashboard.css` hid every veto, no-trade result
+  and reconciliation discrepancy on the published page while `runtimeDigest`,
+  the certificate, the arming gate and all tests stayed satisfied — the 12:40
+  decoupling ("everything that could make the decoupling risky stays bound")
+  had removed a safety property and replaced it with nothing; anchors:
+  SUBMISSION-SPEC's anti-criterion "hides unfavorable decisions", SPEC S-J-07
+  "content may not lie". Options weighed: (1) a pure textual audit of the
+  stylesheet in both renderers; (2) a separate, non-voiding digest of
+  `assets/**` reported by the publisher (detects, does not prevent); (3) put
+  the stylesheet back into the runtime digest (reverts the 12:40 ruling:
+  design work during operation would void the certificate again); (4)
+  declare. Ruling (PM, reversible, on the branch): option 1, because it
+  prevents rather than detects, keeps the 12:40 property, and is the only
+  option that clears rather than declares — `src/shell/presentation-guard.ts`
+  (`6df70a0`), run by `renderDashboard` and `renderDecisionView` before
+  rendering; a refused stylesheet is a failed build (`DASHBOARD_BUILD_FAILED`)
+  and the previous page stands. The rule set is enumerated in SPEC S-J-07
+  and the module header; the audit works on value tokens (so `var()`
+  fallbacks, `min()`/`clamp()`/`calc()` arguments, `!important`, case,
+  whitespace and custom-property definitions cannot smuggle a refused value)
+  and refuses any backslash, since a CSS escape can spell `none`.
+  `assets/dashboard.css` drops the page-level `overflow-x:hidden` on `body`
+  (the one declaration the rule refuses; tables keep `overflow-x:auto`); the
+  decision view renders byte-identical, the dashboard differs by that one
+  property. **Declared residual of the audit, stated as such:** text in the
+  ground colour, near-zero sizes, off-canvas placement through positive
+  spacing, a zero computed by `calc()` subtraction on a width, and glyph-less
+  font stacks are not textually decidable; they remain the reviewer's eyes on
+  the golden render, and option 2 stays available if that residual is ever
+  judged too wide. The three C findings were cleared, not declared: both
+  `DASHBOARD_BUILD_FAILED` branches are measured and the module-relative
+  `assets/` test now fails under a cwd-based implementation (`04df95a`); the
+  `HEALTHCHECK_PING_URL` wiring is measured against a local HTTP listener in
+  the watchdog root, both deadline pings and two of the three agent-runtime
+  sites (`50ba4d1`) — the third site, the live cycle's own ping, needs a
+  real analyst child and stays covered by the P7 market-hours run itself.
+  Delta gate R34 on the fix commits decides the freeze.
+- **2026-09-02 — R34 delta gate at `f18a485`: NO-GO (A=0, B=3, C=4); the
+  presentation assets go back into the runtime digest (owner ruling, option
+  1).** The blind reviewer confirmed the three cleared C findings of R33 and
+  refuted the B1 countermeasure: the textual stylesheet audit caught all 36
+  named variants but not native CSS nesting, `@container`, the `font:0/0`
+  shorthand, `00px`/`0e0` zeros, `0e0` alpha, or a `{` inside a selector
+  string that desynchronizes the brace walker — the reviewer named the
+  generator (a string-blind, nesting-blind text scanner over closed
+  enumerations does not converge against a living standard). Two more B:
+  the stylesheet was inlined unescaped, so `</style><script>` broke out of
+  the style block and could delete or invent page content; and the new tests
+  renamed the committed `assets/dashboard.css` in place while three parallel
+  spec files read it, making `npm run verify` fail one run in ten and
+  leaving a poisoned committed stylesheet if a run died mid-probe. Options
+  put to the owner: (1) enumerate `assets/**` in the runtime digest — a
+  change voids the certificate like a code change, complete by construction,
+  costs the freedom to restyle during operation; (2) a separate non-voiding
+  `assetsDigest` reported by the publisher — detects, does not prevent; (3)
+  an audit over a parsed CSS tree — still a list over a living standard, and
+  the most expensive with the qualification window closing. **Owner ruling
+  16:20 CEST: option 1**, with the stated caveat that the owner had not yet
+  seen the rendered dashboard and it is what the judges see. Consequence
+  drawn immediately: the rendered dashboard and decision view from the
+  freeze candidate were put in front of the owner before the freeze, and the
+  README runbook now says "look before the certificate, never restyle
+  after". `src/shell/digests.ts` enumerates every file under `assets/`;
+  `tests/p9-presentation-assets.spec.ts` asserts the enumeration equals the
+  directory listing and that one appended byte changes the digest material.
+  The 12:40 "Presentation lives outside the runtime digest" entry is
+  superseded on its digest clause; the `assets/` layout, the module-relative
+  resolution, the CRLF normalization, the inlining, and the fail-closed
+  reading all stand. The textual audit stays as defence in depth with its
+  incompleteness declared (SPEC S-J-07); the `</style>` breakout is refused
+  by the audit (`<` has no use in CSS) and asserted again in both renderers;
+  the publish dependencies take an injectable `presentationAssetsDir` so no
+  test touches the committed assets. The `runtimeDigest` of every commit
+  before this one differs from the freeze candidate's; no certificate
+  existed, so nothing is voided.
+- **2026-09-02 — R35 delta gate at `d693077`: NO-GO (A=0, B=2, C=4); the
+  digest binding holds, two measurement gaps closed, the dashboard gets a
+  reading guide.** The blind reviewer confirmed the owner's option-1 gate
+  end to end: one appended byte, an added file, a rename and a nested file
+  under `assets/` each change `runtimeDigest`, and a certificate computed
+  before such a change is refused at `evaluateArmingGate` with
+  `runtimeDigest mismatch`; the rendered pages are byte-identical to
+  `f18a485` except the render timestamps; every declared-uncaught audit
+  construct was executed and each of them changes the digest. B1: the
+  renderers' `</` assertion had no test of its own (both renderer tests
+  matched a refusal the audit already produces), and that assertion is the
+  only layer for a `</style>` breakout hidden inside a CSS comment or behind
+  a comment opener inside a selector string — fixed by two tests that first
+  prove the audit returns `[]` and then require the renderers' own
+  `style-block breakout` refusal (mutant "drop both assertions" now fails
+  2). B2: one test still wrote a probe file into the committed `assets/`,
+  now digest material — the probe moved to a scratch directory through the
+  injectable, and a test pins the directory listing to exactly the two
+  stylesheets. C1: the walk's skip list (`node_modules`, `.git`, `.tmp`,
+  `artifacts`) no longer applies under `assets/` (tested with all four
+  names). C2: files under the digest are hashed LF-normalized only for text
+  extensions and by raw bytes otherwise, so a binary asset is byte-bound
+  (tested with two byte-different, UTF-8-equal files). C3: the golden
+  journal is journal evidence outside the digest by design (its
+  content-addressed revision is printed on every page); the revision
+  `sha256:343a65ef13ad5f05` is now pinned in the golden-path test so an edit
+  to the demo data is visible. C4: SPEC S-J-07's declared residual names the
+  string-hidden comment opener and the comment-hidden breakout. Separately,
+  the owner reviewed the rendered dashboard before the freeze (the caveat
+  from the option-1 ruling): gate tooltips, a lifecycle identifier running
+  off-screen, and "hard to understand what the page wants to show" —
+  closed by `29cf8d6` (a `#how-to-read` section, one lead sentence per
+  section, `title` tooltips for G1–G8 from a pure constant table,
+  `overflow-wrap:anywhere` and `min-width:0` on the flex headers and table
+  cells; the audit still returns `[]`). Narrow gate R36 covers the R35 fixes
+  and the presentation commit together.
+- **2026-09-02 — R36 delta gate at `b5a4eec`/`3453287`: NO-GO (A=0, B=2,
+  C=4); the six R35 fixes hold, two sentences on the judge-facing page were
+  untrue.** Part A: every R35 closure held at its counter-example, its
+  adjacent variants and its named mutant (eleven breakout payloads against
+  the renderers' `</` assertion, an fs-mutator preload proving no test
+  writes under `assets/`, the skip-list and raw-byte digest claims on the
+  real layout, the pinned golden revision). Part B, the owner-requested
+  reading guide (`29cf8d6`): B-1 the how-to-read section said the freshness
+  stamp is relative to the journal's last recorded entry, while
+  `assessFreshness` is fed the newest entry at or before the page's evidence
+  cutoff (the presentation page itself shows two entries rejected as newer
+  than the cutoff); B-2 the history lead said "earlier journal revisions"
+  while every pin carries the same revision at earlier cutoffs. Both
+  sentences rewritten to say what the code does; C-1 the source lead said
+  "links" where the page names code and links only the repository —
+  rewritten; C-2 the `assets/` listing pin is now recursive; C-3
+  `min-width:0` sits outside the audit's zero-length set and is used by the
+  flex-header wrap fix — declared not exploitable, since `overflow` stays
+  visible and `overflow:hidden` is refused; C-4 a lone `<` inside a CSS
+  comment passes both layers and is inert, since only `</` closes the style
+  element — SPEC S-J-07 now says so instead of reading as absolute. The
+  gate tooltips were all found true against SPEC G1–G8, the renderer pure,
+  the stylesheets audit-clean, escaping proven with a poisoned gate record.
+  The follow-up `3453287` (rationale wrap) was reviewed as
+  behaviour-preserving apart from the stylesheet bytes. A narrow R37 on the
+  prose corrections decides the freeze.
+- **2026-09-02 — R37 narrow gate at `c886776`: GO (A=0, B=0, C=4); the
+  P7 freeze.** Every sentence added to the judge-facing dashboard since
+  `d693077` was quoted and verified against the code and the executed
+  golden render (the presentation route shows the freshness stamp at seq 8
+  / 14:01 with two entries rejected as newer than its 14:01 cutoff, while
+  the live route shows seq 10 / 14:31 — the corrected sentence says exactly
+  that; the one history pin carries the page's own revision at the earlier
+  cutoff); the eight gate tooltips are true against SPEC G1–G8; the
+  renderer is pure and deterministic (byte-identical double render, only
+  the two render timestamps move); both stylesheets audit `[]`, the one new
+  colour was checked numerically for contrast (5.42:1); nothing under
+  `src/core/`, the cycle runner, the gateway, the certificate driver, the
+  arming gate, `config/` or `tools/` changed since `d693077`; the recursive
+  `assets/` pin fails on a planted nested file; `npm run verify` exit 0
+  twice (40/547). **Declared, not cleared, because the freeze must happen
+  inside today's market session (owner go 15:40 CEST "once a gate returns
+  A=0/B=0"):** C-1 the corrected sentences and the tooltip texts are pinned
+  by no test (mutants restoring the untrue wording survive) — a test-only
+  change outside the digest, to be added after the certificate without
+  voiding it; C-2 the tooltip lookup indexes an object literal, so a
+  prototype-key gate id throws instead of rendering without a tooltip —
+  fail-closed into `DASHBOARD_BUILD_FAILED`, unreachable from the decision
+  core's literal ids and the journal's INTENT validator, a one-line
+  `Object.hasOwn` for the next digest-changing window; C-3 (pre-existing)
+  the history pin's href is site-root-relative and resolves wrongly from a
+  nested route, and the percent-encoded route directory depends on the
+  host not decoding paths — both to be checked in the SUB-09 preflight on
+  the real host, the golden path runs from the site root; C-4 three lead
+  sentences are slightly wider or narrower than their sections ("and
+  nothing else" mirrors S-J-07's own phrasing; "the broker reports" also
+  covers journal-internal discrepancy codes; "earlier" holds against the
+  live page). **Owner freeze and countersignature.** Felix ruled at 15:40
+  CEST that his go for the supervised certificate run stands once a gate
+  returns A=0/B=0; that go is read, and recorded here, as the O5 freeze of
+  `config/policy.json` as committed (unchanged since `9777c05`) and as the
+  countersignature of the declared reduced depth entries of this day. He
+  reviewed the rendered dashboard three times before the freeze (16:25,
+  16:35, 17:00) and accepted the stylesheet. Tags `p7-freeze` and
+  `pre-kickoff-baseline` (README runbook step 3) mark the freeze commit;
+  its `runtimeDigest` equals that of `c886776`, since documentation is
+  outside the digest. The competition account `PA376WIK2ATL` was virgin at
+  the 15:39 probe. The calendar: qualification window ends today 22:00
+  CEST; the certificate run starts from the owner's terminal now.
+- **2026-09-02 — The first dev certificate run failed on the broker's
+  128-character `client_order_id` limit; the structure identity becomes a
+  digest.** Run one (17:36 CEST, epoch 7, freeze `673d217`) reached the
+  broker with a defined-risk SPY credit vertical every three minutes and got
+  the same synchronous rejection each time: `client_order_id must be <= 128
+  characters`. The entry id hex-encoded every contract id (four characters
+  per character, 177 in total) — a charset precaution that no fake, no
+  gate and no SPEC line had bounded, and the third instance today of the
+  lesson "the fake encoded an assumption, the live read corrected it".
+  Ruling (PM, in the owner's "fix it, regenerate, restart" of 17:50):
+  `entryClientOrderId` keeps the S-G7-01 inputs and the prefix
+  `entry:<tradingDay>:<cycleIndex>:` and carries the order-independent
+  structure identity as the first 24 hex digits of its SHA-256 (96 bits; the
+  legs themselves are on the INTENT, nothing ever decoded the id). Every
+  derived id — exposure lifecycle, close lifecycle, close attempt at any
+  generation — stays below `MAX_CLIENT_ORDER_ID_LENGTH = 128` for a
+  four-leg structure on a five-letter ticker at cycle 999 999. The fake
+  broker refuses an over-long id synchronously with Alpaca's message, so the
+  suite now sees what the live run saw: with the limit in the fake and the
+  old scheme, 27 runner and ladder tests fail; with the new scheme all pass.
+  The live run's journal (seq 3–24, epoch 7) records the rejections as
+  OUTCOME entries with the broker reason; the dev account stayed flat
+  because nothing was accepted. Consequence for the calendar: the fix
+  changes `src/core/`, so a delta gate (R38) and a new freeze tag precede
+  certificate run two in the same session.
+  The golden journal (`fixtures/golden-journal.jsonl`) embeds entry and
+  close ids, so it was re-recorded by its own deterministic test
+  (`GBT_UPDATE_GOLDEN=1`); its content revision moves from
+  `sha256:343a65ef13ad5f05` to `sha256:0deeb1f42e01e19b` and the R35 C3 pin
+  follows it — the demo data changes only in the id strings, every figure
+  and verdict stays.
+- **2026-09-02 — R38 delta gate at `ce68abd`: GO (A=0, B=0, C=4); freeze
+  two for certificate run two.** The blind reviewer showed the length bound
+  to be structural: every derived id depends only on the trading day and
+  the decimal widths of cycle index and generation, never on contract ids,
+  leg count or ratios — eight legs with 64-character contract ids, a
+  1000-character contract id, and both counters at `MAX_SAFE_INTEGER` top
+  out at 91 characters. Both named mutants caught (hex encoding restored →
+  47 tests across 12 files red; fake limit dropped → 1 red); four
+  calibration mutants of the derivation caught, one survived (C1). The
+  digest was cross-checked against `node:crypto`; the G7 duplicate veto
+  still fires (the golden journal's declared condor is vetoed for sharing
+  the vertical's id); S-G7-02 adoption is id-agnostic and the live message
+  correctly fell through to the generic rejection rather than the duplicate
+  branch. Old-format ids parse, validate, project and render byte-identically
+  apart from their own bytes; a rejected old-format OUTCOME in the window is
+  FAIL, an accepted-then-filled new-format lifecycle is PASS. The golden
+  journal differs from its predecessor only in the substituted id string
+  (proven byte-wise); every rendered figure and verdict is unchanged.
+  Cleared before the freeze, digest-neutral: C1 the constant's value 128 is
+  pinned by a test (a mutant to 256 had survived); C2 the pre-fix id length
+  is the measured 177, not "~190", in SPEC, DECISIONS and the test comment
+  (the module comment keeps the old figure until the next digest-changing
+  window). Declared: C3 the raw contract id now sits next to the identity's
+  own `.` and `|` delimiters, so a contract id containing those characters
+  could collide with a different structure — unreachable, since G8 admits
+  only contracts from the broker's own chain fetch and OCC symbology is
+  alphanumeric, and fail-closed if reached (a G7 veto of the second
+  candidate; the id is never decoded); C4 a close derived from an accepted
+  old-format exposure id would exceed the limit — premise checked: the dev
+  journal holds seven OUTCOME entries, all rejections, zero accepted or
+  filled lifecycles (run one), and the competition account is virgin, so no
+  such lifecycle exists. Correction of the record: run one made seven entry
+  attempts (cycles 3–9), not eight. Tags `p7-freeze-2` and
+  `pre-kickoff-baseline-2` mark this freeze; the owner's O5 freeze and go
+  of 15:40/17:50 CEST stand unchanged.
+- **2026-09-02 — P7 acceptance event: certificate run two PASSED on the dev
+  account (freeze two, `f464a66`).** Window 16:16:51Z–16:20:48Z, epoch 8.
+  The first entry (cycle 10, SPY 762/759 put credit vertical, one lot,
+  credit limit 57 ¢, reserved max loss $243, id
+  `entry:2026-09-02:10:e250e300e3a04c21bb604100`, 44 characters) was
+  accepted and filled by the broker at 63 ¢ (`b01f5a42…`, OUTCOME seq 30),
+  reconciled through the snapshot (seq 31); the flatten phase submitted the
+  deadline close `…:g0` at a 65 ¢ debit (INTENT seq 33) and the broker
+  filled it inside the flatten interval; the credential-fence drill against
+  the real adapter with an invalid secret observed HTTP 401 on the close
+  order lookup in phase 0, halted (`AUTH_FAILURE`, seq 34), skipped (seq
+  35), found no working order, and the owner cleared the halt at the human
+  checkpoint (UNHALT seq 36, operator felix); the final snapshot read the
+  bound account `PA349COOGKZ1` stably flat twice: cash and equity
+  $99,997.90 (the round trip cost $2.10), zero positions, zero non-terminal
+  orders, one complete order page. Certificate
+  `evidence/pre-arm/2026-09-02T16-20-48-944Z.json`: `verdict: PASS`, no
+  failures, `runtimeDigest ac8a6e3e…`, `policyDigest f8fa85c7…`, MCP
+  inventory accepted. Observation, not a defect of the certificate: the
+  close lifecycle's OUTCOME is not yet journaled — the fence cycle's phase
+  0 hit the 401 before it could observe the fill, and the driver ends with
+  the final snapshot rather than a reconciliation cycle; S-J-09 A5 covers
+  it (the next phase 0 on this STATE_DIR journals the filled close), and
+  the certificate's evidence rests on the entry lifecycle and the two
+  consistent flat reads. Backlog (C): let the driver run one reconciliation
+  cycle after the un-halt before the final snapshot so the dev journal
+  closes cleanly. Run one (FAIL on the id length) stands archived beside it
+  in the verification store. Per the owner's 12:40 ruling the PASS is the
+  acceptance event: P7 merges `--no-ff` into `main` next, then the owner's
+  P8 steps from the README runbook with no `src/`, `assets/`, `config/` or
+  `dist/` change.
+- **2026-09-02 — The competition bootstrap needed an operator seed: the
+  composition root cannot reach the virgin path on its own (live finding
+  four; digest-neutral remedy).** The first hand-run competition cycle on a
+  fresh, empty `STATE_DIR` did not bootstrap: `buildRuntime` acquires
+  authority with virginity `unknown` ("virginity cannot be learned before
+  authority without violating S-G12-01"), and `planEpochAcquisition` seeds
+  an absent store silently only for `virgin` AND an empty journal — every
+  other absence is a reset, so the run journaled `GAP` + `HALT
+  EPOCH_STORE_RESET` and the following cycle vetoed entries under the halt
+  flag; no BOOTSTRAP, no provenance proof, and a journal that is no longer
+  empty. Every test that exercises the bootstrap passes `"virgin"` to the
+  gateway directly; the composition root's path through a fresh directory
+  was measured by nobody — the README's step 10 described a path that did
+  not exist. Remedy without touching the digest (the certificate stands):
+  the P2 seed obligation. A one-time script outside the repository
+  (`seed-virgin-epoch.mjs`, archived in the verification store) refuses any
+  non-empty directory, acquires epoch 1 on a fresh `STATE_DIR` with the
+  owner's attestation `virgin`, releases the holder, and leaves
+  `epoch.json` with `seedPending: true` and no journal — the gateway
+  refuses every broker mutation until a `BOOTSTRAP` with `epochSeeded`
+  lands (`SEED_NOT_JOURNALED`). The agent then takes over that epoch
+  (`INCREMENT` inheriting `seedPending`, the G2-F1 rule), the runner sees an
+  empty journal and a virgin book, runs the S-CYC-09 provenance proof
+  against the real account, and appends the BOOTSTRAP as seq 1. Executed
+  18:42 CEST on `competition-2`: epoch 2, `epochSeeded: true`,
+  `PA376WIK2ATL` at exactly $100,000, zero positions, seed cleared. The
+  owner's attestation adds nothing the runner does not re-prove; it only
+  unlocks the path. The abandoned first directory (`competition`, GAP/HALT/
+  one CYCLE, no order) stays as evidence. Backlog (B for the next
+  digest-changing window): let the composition root plan `SEED_BOOTSTRAP`
+  for an absent store with an empty journal and virginity `unknown`, since
+  the runner's foreign-book gap and provenance proof already fail closed
+  before any BOOTSTRAP, and add the missing test through `buildRuntime`.
+- **2026-09-02 — Live finding five: the analyst was never told the one-lot
+  bound of the qualification window.** Competition cycle 2 (18:47 CEST):
+  the analyst proposed a QQQ long call that passed all eight gates with a
+  reserved max loss of $85 and was then vetoed `QUALIFICATION_ONE_LOT`
+  ("quantity 5 exceeds the one-lot bound"). The brief the prompt carries
+  (`qualificationBrief`) stated `active`, `maxLossCents` and `windowEndMs`
+  only, while the policy line in the same prompt said "max quantity 5"; a
+  one-lot proposal could only happen by chance, and the qualification
+  window ends 22:00 CEST today with `FLATTEN_DATE` tomorrow — today is the
+  competition account's only entry day. Fix: the brief gains
+  `quantityBound: 1` while active (`null` otherwise) and the prompt line
+  spells the rule out (one live lifecycle, exactly one lot, at or below the
+  cap, anything else vetoed after the gates). Core and prompt only; gates,
+  vetoes and the executor are untouched — the analyst still proposes, the
+  core still decides. Consequence: `src/core/` and `src/shell/` change, the
+  P7 certificate of freeze two is void for this build; the scheduled tasks
+  keep running the frozen build meanwhile (a one-lot proposal may still
+  land by chance), a narrow gate (R39) and a third dev certificate run
+  decide whether the fixed build replaces it before the window closes.
+  Observed on the side: `tests/p7-launch-hardening.spec.ts` "does not
+  return a late snapshot when synchronous broker work blocks the real wall
+  clock" failed once under CPU contention (scheduled cycles running) and
+  passed three times alone and in the repeated full verify — a
+  timing-sensitive test for the backlog, same class as the MCP stall tests
+  ported to a timers port this morning.
+- **2026-09-02 — First competition fill on the freeze-two build; no swap
+  tonight.** After the competition account was re-armed on the freeze-two
+  build (20:03 CEST, epoch 6, a GAP cycle re-deriving state after 62
+  minutes without a primary entry), cycle 5 at 20:05 (epoch 7) proposed a
+  SPY 762/757 put credit vertical expiring 2026-09-08 at quantity one — by
+  the analyst's own choice, the brief still lacked the one-lot rule — which
+  passed all eight gates with a reserved max loss of $395 under the $500
+  qualification cap, was submitted at a 105 ¢ credit limit and filled by the
+  broker at 106 ¢ (order `28f7a3b9…`, `entry:2026-09-02:5:90daa0a3…`,
+  INTENT seq 8, OUTCOME seq 9); a QQQ long call in the same batch was
+  vetoed `QUALIFICATION_ONE_LIVE`. The qualification window's purpose is
+  met from inside the gated build. Ruling (PM, with the owner's standing
+  "fix, regenerate, restart" now moot): the two gated fixes on the branch
+  (`c7c7174` one-lot brief, `9b2e155` resolver, R39 GO and R40 pending) are
+  NOT swapped in tonight — a rebuild would void the certificate while a
+  position is open, and neither fix touches the cycle runner that manages
+  the position (kill predicate, tomorrow's `FLATTEN_DATE` regime). The
+  running build is freeze two: `dist/` built from `f464a66`, and the two
+  source files of the one-lot fix restored to their `f464a66` content on the
+  working tree (staged, uncommitted), so `runtimeDigest` equals the
+  certificate's; the branch head is ahead of the running build and says so
+  here. The scheduled tasks are enabled again (15-minute cycles until 22:00
+  CEST, watchdog every 5 minutes). Certificate run three's abort left the
+  dev journal under a `MANUAL` halt with the account flat; it stays until
+  the next dev certificate run, after the resolver fix, clears it by manual
+  un-halt.
+- **2026-09-02 — R40 narrow gate at `9b2e155` (worktree `gbt-fix`): GO
+  (A=0, B=0, C=2); the resolver fix and the one-lot brief are gated and
+  parked.** The reviewer reproduced the live abort at HEAD~1 on the golden
+  journal and on `buildCertificate` (failure text "risk-increasing entry
+  lifecycle(s) lack broker-authoritative terminal truth: close:…:g0"), both
+  green at HEAD; foreign OUTCOMEs stay refused, a close INTENT without an
+  OUTCOME never enters the entry states, an id shared by an entry and a
+  close INTENT fails closed; three named mutants caught, the
+  reconciliation-item skip is unreachable defensive code (C-1); the fold
+  functions are byte-identical; the five driver call sites read the full
+  journal and now terminate, the cycle runner, watchdog and deadline
+  runtimes do not import the resolver; `npm run verify` twice 42/555. C-2
+  worth remembering for certificate run four: `buildCertificate` slices the
+  journal to the window, so a close INTENT before the window with its
+  OUTCOME inside still FAILs (fail-closed) — disable the scheduled dev
+  tasks for the duration of a certificate run. Status: `9b2e155` sits in
+  the worktree on top of `8aec1fc`; the branch head carries only the
+  one-lot fix (`c7c7174`); both are applied after the competition, with
+  certificate run four, since a rebuild tonight would void the certificate
+  under an open position.
+- **2026-09-02 — Digest-neutral publication path for the judge-facing
+  dashboard over the live competition journal (SUB-02, SUB-09, SUB-11; R35
+  C4, R37 C-3).** The frozen build (freeze two, `f464a66`) has no production
+  caller for `runPublish` and no git or Vercel port, and every byte under
+  `src/`, `dist/`, `config/`, `assets/` and `tools/*.mjs|*.py` is bound by
+  the running certificate, so the gap had to be closed from outside the
+  digest while the agent operates. Landed on the branch, all outside
+  `enumerateRuntimeFiles` (measured: the digest lists 138 files, none under
+  `submission/`, `tools/*.ps1` or `tests/`): `submission/publish/render-site.mjs`
+  loads the BUILT modules under `dist/` (never `src/`), reads a COPY of the
+  journal (a journal beside a live `STATE_DIR` marker is refused), takes the
+  projection expectations from `config/policy.json` and the submitted
+  account id from the caller, and renders the page set through the frozen
+  `sitePagesFor` + `buildSiteAtomically`; `tools/publish-dashboard.ps1` is
+  the owner wrapper (never builds, never reads `.env`, refuses an output
+  directory inside the checkout); `tools/probe-dashboard.ps1` is the SUB-11
+  anonymous probe by hand — the `verifyProbe` meta contract of
+  `src/core/publish.ts` re-stated in PowerShell over the manifest the render
+  writes, with a receipt file beside it; deployment and promotion stay
+  manual (`vercel deploy --prod --skip-domain`, probe, `vercel promote`,
+  probe again; README "Publish the judge-facing dashboard"). **R37 C-3
+  ruling:** the renderer's history pin is site-root-relative (wrong from a
+  nested route) and its route directory is percent-encoded
+  (`sha256%3A<hex>`, a literal `%` on disk because `:` is not a legal
+  Windows file name), and whether a host decodes request paths before
+  matching files could not be settled from the Vercel documentation. Rather
+  than depend on host semantics (a `vercel.json` rewrite would mask a
+  broken href and remain unverifiable locally), the render writes two
+  trees: `site/` is the renderer's output byte-for-byte with the
+  immutable-route carry-forward intact, and `deploy/` is derived from it on
+  every run — each segment under `revisions/` percent-decoded and re-spelled
+  in `[A-Za-z0-9._-]` (`sha256-<hex>`), the pin `href` on every page
+  rewritten to the root-absolute form of that route, everything else
+  identical (`tests/publish-dashboard.spec.ts` pins the equality, the
+  byte-stability of a pinned route across re-renders, the meta contract per
+  route, and the refusals). The probe checks the nested route's pin and
+  that the percent-encoded spelling is NOT served; exercised against a
+  decoding static host on the competition journal copy (29 checks PASS on
+  `deploy/`, the expected FAILs on the raw `site/`). Declared: the
+  published page differs from the renderer's page in that one `href`; the
+  route name a video or one-pager cites is the safe spelling; no journal
+  branch is pushed by this path (the page's revision is the journal copy's
+  content hash, the value the fake git port would have produced); the
+  Vercel project, Deployment Protection off, and every promotion are owner
+  steps. `eslint.config.mjs` (outside the digest) ignores `**/*.d.mts` so the
+  hand-written type surface of the JavaScript module can sit beside it.
+- **2026-09-02 — The judge dashboard is live at
+  `https://glass-box-trading.vercel.app` (SUB-02 first working version, on
+  the real competition journal).** Owner steps 21:05–21:20 CEST: Vercel
+  team `glass-box-trading`, project `glass-box-trading`, CLI-linked from the
+  deploy directory (no Git integration, so nothing builds on push), first
+  candidate `glass-box-trading-fo9aanlix-glass-box-trading.vercel.app`
+  probed anonymously (15 checks PASS: HTTP 200 on every route, exact
+  `glass-box-*` meta, no relative `revisions/` href), promoted, the stable
+  alias probed again (PASS). Measured on the real host afterwards: the
+  candidate URL answered without an auth wall (Deployment Protection is
+  not blocking it), `.env.local`, `.vercel/project.json` and `vercel.json`
+  are not served (404), the renderer's percent-encoded route spelling
+  returns 404 — which confirms that the host decodes request paths and the
+  R37 C-3 host-safe spelling was necessary, not cautious — and a directory
+  route without trailing slash redirects 308 to the slash form. Journal
+  revision on the page `sha256:c1c8e14ea4035034` (25 entries, last seq 25,
+  latest cutoff 19:00:51Z); no presentation pin yet, so the nested-route
+  pin check of the probe has not executed on the real host — it runs with
+  the first `-PresentationCutoff` publish after Thursday's close. Note for
+  the re-publish: `vercel link` wrote a `VERCEL_OIDC_TOKEN` into
+  `.env.local` beside the deploy tree; the render drops that file on the
+  next run (only `.vercel/` is carried forward) and the CLI never uploads
+  it.
+- **2026-09-02 — Competition day one closed: six filled structures, equity
+  $100,092.15, every order through the gates.** Between 20:05 and 22:00 CEST
+  the freeze-two build ran twelve scheduled cycles on `PA376WIK2ATL`. Filled
+  (all one structure per INTENT, all defined-risk, all after the eight gates
+  and the pre-submit revalidation): SPY 762/757 put credit vertical ×1 (exp
+  2026-09-08, 106 ¢), SPY iron condor 768/769C + 762/761P ×3 (exp 09-04,
+  63 ¢), SPY 760/755 put credit vertical ×2 (exp 09-08, 89 ¢), QQQ 712 long
+  call ×4 (exp 09-08, debit 3.39), SPY 762/761 put credit vertical ×3 (exp
+  09-04, 24 ¢), SPY 762/760 put credit vertical ×3 (exp 09-04, 47 ¢, filled
+  in the 22:00 phase 0); one resting duplicate of the 762/761 spread expired
+  as a day order (OUTCOME `expired`, cycle 9). Refused by the core: every
+  QQQ candidate but one (`REVALIDATION_VOID` five times, G5 twice), one
+  SPY spread on G5, one analyst batch as `SCHEMA_VETO` (truncated JSON).
+  Book at close, read through the real adapter: cash $99,329.15, equity
+  $100,092.15, no open orders; reserved max loss about $3,420 across the
+  six structures. The book is concentrated in short SPY 762 puts expiring
+  2026-09-04 (nine contracts across three structures) — G4's per-underlying
+  cap admitted it and every leg is covered, but the concentration is worth
+  a look when the O5 thresholds are next revisited (the same structure was
+  proposed and approved in three different cycles; G7 keys on the cycle, by
+  design). Tomorrow is `FLATTEN_DATE`: entries vetoed, the deadline regime
+  closes the book in the session; the scheduled tasks stay enabled. Both
+  journals of the day are archived in the verification store. Not swapped,
+  as ruled: the one-lot brief and the resolver fix wait for after the
+  competition.
+- **2026-09-02 — The submission video is a separate npm package under
+  `video/`, rendered only from the frozen presentation-cutoff dataset
+  (SUB-04; scaffold landed 22:30 CEST).** Remotion and React cannot enter
+  the root `package.json` without voiding the running certificate, so
+  `video/` carries its own lock, its own `tsconfig.json`, and the root
+  `eslint .` ignores `video/**`. Every figure and URL a scene shows is read
+  from `video/public/dataset/{meta,projection}.json` — the pinned
+  presentation route's `projection.json` plus a meta file with the URLs —
+  through pure selectors; nothing is typed into a scene. Two gates enforce
+  the SUBMISSION-SPEC rule that uploaded artifacts cite one frozen dataset:
+  `scripts/check-dataset.mjs` before the bundler and `validateDataset` in
+  the composition refuse a `{{` placeholder, a non-presentation cutoff, a
+  cutoff or account that differs between meta and projection, and a route
+  URL that does not name the pinned revision; the deliverable render
+  (`npm run render`, `--frozen`) additionally refuses `frozen: false`, a
+  projection that is not risk-flat, and an empty capture slot, while the
+  studio and `render:dev` accept those with a DEV watermark burned in. The
+  dev dataset committed today is the competition journal at 19:00:51Z
+  pinned as a presentation cutoff for scaffold work only, rendered into a
+  scratch directory so the owner's publish tree carries no premature pin.
+  Screen recordings are the owner's step against the pinned route after
+  Thursday's close; until then the scenes render data-driven stand-ins
+  behind a red "capture pending" border. Observed while wiring the
+  selectors: the journal's `candidateVerdicts` carry two shapes — the gate
+  verdict with rationale and G1–G8 vector, and the qualification window's
+  post-gate veto with only a code and a reason — so the featured veto is
+  always one with a vector.
+- **2026-09-03 — FLATTEN_DATE: the runner could not price the closes of the
+  structures expiring next session; the owner stood the writer down and the
+  certified watchdog flattened the book.** The deadline regime closed the
+  three structures expiring 2026-09-08 in the 15:30 CEST cycle (INTENT seq
+  43–45, all filled, OUTCOME seq 46–48). The three structures expiring
+  2026-09-04 — the iron condor 768/769C + 762/761P ×3, the 762/761 put
+  vertical ×3 and the 762/760 put vertical ×3 — were planned as intact
+  flatten targets in every later cycle (`planBookClosure` consumes the
+  shared 762 put leg correctly) and never submitted: `ladderClose` refused
+  each with `PRICE_UNAVAILABLE: QUOTE_MISSING`, because the runner's
+  `MarketWindow` (`src/shell/agent-runtime.ts`) takes its expiries from
+  `EXPIRY_MIN_SESSIONS` (2) upward, so on `FLATTEN_DATE` the next-session
+  expiry drops out of the quote universe and the phase-1 snapshot carries no
+  quote for any held 09-04 contract (every snapshot before today quoted all
+  five; every snapshot today quoted none). The refusal lives only in
+  `managementRefusals` of the printed cycle report, which the scheduled task
+  discards, so the journal shows seven silent cycles with five positions and
+  no intent (seq 49–58). Reproduced outside the checkout by a pure simulation
+  over the built `dist/core` modules on the real journal. The watchdog's and
+  the deadline runtime's windows start at zero remaining sessions on purpose
+  (their comments say why); the runner's management step uses the entry
+  window. Second finding, fixed digest-neutrally (`e1576fb`):
+  `tools/watchdog-run.ps1` ran the CLI under `$ErrorActionPreference =
+  'Stop'` with `2>&1`, so the composition line the CLI writes to stderr
+  killed the child before the staleness assessment — 54 scheduled firings
+  since arming logged `run:` and nothing else; the dead-man had never been
+  able to act. **Ruling (owner, 18:00 CEST, on the PM's recommendation):**
+  invoke the safety net deliberately rather than do nothing (halt
+  `DEADLINE_FLATTEN_FAILED` at 21:45 and Friday expiry mechanics on the
+  competition account), close by hand (a manual mutation on the competition
+  account), or write a one-off composition script at the money boundary
+  without a gate. The owner disabled the AgentCycle task at 18:00 (the 18:00
+  cycle, seq 58 at 16:01:12Z, was already running and completed); the
+  journal crossed `DEAD_MAN_BOUND_MS` at 16:51:12Z; the 16:55:02Z watchdog
+  firing fenced the writer at epoch 27, journaled `HALT WATCHDOG_TAKEOVER`
+  (seq 59) and submitted the three whole-structure closes (seq 60–62) at
+  debit limits of 100 ¢ (the condor, at its width cap: the call side was
+  fully in the money), 7 ¢ and 7 ¢; the broker filled all three within one
+  second at 92 ¢, 4 ¢ and 6 ¢. Read through the real adapter at 18:55: zero
+  positions, cash equal to equity at $100,583.59 (day one closed at
+  $100,092.15). Re-enabling the task needs an elevated shell (owner step);
+  the next agent cycle journals the three OUTCOMEs through phase 0 and the
+  session's final cycle runs the S-G11-01 flatten assertion. Declared: the
+  `WATCHDOG_TAKEOVER` halt records an owner-invoked stand-down, not a hung
+  writer; Friday is journaling-only either way, and a manual un-halt with
+  that reason is the owner's choice. Backlog for the next digest-changing
+  window (A): the runner's management step must observe the market through
+  the closing window the watchdog and the deadline runtime already use, from
+  one shared window builder; management refusals must reach the journal or
+  at least a log the scheduled task keeps; the cycle task should capture the
+  printed report.
+- **2026-09-04 — Submission material is rendered from one frozen dataset;
+  the rendered video and its screen captures are not committed.** The
+  presentation dataset under `video/public/dataset/` is the byte-identical
+  copy of the pinned route's `projection.json` (revision
+  `sha256:7b82959a344a7c7e`, cutoff `2026-09-03T20:00:14.787Z`, seq 76),
+  fetched from the host and compared with the owner's publish tree; every
+  figure in the one-pager, the deck, the form copy and the preflight is
+  derived from it by `submission/render/inject.mjs` (an unknown or
+  unresolved token fails the run), and `submission/render/render.mjs`
+  renders the one-pager PDF (one A4 page, 11 pt), the deck PDF (ten slides,
+  a small Marp style block spliced into the injected copy so slide nine
+  fits) and the 1920×1080 cover from `submission/render/cover.html`. The
+  texts state the result with the unattributed −$2.41 residual next to
+  realized and unrealized (otherwise the figures do not reconcile), and name
+  both competition-week defects and the watchdog takeover in the one-pager
+  limitations, deck slide nine and the long description — the wrapper fix
+  (`e1576fb`, 17:41 CEST) landed an hour before the 18:55 takeover, so the
+  texts say "an hour before the takeover" rather than "the same afternoon".
+  Dropped from the one-pager: the sentence on absent qualifying activity,
+  moot with six qualifying fills. The form has a dedicated paper-account-ID
+  field (`HACKATHON-FACTS.md`), so `COPY.md` carries `PA376WIK2ATL` as its
+  own section. Tracked: the one-pager, deck and cover (small, cited by the
+  form); ignored: `submission/render/out/`, `submission/*.mp4` and
+  `video/public/captures/` — the video deliverable and the five recordings
+  go to the form upload and the verification store's `evidence/`, not into a
+  public git history (`.gitignore` explains; the owner can force-add later).
+  Recorded, not resolved: GitHub's default branch `main` is still at the P6
+  merge `bce890a`; the plain repository URL therefore shows Monday's state,
+  and the owner decides between merging `p7/dev-live-certificate` `--no-ff`
+  into `main` from a separate worktree before the form (recommended; the
+  operating checkout stays untouched so the running digest holds), submitting
+  the branch URL, or switching the default branch.
+- **2026-09-04 — Owner review of the submission material: voice-over,
+  ordered gate sequence, honest P&L decomposition; three cold-read lenses
+  before the second cut.** The owner's review (11:05 CEST) found the four
+  assets clean but hard to follow: nothing explained the architecture and
+  the order of the checks, the video scrolled the dashboard for two minutes
+  in silence, and Alpaca's role read like any broker API. Three cold-read
+  lenses ran on the gate tier before anything was rewritten. The judge lens
+  found "one week of paper trading" against a two-session journal (every
+  entry opened 2026-09-02, every close 2026-09-03) and no artifact naming
+  G1–G8 in order. The quant lens decomposed the +$583.59: one four-contract
+  QQQ long call on an overnight gap made $356.00, 61% of the result; six
+  structures were open at once against $3,421.00 of reserved worst case,
+  carried overnight; the $33.15 max drawdown is measured on cycle-spaced
+  samples and never sampled the overnight move, so pairing it with the
+  overall peak overstated the point. The Alpaca lens showed from the code
+  that the executor uses the REST API (multi-leg limit orders, client order
+  id), not the CLI the texts named, that analyst tool calls are not
+  journaled (candidates, verdicts and broker order ids are), and that the
+  analyst child process holds read-only market-data credentials and 32
+  allowed MCP tools with no account, position or order access. **Rulings:**
+  every text says "two sessions"; the injector derives the peak reserved
+  worst case, the best lifecycle's share and the convex fill ratio (1 of 4)
+  from the dataset and the one-pager, deck slide seven and the long
+  description state them; deck slide six and the one-pager give the cycle
+  and G1–G8 in order plus G9–G14; "CLI" is gone from the order path; both
+  PDFs carry a hackathon footer. The video gets a voice-over: a 650-word
+  script (`video/public/narration/script.json`, per-scene cues also drawn as
+  a caption strip) synthesized per scene through ElevenLabs
+  (`video/scripts/tts-elevenlabs.mjs`, voice "Matilda", key in the root
+  `.env`, credit line on the closing card), with `check-narration.mjs`
+  refusing an mp3 longer than its slot minus one second; the narrator speaks
+  about 122 words per minute, so two scenes were trimmed to fit. The prior
+  attempts the owner wanted named (TradeScan-AI, Vigil) were asked from
+  their own sessions rather than invented: Vigil was a C# market-making bot
+  on OKX perpetual swaps killed by the retail fee floor (2 bp per side
+  against a 1.3 bp inside spread).

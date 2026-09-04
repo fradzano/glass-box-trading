@@ -270,12 +270,12 @@ async function exerciseCore() {
   const intentDraft = execution.intentDraft({ atIso: "2026-08-31T13:31:00.000Z", epoch: 1 }, entryPlan, priced.candidate, recheck.candidateVerdicts[0], assembled.snapshot, binding);
   const intentPlanned = journal.planAppend({ lastSeq: 1, priorIntentRationales: [] }, intentDraft, []);
   if (!intentPlanned.ok) throw new Error("sandboxed intentDraft did not validate: " + intentPlanned.reason);
-  const outcome = execution.outcomeFromOrder({ clientOrderId: "entry:e", limit: priced.candidate.entryLimit, binding, epoch: 1, atIso: "2026-08-31T13:32:00.000Z" }, { brokerOrderId: "b", clientOrderId: "entry:e", status: "filled", filledQuantity: 1, avgFillPriceCents: 198, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null });
+  const outcome = execution.outcomeFromOrder({ clientOrderId: "entry:e", limit: priced.candidate.entryLimit, binding, epoch: 1, atIso: "2026-08-31T13:32:00.000Z" }, { brokerOrderId: "b", clientOrderId: "entry:e", status: "filled", filledQuantity: 1, avgFillPriceCents: 198, avgFillPriceRaw: "1.98", brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null });
   const outcomePlanned = journal.planAppend({ lastSeq: 2, priorIntentRationales: [] }, outcome.draft, []);
   if (!outcomePlanned.ok) throw new Error("sandboxed OUTCOME draft did not validate: " + outcomePlanned.reason);
   const fold = execution.foldLifecycles([planned.entry, intentPlanned.entry, outcomePlanned.entry]);
   if (!fold.ok || fold.entries.length !== 1 || fold.entries[0].state !== "filled") throw new Error("sandboxed lifecycle fold is wrong");
-  const heldBook = { ...book, equityCents: 9_000_000, positions: [{ contractId: "SHORT", quantity: -1, avgEntryPriceCents: 300 }, { contractId: "LONG", quantity: 1, avgEntryPriceCents: 100 }], openOrders: [{ brokerOrderId: "o", clientOrderId: "entry:x", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, brokerTimestamps: {}, brokerReason: null, legs: [{ contractId: "OTHER", side: "buy", ratio: 1 }], quantity: 1, limit: null }] };
+  const heldBook = { ...book, equityCents: 9_000_000, positions: [{ contractId: "SHORT", quantity: -1, avgEntryPriceCents: 300 }, { contractId: "LONG", quantity: 1, avgEntryPriceCents: 100 }], openOrders: [{ brokerOrderId: "o", clientOrderId: "entry:x", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerTimestamps: {}, brokerReason: null, legs: [{ contractId: "OTHER", side: "buy", ratio: 1 }], quantity: 1, limit: null }] };
   const killPlan = execution.planKillManagement(heldBook, fold.entries);
   const eligible = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "SHORT", side: "buy", quantity: 1 }, { contractId: "LONG", side: "sell", quantity: 1 }]);
   const opening = execution.emergencyCloseEligibility(heldBook.positions, [{ contractId: "OTHER", side: "buy", quantity: 1 }]);
@@ -297,6 +297,7 @@ async function exerciseCore() {
     EXPIRY_MIN_SESSIONS: 2, EXPIRY_MAX_SESSIONS: 10, MAX_STRIKE_DISTANCE_BPS: 1_000, MAX_CANDIDATE_QTY: 5,
     LIMIT_TOLERANCE_CENTS: 5, CLOSE_ESCALATION_STEP_CENTS: 2, RESIDUE_MAX_SESSIONS: 1,
     ANALYST_TIMEOUT_MS: 240_000, CYCLE_WALLTIME_BUDGET_MS: 300_000, LOCK_TAKEOVER_BOUND_MS: 400_000,
+    ANALYST_MODEL: "claude-sonnet-5",
     ANALYST_MCP_CAPABILITY_MANIFEST: "config/analyst-mcp-readonly.json", ANALYST_MCP_RUNTIME_LOCK: "config/analyst-runtime-lock.json",
     ANALYST_ALPACA_PROFILE: "dev", QUALIFYING_ACTIVITY_CHECKPOINT: "2026-09-01T20:00:00Z",
     QUALIFICATION_WINDOW_END: "2026-09-02T20:00:00Z", QUALIFICATION_MAX_LOSS_CENTS: 50_000,
@@ -311,9 +312,9 @@ async function exerciseCore() {
   if (armed.value.decision.cycleIntervalMs !== 900_000 || armed.value.execution.killEquityThresholdCents !== 9_000_000) throw new Error("sandboxed startup bundle is wrong");
   const sandboxLock = {
     schemaVersion: 1,
-    source: { repository: "https://example.invalid/repo.git", commit: "a".repeat(40), package: "alpaca-mcp-server", version: "2.3.0", dependencyLockAtCommit: "uv.lock" },
-    interpreter: { implementation: "CPython", version: "3.14.1", launcherSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) },
-    installPolicy: { dedicatedEnvironment: true, buildFromPinnedCommit: true, frozenDependencyLock: true, learnHashesFromInstalledEnvironment: false, verifyImmutableSourceAndPackageFilesBeforeSpawn: true, removeBeforeSpawn: ["**/*.pyc"], requireRemovedFilesAbsentBeforeSpawn: true, disableBytecodeWritesInChild: true },
+    source: { repository: "https://example.invalid/repo.git", commit: "a".repeat(40), package: "alpaca-mcp-server", version: "2.3.0", dependencyLockAtCommit: "uv.lock", dependencySiteSha256: "d".repeat(64) },
+    interpreter: { implementation: "CPython", version: "3.14.1", wheelPlatformTag: "win_amd64", launcherSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) },
+    installPolicy: { dedicatedEnvironment: true, buildFromPinnedCommit: true, frozenDependencyLock: true, learnHashesFromInstalledEnvironment: false, verifyImmutableSourceAndPackageFilesBeforeSpawn: true, removeBeforeSpawn: ["**/__pycache__/**", "**/*.pyc", "site/bin/**"], requireRemovedFilesAbsentBeforeSpawn: true, disableBytecodeWritesInChild: true },
   };
   const sandboxManifest = { schemaVersion: 1, server: { package: "alpaca-mcp-server", version: "2.3.0", runtimeLock: "lock.json" }, analystProfile: "dev", inventoryPolicy: "exact", alpacaToolsets: ["assets"], allowedTools: ["get_asset", "get_clock"] };
   const lockOk = startup.validateRuntimeLock(sandboxLock);
@@ -322,7 +323,7 @@ async function exerciseCore() {
   const env = startup.buildAnalystChildEnv(manifestOk.value, { devKeyId: "k", devSecretKey: "s" });
   const observation = {
     sourceRepository: sandboxLock.source.repository, sourceCommit: sandboxLock.source.commit, packageName: "alpaca-mcp-server", packageVersion: "2.3.0",
-    dependencyLockMatchesPin: true, interpreterLauncherSha256: sandboxLock.interpreter.launcherSha256, interpreterRuntimeSha256: sandboxLock.interpreter.runtimeSha256,
+    dependencyLockMatchesPin: true, dependencyContentMatchesPin: true, interpreterLauncherSha256: sandboxLock.interpreter.launcherSha256, interpreterRuntimeSha256: sandboxLock.interpreter.runtimeSha256,
     hashProvenance: "runtime_lock", immutableFileMismatches: [], bytecodeArtifactsPresent: [], bytecodeWritesDisabled: true, childEnvironment: env,
   };
   const launchOk = startup.verifyMcpLaunch(lockOk.value, observation, []);
@@ -366,8 +367,8 @@ async function exerciseCore() {
   const failPing = lifecycle.planPing({ durableAppendLanded: true, alarmConditions: ["X"] });
   const successPing = lifecycle.planPing({ durableAppendLanded: true, alarmConditions: [] });
   if (staleAssessment.kind !== "stale" || quietAssessment.kind !== "quiet" || failPing.kind !== "fail" || successPing.kind !== "success") throw new Error("sandboxed staleness or ping planning is wrong");
-  const provenance = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-28T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityHistory: { complete: true, items: 0 } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
-  const reused = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-27T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityHistory: { complete: true, items: 0 } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
+  const provenance = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-28T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityLedger: { complete: true, activities: [{ id: "TEST_ONLY_SANDBOX_JNLC", activityType: "JNLC", status: "executed", netAmountCents: 10_000_000, currency: "USD", occurredAt: "2026-08-28T16:05:00.000Z" }] } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
+  const reused = lifecycle.validateCompetitionProvenance({ accountRole: "paper", accountId: "TEST_ONLY_SANDBOX", createdAt: "2026-08-27T16:00:00.000Z", openingCashCents: 10_000_000, openingEquityCents: 10_000_000, positionCount: 0, nonTerminalOrderCount: 0, orderHistory: { complete: true, items: 0 }, fillHistory: { complete: true, items: 0 }, activityLedger: { complete: true, activities: [{ id: "TEST_ONLY_SANDBOX_JNLC", activityType: "JNLC", status: "executed", netAmountCents: 10_000_000, currency: "USD", occurredAt: "2026-08-28T16:05:00.000Z" }] } }, { expectedAccountId: "TEST_ONLY_SANDBOX", competitionStartMs: execution.utcIsoToEpochMs("2026-08-28T15:00:00.000Z"), initialCapitalCents: 10_000_000 });
   if (!provenance.ok || reused.ok || !reused.reuseEvidence) throw new Error("sandboxed provenance proof is wrong");
   paths.push("deadlineRegime(normal/flatten/post), lifecycleEntryVeto(DEADLINE/EXPIRY/none), classifyBook(matched/residue/human/unclear), planPrimaryEntry(bootstrap/foreign/gap), escalateCloseLimit(step / AT cap 500) + marketableCloseLimit(312), evaluateExpiryHold(proof ok / nonzero bid refused), assessStaleness(stale/quiet) + planPing(fail-over-success), validateCompetitionProvenance(virgin ok / reuse flagged)");
 
@@ -422,6 +423,27 @@ async function exerciseCore() {
   const retried = publish.planPush(pushed, "rev-sandbox");
   const settled = publish.pushStateAfter(pushed, { ok: true, revision: "rev-sandbox" }, "t2");
   if (pushed.consecutiveFailures !== 1 || retried.kind !== "push" || settled.consecutiveFailures !== 0 || publish.planPush(settled, "rev-sandbox").kind !== "skip" || !publish.publishDegradation(pushed, "rev-sandbox").degraded || publish.publishDegradation(settled, "rev-sandbox").degraded) throw new Error("sandboxed push retry state is wrong");
+  // ---- P7: the S-ARM-01 certificate core and the Alpaca wire mapping ----
+  const certificate = await loadModuleGraph(context, path.join(DIST, "core", "certificate.js"));
+  const alpaca = await loadModuleGraph(context, path.join(DIST, "core", "alpaca-mapping.js"));
+  const sha = await loadModuleGraph(context, path.join(DIST, "core", "sha256.js"));
+  if (sha.sha256Text("abc") !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") throw new Error("sandboxed sha256 is wrong");
+  const rawConfig = { ALPACA_PROFILE: "dev", EXPECTED_ACCOUNT_ID: "TEST_ONLY_SANDBOX", STATE_DIR: "C:/state", BOOTSTRAP_DIAGNOSTIC_SINK: "C:/sink", ALPACA_TRADING_ORIGIN: "https://paper-api.alpaca.markets", MAX_CANDIDATE_QTY: 5, ANALYST_MODEL: "claude-sonnet-5" };
+  const devDigest = certificate.policyDigest(rawConfig, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  const competitionDigest = certificate.policyDigest({ ...rawConfig, ALPACA_PROFILE: "competition", EXPECTED_ACCOUNT_ID: "PA_OTHER", STATE_DIR: "D:/other" }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  const changedDigest = certificate.policyDigest({ ...rawConfig, MAX_CANDIDATE_QTY: 6 }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  if (!devDigest.ok || !competitionDigest.ok || !changedDigest.ok || devDigest.digest !== competitionDigest.digest || devDigest.digest === changedDigest.digest || certificate.policyDigest({ ...rawConfig, UNKNOWN: 1 }, { canonicalTradingOrigin: "https://paper-api.alpaca.markets" }).ok) throw new Error("sandboxed policy digest is wrong");
+  const analystRuntime = { lockSha256: "a".repeat(64), manifestSha256: "b".repeat(64), sourceRepository: "https://x.invalid/r.git", sourceCommit: "0".repeat(40), packageName: "p", packageVersion: "1", interpreterLauncherSha256: "c".repeat(64), interpreterRuntimeSha256: "d".repeat(64), launchArtifactsSha256: "e".repeat(64) };
+  const runtimeA = certificate.runtimeDigest({ files: [{ path: "src/a.ts", sha256: "f".repeat(64) }], analystRuntime });
+  const runtimeB = certificate.runtimeDigest({ files: [{ path: "src/a.ts", sha256: "0".repeat(64) }], analystRuntime });
+  if (!runtimeA.ok || !runtimeB.ok || runtimeA.digest === runtimeB.digest) throw new Error("sandboxed runtime digest is wrong");
+  const emptyCertificate = certificate.buildCertificate({ accountId: "TEST_ONLY_SANDBOX", tradingOrigin: "https://paper-api.alpaca.markets", canonicalTradingOrigin: "https://paper-api.alpaca.markets", window: { startedAt: "2026-09-01T13:35:00.000Z", endedAt: "2026-09-01T15:00:00.000Z" }, runtimeDigest: runtimeA.digest, policyDigest: devDigest.digest, mcpInventoryAccepted: true, journal: [], orderObservations: [], harnessCancels: [], fence: null, finalSnapshot: null });
+  const arming = certificate.validateArmingCertificate(emptyCertificate, { runtimeDigest: runtimeA.digest, policyDigest: devDigest.digest, canonicalTradingOrigin: "https://paper-api.alpaca.markets" });
+  if (emptyCertificate.verdict !== "FAIL" || emptyCertificate.failures.length < 4 || arming.ok || certificate.successfulDevLiveTestAt(emptyCertificate) !== null) throw new Error("sandboxed certificate evaluation is wrong");
+  const mappedOrder = alpaca.mapOrder({ id: "o", client_order_id: "c", status: "accepted", qty: "1", filled_qty: "0", limit_price: "-0.35", submitted_at: "2026-09-01T14:00:00.123456789Z", legs: [{ symbol: "A", side: "sell", ratio_qty: "1" }, { symbol: "B", side: "buy", ratio_qty: "1" }] });
+  const request = alpaca.buildOrderRequest({ clientOrderId: "c", quantity: 1, intent: "entry", limit: { kind: "credit", priceCents: 35 }, legs: [{ contractId: "A", side: "sell", ratio: 1 }, { contractId: "B", side: "buy", ratio: 1 }] });
+  if (mappedOrder === null || mappedOrder.limit.kind !== "credit" || mappedOrder.limit.priceCents !== 35 || mappedOrder.brokerTimestamps.submitted_at !== "2026-09-01T14:00:00.123Z" || request.limit_price !== "-0.35" || alpaca.dollarsToCents("1.235") !== null || alpaca.dollarsToCentsRounded("1.235") !== 124 || alpaca.mapOrder({ id: "o" }) !== null) throw new Error("sandboxed alpaca mapping is wrong");
+  paths.push("sha256Text(abc vector), policyDigest(dev == competition identity / policy change differs / unknown field refused), runtimeDigest(file content change differs), buildCertificate(empty evidence -> FAIL, never arms, no live-test instant), mapOrder(credit sign, nanosecond truncation, malformed null) + buildOrderRequest(negative net credit) + dollarsToCents(exact / rounded)");
   paths.push("projectPerformance(reconciled +500 = -200 unrealized + 700 UNATTRIBUTED / cutoff rejects 3), assessFreshness(fresh/stale), projectQualification(not due / at risk / failed / qualified / n.a.) + qualificationEntryVeto(cap / one lot / one live / at cap ok / closed window none), verifyProbe(ok / mismatch / auth wall / down), planPromotion+planStableVerification(reject keeps alias / rollback to prior), checkPushTarget(exact ref only), planPush+pushStateAfter(retry after failure, skip when pushed)");
   return paths;
 }

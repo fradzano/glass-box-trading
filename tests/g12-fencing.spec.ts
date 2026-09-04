@@ -64,6 +64,24 @@ async function runCli(compiledDist: string, args: readonly string[]): Promise<{ 
 }
 
 describe("S-G12-01 lock held by a live instance", () => {
+  it("S-G12-01 the kernel releases the mutex when its holder process crashes", async () => {
+    const compiledDist = inject("compiledDist");
+    const paths = freshPaths();
+    const child = spawn(process.execPath, [path.join(compiledDist, "shell", "gateway-cli.js"), paths.root, "crashing-holder", "hold"], { stdio: ["ignore", "pipe", "pipe"] });
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", chunk => { if (String(chunk).includes("LOCKED")) resolve(); else reject(new Error(`unexpected holder output: ${String(chunk)}`)); });
+    });
+    child.kill();
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => { resolve(); });
+    });
+
+    const reopened = gatewayFor(paths, "after-crash", () => TEST_ONLY_AT_MS);
+    await expect(Promise.race([reopened.openJournal(), new Promise<never>((_resolve, reject) => { setTimeout(() => { reject(new Error("kernel mutex was not released after process exit")); }, 2_000); })])).resolves.toMatchObject({ entries: [] });
+  });
+
   it("S-G12-01 the second instance is suppressed, appends one staleness-neutral witness line, and never reaches the broker", async () => {
     const paths = freshPaths();
     const portA = recordingPort();
@@ -436,7 +454,9 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     // neither the journal nor the broker and is never state authority. dashboard-build.ts (P6) writes ONLY
     // rendered pages into the site output directory through its injected sink (S-J-07); it reads the journal
     // through the pure projection and never touches STATE_DIR.
-    expect(writers.sort()).toEqual(["dashboard-build.ts", "diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts"]);
+    // ping-healthchecks.ts (P7) appends ONLY the local ping record (a sidecar in STATE_DIR outside the journal, epoch,
+    // and halt flag) as the dead-man port's fallback; the runner decides every ping through the pure planPing.
+    expect(writers.sort()).toEqual(["dashboard-build.ts", "diagnostic-sink.ts", "epoch-store.ts", "journal-store.ts", "ping-healthchecks.ts"]);
     const atomicWriters = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("writeJsonAtomically"));
     // publisher.ts (P6) writes the push state and the deployment receipts — sidecar files in STATE_DIR outside the
     // journal, epoch, and halt flag (S-J-07: receipts never create a journal revision); its only journal append is
@@ -446,8 +466,15 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     expect(importers).toEqual(["mutation-gateway.ts"]);
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
     // watchdog.ts (P5) constructs its own gateway like gateway-cli; it never calls the port directly.
-    expect(brokerUsers.sort()).toEqual(["gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "watchdog.ts"]);
-    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "cycle-runner.ts"]) {
+    // agent-runtime.ts (P7) is the composition root: it constructs the gateway with the account-bound real Alpaca
+    // port exactly like gateway-cli constructs it with the fake; it never calls the port itself.
+    // account-bound-broker.ts is the gateway's final delegate wrapper: it independently re-observes account identity
+    // immediately before forwarding a mutation and has no other caller.
+    // startup-broker-fence.ts constructs a brokerless gateway only to journal a pre-runtime refusal.
+    // deadline-runtime.ts (S-G11-03/04) is the Friday entries' composition root: like agent-runtime.ts it hands the
+    // account-bound real port to the gateway it constructs, and like it, it never calls that port itself.
+    expect(brokerUsers.sort()).toEqual(["account-bound-broker.ts", "agent-runtime.ts", "deadline-runtime.ts", "gateway-cli.ts", "manual-unhalt.ts", "mutation-gateway.ts", "startup-broker-fence.ts", "watchdog.ts"]);
+    for (const name of ["gateway-cli.ts", "manual-unhalt.ts", "watchdog.ts", "watchdog-cli.ts", "deadline.ts", "deadline-runtime.ts", "deadline-cli.ts", "cycle-runner.ts", "agent-runtime.ts", "certificate-run.ts", "certificate-cli.ts", "agent-cli.ts"]) {
       expect(readFileSync(path.join(shellDirectory, name), "utf8")).not.toMatch(/\.mutate\(/u);
     }
   });

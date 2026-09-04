@@ -32,7 +32,7 @@ import {
   verifyProbe,
 } from "../core/publish.js";
 import type { DeploymentState, ProbeObservation, ProbeVerdict, PublishExpectation, PushState, StableVerificationPlan } from "../core/publish.js";
-import { buildSiteAtomically, immutableRoute } from "./dashboard-build.js";
+import { DASHBOARD_STYLESHEET, buildSiteAtomically, immutableRoute, readPresentationAsset } from "./dashboard-build.js";
 import type { BuildReport, BuildSink, SitePage } from "./dashboard-build.js";
 import type { MutationGateway } from "./mutation-gateway.js";
 import { renderDashboard } from "./render-dashboard.js";
@@ -78,6 +78,14 @@ export interface PublishDependencies {
   /** Present when a refusal must be journaled locally; the publisher never appends anything else. */
   readonly gateway: { readonly gateway: MutationGateway; readonly epoch: number } | null;
   readonly buildSink?: BuildSink;
+  /**
+   * Where `readPresentationAsset` reads `assets/*.css` from. Defaults to the
+   * module-relative `presentationAssetsDir` (every production caller relies
+   * on this default and stays unchanged); a test points it at a scratch
+   * directory instead of renaming or overwriting the committed stylesheet
+   * (P9/R34 B3).
+   */
+  readonly presentationAssetsDir?: string;
 }
 
 export interface PublishReport {
@@ -152,6 +160,8 @@ export interface SiteRenderInput {
   readonly source: PublicSourceLinks;
   readonly pins: readonly PinRequest[];
   readonly pushState: PushState;
+  /** The dashboard stylesheet text (`assets/dashboard.css`), inlined into every rendered page. */
+  readonly styles: string;
 }
 
 /** The page set for one revision: the advancing latest route plus one immutable route per pin. Pure apart from its inputs. */
@@ -169,6 +179,7 @@ export function sitePagesFor(input: SiteRenderInput): { readonly pages: readonly
     source: input.source,
     pinned,
     routeLabel,
+    styles: input.styles,
   });
   const pages: SitePage[] = [
     { relativePath: "index.html", render: () => renderDashboard(latest, expectationFor(latest), context("latest (advances with every accepted revision)", latest)) },
@@ -238,7 +249,16 @@ export async function runPublish(deps: PublishDependencies): Promise<PublishRepo
   }
 
   // ---- render aside, then swap (S-J-07): the local site always reflects the local journal, pushed or not ----
-  const { pages, latest } = sitePagesFor({ entries: journal.entries, revision, nowMs, expectations: deps.expectations, cycleIntervalMs: deps.cycleIntervalMs, deadManBoundMs: deps.deadManBoundMs, source: deps.source, pins: deps.pins, pushState });
+  // The presentation asset is read here, not imported: a missing or unreadable
+  // stylesheet is a build failure like any other, never a silently unstyled page.
+  let styles: string;
+  try {
+    styles = readPresentationAsset(DASHBOARD_STYLESHEET, deps.presentationAssetsDir);
+  } catch (error) {
+    alarms.push("DASHBOARD_BUILD_FAILED");
+    return { revision, refusal: null, push, pushState, build: null, buildError: messageOf(error), candidateUrl: null, promotion: "not_attempted", stableVerification: "not_attempted", deploymentState, alarms, projection: null };
+  }
+  const { pages, latest } = sitePagesFor({ entries: journal.entries, revision, nowMs, expectations: deps.expectations, cycleIntervalMs: deps.cycleIntervalMs, deadManBoundMs: deps.deadManBoundMs, source: deps.source, pins: deps.pins, pushState, styles });
   let build: BuildReport;
   try {
     build = buildSiteAtomically(deps.siteDir, pages, nonce, deps.buildSink);

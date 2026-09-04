@@ -8,13 +8,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { integerUnit } from "../src/core/domain.js";
 import type { DecisionSnapshot } from "../src/core/domain.js";
-import { epochMsToUtcIso } from "../src/core/execution.js";
+import { entryAcknowledgementDraft, epochMsToUtcIso } from "../src/core/execution.js";
 import type { MarketObservation } from "../src/core/execution.js";
 import { parseJournalText } from "../src/core/journal.js";
 import type { JournalEntry } from "../src/core/journal.js";
 import { closeAttemptId, closeLifecycleId } from "../src/core/order-identity.js";
 import { runCycle } from "../src/shell/cycle-runner.js";
 import type { CycleDependencies, CycleReport } from "../src/shell/cycle-runner.js";
+import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { readEpochStore } from "../src/shell/epoch-store.js";
 import { createFakeBroker } from "../src/shell/fake-broker.js";
 import type { FakeBroker, FakeBrokerOptions } from "../src/shell/fake-broker.js";
@@ -26,6 +27,9 @@ import type { StatePaths } from "../src/shell/state-dir.js";
 import { LONG_CALL, SHORT_CALL, TEST_ONLY_EXECUTION_CONFIG, creditVertical } from "./execution-fixtures.js";
 import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN, journalSnapshot } from "./journal-fixtures.js";
+// The P5 harness (real lifecycle deps, so phase 0's HUMAN_ACTION classification actually runs — the
+// plain harness() above passes `lifecycle: null`, which turns that phase off entirely).
+import { cleanupLifecycleDirs, lifecycleHarness, recordingPing } from "./lifecycle-fixtures.js";
 
 const temporaryDirectories: string[] = [];
 const journalsToUnlock: string[] = [];
@@ -96,11 +100,14 @@ interface Harness {
   readonly analystCalls: { count: number };
 }
 
-async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; readonly analyst?: CycleDependencies["analyst"]; readonly seedEntries?: readonly Record<string, unknown>[] } = {}): Promise<Harness> {
+async function harness(options: { readonly broker?: Partial<FakeBrokerOptions>; readonly analyst?: CycleDependencies["analyst"]; readonly seedEntries?: readonly Record<string, unknown>[]; readonly mutationHttpStatus?: number } = {}): Promise<Harness> {
   const paths = freshPaths();
   const clock = { now: NOW };
   const fake = createFakeBroker({ accountId: TEST_ONLY_ACCOUNT_ID, cashCents: 10_000_000, equityCents: 10_000_000, clock: () => clock.now, ...options.broker });
-  const gateway = createMutationGateway({ paths, secrets: ["TEST_ONLY_SECRET_KEY"], clock: () => clock.now, brokerPort: fake.port, instanceId: "runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
+  const brokerPort = options.mutationHttpStatus === undefined
+    ? fake.port
+    : { mutate: () => Promise.reject(new BrokerHttpError(options.mutationHttpStatus as number, "credential scope rejected")) };
+  const gateway = createMutationGateway({ paths, secrets: ["TEST_ONLY_SECRET_KEY"], clock: () => clock.now, brokerPort, instanceId: "runner", lockTakeoverBoundMs: 60_000, binding: BINDING });
   const acquired = await gateway.acquireAuthority({ account: "virgin" });
   if (acquired.kind !== "WON") throw new Error(`fixture acquisition failed: ${JSON.stringify(acquired)}`);
   const priorSample = { bidCents: 99, askCents: 101, bidSize: 20, askSize: 20, quotedAt: TEST_ONLY_AT, brokerQuotedAt: "2026-08-31T13:29:59.871234567Z" };
@@ -223,12 +230,14 @@ describe("S-X-01/03/04 through the runner: INTENT before order, OUTCOME after, e
     const resting = await harness({ broker: { onSubmit: () => ({ kind: "accept" }) } });
     const first = await resting.cycle();
     expect(first.actions[0]).toMatchObject({ result: "SUBMITTED", status: null, detail: "working" });
-    expect(types(resting.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT"]);
+    expect(types(resting.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "RECONCILIATION"]);
     const clientOrderId = first.actions[0]!.clientOrderId;
-    // While it rests, the next cycle's phase 0 records it as matched-working and G2 still counts its reservation.
+    const acknowledged = entriesOf(resting.paths)[3]!;
+    expect(acknowledged).toMatchObject({ items: [{ kind: "entry_order", clientOrderId, classification: "ACKNOWLEDGED_WORKING", brokerOrderId: "fake-1" }] });
+    // While it rests, the next cycle's phase 0 observes it as still working and G2 keeps counting its acknowledged reservation.
     const quiet = (): Promise<string> => Promise.resolve(JSON.stringify({ candidates: [] }));
     const second = await resting.cycle({ analyst: quiet });
-    expect(second.resolved).toEqual([{ clientOrderId, result: "MATCHED_WORKING" }]);
+    expect(second.resolved).toEqual([{ clientOrderId, result: "STILL_WORKING" }]);
     expect(types(resting.paths).slice(3, 5)).toEqual(["RECONCILIATION", "CYCLE"]);
     const cycleTwo = entriesOf(resting.paths)[4]!;
     expect((cycleTwo["snapshot"] as { openOrders: { clientOrderId: string }[] }).openOrders.map(order => order.clientOrderId)).toEqual([clientOrderId]);
@@ -243,6 +252,28 @@ describe("S-X-01/03/04 through the runner: INTENT before order, OUTCOME after, e
 });
 
 describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before any new order", () => {
+  it("blocks every later plan in the same batch after a submit becomes confirmation-unclear", async () => {
+    let submitCalls = 0;
+    const run = await harness({
+      analyst: () => Promise.resolve(TWO_CANDIDATES_JSON),
+      broker: {
+        onSubmit: () => {
+          submitCalls += 1;
+          return submitCalls === 1 ? { kind: "lose_ack_never_sent" } : { kind: "fill" };
+        },
+      },
+    });
+
+    const report = await run.cycle();
+
+    expect(report.entriesBlocked).toContain("CONFIRMATION_UNCLEAR");
+    expect(report.actions).toHaveLength(2);
+    expect(report.actions[0]).toMatchObject({ result: "SUBMITTED", status: "confirmation_unclear" });
+    expect(report.actions[1]).toMatchObject({ result: "NOT_SENT", detail: "CONFIRMATION_UNCLEAR" });
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
+  });
+
   it("S-CYC-04 timeout after send → OUTCOME confirmation_unclear, reservation retained; the next cycle's phase 0 finds the order and journals the resolution first", async () => {
     const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
     const first = await run.cycle();
@@ -257,21 +288,59 @@ describe("S-CYC-04 a lost acknowledgement is resolved by client order ID before 
     run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
     const second = await run.cycle();
     expect(second.resolved).toEqual([{ clientOrderId, result: "MATCHED_WORKING" }]);
+    expect(second.entriesBlocked).toContain(`UNRESOLVED:${clientOrderId}`);
     const sequence = types(run.paths);
     expect(sequence.indexOf("RECONCILIATION")).toBeLessThan(sequence.lastIndexOf("CYCLE"));
-    // The resolved (working) reservation still counts, so the second cycle's identical structure is a different identity but the sleeve carries both.
+    // Exact identity is known, but the working order is not terminal: no new
+    // entry may be submitted yet.
     const reconciliation = entriesOf(run.paths).find(entry => entry.type === "RECONCILIATION")!;
     expect(reconciliation).toMatchObject({ reasonCodes: [], items: [{ kind: "entry_order", clientOrderId, classification: "MATCHED_WORKING", brokerOrderId: "fake-1" }] });
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    run.fake.transitionOrder(clientOrderId, { status: "canceled", reason: "terminally canceled after lost acknowledgement" });
+    const terminal = await run.cycle();
+    expect(terminal.resolved).toEqual([{ clientOrderId, result: "OUTCOME:canceled" }]);
+    expect(terminal.entriesBlocked).not.toContain(`UNRESOLVED:${clientOrderId}`);
     expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(2);
 
-    // Never sent at all: phase 0 finds nothing and releases the reservation as NOT_SUBMITTED.
+    // Not found is still ambiguous after a lost acknowledgement: phase 0
+    // journals the negative lookup, blocks entries, and probes the same ID again.
     const neverSent = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack_never_sent" }) } });
     await neverSent.cycle();
     expect(types(neverSent.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
     neverSent.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
     const resolved = await neverSent.cycle();
     expect(resolved.resolved[0]).toMatchObject({ result: "NOT_AT_BROKER" });
+    expect(resolved.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
     expect(entriesOf(neverSent.paths).find(entry => entry.type === "RECONCILIATION")).toMatchObject({ reasonCodes: ["NOT_SUBMITTED"], items: [{ classification: "NOT_AT_BROKER" }] });
+    expect(neverSent.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    const repeated = await neverSent.cycle();
+    expect(repeated.resolved[0]).toMatchObject({ result: "NOT_AT_BROKER" });
+    expect(repeated.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
+    expect(entriesOf(neverSent.paths).filter(entry => entry.type === "RECONCILIATION" && (entry["items"] as { classification?: string }[] | undefined)?.some(item => item.classification === "NOT_AT_BROKER"))).toHaveLength(2);
+    expect(neverSent.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    const originalSubmit = neverSent.fake.mutations.find(mutation => mutation.kind === "submit_order");
+    if (originalSubmit === undefined) throw new Error("fixture");
+    await neverSent.fake.port.mutate(originalSubmit);
+    const appearedLate = await neverSent.cycle({ analyst: () => Promise.resolve(JSON.stringify({ candidates: [] })) });
+    expect(appearedLate.resolved[0]).toMatchObject({ clientOrderId: originalSubmit.clientOrderId, result: "OUTCOME:filled" });
+    expect(appearedLate.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(false);
+  });
+
+  it("S-CYC-04 a misordered acknowledgement after lost ack invalidates the fold and sends no new order", async () => {
+    const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
+    const first = await run.cycle();
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    const order = await run.fake.read.orderByClientId(clientOrderId);
+    if (order === null) throw new Error("fixture");
+    const appended = await run.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: entryAcknowledgementDraft({ atIso: epochMsToUtcIso(run.clock.now), epoch: 1 }, clientOrderId, order) } });
+    expect(appended).toMatchObject({ ok: true });
+
+    run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
+    const refused = await run.cycle();
+    expect(refused.entriesBlocked).toContain("LIFECYCLE_FOLD");
+    expect(refused.actions).toEqual([]);
+    expect(run.analystCalls.count).toBe(1);
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
   });
 
   it("S-CYC-04 / S-G7-02 a replayed client order ID is adopted from the broker's duplicate answer, never re-sent under a fresh ID", async () => {
@@ -339,6 +408,56 @@ describe("S-CYC-05 revalidation against fresh broker truth immediately before su
   });
 });
 
+describe("S-CYC-05 / linearization point", () => {
+  afterEach(() => { cleanupLifecycleDirs(); });
+
+  // A wholly foreign contract (no journaled structure, no journaled underlying): classifyBook can only
+  // read it as HUMAN_ACTION, never RESIDUE (src/core/lifecycle.ts, the discrimination rule at S-G10-02/03).
+  const FOREIGN_CONTRACT = "TSLA270115C00300000";
+
+  it("S-CYC-05 / linearization point a foreign position appearing between the fresh revalidation read and broker acceptance does not void the submit, and the submitted structure is still defined-risk", async () => {
+    const run = await lifecycleHarness();
+    // The owner ruling (2026-09-02) fixes the linearization point at the completion of the revalidation's
+    // final fresh broker read (fetchBook() at cycle-runner.ts phase 4, immediately before buildClaimset's
+    // fingerprint is compared against it). setSubmitBehaviour's callback only runs inside the fake broker's
+    // port.mutate() -> submit(), which the runner reaches strictly AFTER that fresh read has already been
+    // fetched and the claimset re-checked (S-CYC-05 revalidateClaimset). So mutating positions here mimics a
+    // human broker-UI trade landing exactly in the gap between "checked against broker truth" and "broker
+    // accepted the submit" — the gap the ruling declares unobservable to any claim.
+    run.fake.setSubmitBehaviour(() => {
+      run.fake.setPositions([{ contractId: FOREIGN_CONTRACT, quantity: 2, avgEntryPriceCents: 500 }]);
+      return { kind: "fill" };
+    });
+    const report = await run.cycle();
+    // Submitted, not voided: no REVALIDATION_VOID/RECONCILIATION entry appears in this cycle at all.
+    expect(report.actions).toMatchObject([{ result: "SUBMITTED", status: "filled" }]);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP", "CYCLE", "INTENT", "OUTCOME"]);
+    const intent = entriesOf(run.paths)[2]!;
+    // Defined-risk as usual: same credit vertical, same submitted limit and reserved max loss as the ordinary
+    // happy path (S-X-01) — the foreign trade landing after the fresh read changes nothing about this plan.
+    expect(intent).toMatchObject({ action: "entry", submittedLimit: { kind: "credit", priceCents: 198 }, reservedMaxLossCents: 30_200 });
+    expect(entriesOf(run.paths)[3]).toMatchObject({ type: "OUTCOME", status: "filled" });
+    const submitsAfterFirstCycle = run.fake.mutations.filter(mutation => mutation.kind === "submit_order").length;
+    expect(submitsAfterFirstCycle).toBe(1);
+
+    // The following cycle's phase 0 (S-G10-02/S-G10-05) now sees the foreign quantity sitting in the book: it
+    // was never observable to the revalidation that already ran, so it is classified fresh, here, first.
+    const next = await run.cycle();
+    expect(next.classification?.positions.find(item => item.contractId === FOREIGN_CONTRACT)).toMatchObject({ class: "HUMAN_ACTION" });
+    expect(run.entries().some(entry => entry.type === "HUMAN_ACTION" && String(entry["description"]).includes(FOREIGN_CONTRACT))).toBe(true);
+    expect(run.entries().some(entry => entry.type === "HALT" && entry["reason"] === "RESIDUE_UNRESOLVED")).toBe(true);
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "RESIDUE_UNRESOLVED", sticky: false });
+    // Not silent (per the ruling): the violation is journaled, and it halts. Zero new entries this cycle.
+    expect(next.actions).toEqual([]);
+    expect(run.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(submitsAfterFirstCycle);
+  });
+
+  // Companion case (already covered above, not duplicated here): "S-CYC-05 / BEQ-3" proves the mirror image —
+  // the same foreign position appearing BEFORE the fresh read (during the analyst step) fails POSITIONS_UNCHANGED
+  // and yields REVALIDATION_VOID with zero broker mutations. The owner ruling's linearization point is exactly
+  // the boundary between that case and this one.
+});
+
 describe("S-G13-01 kill management under the valid fence", () => {
   async function heldSpread(options: { readonly onCancel?: FakeBrokerOptions["onCancel"]; readonly extraOrder?: "entry" | "close" } = {}): Promise<Harness & { readonly exposureLifecycleId: string; readonly restingEntryId: string | null }> {
     const run = await harness({ broker: options.onCancel === undefined ? {} : { onCancel: options.onCancel } });
@@ -349,7 +468,7 @@ describe("S-G13-01 kill management under the valid fence", () => {
     if (options.extraOrder === "entry") {
       // A second lifecycle whose entry is resting at the broker: the risk-increasing order the kill must cancel first.
       run.fake.setSubmitBehaviour(() => ({ kind: "accept" }));
-      const second = await run.cycle();
+      const second = await run.cycle(options.onCancel === undefined ? undefined : { analyst: () => Promise.resolve(JSON.stringify({ candidates: [{ ...creditVertical(), quantity: 2 }] })) });
       restingEntryId = second.actions[0]!.clientOrderId;
       expect(second.actions[0]).toMatchObject({ status: null, detail: "working" });
     }
@@ -500,6 +619,28 @@ describe("S-CYC-06 journal failure blocks every new risk; the sole exception is 
 });
 
 describe("S-X-02 a broker record worse than the submitted limit halts new entries", () => {
+  it("S-X-02 halts immediately when a normally acknowledged working order already carries a partial fill worse than its limit", async () => {
+    const run = await harness({
+      analyst: () => Promise.resolve(JSON.stringify({ candidates: [{ ...creditVertical(), quantity: 3 }] })),
+      broker: { onSubmit: () => ({ kind: "partial", filledQuantity: 1, avgFillPriceCents: 150 }) },
+    });
+    const report = await run.cycle();
+    expect(report.actions[0]).toMatchObject({ result: "SUBMITTED", status: null, detail: "working" });
+    expect(report.entriesBlocked).toContain("BROKER_PRICE_BREACH");
+    expect(entriesOf(run.paths).find(entry => entry.type === "RECONCILIATION")).toMatchObject({
+      reasonCodes: ["BROKER_PRICE_BREACH"],
+      items: [{ classification: "ACKNOWLEDGED_WORKING", status: "partially_filled", filledQuantity: 1, avgFillPriceCents: 150 }],
+    });
+    expect(entriesOf(run.paths).at(-1)).toMatchObject({ type: "HALT", reason: "BROKER_PRICE_BREACH" });
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "BROKER_PRICE_BREACH", sticky: false });
+    expect(await run.gateway.dispatchManualUnhalt({ operator: "felix", reason: "exercise phase-zero breach re-observation" })).toMatchObject({ ok: true });
+    const repeated = await run.cycle({ analyst: () => Promise.resolve(JSON.stringify({ candidates: [] })) });
+    expect(repeated.resolved[0]).toMatchObject({ result: "STILL_WORKING" });
+    expect(repeated.entriesBlocked).toContain("BROKER_PRICE_BREACH");
+    expect(entriesOf(run.paths).at(-2)).toMatchObject({ type: "HALT", reason: "BROKER_PRICE_BREACH" });
+    expect(readHaltState(run.paths)).toEqual({ halted: true, reason: "BROKER_PRICE_BREACH", sticky: false });
+  });
+
   it("S-X-02 a fill below the submitted credit limit is journaled BROKER_PRICE_BREACH, reserves the actual exposure, and lands a non-sticky HALT that blocks the next cycle until a human reconciles", async () => {
     const run = await harness({ broker: { onSubmit: () => ({ kind: "fill", avgFillPriceCents: 150 }) } });
     const report = await run.cycle();
@@ -608,5 +749,88 @@ describe("S-G12-06 the credential fence also fences the phase-4 re-check (P4 gat
     expect(run.analystCalls.count).toBe(1);
     expect(run.fake.mutations).toHaveLength(0);
     expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
+  });
+
+  it("a 403 returned by the order mutation is preserved through the gateway and durably halts the runner", async () => {
+    const run = await harness({ mutationHttpStatus: 403 });
+    const report = await run.cycle();
+
+    expect(report.actions).toContainEqual(expect.objectContaining({ status: "confirmation_unclear" }));
+    expect(report.entriesBlocked).toContain("AUTH_FAILURE");
+    expect(readHaltState(run.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE", sticky: false });
+    expect(entriesOf(run.paths).filter(entry => entry.type === "HALT")).toHaveLength(1);
+    expect(run.fake.mutations).toHaveLength(0);
+  });
+});
+
+describe("S-G14-03 a success ping never precedes a durable append", () => {
+  // The dead-man check reads a success ping as "this deployment is alive AND
+  // its journal took the run". Every exit below reaches `finish` with nothing
+  // durable appended and no alarm condition, so the only honest plan is `none`:
+  // a success ping here would refresh liveness for a deployment that wrote
+  // nothing, and the 45-60 min missed-ping SLA — the sole passive detector of a
+  // journal that has gone silent — would never fire.
+  const marketDark = (): Promise<MarketObservation> => Promise.reject(new Error("market data unreachable"));
+
+  it("a cycle whose journal cannot be appended plans no ping and delivers none", async () => {
+    const run = await harness();
+    const ping = recordingPing(() => run.clock.now);
+    lockJournal(run.paths);
+
+    const report = await run.cycle({ ping });
+    expect(report.journalFailure).not.toBeNull();
+    expect(report.alarmConditions).toEqual([]);
+    expect(report.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+    unlockJournal(run.paths);
+    expect(types(run.paths)).toEqual(["BOOTSTRAP"]);
+  });
+
+  it("a cycle whose journal cannot be folded plans no ping and delivers none", async () => {
+    // The S-CYC-04 fold invalidation: a misordered acknowledgement after a lost
+    // ack. Phase 0 refuses before any append, so nothing durable exists.
+    const run = await harness({ broker: { onSubmit: () => ({ kind: "lose_ack" }) } });
+    const first = await run.cycle();
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    const order = await run.fake.read.orderByClientId(clientOrderId);
+    if (order === null) throw new Error("fixture");
+    const appended = await run.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: entryAcknowledgementDraft({ atIso: epochMsToUtcIso(run.clock.now), epoch: 1 }, clientOrderId, order) } });
+    expect(appended).toMatchObject({ ok: true });
+
+    const ping = recordingPing(() => run.clock.now);
+    const refused = await run.cycle({ ping });
+    expect(refused.entriesBlocked).toContain("LIFECYCLE_FOLD");
+    expect(refused.alarmConditions).toEqual([]);
+    expect(refused.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+  });
+
+  it("total world loss pings success only when its SKIP landed, and nothing at all when the journal was down too", async () => {
+    // With the journal alive the abstention itself is the durable append, so a
+    // success ping is earned even though the broker answered nothing (S-CYC-03).
+    const journaled = await harness();
+    const earned = recordingPing(() => journaled.clock.now);
+    journaled.fake.failNextReads(["account", "positions", "orders"]);
+    const durable = await journaled.cycle({ ping: earned, market: marketDark });
+    expect(durable).toMatchObject({ primary: "SKIP", reasonCodes: ["WORLD_UNREACHABLE"], journalFailure: null });
+    expect(durable.ping).toBe("success");
+    expect(earned.record.successes).toHaveLength(1);
+
+    // Same darkness, journal unwritable: the SKIP never lands, so nothing may claim liveness.
+    const dark = await harness();
+    const ping = recordingPing(() => dark.clock.now);
+    dark.fake.failNextReads(["account", "positions", "orders"]);
+    lockJournal(dark.paths);
+    const report = await dark.cycle({ ping, market: marketDark });
+    expect(report).toMatchObject({ primary: null, reasonCodes: ["WORLD_UNREACHABLE"] });
+    expect(report.journalFailure).not.toBeNull();
+    expect(report.alarmConditions).toEqual([]);
+    expect(report.ping).toBe("none");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toEqual([]);
+    unlockJournal(dark.paths);
+    expect(types(dark.paths)).toEqual(["BOOTSTRAP"]);
   });
 });

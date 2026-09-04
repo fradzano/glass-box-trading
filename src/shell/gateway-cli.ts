@@ -3,11 +3,12 @@
 //   node gateway-cli.js <stateDir> <instanceId> takeover
 //   node gateway-cli.js <stateDir> <instanceId> write <count>
 //   node gateway-cli.js <stateDir> <instanceId> witness
+//   node gateway-cli.js <stateDir> <instanceId> hold
 // `takeover` prints the acquisition result. `write` acquires first (it must
 // WIN, otherwise it exits 1) and appends <count> CYCLE lines under the epoch
 // it won. `witness` appends one SUPPRESSED line without any authority.
 // It prints one JSON result to stdout and exits non-zero on any failure.
-import { readHolder } from "./epoch-store.js";
+import { readHolder, withMutex } from "./epoch-store.js";
 import { createMutationGateway, NO_BROKER_PORT } from "./mutation-gateway.js";
 import { resolveStateDir } from "./state-dir.js";
 
@@ -72,6 +73,12 @@ if (command === "witness") {
     },
   });
   emit(result, result.ok ? 0 : 1);
+}
+
+if (command === "hold") {
+  await withMutex(paths.value, () => new Promise<never>(() => {
+    process.stdout.write("LOCKED\n");
+  }));
 }
 
 process.stderr.write(`unknown command ${command}\n`);

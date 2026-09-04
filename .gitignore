@@ -11,3 +11,22 @@ artifacts/
 
 # Local scratch
 .tmp/
+
+# Ephemeral agent worktrees
+.claude/worktrees/
+
+# S-ARM-01 pre-arm certificates (owner decision, DECISIONS.md 2026-09-02:
+# "Certificates stay local" — the certificate carries the dev account ID and
+# broker evidence the public repository does not need).
+evidence/
+
+# Remotion (video/ is its own package; renders go to submission/ by hand)
+video/out/
+video/.remotion/
+
+# Submission renders that are generated or recorded (submission/render/render.mjs, video/README.md);
+# the video deliverable and the screen captures are uploaded to the form and archived in the
+# verification store, not committed (binary size); the one-pager, deck and cover are tracked.
+submission/render/out/
+submission/*.mp4
+video/public/captures/

@@ -3,12 +3,14 @@
 // provenance latch; AUS-1, GV-1, WIN-2), and S-CYC-10 (failed resolution
 // stays blocking) as executed runner behaviour over the real gateway.
 import { describe, afterEach, expect, it } from "vitest";
+import { mapAccountActivity } from "../src/core/alpaca-mapping.js";
 import { utcIsoToEpochMs } from "../src/core/execution.js";
 import { planPrimaryEntry, validateCompetitionProvenance } from "../src/core/lifecycle.js";
 import { runCycle } from "../src/shell/cycle-runner.js";
 import { createFakeBroker } from "../src/shell/fake-broker.js";
 import { createMutationGateway } from "../src/shell/mutation-gateway.js";
 import { writeEpochStore } from "../src/shell/epoch-store.js";
+import { RECORDED_OPENING_FUNDING_JOURNAL } from "./alpaca-fixtures.js";
 import { TEST_ONLY_EXECUTION_CONFIG } from "./execution-fixtures.js";
 import { TEST_ONLY_O5_CONFIG } from "./fixtures.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_AT_MS, TEST_ONLY_ORIGIN } from "./journal-fixtures.js";
@@ -28,6 +30,14 @@ afterEach(() => { cleanupLifecycleDirs(); });
 
 const COMPETITION_START_MS = utcIsoToEpochMs("2026-08-28T15:00:00Z") as number;
 
+/**
+ * A settled Alpaca paper account is NOT activity-free: it carries the `JNLC`
+ * journal that funded it (recorded on the dev account 2026-09-02, P8). This
+ * bundle is deliberately that settled shape, so these cases keep exercising
+ * the funding-sum rule; the other virgin shape — the brand-new account whose
+ * journal the broker has not posted yet, ledger empty at exactly
+ * INITIAL_CAPITAL — is covered in `p8-competition-provenance.spec.ts`.
+ */
 function validBundle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     accountRole: "paper",
@@ -39,7 +49,7 @@ function validBundle(overrides: Record<string, unknown> = {}): Record<string, un
     nonTerminalOrderCount: 0,
     orderHistory: { complete: true, items: 0 },
     fillHistory: { complete: true, items: 0 },
-    activityHistory: { complete: true, items: 0 },
+    activityLedger: { complete: true, activities: [mapAccountActivity(RECORDED_OPENING_FUNDING_JOURNAL)] },
     ...overrides,
   };
 }
@@ -169,7 +179,7 @@ describe("S-CYC-09 / WIN-2 — the competition provenance proof", () => {
 });
 
 describe("S-CYC-10 / BEQ-2 — failed resolution stays blocking", () => {
-  it("S-CYC-10 an unresolvable CONFIRMATION_UNCLEAR blocks entries and is journaled each cycle; only a successful classification unblocks", async () => {
+  it("S-CYC-10 an unresolvable CONFIRMATION_UNCLEAR blocks entries until broker-terminal truth", async () => {
     const harness = await lifecycleHarness();
     harness.fake.setSubmitBehaviour(() => ({ kind: "lose_ack" }));
     const first = await harness.cycle();
@@ -186,9 +196,18 @@ describe("S-CYC-10 / BEQ-2 — failed resolution stays blocking", () => {
     const items = reconciliation?.["items"] as readonly Record<string, unknown>[];
     expect(items.some(item => item["class"] === "CONFIRMATION_UNCLEAR")).toBe(true);
 
-    // A successful classification unblocks: the broker answers, the working order is matched, entries flow again.
+    // A successful identity match is still non-terminal: the broker answers,
+    // but a working order remains blocked after the lost acknowledgement.
     const third = await harness.cycle();
     expect(third.resolved).toMatchObject([{ result: "MATCHED_WORKING" }]);
-    expect(third.actions).toMatchObject([{ result: "SUBMITTED" }]);
+    expect(third.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
+    expect(third.actions.every(action => action.result !== "SUBMITTED")).toBe(true);
+    expect(harness.analystCalls.count).toBe(1);
+
+    const clientOrderId = first.actions[0]!.clientOrderId;
+    harness.fake.transitionOrder(clientOrderId, { status: "canceled", reason: "terminal broker truth" });
+    const fourth = await harness.cycle();
+    expect(fourth.resolved).toMatchObject([{ result: "OUTCOME:canceled" }]);
+    expect(fourth.actions).toMatchObject([{ result: "SUBMITTED" }]);
   });
 });

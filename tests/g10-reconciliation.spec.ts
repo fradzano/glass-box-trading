@@ -82,7 +82,7 @@ describe("S-G10-03 — assignment residue dispatches through the discrimination"
 });
 
 describe("S-G10-04 — intent without outcome resolves against the broker by client order ID", () => {
-  it("S-G10-04 not found at the broker → NOT_SUBMITTED journaled and the reservation released", async () => {
+  it("S-G10-04 not found after lost acknowledgement stays reserved and blocks until terminal broker truth", async () => {
     const harness = await lifecycleHarness();
     // The submit throws before anything reaches the broker: a durable INTENT with no outcome.
     harness.fake.setSubmitBehaviour(() => ({ kind: "lose_ack_never_sent" }));
@@ -91,8 +91,14 @@ describe("S-G10-04 — intent without outcome resolves against the broker by cli
     harness.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
     const second = await harness.cycle();
     expect(second.resolved).toMatchObject([{ result: "NOT_AT_BROKER" }]);
+    expect(second.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
     const reconciliation = harness.entries().find(entry => entry.type === "RECONCILIATION" && Array.isArray(entry["reasonCodes"]) && (entry["reasonCodes"] as unknown[]).includes("NOT_SUBMITTED"));
     expect(reconciliation).toBeDefined();
+    expect(harness.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
+    const third = await harness.cycle();
+    expect(third.resolved).toMatchObject([{ result: "NOT_AT_BROKER" }]);
+    expect(third.entriesBlocked.some(item => item.startsWith("UNRESOLVED:"))).toBe(true);
+    expect(harness.fake.mutations.filter(mutation => mutation.kind === "submit_order")).toHaveLength(1);
   });
 });
 
@@ -151,7 +157,7 @@ describe("classifyBook — the pure discrimination", () => {
         { contractId: "TSLA", quantity: 5, avgEntryPriceCents: 100 },
       ],
       openOrders: [
-        { brokerOrderId: "b2", clientOrderId: "mystery-order", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null },
+        { brokerOrderId: "b2", clientOrderId: "mystery-order", status: "accepted", filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, brokerTimestamps: {}, brokerReason: null, legs: [], quantity: 1, limit: null },
       ],
     });
     const classification = classifyBook(testBook, lifecycles, [], ["entry-unclear"]);

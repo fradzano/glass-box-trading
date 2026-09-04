@@ -5,11 +5,13 @@
     "commit": "872abbf28dab6cdde7d341fc13ac139b8002d1d9",
     "package": "alpaca-mcp-server",
     "version": "2.3.0",
-    "dependencyLockAtCommit": "uv.lock"
+    "dependencyLockAtCommit": "uv.lock",
+    "dependencySiteSha256": "05697dac3f1cdf3e3d96d0da6879c4b1ffef96d2b4f345de4278e65c58abc6e4"
   },
   "interpreter": {
     "implementation": "CPython",
     "version": "3.14.1",
+    "wheelPlatformTag": "win_amd64",
     "launcherSha256": "2300a8f8244993355fb2e15c6b5b35f9566cd3a79f99ebb56986d73a70cb29ad",
     "runtimeSha256": "3179d8b7d28ccc7547e59c3080bf2f715442b692c33798e928fd311f2c97f57b"
   },
@@ -21,7 +23,8 @@
     "verifyImmutableSourceAndPackageFilesBeforeSpawn": true,
     "removeBeforeSpawn": [
       "**/__pycache__/**",
-      "**/*.pyc"
+      "**/*.pyc",
+      "site/bin/**"
     ],
     "requireRemovedFilesAbsentBeforeSpawn": true,
     "disableBytecodeWritesInChild": true

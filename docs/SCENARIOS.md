@@ -55,6 +55,7 @@ What must hold: positions whose risk profile changes as expiry approaches are ha
 **8. Evening overlap — developer watches it trade live**
 Actors: developer at terminal, running agent. Trigger: any weekday ~20:00–22:00 CEST. The developer is home while cycles still fire. He opens logs/dashboard while a cycle is mid-flight, possibly runs a manual command (query, close a position by hand in the Alpaca UI) concurrently with the agent's own cycle. His manual close and the agent's next cycle now both act on the same position.
 What must hold: manual intervention and an autonomous cycle acting on the same account concurrently cannot corrupt state or double-act on the same position; the journal must reflect that a human acted, or the judge later sees agent-inexplicable trades.
+Bound (owner ruling 2026-09-02): the broker cannot make the agent's final read and its submit atomic, so a manual change landing in exactly that window is unobservable by the pre-submit check. The rule of operation is therefore that the developer does not mutate the account by hand while the agent operates unless it is durably halted; if he does anyway, the next cycle must detect the foreign quantity, halt, and journal it as a human action — the system promises detection one cycle later, not prevention within the window.
 
 ## B. DEGRADED — things break mid-flight
 
@@ -329,11 +330,15 @@ arming.
 **59. A smoke test is called a successful dev live test**
 Actors: owner, dev account, arming gate. Trigger: accept/cancel worked once, but
 credit acceptance, a real fill/outcome path, or the liquidity inputs were never
-observed. A hand-entered timestamp still unlocks the competition account. What
-must hold: `successful_dev_live_test_at` is derived only from a machine-readable
-certificate tied to the runtime and role-neutral policy digests, with broker evidence for
-all named market-hours checks and a flat terminal dev account. Any code/config
-change invalidates the certificate.
+observed. A hand-entered timestamp is offered as proof. What must hold:
+`successful_dev_live_test_at` is derived only from a complete, semantically
+valid machine-readable certificate tied to the runtime and role-neutral policy
+digests, with broker evidence for all named market-hours checks and a stable,
+flat terminal dev account. Acceptance must describe the exact intended one-lot
+credit Mleg, and the reconciled positions must equal its filled leg quantities.
+Any code/config change invalidates the certificate.
+The integrity digest detects edits but, under the declared trusted-local-operator
+boundary, is not an external attestation against deliberate local forgery.
 
 **60. The watchdog inherits a mixed intact-and-residue book**
 Actors: stalled agent, watchdog, broker. Trigger: after fencing, reconciliation

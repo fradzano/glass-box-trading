@@ -9,16 +9,20 @@
 // the epoch this process won; the runner holds no order state in memory.
 import { decide, parseAnalystOutput } from "../core/decision.js";
 import { integerUnit } from "../core/domain.js";
-import type { CloseAttemptSnapshot, CloseLifecycleSnapshot, DecisionSnapshot, DecisionConfig, EntryActionPlan, OptionLeg, Quantity } from "../core/domain.js";
+import type { CloseAttemptSnapshot, CloseLifecycleSnapshot, DecisionSnapshot, DecisionConfig, EntryActionPlan, OptionContract, OptionLeg, OptionQuote, Quantity } from "../core/domain.js";
 import {
   assembleDecisionSnapshot,
   auditGapDraft,
   buildClaimset,
   cancelReconciliationDraft,
   closeIntentDraft,
+  classifyBrokerFillPrice,
   classifyWorkingOrder,
+  closeAttemptsAwaitingOutcome,
   cycleDraft,
   emergencyCloseEligibility,
+  entryAcknowledgementDraft,
+  entryFillTransitionBreachesLimit,
   entryResolutionDraft,
   epochMsToUtcIso,
   haltDraft,
@@ -33,6 +37,8 @@ import {
   priceAndDecide,
   priceCloseLimit,
   reconcileCancel,
+  reconcileCloseAttempt,
+  remainingCloseExposure,
   revalidateClaimset,
   revalidationVoidDraft,
   skipDraft,
@@ -96,12 +102,23 @@ export interface AnalystInput {
   readonly underlyings: readonly string[];
   /** S-CYC-12: the qualification window's prioritisation hint and cap — never a gate parameter. */
   readonly qualification: QualificationBrief;
+  /**
+   * P7: the very observation the gates will judge — contracts, their quotes,
+   * and spot — so the analyst proposes from what the core can price. A
+   * candidate outside this set is vetoed for a missing quote (S-G5-03); the
+   * analyst gains no gate influence by seeing it.
+   */
+  readonly market: {
+    readonly contracts: readonly OptionContract[];
+    readonly quotesByContract: Readonly<Record<string, OptionQuote>>;
+    readonly spotCentsByUnderlying: Readonly<Record<string, number>>;
+  };
 }
 
 /** The dead-man check's two endpoints (S-G14-03). The runner decides which to hit through the pure `planPing`. */
 export interface PingPort {
-  success(): Promise<void>;
-  fail(conditions: readonly string[]): Promise<void>;
+  success(deadlineAtMs?: number): Promise<void>;
+  fail(conditions: readonly string[], deadlineAtMs?: number): Promise<void>;
 }
 
 export interface LifecycleDeps {
@@ -132,11 +149,13 @@ export interface CycleDependencies {
   readonly paths: StatePaths;
   readonly binding: AccountBinding;
   readonly broker: BrokerReadPort;
-  readonly market: () => Promise<MarketObservation>;
+  readonly market: (deadlineAtMs?: number) => Promise<MarketObservation>;
   /** Returns the analyst's raw text; may throw or hang — it is invoked at most once per cycle (S-CYC-01). */
   readonly analyst: (input: AnalystInput) => Promise<string>;
   readonly analystTimeoutMs: number;
   readonly clock: () => number;
+  /** Absolute shell wall-clock deadline. Every gateway action and real broker request inherits it. */
+  readonly cycleDeadlineMs?: number;
   readonly calendar: DecisionSnapshot["calendar"];
   readonly tradingDay: string;
   readonly cycleIndex: number;
@@ -151,6 +170,8 @@ export interface CycleDependencies {
    */
   readonly lifecycle: LifecycleDeps | null;
   readonly ping: PingPort | null;
+  /** Production defers delivery until the aggregate cycle work has won its deadline race. */
+  readonly deferPingDelivery?: boolean;
 }
 
 export interface ActionReport {
@@ -181,6 +202,23 @@ export interface ManagementCloseReport {
   readonly atCap: boolean;
 }
 
+/**
+ * A management ladder step that planned an attempt and then refused to submit
+ * it. The refusal is the visible half of the S-CYC-05 freshness rule: a close
+ * planned against a stale book is stopped by the eligibility check on the
+ * fresh one, and without this record that stop is indistinguishable from never
+ * having planned the attempt at all. A ladder that plans from the fresh book
+ * produces no refusals — a non-empty list means something older than the
+ * management step's own read decided what to close.
+ */
+export interface ManagementRefusalReport {
+  readonly exposureLifecycleId: string;
+  readonly route: string;
+  /** The generation the refused attempt would have carried; `null` when the close-lifecycle plan itself was vetoed. */
+  readonly generation: number | null;
+  readonly reason: string;
+}
+
 export interface CycleReport {
   readonly primary: "CYCLE" | "SKIP" | "BOOTSTRAP" | "GAP" | null;
   readonly reasonCodes: readonly ReasonCode[];
@@ -196,6 +234,8 @@ export interface CycleReport {
   readonly classification: BookClassification | null;
   readonly lifecycleVetoes: readonly LifecycleVeto[];
   readonly managementCloses: readonly ManagementCloseReport[];
+  /** Ladder steps that planned an attempt and refused to submit it (S-CYC-05 on the close side). */
+  readonly managementRefusals: readonly ManagementRefusalReport[];
   readonly declaredHolds: readonly string[];
   readonly alarmConditions: readonly string[];
   readonly ping: PingPlan["kind"] | null;
@@ -260,26 +300,38 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   const alarmConditions: string[] = [];
   const lifecycleVetoes: LifecycleVeto[] = [];
   const managementCloses: ManagementCloseReport[] = [];
+  const managementRefusals: ManagementRefusalReport[] = [];
   let classification: BookClassification | null = null;
   let declaredHolds: readonly string[] = [];
   const appended = { durable: false };
 
+  async function heartbeatBoundary(phase: string): Promise<void> {
+    if (deps.cycleDeadlineMs === undefined) return;
+    if (deps.clock() >= deps.cycleDeadlineMs) throw new Error(`CYCLE_WALLTIME_EXCEEDED before ${phase}`);
+    if (!await gateway.heartbeat()) throw new Error(`WRITER_HEARTBEAT_FAILED at ${phase}`);
+  }
+
   /** Every exit funnels here: the ping decision is pure and fires exactly once per invocation (S-G14-03). */
-  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
+  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "managementRefusals" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
+    await heartbeatBoundary("phase 5");
     const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions });
-    if (deps.ping !== null) {
+    // A cycle under an aggregate deadline only computes the ping plan here.
+    // Its composition root delivers after the work Promise wins the outer
+    // deadline race; a losing background continuation can therefore never
+    // emit liveness. Deadline-free test/watchdog compositions deliver here.
+    if (deps.ping !== null && deps.cycleDeadlineMs === undefined && deps.deferPingDelivery !== true) {
       try {
-        if (plan.kind === "success") await deps.ping.success();
-        if (plan.kind === "fail") await deps.ping.fail(plan.conditions);
+        if (plan.kind === "success") await deps.ping.success(deps.cycleDeadlineMs);
+        if (plan.kind === "fail") await deps.ping.fail(plan.conditions, deps.cycleDeadlineMs);
       } catch {
         // The check is best-effort delivery; a failed ping never blocks the cycle result.
       }
     }
-    return { ...partial, classification, lifecycleVetoes, managementCloses, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+    return { ...partial, classification, lifecycleVetoes, managementCloses, managementRefusals, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind };
   }
 
   async function append(draft: JournalDraft): Promise<boolean> {
-    const result = await gateway.dispatch({ class: "authoritative", epoch, action: { kind: "journal_append", entry: draft } });
+    const result = await gateway.dispatch({ class: "authoritative", epoch, ...(deps.cycleDeadlineMs === undefined ? {} : { deadlineAtMs: deps.cycleDeadlineMs }), action: { kind: "journal_append", entry: draft } });
     if (result.ok) {
       appended.durable = true;
       return true;
@@ -295,11 +347,14 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   async function mutate(mutation: BrokerMutation): Promise<DispatchResult> {
-    return gateway.dispatch({ class: "authoritative", epoch, action: { kind: "broker_mutation", mutation } });
+    const boundedMutation = deps.cycleDeadlineMs === undefined ? mutation : { ...mutation, notAfterMs: deps.cycleDeadlineMs };
+    const result = await gateway.dispatch({ class: "authoritative", epoch, ...(deps.cycleDeadlineMs === undefined ? {} : { deadlineAtMs: deps.cycleDeadlineMs }), action: { kind: "broker_mutation", mutation: boundedMutation } });
+    if (!result.ok && classifyBrokerFailure(result.httpStatus ?? null) === "AUTH_FAILURE") await haltForAuthFailure(result.reason);
+    return result;
   }
 
   async function fetchBook(): Promise<Fetched<BrokerBook> & { readonly partial?: boolean }> {
-    const [account, positions, openOrders] = await Promise.all([fetched(() => deps.broker.account()), fetched(() => deps.broker.positions()), fetched(() => deps.broker.openOrders())]);
+    const [account, positions, openOrders] = await Promise.all([fetched(() => deps.broker.account(deps.cycleDeadlineMs)), fetched(() => deps.broker.positions(deps.cycleDeadlineMs)), fetched(() => deps.broker.openOrders(deps.cycleDeadlineMs))]);
     if (!account.ok || !positions.ok || !openOrders.ok) {
       const failed = [account, positions, openOrders].flatMap(result => (result.ok ? [] : [result]));
       const authStatus = failed.map(result => result.httpStatus).find(status => classifyBrokerFailure(status) === "AUTH_FAILURE") ?? null;
@@ -309,6 +364,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 0: reconcile our own lifecycles against broker truth before any new order (S-CYC-04) ----
+  await heartbeatBoundary("phase 0");
   const opened = await gateway.openJournal();
   let entries: readonly JournalEntry[] = opened.entries;
   const firstFold = assembleFold(entries);
@@ -318,7 +374,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // Every lifecycle without a terminal status is re-read from the broker: an unsubmitted INTENT, a lost
     // acknowledgement (S-CYC-04), and a resting order whose asynchronous fate arrived meanwhile (S-X-04).
     if (record.state !== "intent" && record.state !== "confirmation_unclear" && record.state !== "fillable") continue;
-    const lookup = await fetched(() => deps.broker.orderByClientId(record.clientOrderId));
+    const lookup = await fetched(() => deps.broker.orderByClientId(record.clientOrderId, deps.cycleDeadlineMs));
     if (!lookup.ok) {
       if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
       entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
@@ -334,14 +390,27 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     }
     const outcomeContext: OutcomeContext = { clientOrderId: record.clientOrderId, limit: record.candidate.entryLimit, binding, epoch, atIso: context().atIso };
     const derived = order === null ? null : outcomeFromOrder(outcomeContext, order);
-    if (derived === null && order !== null && record.state === "fillable") {
+    const observedTransitionBreach = record.priceBreach || (order !== null && entryFillTransitionBreachesLimit(record, order.filledQuantity, order.avgFillPriceCents, order.avgFillPriceRaw));
+    if (observedTransitionBreach) {
+      await haltForPriceBreach(record.clientOrderId);
+      if (!entriesBlocked.includes("BROKER_PRICE_BREACH")) entriesBlocked.push("BROKER_PRICE_BREACH");
+    }
+    const workingEvidenceChanged = order !== null && (order.brokerOrderId !== record.brokerOrderId
+      || order.filledQuantity !== record.filledQuantity
+      || order.avgFillPriceCents !== record.avgFillPriceCents
+      || order.avgFillPriceRaw !== (record.avgFillPriceRaw ?? null));
+    if (derived === null && order !== null && record.state === "fillable" && !workingEvidenceChanged) {
       resolved.push({ clientOrderId: record.clientOrderId, result: "STILL_WORKING" });
       continue;
     }
-    const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order) : derived.draft;
+    const draft = derived === null ? entryResolutionDraft(context(), record.clientOrderId, order, record.candidate.entryLimit) : derived.draft;
     if (!await append(draft)) break;
     resolved.push({ clientOrderId: record.clientOrderId, result: derived === null ? (order === null ? "NOT_AT_BROKER" : "MATCHED_WORKING") : `OUTCOME:${derived.status}` });
-    if (derived?.fill === "BROKER_PRICE_BREACH") await haltForPriceBreach(record.clientOrderId);
+    if (derived === null && (order === null || record.state === "intent" || record.state === "confirmation_unclear")) entriesBlocked.push(`UNRESOLVED:${record.clientOrderId}`);
+    if (derived?.fill === "BROKER_PRICE_BREACH" || observedTransitionBreach) {
+      await haltForPriceBreach(record.clientOrderId);
+      if (!entriesBlocked.includes("BROKER_PRICE_BREACH")) entriesBlocked.push("BROKER_PRICE_BREACH");
+    }
   }
   // An emergency close the journal never saw (S-CYC-06): the next attempt ID of every filled lifecycle is probed at the broker.
   if (journalFailure() === null) {
@@ -351,7 +420,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       const journaledGenerations = firstFold.closes.filter(close => close.closeLifecycleId === lifecycleId).map(close => close.generation);
       const nextGeneration = journaledGenerations.length === 0 ? 0 : Math.max(...journaledGenerations) + 1;
       const attemptId = closeAttemptId(lifecycleId, integerUnit(nextGeneration, "Quantity"));
-      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId));
+      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId, deps.cycleDeadlineMs));
       if (!lookup.ok || lookup.value === null) continue;
       const order = lookup.value;
       const item = {
@@ -378,13 +447,39 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       auditGaps.push(attemptId);
     }
   }
+  // S-CYC-04 on the close side: a close attempt's broker fate can arrive while no ladder step is looking at it —
+  // the ladder only visits a close lifecycle while the exposure it belongs to is still on the book. Every journaled
+  // attempt without a terminal outcome is therefore re-read by its own client order ID and resolved here, before any
+  // management or entry action, so no broker fill exists without its journaled OUTCOME (A5, the S-J-09 bijection).
+  if (journalFailure() === null) {
+    for (const record of closeAttemptsAwaitingOutcome(firstFold.closes)) {
+      const lookup = await fetched(() => deps.broker.orderByClientId(record.attemptId, deps.cycleDeadlineMs));
+      if (!lookup.ok) {
+        if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
+        entriesBlocked.push(`UNRESOLVED:${record.attemptId}`);
+        resolved.push({ clientOrderId: record.attemptId, result: "UNRESOLVED" });
+        continue;
+      }
+      const reconciliation = reconcileCloseAttempt(context(), binding, record, lookup.value);
+      if (reconciliation.kind === "RESOLVED" && !await append(reconciliation.draft)) break;
+      if (reconciliation.kind === "RESOLVED") resolved.push({ clientOrderId: record.attemptId, result: `OUTCOME:${reconciliation.status}` });
+      if (reconciliation.kind === "WORKING") resolved.push({ clientOrderId: record.attemptId, result: "STILL_WORKING" });
+      // Absent at the broker, or answered with nothing terminal: never distinguishable from a delayed effect after a
+      // lost acknowledgement, so the attempt stays reserved and blocks new entries until broker truth settles it.
+      if (reconciliation.kind === "ABSENT" || reconciliation.kind === "UNCHANGED" || (reconciliation.kind === "RESOLVED" && !reconciliation.terminal)) {
+        entriesBlocked.push(`UNRESOLVED:${record.attemptId}`);
+        if (reconciliation.kind !== "RESOLVED") resolved.push({ clientOrderId: record.attemptId, result: reconciliation.kind === "ABSENT" ? "NOT_AT_BROKER" : "CONFIRMATION_UNCLEAR" });
+      }
+    }
+  }
   // A journal that already failed in phase 0 blocks every entry; the cycle still takes its snapshot, because the
   // kill predicate must be evaluated and the S-CYC-06 emergency close of existing exposure must stay reachable.
   const journalDownSincePhaseZero = journalFailure() !== null;
   if (journalDownSincePhaseZero) entriesBlocked.push("JOURNAL_UNAVAILABLE");
 
   // ---- phase 1: one snapshot; a half-answer is an abstention (S-CYC-02) ----
-  const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market())]);
+  await heartbeatBoundary("phase 1");
+  const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market(deps.cycleDeadlineMs))]);
   if (!bookFetch.ok || !marketFetch.ok) {
     // S-G12-06: a broker 401/403 is a credential fence — a distinguishable AUTH_FAILURE that halts, never generic
     // world unavailability. Market-data failures stay in the S-CYC-02 world classes; only the broker port fences.
@@ -497,6 +592,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 2: the analyst, at most once, bounded, never retried in-process (S-CYC-01) ----
+  await heartbeatBoundary("phase 2");
   let analystSkip: string | null = null;
   let batch = parseAnalystOutput("{\"candidates\":[]}");
   const managementOnly = halt.halted || entriesBlocked.length > 0 || gapCycle;
@@ -507,7 +603,15 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   if (qualification.state === "COMPETITIVENESS_AT_RISK" || qualification.state === "WINNING_ACCEPTANCE_FAILED") alarmConditions.push(qualification.state);
   if (!managementOnly) {
     try {
-      const raw = await withTimeout(deps.analyst({ tradingDay: deps.tradingDay, cycleIndex: deps.cycleIndex, underlyings: deps.decisionConfig.underlyingUniverse, qualification: qualificationBrief(qualification, qualificationConfig) }), deps.analystTimeoutMs);
+      const raw = await withTimeout(deps.analyst({
+        tradingDay: deps.tradingDay,
+        cycleIndex: deps.cycleIndex,
+        // Copies, never aliases: the analyst boundary reaches no policy array and no gate input (gate findings G1-F6, G2-F7, P7).
+        underlyings: [...deps.decisionConfig.underlyingUniverse],
+        qualification: structuredClone(qualificationBrief(qualification, qualificationConfig)),
+        // A deep copy: the analyst boundary must not be able to reach the snapshot the gates judge (gate finding G1-F6, P7).
+        market: structuredClone({ contracts: Object.values(snapshot.contractsById), quotesByContract: snapshot.quotesByContract, spotCentsByUnderlying: snapshot.spotCentsByUnderlying }),
+      }), deps.cycleDeadlineMs === undefined ? deps.analystTimeoutMs : Math.max(1, Math.min(deps.analystTimeoutMs, deps.cycleDeadlineMs - deps.clock())));
       batch = parseAnalystOutput(raw);
     } catch (error) {
       analystSkip = messageOf(error);
@@ -515,6 +619,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 3: price from the decision's own quotes, then decide ----
+  await heartbeatBoundary("phase 3");
   const decision: PricedDecision = priceAndDecide(snapshot, batch, deps.decisionConfig, deps.executionConfig, deps.clock());
 
   // ---- P5 lifecycle entry vetoes: EXPIRY (S-G9-01) and DEADLINE (S-G11-01/02), after the gate vector ----
@@ -562,6 +667,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   // ---- phase 4: execute every approved action through INTENT → revalidation → gateway → OUTCOME ----
+  await heartbeatBoundary("phase 4");
   for (const plan of approvedActions) {
     if (entriesBlocked.length > 0 || journalFailure() !== null) {
       actions.push({ clientOrderId: plan.clientOrderId, result: "NOT_SENT", status: null, detail: entriesBlocked.length > 0 ? entriesBlocked.join(",") : journalFailure() });
@@ -618,14 +724,32 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       continue;
     }
     let derived = outcomeFromSubmit(outcomeContext, observation);
+    let workingOrder = observation.kind === "acknowledged" || (observation.kind === "duplicate" && observation.order !== null) ? observation.order : null;
     if (derived === null) {
       // Post-submit status check (S-X-04): an asynchronous rejection or fill that arrived meanwhile is picked up now.
-      const later = await fetched(() => deps.broker.orderByClientId(plan.clientOrderId));
-      if (later.ok && later.value !== null) derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
+      const later = await fetched(() => deps.broker.orderByClientId(plan.clientOrderId, deps.cycleDeadlineMs));
+      if (later.ok && later.value !== null) {
+        derived = outcomeFromOrder({ ...outcomeContext, atIso: context().atIso }, later.value);
+        if (derived === null) workingOrder = later.value;
+      }
     }
     if (derived !== null) await append(derived.draft);
+    else if (workingOrder !== null) {
+      const workingDraft = observation.kind === "acknowledged"
+        ? entryAcknowledgementDraft(context(), plan.clientOrderId, workingOrder, plan.submittedLimit)
+        : entryResolutionDraft(context(), plan.clientOrderId, workingOrder, plan.submittedLimit);
+      await append(workingDraft);
+    }
     actions.push({ clientOrderId: plan.clientOrderId, result: "SUBMITTED", status: derived?.status ?? null, detail: derived === null ? "working" : null });
-    if (derived?.fill === "BROKER_PRICE_BREACH") {
+    // S-CYC-04 applies inside the batch too. If the port answer cannot prove
+    // whether this submit exists at the broker, no sibling plan may cross the
+    // gateway until a later cycle's phase 0 reconciles this exact client ID.
+    if (derived?.status === "confirmation_unclear" && !entriesBlocked.includes("CONFIRMATION_UNCLEAR")) entriesBlocked.push("CONFIRMATION_UNCLEAR");
+    if (derived === null && observation.kind === "duplicate" && !entriesBlocked.includes("CONFIRMATION_UNCLEAR")) entriesBlocked.push("CONFIRMATION_UNCLEAR");
+    const workingFill = derived === null && workingOrder !== null && workingOrder.filledQuantity > 0 && workingOrder.avgFillPriceCents !== null
+      ? classifyBrokerFillPrice(plan.submittedLimit, workingOrder)
+      : null;
+    if (derived?.fill === "BROKER_PRICE_BREACH" || workingFill === "BROKER_PRICE_BREACH") {
       await haltForPriceBreach(plan.clientOrderId);
       entriesBlocked.push("BROKER_PRICE_BREACH");
     }
@@ -670,7 +794,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
 
   async function submitObservation(dispatched: DispatchResult, clientOrderId: string): Promise<SubmitObservation | null> {
     const lookup = async (): Promise<BrokerOrderRecord | null> => {
-      const found = await fetched(() => deps.broker.orderByClientId(clientOrderId));
+      const found = await fetched(() => deps.broker.orderByClientId(clientOrderId, deps.cycleDeadlineMs));
       return found.ok ? found.value : null;
     };
     if (dispatched.ok) {
@@ -698,7 +822,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     for (let generation = 0; generation <= highest + 1; generation += 1) {
       const attemptId = closeAttemptId(lifecycleId, integerUnit(generation, "Quantity"));
       const known = journaledCloses.find(close => close.attemptId === attemptId);
-      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId));
+      const lookup = await fetched(() => deps.broker.orderByClientId(attemptId, deps.cycleDeadlineMs));
       const order = lookup.ok ? lookup.value : null;
       if (known === undefined && order === null) continue;
       attempts.push({
@@ -748,18 +872,28 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
    * submission at the generation's escalated price. Every re-price lands as
    * its own close INTENT; reaching the cap halts and alarms while the order
    * rests AT the cap. The ladder never opens exposure: every submission
-   * passes `emergencyCloseEligibility` against broker positions.
+   * passes `emergencyCloseEligibility` against the positions of the book
+   * `book` — which is the caller's freshly read one, never the phase-1
+   * snapshot the analyst step is older than (S-CYC-05 on the close side).
+   * Every step that plans an attempt and then refuses it is recorded in
+   * `managementRefusals`, so the refusal is measurable evidence rather than a
+   * silent return: a ladder fed from the fresh book never produces one.
    */
-  async function ladderClose(exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
+  async function ladderClose(book: BrokerBook, exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
     let closesNow = journaledCloses;
     let exposureNow = quantity;
     const lifecycleSnap = await closeLifecycleSnapshot(exposureLifecycleId, route, exposureNow, closesNow);
     let plan = planCloseLifecycle(lifecycleSnap);
-    if (plan.kind === "COMPLETE" || plan.kind === "VETO") return { attemptId: null, atCap: false };
+    // COMPLETE is the ladder's normal end (nothing left to close) and stays silent; a VETO is a refused plan.
+    if (plan.kind === "VETO") {
+      managementRefusals.push({ exposureLifecycleId, route, generation: null, reason: `PLAN_VETO: ${plan.reason}` });
+      return { attemptId: null, atCap: false };
+    }
+    if (plan.kind === "COMPLETE") return { attemptId: null, atCap: false };
     if (plan.kind === "ADOPT") {
       const restingId = plan.attemptId;
       await mutate({ kind: "cancel_order", clientOrderId: restingId, binding });
-      const after = await fetched(() => deps.broker.orderByClientId(restingId));
+      const after = await fetched(() => deps.broker.orderByClientId(restingId, deps.cycleDeadlineMs));
       const record = after.ok ? after.value : null;
       const reconciliation = reconcileCancel(record);
       if (record !== null) {
@@ -769,10 +903,12 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         if (derived !== null) await append(derived.draft);
       }
       // A fill during the cancel reduced the exposure through its own OUTCOME; an unclear cancel keeps the
-      // attempt counted as fillable — no parallel child is ever created (S-G7, S-X-05).
-      if (reconciliation === "CANCEL_UNCLEAR" || reconciliation === "FILLED_DURING_CANCEL") return { attemptId: restingId, atCap: false };
-      const filledMeanwhile = record?.filledQuantity ?? 0;
-      const remaining = Math.max(exposureNow - filledMeanwhile, 0);
+      // attempt counted as fillable — no parallel child is ever created (S-G7, S-X-05). `record === null` is
+      // exactly the CANCEL_UNCLEAR case; naming it here also hands the arithmetic below a present record.
+      if (record === null || reconciliation === "CANCEL_UNCLEAR" || reconciliation === "FILLED_DURING_CANCEL") return { attemptId: restingId, atCap: false };
+      // `exposureNow` is the management step's own fresh reading and is already net of what this attempt filled;
+      // the attempt only bounds the remainder from above, it is never subtracted from it (pure `remainingCloseExposure`).
+      const remaining = remainingCloseExposure(exposureNow, record);
       if (remaining === 0) return { attemptId: restingId, atCap: false };
       exposureNow = integerUnit(remaining, "Quantity");
       closesNow = await refreshCloses(closesNow);
@@ -783,9 +919,17 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     const priced = cap.kind === "uncapped_marketable"
       ? marketableCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents)
       : escalateCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents, cap);
-    if (!priced.ok) return { attemptId: null, atCap: false };
+    if (!priced.ok) {
+      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `PRICE_UNAVAILABLE: ${priced.reason}` });
+      return { attemptId: null, atCap: false };
+    }
     const eligibility = emergencyCloseEligibility(book.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
-    if (!eligibility.eligible) return { attemptId: null, atCap: false };
+    if (!eligibility.eligible) {
+      // The attempt was planned against something the fresh book no longer carries: it is refused, and the
+      // refusal is recorded so that planning from a stale book cannot hide behind this gate (S-CYC-05, A11).
+      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `NOT_ELIGIBLE: ${eligibility.reason}` });
+      return { attemptId: null, atCap: false };
+    }
     if (priced.atCap) {
       alarmConditions.push(`CLOSE_LADDER_AT_CAP:${plan.attemptId}`);
       await haltFor("CLOSE_LADDER_CAPPED", `${exposureLifecycleId}: the escalated close rests AT its defined-risk cap; attempts continue at the cap (S-X-05)`);
@@ -805,6 +949,20 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   /** Eviction (S-G9-02), deadline flatten (S-G11-01/02), and residue recovery (S-G10-02/03, S-X-06) — every cycle, also under halt. */
   async function runManagementActions(lifecycle: LifecycleDeps): Promise<void> {
     const step = lifecycle.closeEscalationStepCents;
+    // S-CYC-05 on the close side (A11/A13/A23): the phase-1 snapshot is older
+    // than the analyst step, and a close planned against it can be an OPENING
+    // order once the position it meant to close has filled away meanwhile.
+    // Everything below — eviction targets, the flatten closure, the cancel
+    // pass, and every eligibility check inside the ladder — therefore reads
+    // from `bookNow`, taken here, inside the same deadline budget as every
+    // other read. Without it no close is submitted this cycle at all.
+    const refreshed = await fetchBook();
+    if (!refreshed.ok) {
+      if (isAuthFailure(refreshed)) await haltForAuthFailure(refreshed.error);
+      alarmConditions.push(`MANAGEMENT_BOOK_UNREADABLE:${refreshed.error}`);
+      return;
+    }
+    const bookNow = refreshed.value;
     const journalNow = assembleFold((await gateway.openJournal()).entries);
     const lifecyclesNow = journalNow?.lifecycles ?? lifecycles;
     let closesNow = journalNow?.closes ?? closes;
@@ -812,9 +970,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
 
     if (regime === "normal") {
       // S-G9-02: whole-structure eviction closes, regardless of P&L, tracked to a terminal state via the ladder.
-      const targets = evictionTargets(book, lifecyclesNow, lifecycle.nextTradingDay);
+      const targets = evictionTargets(bookNow, lifecyclesNow, lifecycle.nextTradingDay);
       for (const target of targets) {
-        await ladderClose(target.record.exposureLifecycleId, target.closingLegs, target.quantity, "expiry", closeCapFor(target.record.candidate), closesNow, `expiry eviction of ${target.record.exposureLifecycleId}: expiry at or before the next trading session ${lifecycle.nextTradingDay}`, step);
+        await ladderClose(bookNow, target.record.exposureLifecycleId, target.closingLegs, target.quantity, "expiry", closeCapFor(target.record.candidate), closesNow, `expiry eviction of ${target.record.exposureLifecycleId}: expiry at or before the next trading session ${lifecycle.nextTradingDay}`, step);
         closesNow = await refreshCloses(closesNow);
       }
       if (targets.length > 0 && lifecycle.finalCycleOfSession) {
@@ -827,10 +985,10 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       }
     } else {
       // S-G11-01: cancel every working order that could increase risk; resting closes are re-priced by the ladder itself.
-      for (const order of book.openOrders) {
-        if (!isWorkingBrokerStatus(order.status) || classifyWorkingOrder(order, book.positions) !== "risk_increasing") continue;
+      for (const order of bookNow.openOrders) {
+        if (!isWorkingBrokerStatus(order.status) || classifyWorkingOrder(order, bookNow.positions) !== "risk_increasing") continue;
         await mutate({ kind: "cancel_order", clientOrderId: order.clientOrderId, binding });
-        const after = await fetched(() => deps.broker.orderByClientId(order.clientOrderId));
+        const after = await fetched(() => deps.broker.orderByClientId(order.clientOrderId, deps.cycleDeadlineMs));
         const record = after.ok ? after.value : null;
         const entryRecord = lifecyclesNow.find(item => item.clientOrderId === order.clientOrderId);
         if (record !== null && entryRecord !== undefined) {
@@ -840,15 +998,21 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       }
       // S-G11-01/02: whole-structure closes for every open position — from the first FLATTEN_DATE cycle onward,
       // and on Friday as the journaled failure path when Thursday did not end flat. Never leg-wise on intact structures.
-      const closure = planBookClosure(book, lifecyclesNow);
+      const closure = planBookClosure(bookNow, lifecyclesNow);
       for (const structure of closure.intact) {
-        await ladderClose(structure.record.exposureLifecycleId, structure.closingLegs, structure.quantity, "deadline", closeCapFor(structure.record.candidate), closesNow, `${regime === "flatten" ? "FLATTEN_DATE" : "post-deadline failure-path"} whole-structure close of ${structure.record.exposureLifecycleId}`, step);
+        await ladderClose(bookNow, structure.record.exposureLifecycleId, structure.closingLegs, structure.quantity, "deadline", closeCapFor(structure.record.candidate), closesNow, `${regime === "flatten" ? "FLATTEN_DATE" : "post-deadline failure-path"} whole-structure close of ${structure.record.exposureLifecycleId}`, step);
         closesNow = await refreshCloses(closesNow);
       }
     }
 
     // G10 residue recovery with the S-X-06 discrimination — leg-wise, because the structure is already broken.
-    for (const item of classification?.positions ?? []) {
+    // The targets are re-derived here by running the same pure classification over `bookNow`: the phase-1
+    // classification is minutes older than this step, so a residue may have vanished, grown, or shrunk since.
+    // The journaled phase-1 RECONCILIATION stays exactly what it was — it reports what phase 1 saw — while what
+    // the ladder acts on is truth at this instant (S-CYC-05 on the close side, A11).
+    const unresolvedNow = entriesBlocked.filter(item => item.startsWith("UNRESOLVED:")).map(item => item.slice("UNRESOLVED:".length));
+    const classificationNow = classifyBook(bookNow, lifecyclesNow, closesNow, unresolvedNow);
+    for (const item of classificationNow.positions) {
       if (item.class === "MATCHED" || holds.has(item.contractId)) continue;
       const position: BrokerPosition = { contractId: item.contractId, quantity: item.quantity, avgEntryPriceCents: 0 };
       const journaledUnderlyings = new Set(lifecyclesNow.map(record => record.underlying));
@@ -861,7 +1025,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         if (contract !== undefined) {
           const quote = Object.hasOwn(snapshot.quotesByContract, item.contractId) ? snapshot.quotesByContract[item.contractId] : undefined;
           const spot = Object.hasOwn(snapshot.spotCentsByUnderlying, contract.underlying) ? snapshot.spotCentsByUnderlying[contract.underlying] : undefined;
-          const paired = (classification?.positions ?? []).some(other => {
+          const paired = classificationNow.positions.some(other => {
             if (other.contractId === item.contractId || other.quantity >= 0) return false;
             const otherContract = Object.hasOwn(snapshot.contractsById, other.contractId) ? snapshot.contractsById[other.contractId] : undefined;
             const otherUnderlying = otherContract?.underlying ?? other.contractId;
@@ -876,11 +1040,11 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
             }
           }
         }
-        await ladderClose(`residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "zero_floor" }, closesNow, `bounded long residue close of ${item.contractId} (zero-floor ladder, S-G10-03)`, step);
+        await ladderClose(bookNow, `residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "zero_floor" }, closesNow, `bounded long residue close of ${item.contractId} (zero-floor ladder, S-G10-03)`, step);
       } else {
         // S-X-06: the realized cost MAY exceed the original maxLoss — the journaled assignment exception to A23's constructive worst case.
         alarmConditions.push(`UNBOUNDED_RESIDUE_RECOVERY:${item.contractId}`);
-        await ladderClose(`residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "uncapped_marketable" }, closesNow, `unbounded short residue of ${item.contractId}: requoted marketable-limit close with no price cap (S-X-06 assignment exception to A23's constructive worst case)`, step);
+        await ladderClose(bookNow, `residue:${item.contractId}`, [closingLeg], absQuantity, "residue", { kind: "uncapped_marketable" }, closesNow, `unbounded short residue of ${item.contractId}: requoted marketable-limit close with no price cap (S-X-06 assignment exception to A23's constructive worst case)`, step);
       }
       closesNow = await refreshCloses(closesNow);
     }
@@ -920,7 +1084,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     // that can journal the kill. Only the emergency close may follow below.
     for (const clientOrderId of journalAvailable ? plan.cancel : []) {
       const dispatched = await mutate({ kind: "cancel_order", clientOrderId, binding });
-      const after = await fetched(() => deps.broker.orderByClientId(clientOrderId));
+      const after = await fetched(() => deps.broker.orderByClientId(clientOrderId, deps.cycleDeadlineMs));
       const reconciliation = reconcileCancel(after.ok ? after.value : null);
       cancelRaces[clientOrderId] = reconciliation;
       if (reconciliation === "CANCELED") canceled.push(clientOrderId);

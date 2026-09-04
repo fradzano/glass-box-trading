@@ -61,7 +61,7 @@ parameter — no constant below may be hardcoded in core logic.
 | `CLOSE_ESCALATION_STEP` | *O5* | per-cycle limit re-price step for closes, $/share of option price (§7) |
 | `RESIDUE_MAX_SESSIONS` | *O5* (default 1) | sessions until unresolved residue alarms |
 | `ANALYST_TIMEOUT` | *O5* | hard wall-time ceiling for the analyst call |
-| `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it) |
+| `CYCLE_WALLTIME_BUDGET` | *O5* | hard ceiling on caller-visible total cycle wall-time, shell-enforced across all phases (`ANALYST_TIMEOUT` and every broker/journal/push timeout live under it). The shell rechecks elapsed wall time before returning, so synchronous event-loop blocking cannot turn a late result into success. No local effect begins after the ceiling; a broker request begun before it but settling after it is confirmation-unclear and must be reconciled, never reported as success. |
 | `LOCK_TAKEOVER_BOUND` | *O5* | scheduling constraint ONLY (writer authority comes from fencing, S-G12-07): `> CYCLE_WALLTIME_BUDGET`, and `LOCK_TAKEOVER_BOUND + 2 × (CYCLE_INTERVAL + CYCLE_WALLTIME_BUDGET) ≤ DEAD_MAN_BOUND` (corrected per spec-pass GV-2; see S-G12-02) |
 | `EXPECTED_ACCOUNT_ID` | set at kickoff | literal broker account ID per role (see S-J-06) |
 | `ALPACA_PROFILE` | explicit `dev` or `competition` | selects one closed credential/account role; no default or fallback |
@@ -114,37 +114,101 @@ safety is green.
 ### S-ARM-01 — dev live-test certificate
 
 `successful_dev_live_test_at` exists only as the timestamp inside a PASS
-certificate at `PRE_ARM_CERTIFICATE`; an operator cannot type or override it.
+certificate at `PRE_ARM_CERTIFICATE`; normal startup has no independent
+timestamp override. The trusted local operator supplies that certificate, and
+its complete-body digest detects accidental or unreviewed edits. This is an
+integrity and semantic-evidence boundary, not an external attestation against a
+malicious local operator or modified verifier that deliberately regenerates a
+synthetic certificate.
 The certificate contains the literal dev role/account ID, canonical paper
-origin, UTC test window, `runtimeDigest`, role-neutral `policyDigest`, and broker
-IDs/timestamps proving:
+origin, UTC test window, `runtimeDigest` (over `src/**/*.ts`, `dist/**/*.js`,
+`config/**/*.json`, `tools/*.mjs|*.py`, the package and tsconfig files, and
+every file under `assets/` — the judge-visible stylesheets, bound since
+2026-09-02), role-neutral `policyDigest`, and broker IDs/timestamps proving:
 
 1. fresh market-hours option quotes including bid/ask sizes and quote timestamps
    were consumed by the real liquidity gate;
 2. a defined-risk credit mleg received a positive broker acceptance state
-   (`new`/`accepted`/`open`) and then reached `filled` or harness-requested
-   `canceled`, recorded as an `OUTCOME`; any synchronous or asynchronous
-   `rejected` state makes the certificate FAIL;
-3. a minimal defined-risk mleg followed a real fill through broker
-   reconciliation and journal `OUTCOME` rather than accept/cancel alone;
+   (`new`/`accepted`/`open`/`pending_new`, or `partially_filled`/`filled` when
+   a fast fill precedes the driver's first observation) and then reached
+   `filled` or harness-requested `canceled`, recorded as an `OUTCOME`; the observed broker order must equal
+   the INTENT's client/broker identity, complete leg ratios and sides, one-lot
+   quantity, credit limit kind, and price; any synchronous or asynchronous
+   `rejected` state or shape disagreement makes the certificate FAIL;
+3. exactly one lot of that same accepted credit lifecycle and broker order
+   followed a real fill through broker reconciliation and journal `OUTCOME`
+   rather than accept/cancel alone; acceptance and fill may never be assembled
+   from different client or broker order IDs, and the later bound-account
+   broker snapshot must contain exactly the signed filled leg quantities, not
+   merely positions with compatible signs;
 4. the credential-fence drill required by S-G12-06 passed; and
 5. the final fully paginated dev snapshot contains zero positions and zero
    non-terminal orders.
 
+After the first live cycle, an exceptional certificate exit is itself a
+failure signal and enters the same gateway-bound S-G11 flatten regime before
+the error returns. Broker reads and flatten cycles are retried to the configured
+certificate bound; failure to prove a flat bound account is reported as
+unresolved exposure, never a quiet process exit. Recovery first ensures a
+journal-authoritative halt, adding a non-sticky abort `HALT` only when no halt
+already exists (an existing stronger halt is never replaced), and exact client-order-ID
+reconciliation must bring every pre-abort risk-increasing lifecycle to
+broker-authoritative terminal evidence: reject, cancel, expiry, fill, or the
+terminal partially-filled representation of a canceled/expired remainder; every
+filled portion must then be flattened. `NOT_AT_BROKER` and `confirmation_unclear` are not finality after
+a lost acknowledgement, regardless of flat observations. A candidate stable
+snapshot is bracketed before and after by one atomic gateway operation that
+proves writer epoch, refreshes its heartbeat, and reads journal truth under the
+same mutex; the exact terminal `HALT` sequence must be unchanged across that
+bracket. Changed authority, any intervening human halt transition, or a still-uncertain
+lifecycle makes recovery unresolved.
+
+The normal PASS path applies the corresponding open-state proof after the
+credential fence: the certificate binds the exact `AUTH_FAILURE` `HALT` and
+human `UNHALT` sequences produced by that run, and two atomic writer reads
+bracket both the pre-fence and final stable broker snapshots. Before either
+snapshot, every risk-increasing entry lifecycle must already have
+broker-authoritative terminal truth; `NOT_AT_BROKER` and
+`confirmation_unclear` remain unresolved. Both reads must retain authority,
+show no active halt where the phase requires an open state, and observe the
+same terminal journal sequence, so no lifecycle transition can race a flat
+snapshot. The final bracket must also name the fence run's same `UNHALT` as
+the terminal halt transition. A journal change, replacement halt, or un-halt
+invalidates the certificate run.
+
+Every certificate/recovery full snapshot carries one absolute deadline through
+all account, position, stability, and paginated order reads; that deadline is
+strictly below the writer takeover bound. While the operator checkpoint is
+open, the driver refreshes its writer heartbeat and aborts the prompt on lost
+authority. After approval it repeats the stable-flat snapshot bracket. The
+manual `UNHALT` is then one kernel-mutex CAS over the exact expected epoch,
+holder, `AUTH_FAILURE` HALT sequence, and terminal journal sequence; any drift
+leaves the halt active.
+
+The supervised certificate driver's entry/flatten attempt counts and intervals
+are positive constants in the executable runtime identity. Ambient environment
+variables cannot reduce or disable the abort fence/recovery path; changing a
+bound is a reviewed code change and invalidates `runtimeDigest`.
+
 `runtimeDigest` canonically covers executable core/shell code, schemas,
 dependency locks, the MCP capability manifest, the pinned MCP runtime lock, and
-the verified immutable launch artifacts. `policyDigest` canonically covers
+the verified immutable launch artifacts, including the complete importable MCP
+site tree. `policyDigest` canonically covers
 every role-independent behavior value and risk limit, including the normalized
-paper trading origin. Its sole closed exclusions are `ALPACA_PROFILE`,
-`EXPECTED_ACCOUNT_ID`, and dev/competition credentials; secrets are neither
-serialized nor hashed into public evidence. A versioned field-classification
+paper trading origin. Its closed exclusions are the identity fields
+`ALPACA_PROFILE` and `EXPECTED_ACCOUNT_ID`, dev/competition credentials, and
+the three host-local deployment locations `STATE_DIR`,
+`BOOTSTRAP_DIAGNOSTIC_SINK`, and `PRE_ARM_CERTIFICATE` (P7 decision,
+2026-09-01: the competition journal must not inherit the dev journal, so
+`STATE_DIR` differs per role by construction and cannot be role-neutral
+policy); secrets are neither serialized nor hashed into public evidence. A versioned field-classification
 schema rejects every unknown config field until it is assigned to policy or the
 closed identity/secret set. The competition role, account ID, credentials, and
 provenance are then checked separately by S-J-06/S-CYC-09; switching only those
 closed identity fields cannot invalidate an otherwise identical dev proof.
 
-Any absent observation, incomplete page, unresolved order, account mismatch,
-or runtime/policy digest mismatch makes the certificate FAIL and blocks
+Any absent observation, unstable or incomplete snapshot, unresolved order,
+account mismatch, or runtime/policy digest mismatch makes the certificate FAIL and blocks
 competition arming in S-CYC-11. A runtime or role-independent policy change
 invalidates the certificate and requires a new market-hours run. The test uses the dev
 account only and keeps every submitted structure inside the same defined-risk
@@ -205,8 +269,30 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   written even though no broker data exists. (A4)
 - **S-CYC-04** Order submitted, acknowledgment lost (timeout after send),
   then the order is journaled `CONFIRMATION_UNCLEAR`, its budget reservation
-  is retained, and the next cycle's phase 0 resolves it by client order ID
-  against the broker BEFORE any new order is placed. (A2, A5, A23)
+  is retained, every later risk-increasing plan in the same analyst batch is
+  blocked immediately, and the next cycle's phase 0 resolves it by client
+  order ID against the broker BEFORE any new order is placed. (A2, A5, A23)
+  **Close side (2026-09-02):** a close attempt is journaled as INTENT before
+  submission and resolved by its own client order ID, exactly as an entry is.
+  Because the escalation ladder visits a close lifecycle only while the
+  exposure it belongs to is still on the book, a resting attempt can reach
+  its terminal broker state (filled, canceled, rejected, expired) while no
+  ladder step ever looks at it again; the position is then gone from the
+  account while the journal still shows the close working, and the S-J-09
+  projection loses its bijection with broker truth (A5). Phase 0 therefore
+  reconciles close attempts as well as entries: every journaled attempt that
+  is not yet terminal in the fold (`submitted`, or `confirmation_unclear`)
+  is re-read at the broker by its attempt ID BEFORE any management or entry
+  action of the cycle, and a terminal broker record is journaled as that
+  attempt's OUTCOME with the broker's exact filled quantity and average
+  price. An attempt whose broker record is still working is left to the
+  ladder and journals nothing. An attempt the broker does not know, a lookup
+  that fails, and an answer that settles nothing invent no outcome: the
+  attempt stays reserved and non-terminal, blocks every new entry of the
+  cycle, and appears in the G10 classification as `CONFIRMATION_UNCLEAR`
+  (S-G10-04), a transient block rather than a `RESIDUE_UNRESOLVED` halt. The
+  resolution is idempotent: an attempt already carrying the status the
+  broker reports is re-read but never re-journaled.
 - **S-CYC-05** Pre-submit revalidation via typed claimset (owner ruling
   GV-3, 2026-08-25): every core-approved action carries a **typed
   revalidation claimset** — the machine-readable list of facts its gate
@@ -228,7 +314,24 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   Quote-, calendar-, and chain-facts are not re-fetched here; their
   currency is bounded by S-CORE-02's staleness bound, which still applies
   at submit time. A narrower reading (only the target position) is
-  non-conforming. (A13, #8)
+  non-conforming.
+  **Linearization point (owner ruling 2026-09-02):** the completion of the
+  final fresh broker read in this revalidation is the instant at which the
+  action is deemed checked against broker truth. The broker offers no
+  conditional submit (no book revision, no if-match on orders; only client
+  order ID idempotency), so a book change that occurs after that read and
+  before broker acceptance of the submit is not observable by any claim
+  and does not void the action. Manual broker mutations (Alpaca UI or API)
+  are therefore prohibited during the supervised certificate run and
+  during competition operation, except while a durable `HALT` is in force
+  and no writer holds authority. A violation is never silent: the next
+  cycle's phase 0 classifies the foreign quantity as `RESIDUE` or
+  `HUMAN_ACTION` (S-G10-02) and halts, and on the competition account it
+  breaks the SUB-08 provenance latch irreversibly. The agent's own
+  position stays defined-risk regardless; only the aggregate caps (G3/G4)
+  can be exceeded for one cycle, by the human's quantity, never the
+  agent's. Should the broker ever offer an atomic conditional submit, this
+  declaration becomes an implementation obligation. (A13, #8)
 - **S-CYC-06** Local journal append fails (disk full, lock), then no entry
   order or ordinary close is submitted this cycle. Sole emergency exception:
   if mutation authority remains valid and the action is mechanically proven to
@@ -261,10 +364,42 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   before any order it additionally requires a fully paginated provenance bundle:
   paper role and `EXPECTED_ACCOUNT_ID`; broker creation timestamp at or after
   `COMPETITION_START`; opening cash and equity both exactly `INITIAL_CAPITAL`;
-  zero positions and non-terminal orders; and empty order, fill, and trading-
-  activity history from creation through the snapshot. Missing pages, reset/
+  zero positions and non-terminal orders; empty order and fill history from
+  creation through the snapshot; and a complete account-activity ledger that
+  holds nothing but opening capital funding — a virgin paper account carries
+  exactly one such activity (recorded from the dev account 2026-09-02), so
+  "empty" means "no activity other than the opening funding". An activity
+  counts as opening funding exactly when its type is `JNLC`, its status
+  `executed`, its currency `USD`, and its net amount a strictly positive
+  exact cent value; the exact-cent sum of all such journals must equal
+  `INITIAL_CAPITAL` (the rule is the sum, not the count). The remainder is
+  graded: any non-`JNLC` activity, or an executed `JNLC` with a negative
+  amount (cash that left the account), is reset/reuse evidence and latches
+  `PROVENANCE_BROKEN`; so does a countable funding sum that differs from
+  `INITIAL_CAPITAL` (a second funding is a reset, a different opening
+  balance is not the prescribed account), and so does a creation instant
+  before `COMPETITION_START` (not spend evidence, but an unfixable fact of
+  ineligibility, so the irreversible latch costs nothing and forces the
+  human); a cash-out latches even when the remaining journals still sum to
+  the initial capital; a `JNLC` that merely fails to count (cancelled,
+  non-USD, zero, amount absent) or an incomplete page blocks the bootstrap
+  retryably without the latch — reuse evidence must be positive evidence
+  that the account was spent. A complete but EMPTY ledger is virgin
+  evidence: the broker posts the opening funding journal later than account
+  creation (recorded 2026-09-02 on the competition account, created
+  09:54:41Z with cash and equity at exactly the initial capital and no
+  activity at all), so when no funding journal exists yet, opening cash and
+  equity equal to `INITIAL_CAPITAL` together with empty, complete order and
+  fill history are the funding evidence. No
+  ordering between the funding instant and the creation instant is checked;
+  creation is bounded by `COMPETITION_START` alone. Missing pages, reset/
   reuse evidence, or an allowed-looking $100k snapshot without creation/history
-  proof fails closed. Then the cycle journals
+  proof fails closed. Declared limit: on a fresh `STATE_DIR` nothing can be
+  journaled before the seed `BOOTSTRAP` (S-G12-02 seed rule), so a failed
+  first proof leaves no journal entry and no persisted halt flag; it stays
+  fail-closed (no order path exists without the seed), alarms through the
+  fail ping, and is re-evaluated every cycle, and the first competition cycle
+  is therefore run supervised in a terminal whose report is read. Then the cycle journals
   `BOOTSTRAP` (broker snapshot as the opening baseline; no "state then"
   exists and none is fabricated) and proceeds as a normal cycle. An empty
   journal facing a NON-empty account (lost/corrupted journal, wrong working
@@ -307,23 +442,49 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   `ANALYST_ALPACA_PROFILE=dev`, generate `ALPACA_TOOLSETS` from the single
   positive capability manifest, and validate the manifest schema/policy. The
   tracked runtime lock must independently name an immutable official upstream
-  commit, its dependency lock, and expected interpreter/content digests; hashes
-  may never be learned from the currently installed environment. The server is
+  commit, its dependency lock, expected interpreter/content digests, and the
+  canonical dependency-site digest derived from that pinned Git object's
+  production dependency graph by a clean rebuild from its SHA-256-authenticated
+  wheels, with wheel identity/hash rechecked and importable payload extracted
+  without installer execution; every selected wheel tag must match the pinned
+  interpreter/platform identity, and unsupported dependency markers fail closed.
+  Hashes may never be learned from the currently
+  installed environment. The server is
   built in a dedicated environment from that pinned source/dependency lock.
   Before spawn, the same launcher first removes every `__pycache__` directory
   and `.pyc` file from the dedicated environment and verifies their recursive
-  absence. No generated executable file is exempt from comparison or allowed
-  to survive into the launch. Still before executing any child code, the
+  absence. It likewise removes the installer-created `site/bin` tree and
+  verifies its recursive absence, because Python could otherwise resolve its
+  scripts as namespace-package modules even when the directory is absent from
+  `PATH`. Still before executing any child code, the
   launcher verifies the exact interpreter/runtime bytes, immutable source/
-  package files, package name/version, and launch environment against the
+  package files, package name/version, the complete importable dependency tree
+  against that independently tracked digest, and launch environment against the
   independently expected values; all verified identities enter `runtimeDigest`.
   Only after every check passes may it start the child with Python bytecode
-  writes disabled. It then inventories
+  writes disabled. Because the pinned stdio SDK injects a fixed OS default set,
+  the launcher overrides every such value before spawn and its `-S` Python
+  bootstrap reconstructs the complete validated environment before importing
+  any MCP package code: secret values are captured from the child environment
+  without entering argv, while every non-secret value is restored from an exact
+  literal so an interpreter rewrite cannot drift it. It then inventories
   the tools actually offered and rejects a source/content/interpreter/dependency
   mismatch, surviving/generated bytecode, missing or ambiguous identity,
   launch-environment mismatch,
   extra/missing capability, or any analyst shell/CLI/executor secret. No arming
-  or analyst request is released until that post-start inventory passes. Required
+  or analyst request is released until that post-start inventory passes. Every
+  external launch lifecycle operation — evidence collection, connect, inventory,
+  tool call, and stop — has a hard runtime-digested deadline. Holder release is
+  attempted independently of child shutdown, so a stalled transport cannot
+  retain writer authority indefinitely. The launcher owns a cancellable child
+  attempt before it waits for connect; timeout or connect failure must stop
+  that attempt before returning,
+  including when the connected child handle would arrive only after timeout.
+  No started child may become unreachable through late promise settlement.
+  Evidence cleanup/scans/hashes use
+  asynchronous deadline-aware filesystem operations, and every Git subprocess
+  receives the remaining aggregate timeout; a timed-out pre-spawn operation
+  releases no child or analyst request. Required
   market-data origins are validated separately and are not confused with the
   order-capable paper-only origin.
   If `STATE_DIR` itself cannot open, the impossible local-journal requirement is
@@ -470,7 +631,13 @@ MAX_REL_SPREAD`, quote size ≥ `MIN_QUOTE_SIZE`, quote age ≤ `QUOTE_MAX_AGE`.
 
 - **S-G7-01** Entry client order ID is a deterministic function of (trading
   day, cycle index, structure identity, action kind); same inputs → same ID and
-  different cycle → different ID. Every close instead owns one stable,
+  different cycle → different ID. The structure identity (every leg's contract
+  id, side and ratio, order-independent) enters as a truncated SHA-256, so
+  every id the core derives — entry, exposure lifecycle, close lifecycle,
+  close attempt — stays within the broker's synchronous 128-character
+  `client_order_id` limit (observed live 2026-09-02: a hex-encoded identity
+  of 177 characters was rejected on every entry; the fake broker enforces
+  the same limit with the same message; `tests/g7-order-id-length.spec.ts`). Every close instead owns one stable,
   route-independent `closeLifecycleId` derived from the exposure lifecycle.
   Ordinary, emergency, expiry, kill, and watchdog routes reconcile/adopt that
   lifecycle rather than invent a second close. A broker attempt ID is
@@ -566,10 +733,35 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   structure is already broken and each step strictly reduces risk. Bounded
   residue closes via the capped ladder (S-X-05); unbounded residue (short
   stock, orphan short leg) via the discriminated recovery policy S-X-06.
+  The residue set the resolution acts on is re-derived from the book read
+  in the management step, not from the phase-1 classification that the
+  journaled RECONCILIATION reports: a residue that vanished meanwhile is not
+  attempted at all, and one whose quantity changed is closed at its current
+  quantity.
   (A11)
 - **S-G10-04** Intent without outcome: broker queried by client order ID;
-  found → outcome journaled now; not found → journaled `NOT_SUBMITTED` and
-  the reservation released.
+  found terminal → outcome journaled now; found still working → identity
+  journaled but the lifecycle remains `CONFIRMATION_UNCLEAR`, reserved,
+  entry-blocking, and queried again; not found → journaled `NOT_SUBMITTED` with
+  the same retained uncertainty. Neither a negative lookup nor a working match
+  proves that a lost-acknowledgement request has reached terminal truth; only a
+  broker-terminal outcome or a pre-submit `REVALIDATION_VOID` releases it. A
+  normally acknowledged working submit is durably distinguished as
+  `ACKNOWLEDGED_WORKING` and follows ordinary fillable-risk accounting. That
+  transition is valid only directly from `INTENT` (or idempotently for the same
+  broker order already `fillable`); it can never repair `CONFIRMATION_UNCLEAR`
+  or a terminal lifecycle. Entry client-order IDs are unique across INTENTs;
+  broker-order identity, filled quantity, and cumulative fill value are
+  monotonic. The exact broker decimal average is retained beside the
+  half-away-rounded cent value and the two must agree; every newly observed
+  exact fill increment is classified against the submitted limit, including
+  increments hidden by an aggregate average. The rounded display value uses
+  its conservative interval edge for risk accounting (upper for debit, lower
+  for credit).
+  `REVALIDATION_VOID` is valid only before submit; and no OUTCOME may weaken or
+  overwrite terminal truth. A cancel, expiry, or rejection after a partial fill
+  must preserve the observed filled quantity as terminal partial-fill evidence.
+  Any invalid transition makes lifecycle reconstruction fail closed.
 - **S-G10-05** A manual human trade is journaled `HUMAN_ACTION` — visible to
   the judge as exactly that, never absorbed into agent reasoning. On the dev
   account it follows ordinary reconciliation. On the competition account it
@@ -607,6 +799,23 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   hands over to the owner in writing, never in silence. A valid
   `DECLARED_EXPIRY_HOLD` is recorded as a non-flat, zero-additional-liability
   terminal residue and does not masquerade as this failure path.
+  A Friday entry that cannot be written may not end in silence. Exactly two
+  conditions prevent the entry: the decision snapshot cannot be assembled
+  from the observed book and market, or the gateway refuses the
+  authoritative append. In both, no journal entry exists and the journal is
+  therefore unavailable as the handover channel, so the run raises the
+  active fail-signal with the alarm condition
+  `DEADLINE_ENTRY_NOT_JOURNALED`, qualified by the failure class
+  (`SNAPSHOT_NOT_ASSEMBLED` or `ENTRY_NOT_JOURNALED`) and the underlying
+  reason, and reports it in a closed `failure` field that is null exactly
+  when the entry landed; the process exit is non-zero on every such path
+  (an abort before either check reaches the same signal from the CLI as
+  `ENTRY_ABORTED`). A `TERMINAL` reporting a risk-bearing remainder remains
+  a success of the entry, not a failure of it. Both entries are owner-driven
+  one-shot processes (`deadline-cli`): `STATE_DIR` comes from the validated
+  configuration only, writer authority is acquired through the gateway like
+  the agent's, nothing is appended when a live writer holds the epoch, and
+  a second `TERMINAL` is refused by a pure admission rule over the journal.
 
 ## 5. State and failure gates
 
@@ -614,13 +823,19 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 
 - **S-G12-01** Lock held by a live instance → the second instance makes no
   broker call, appends a single `SUPPRESSED` line **as a witness append**
-  (the authority-free gateway class defined in S-G12-07), exits 0.
+  (the authority-free gateway class defined in S-G12-07); the scheduled
+  second instance exits 0, whereas an owner-driven one-shot tool (the
+  certificate CLI, the deadline CLI) exits non-zero on suppression so the
+  operator learns that the requested run did not happen.
   `SUPPRESSED` is **staleness-neutral**: it does not count as a journal
   append for the watchdog's staleness clock (S-G14-02) and never triggers
   a success ping (S-G14-03) — a dead or hanging holder can never be kept
   looking alive by its own suppressed successors. Journal appends from any
   instance reach the JSONL only serialized (single writer path / file
-  lock), never interleaved. (#23, #40; owner ruling GV-2, 2026-08-25)
+  lock), never interleaved. Runtime composition therefore acquires or is
+  suppressed before the first account, calendar, position, order, or market
+  broker read; the scheduled suppressed process exits 0 after its witness.
+  (#23, #40; owner ruling GV-2, 2026-08-25)
 - **S-G12-02** Time alone NEVER grants writer authority (owner ruling GV-2,
   2026-08-25). A heartbeat older than `LOCK_TAKEOVER_BOUND` is only the
   *trigger* to attempt a takeover; the takeover itself proceeds exclusively
@@ -639,12 +854,15 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G12-03** Halt flag set → all entry actions veto `HALT`; management
   actions (eviction, residue closes, flatten, kill-switch) still run.
 - **S-G12-04** Un-halt is manual and journaled; no code path clears the
-  flag. (A19)
+  flag. Once a halt is sticky, later HALT entries remain audit evidence but
+  cannot replace its projected reason or reduce its strength. (A19)
 - **S-G12-05** The halt flag is a persisted file, part of the snapshot, and
   a core input — not ambient state read inside the core.
 - **S-G12-06** Credential fence (decision D): an auth failure (401/403) is
   journaled as `AUTH_FAILURE` — a distinguishable state, not generic
-  `WORLD_UNREACHABLE` — and blocks all orders. The runbook fact is spec:
+  `WORLD_UNREACHABLE` — and blocks all orders. This applies to every
+  authenticated startup read, including account identity and exchange
+  calendar, before later cycle reads use the same fence. The runbook fact is spec:
   a key rotation does NOT cancel working orders; the documented fence
   procedure therefore ends with a working-order check/cancel in the broker
   dashboard, and the fence is drilled once on the dev account pre-arm
@@ -664,11 +882,27 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   and a fenced writer's own `FENCED_OUT` demise notice) carry NO
   authority, may mutate nothing at the broker, are staleness-neutral
   (S-G14-02), never trigger a success ping, and reach the JSONL only
-  through the same serialized append path. Epoch acquisition is a single
+  through the same serialized append path. One purpose-specific monotonic
+  safety interlock is narrower than either request class: a startup process
+  that independently observes `AUTH_FAILURE` or `ACCOUNT_BINDING_MISMATCH`
+  may append only that `HALT`, stamped with the current persisted epoch under
+  the gateway mutex. It cannot reach the broker, acquire or release another
+  holder, append any other type, or clear a halt. This prevents a fresh rival
+  holder from suppressing a required broker-identity fence. The same mutex
+  reconciles the halt projection from the authoritative journal and protects
+  a final halt read immediately before broker I/O. A crash after the durable
+  `HALT`/`UNHALT` line but before its projection write is therefore repaired
+  before the state is exposed or an entry is admitted; an already-authorized
+  but stale entry is vetoed. Cancel and explicit close remain available under
+  S-G12-03. The mutex is a kernel-owned Windows named pipe (Linux: abstract
+  socket), derived from the OS-canonical physical `STATE_DIR` so aliases of one
+  directory converge, exclusive while its process lives and automatically released on
+  close or crash. It has no stale-file cleanup, age takeover, or waiting
+  timeout. Epoch acquisition is a single
   **atomic compare-and-increment** on the persisted epoch store: of two
   concurrent takers exactly one wins; the loser observes the changed
   epoch and demotes itself to a witness. The epoch store lives at the
-  configured absolute `STATE_DIR` (§0; validated at S-CYC-11 — a relative
+  configured absolute, OS-canonical `STATE_DIR` (§0; validated at S-CYC-11 — a relative
   or unresolvable path never arms), so every instance on the host —
   agent, watchdog, manual run — validates against the SAME store by
   construction, and it follows the S-CYC-09 rule: an absent/reset epoch
@@ -729,6 +963,35 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   one fence, mleg close, both S-X-06 closes, no duplicate action, halt, journal,
   and fail-ping. A
   fenced old writer that wakes later cannot mutate anything (S-G12-07).
+  Controlled end: once a `TERMINAL` entry stands in the journal (S-G11-04),
+  the deployment has ended by design and the watchdog stands down. A journal
+  that stops growing after the controlled end is the intended outcome, not
+  evidence of a hung writer, so the staleness assessment yields the quiet
+  reason `DEPLOYMENT_TERMINAL`, and that reason outranks every other: no
+  fence, no epoch increment, no takeover halt, no book recovery, no broker
+  mutation and no ping, regardless of session hours and of how far the last
+  authoritative append lies beyond `DEAD_MAN_BOUND`. The flag is a fold over
+  the same journal read the staleness clock uses, passed into the pure
+  assessment, which never reads a journal itself. Absent a standing
+  `TERMINAL`, staleness behaviour is unchanged. The scheduled watchdog
+  composes the real account-bound broker, the ping port and a close-oriented
+  market window from the validated configuration; any configuration or
+  credential problem degrades to fence-only behaviour that still halts and
+  still fail-pings. Authority is the fence, not the observation: when the
+  epoch acquisition returns anything but `WON` or `GAP_HALT` — a live holder
+  that still heartbeats (`SUPPRESSED`), a rival taker that won the race
+  (`LOST`), or a refusing store (`REFUSED`) — the run may not halt, journal,
+  close or mutate, and therefore does the one thing still open to it: it
+  fail-pings on a closed alarm condition naming the age of the silence
+  (`WATCHDOG_NO_AUTHORITY:staleness <n> ms`) and the reason the fence was
+  denied (`WRITER_HUNG_LOCK_HELD:<holderId>`,
+  `WATCHDOG_AUTHORITY_LOST:<epoch>`, `WATCHDOG_AUTHORITY_REFUSED:<reason>`).
+  A journal stale beyond `DEAD_MAN_BOUND` during a session while someone
+  else holds authority is the developer-must-look state, never a quiet one.
+  A takeover whose HALT append does not land reports `halted: false` with
+  `HALT_NOT_JOURNALED` on its fail ping; the next firing, staleness
+  unchanged, takes over again and lands the halt once the journal is
+  writable, so the residual window is one watchdog interval.
   Witness appends (the S-G12-07 class — `SUPPRESSED`, `FENCED_OUT`) never
   reset this staleness clock.
 - **S-G14-03** External detection (decision C): the agent sends a success
@@ -739,7 +1002,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   same check also carries ACTIVE alarms. The append precondition applies only
   to success pings: an active failure ping is failure-only and may be sent
   before any journal exists, specifically for S-CYC-11 bootstrap/config errors;
-  it can never refresh liveness. The set of alarm-worthy
+  it can never refresh liveness. A cycle governed by
+  `CYCLE_WALLTIME_BUDGET` computes its ping plan inside the cycle but delivers
+  only after the aggregate work wins its deadline race; a losing background
+  continuation cannot emit success. Delivery inherits the remaining absolute
+  deadline, and any non-2xx HTTP response is failure. The set of alarm-worthy
   conditions has ONE source, not a second list here: every case whose own
   text prescribes an "active fail-signal" or "fail-ping" (currently
   S-G9-02, S-G10-02, S-CYC-11, S-G11-01, S-G11-04, S-X-05, S-X-06; the
@@ -848,7 +1115,34 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   deployment receipt keyed by journal revision outside the append-only trading
   journal, so acceptance does not create a recursive new journal revision.
   Tests cover candidate rejection, successful promotion, and rollback for the
-  deadline and terminal appends. (A9, A10, A26)
+  deadline and terminal appends. "Content may not lie" reaches the
+  presentation layer. The gate is the S-ARM-01 runtime digest: every file
+  under `assets/` (the stylesheets inlined into every page) is enumerated
+  like source — recursively, with no directory name skipped there, text
+  files LF-normalized and every other file hashed by its raw bytes — so a
+  stylesheet change after the certificate voids it
+  exactly like a code change and the arming gate refuses (owner ruling
+  2026-09-02 after R33/R34; the rendered dashboard is reviewed by the owner
+  before the certificate run, never restyled after it). Defence in depth,
+  not the gate: the pure renderers audit the stylesheet text before
+  rendering and refuse constructs that hide, collapse, or paint away
+  content, break out of the `<style>` block, or load an external resource
+  (`display:none`, `visibility`, `opacity`, zero-alpha colours, zero sizes,
+  negative offsets, `overflow:hidden`, absolute placement, transforms,
+  clipping, CSS escapes, `<`, `@import`, `url(`; also through `var()`
+  fallbacks and custom-property definitions); a refused stylesheet is a
+  failed build (`DASHBOARD_BUILD_FAILED`) and the previous page stands. The
+  audit is textual and known incomplete (R34/R35: native nesting,
+  `@container`, shorthand zeros, exponent notation, string-embedded braces
+  and string-embedded comment openers, a `</style>` breakout hidden inside
+  a CSS comment — that one is refused by the renderers' own `</` assertion
+  on the raw text, which is the only layer for it and is measured as such,
+  while a lone `<` inside a comment passes both layers and is inert, since
+  only `</` can close the style element — and any hiding by
+  colour, near-zero size, or off-canvas spacing), which is why the
+  digest, not the audit, carries the guarantee (`src/shell/digests.ts`,
+  `src/shell/presentation-guard.ts`, `tests/p9-presentation-assets.spec.ts`,
+  `tests/p9-presentation-guard.spec.ts`). (A9, A10, A26)
 - **S-J-08** Branch isolation is checked, not assumed: the journal writer
   pushes exclusively to the configured journal branch and refuses any other
   ref — a test configures a non-journal target and asserts refusal; the
@@ -915,7 +1209,18 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   width − credit; the guarantee is about the net). Non-intact subjects (orphan legs, share residue) do not use this
   cap — they follow the discriminated recovery policy of S-X-06. Every
   re-price is journaled. The ladder never crosses into opening exposure
-  and never legs out of an intact structure (A11).
+  and never legs out of an intact structure (A11): the eviction targets,
+  the flatten closure, the residue targets, and the eligibility check
+  before every submission are all derived from a broker read taken inside
+  the management step itself, never from the phase-1 snapshot the analyst
+  step is older than. A step that plans an attempt and then refuses it
+  records that refusal in the cycle report, so planning from a stale book
+  is measurable instead of being silently absorbed by the eligibility gate.
+  After a ladder cancel, the next generation's quantity is the exposure of
+  that same fresh read, bounded above by the unfilled part of the canceled
+  attempt: a fill the fresh read already excludes is never subtracted from
+  it a second time, and a fill that landed after that read can never be
+  over-closed.
 - **S-X-06** Discriminated recovery policy for unbounded residues (owner
   ruling GV-6, 2026-08-25): a subject that is already outside defined-risk
   construction — an orphan SHORT option leg, or short stock from

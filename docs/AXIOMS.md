@@ -132,7 +132,12 @@ this file.
   Between core approval and submission, the executor
   revalidates that the decision's preconditions still hold against fresh
   broker state — a concurrent change (a manual human action, an order filled
-  meanwhile) voids the action, journaled as such. The agent writes only the
+  meanwhile) voids the action, journaled as such. The completion of that
+  fresh read is the declared linearization point: a change landing between
+  it and broker acceptance is unobservable without a broker-side conditional
+  submit, so manual mutations are prohibited while the agent operates, and a
+  violation surfaces as a halt in the next cycle's phase 0 rather than
+  passing silently. The agent writes only the
   dedicated journal branch; humans never do — submission work and agent pushes
   cannot collide. (#8 #23 #40 #44)
 
@@ -310,13 +315,18 @@ this file.
   Mandatory policy bounds and the analyst's observed read-only capability
   inventory validate fail-closed. `successful_dev_live_test_at` is derived only
   from a machine-readable dev-account certificate tied to the deployed runtime
-  `runtimeDigest` and role-neutral `policyDigest`. It proves credit-mleg acceptance, a broker fill through
-  OUTCOME/reconciliation, fresh quote-size/liquidity inputs, and a terminal dev
+  `runtimeDigest` and role-neutral `policyDigest`. It proves exact one-lot
+  credit-mleg acceptance (broker identity, legs, quantity, and limit all equal
+  the INTENT), a quantitatively exact broker fill through OUTCOME/reconciliation,
+  fresh quote-size/liquidity inputs, and a terminal dev
   account with zero positions and non-terminal orders. Missing, partial, stale,
-  or mismatched evidence blocks competition arming. Only the closed
-  profile/account/credential identity set changes from dev proof to competition
-  arm and is verified separately; the paper origin stays policy and unknown
-  config fields fail closed. (#57 #58 #59 #62 #69 #71)
+  unstable, or mismatched evidence blocks competition arming. The certificate
+  is integrity-checked under the trusted-local-operator threat model; it is not
+  an independent signature against a malicious local forger. Only the closed
+  profile/account/credential identity set and the closed host-local deployment
+  locations change from dev proof to competition arm and are verified
+  separately; the paper origin stays policy and unknown config fields fail
+  closed. (#57 #58 #59 #62 #69 #71)
 
 ---
 

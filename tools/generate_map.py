@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", "node_modules", "dist", ".tmp", ".vercel"}
+SKIP_DIRS = {".git", "node_modules", "dist", ".tmp", ".vercel", ".claude", "tmp"}
 SKIP_FILES = {"REPO_MAP.md", "TEST_MAP.md"}
 TEST_MARKERS = (".test.", ".spec.", "_test.")
 

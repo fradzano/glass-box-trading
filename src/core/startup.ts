@@ -157,6 +157,7 @@ function knownFields(): readonly string[] {
   "CLOSE_ESCALATION_STEP_CENTS",
   "RESIDUE_MAX_SESSIONS",
   "ANALYST_TIMEOUT_MS",
+  "ANALYST_MODEL",
   "CYCLE_WALLTIME_BUDGET_MS",
   "LOCK_TAKEOVER_BOUND_MS",
   "ANALYST_MCP_CAPABILITY_MANIFEST",
@@ -221,6 +222,7 @@ export interface ValidatedStartup {
   readonly scheduling: SchedulingBounds;
   readonly alertDeliveryBudgetMs: number;
   readonly analystTimeoutMs: number;
+  readonly analystModel: string;
   readonly closeEscalationStepCents: number;
   readonly residueMaxSessions: number;
   readonly qualification: QualificationConfig;
@@ -289,6 +291,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   const closeEscalationStepCents = readInteger(raw, "CLOSE_ESCALATION_STEP_CENTS", violations, { min: 1 });
   const residueMaxSessions = readInteger(raw, "RESIDUE_MAX_SESSIONS", violations, { min: 1 });
   const analystTimeoutMs = readInteger(raw, "ANALYST_TIMEOUT_MS", violations, { min: 1 });
+  const analystModel = readString(raw, "ANALYST_MODEL", violations);
   const cycleWalltimeBudgetMs = readInteger(raw, "CYCLE_WALLTIME_BUDGET_MS", violations, { min: 1 });
   const lockTakeoverBoundMs = readInteger(raw, "LOCK_TAKEOVER_BOUND_MS", violations, { min: 1 });
   const manifestPath = readString(raw, "ANALYST_MCP_CAPABILITY_MANIFEST", violations);
@@ -394,7 +397,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
   // Every read above either succeeded or recorded a violation, so the non-null assertions below are guarded by the return.
   if (
     profile === null || expectedAccountId === null || origin === null || stateDir === null || diagnosticSink === null ||
-    decision === null || execution === null || scheduling === null || alertDeliveryBudgetMs === null || analystTimeoutMs === null ||
+    decision === null || execution === null || scheduling === null || alertDeliveryBudgetMs === null || analystTimeoutMs === null || analystModel === null ||
     closeEscalationStepCents === null || residueMaxSessions === null || checkpointMs === null || windowEndMs === null ||
     qualificationMaxLossCents === null || competitionStartMs === null || flattenDate === null ||
     manifestPath === null || runtimeLockPath === null || analystProfile !== "dev"
@@ -413,6 +416,7 @@ export function validateStartupConfig(raw: Raw, expectations: StartupExpectation
       scheduling,
       alertDeliveryBudgetMs,
       analystTimeoutMs,
+      analystModel,
       closeEscalationStepCents,
       residueMaxSessions,
       qualification: { checkpointIso: raw["QUALIFYING_ACTIVITY_CHECKPOINT"] as string, windowEndIso: raw["QUALIFICATION_WINDOW_END"] as string, maxLossCents: qualificationMaxLossCents },
@@ -447,10 +451,13 @@ export interface RuntimeLock {
     readonly package: string;
     readonly version: string;
     readonly dependencyLockAtCommit: string;
+    /** Canonical importable dependency tree rebuilt from uv.lock-authenticated wheels. */
+    readonly dependencySiteSha256: string;
   };
   readonly interpreter: {
     readonly implementation: string;
     readonly version: string;
+    readonly wheelPlatformTag: string;
     readonly launcherSha256: string;
     readonly runtimeSha256: string;
   };
@@ -506,12 +513,12 @@ export function validateRuntimeLock(raw: unknown): DocumentValidation<RuntimeLoc
   if (!isRecord(raw)) return { ok: false, issues: ["runtime lock is not an object"] };
   if (raw["schemaVersion"] !== 1) issues.push("schemaVersion must be 1");
   const source = raw["source"];
-  if (!isRecord(source) || typeof source["repository"] !== "string" || !source["repository"].startsWith("https://") || !isCommitSha(source["commit"]) || typeof source["package"] !== "string" || source["package"].length === 0 || typeof source["version"] !== "string" || source["version"].length === 0 || typeof source["dependencyLockAtCommit"] !== "string" || source["dependencyLockAtCommit"].length === 0) {
-    issues.push("source must pin repository (https), a full 40-hex commit, package, version, and the dependency lock file at that commit");
+  if (!isRecord(source) || typeof source["repository"] !== "string" || !source["repository"].startsWith("https://") || !isCommitSha(source["commit"]) || typeof source["package"] !== "string" || source["package"].length === 0 || typeof source["version"] !== "string" || source["version"].length === 0 || typeof source["dependencyLockAtCommit"] !== "string" || source["dependencyLockAtCommit"].length === 0 || !isSha256(source["dependencySiteSha256"])) {
+    issues.push("source must pin repository (https), a full 40-hex commit, package, version, the dependency lock file at that commit, and an independently derived dependency-site sha256");
   }
   const interpreter = raw["interpreter"];
-  if (!isRecord(interpreter) || typeof interpreter["implementation"] !== "string" || interpreter["implementation"].length === 0 || typeof interpreter["version"] !== "string" || interpreter["version"].length === 0 || !isSha256(interpreter["launcherSha256"]) || !isSha256(interpreter["runtimeSha256"])) {
-    issues.push("interpreter must name implementation, version, and two sha256 digests");
+  if (!isRecord(interpreter) || typeof interpreter["implementation"] !== "string" || interpreter["implementation"].length === 0 || typeof interpreter["version"] !== "string" || interpreter["version"].length === 0 || typeof interpreter["wheelPlatformTag"] !== "string" || !/^[a-z0-9_]+$/.test(interpreter["wheelPlatformTag"]) || !isSha256(interpreter["launcherSha256"]) || !isSha256(interpreter["runtimeSha256"])) {
+    issues.push("interpreter must name implementation, version, a wheel platform tag, and two sha256 digests");
   }
   const policy = raw["installPolicy"];
   if (!isRecord(policy)) issues.push("installPolicy missing");
@@ -549,6 +556,7 @@ export type McpViolationCode =
   | "SOURCE_MISMATCH"
   | "PACKAGE_MISMATCH"
   | "DEPENDENCY_LOCK_DRIFT"
+  | "DEPENDENCY_CONTENT_MISMATCH"
   | "INTERPRETER_MISMATCH"
   | "HASH_PROVENANCE_INVALID"
   | "IMMUTABLE_CONTENT_MISMATCH"
@@ -572,13 +580,15 @@ export interface McpLaunchObservation {
   readonly packageVersion: string;
   /** The dedicated environment's dependency lock is byte-identical to the one at the pinned commit. */
   readonly dependencyLockMatchesPin: boolean;
+  /** Installed dependency bytes equal the wheel-hash-derived tracked site digest. */
+  readonly dependencyContentMatchesPin: boolean;
   readonly interpreterLauncherSha256: string;
   readonly interpreterRuntimeSha256: string;
   /** Where the expected digests came from; anything but the tracked runtime lock is a WIN-19 violation. */
   readonly hashProvenance: "runtime_lock" | "installed_environment";
   /** Immutable source/package files whose content digest differs from the pinned expectation. */
   readonly immutableFileMismatches: readonly string[];
-  /** Generated executable artifacts (__pycache__/, *.pyc) still present after the removal pass. */
+  /** Generated/unverified executable artifacts still present after the removal pass. */
   readonly bytecodeArtifactsPresent: readonly string[];
   readonly bytecodeWritesDisabled: boolean;
   readonly childEnvironment: Readonly<Record<string, string>>;
@@ -651,6 +661,9 @@ export function verifyMcpLaunch(lock: RuntimeLock, observation: McpLaunchObserva
   }
   if (!observation.dependencyLockMatchesPin) {
     violations.push({ code: "DEPENDENCY_LOCK_DRIFT", detail: `dependency lock differs from ${lock.source.dependencyLockAtCommit} at the pinned commit` });
+  }
+  if (!observation.dependencyContentMatchesPin) {
+    violations.push({ code: "DEPENDENCY_CONTENT_MISMATCH", detail: "installed dependency bytes differ from the independently derived dependency-site digest" });
   }
   if (observation.interpreterLauncherSha256 !== lock.interpreter.launcherSha256 || observation.interpreterRuntimeSha256 !== lock.interpreter.runtimeSha256) {
     violations.push({ code: "INTERPRETER_MISMATCH", detail: "interpreter launcher/runtime digests differ from the pinned interpreter identity" });

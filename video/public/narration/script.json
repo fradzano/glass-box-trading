@@ -1,0 +1,229 @@
+{
+  "scenes": {
+    "coldOpen": {
+      "text": "This is an options trading bot that ran on a schedule against a one hundred thousand dollar Alpaca paper account. A language model suggests trades. It is never allowed to place one. A deterministic core checks every suggestion against a fixed list of risk gates, and only what the core approves reaches the broker. Every step is written down in public before it happens.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "An options trading bot, on a schedule, on a $100,000 Alpaca paper account."
+        },
+        {
+          "at": 8,
+          "text": "A language model suggests trades. It is never allowed to place one."
+        },
+        {
+          "at": 14,
+          "text": "A deterministic core checks every suggestion against a fixed list of risk gates."
+        },
+        {
+          "at": 21,
+          "text": "Only approved plans reach the broker. Every step is journaled in public first."
+        }
+      ]
+    },
+    "dashboardOpen": {
+      "text": "No login, no export, no screenshot of a spreadsheet. This is the public dashboard on its pinned address, frozen at the presentation cutoff, so a judge sees the same numbers the builder does. The top of the page shows equity, profit and loss against the broker recorded start, and whether the book is flat. It is flat. Everything below it is folded from the journal.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "No login, no export, no screenshot of a spreadsheet."
+        },
+        {
+          "at": 4,
+          "text": "The public dashboard, pinned and frozen at the presentation cutoff."
+        },
+        {
+          "at": 10,
+          "text": "A judge sees the same numbers the builder does."
+        },
+        {
+          "at": 14,
+          "text": "Equity, P&L against the broker-recorded start, and whether the book is flat."
+        },
+        {
+          "at": 22,
+          "text": "It is flat. Everything below is folded from the journal."
+        }
+      ]
+    },
+    "decisionCycle": {
+      "text": "Here is one cycle, in order. Phase zero reconciles the journal against the broker: every position and order must match something the agent wrote down, and anything foreign halts new entries. Phase one takes a fresh account snapshot and fresh quotes. Then the analyst runs. That is Claude, in a child process with read-only market data credentials, reading Alpaca through the MCP server: assets, stock data, options data. It cannot see the account, positions or orders. What comes back is a list of candidate structures in a fixed schema.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "One cycle, in order. Phase 0 reconciles the journal against the broker."
+        },
+        {
+          "at": 6,
+          "text": "Every position and order must match. Anything foreign halts new entries."
+        },
+        {
+          "at": 13,
+          "text": "Phase 1 takes a fresh account snapshot and fresh quotes."
+        },
+        {
+          "at": 19,
+          "text": "Claude reads Alpaca via MCP: assets, stock data, options data. Read-only."
+        },
+        {
+          "at": 27,
+          "text": "It cannot see the account, the positions or the orders."
+        },
+        {
+          "at": 33,
+          "text": "Back comes a list of candidate structures in a fixed schema."
+        }
+      ]
+    },
+    "gateVector": {
+      "text": "The core prices every candidate from its own quotes, not the analyst's. Then eight gates run in a fixed order. Defined risk first: if maximum loss is not fixed at entry, the candidate dies there. Then sleeve budget, max loss per position, concentration, liquidity, session, idempotency, schema and whitelist. In cycle two, a SPY credit spread failed gate five, liquidity: one leg's quote size was below the minimum. Vetoed, reason recorded.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "The core prices each candidate from its own quotes, not the analyst's."
+        },
+        {
+          "at": 6,
+          "text": "Eight gates, always in the same fixed order."
+        },
+        {
+          "at": 9,
+          "text": "G1 defined risk: max loss not fixed at entry, and the candidate dies here."
+        },
+        {
+          "at": 16,
+          "text": "G2 to G8: budget, max loss, concentration, liquidity, session, idempotency, schema."
+        },
+        {
+          "at": 24,
+          "text": "Cycle 2: SPY-VCR-20260908-01 failed G5, liquidity."
+        },
+        {
+          "at": 29,
+          "text": "One leg's quote size was below the minimum. Vetoed, reason recorded."
+        }
+      ]
+    },
+    "orderToOutcome": {
+      "text": "An approved plan becomes a multi-leg limit order, revalidated against fresh broker truth, then sent to the Alpaca REST API under a client order id. Intent is journaled before, outcome after. Intent eight: one SPY put credit spread, filled at one dollar six, three hundred ninety-five dollars of max loss reserved. Closed by the deadline route at fifty-eight cents. Forty-eight dollars realized.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "Approved plans become multi-leg limit orders. Never market orders."
+        },
+        {
+          "at": 5,
+          "text": "Revalidated against fresh broker truth just before submission."
+        },
+        {
+          "at": 9,
+          "text": "Alpaca REST API, client order id as the idempotency key."
+        },
+        {
+          "at": 13,
+          "text": "Intent journaled before, outcome after."
+        },
+        {
+          "at": 16,
+          "text": "Intent seq 8: one SPY put credit vertical, filled at 1.06, $395 reserved."
+        },
+        {
+          "at": 23,
+          "text": "Deadline route closed it at 0.58. Plus $48.00 realized."
+        }
+      ]
+    },
+    "architecture": {
+      "text": "Two earlier bots of mine died on economics, not on bugs: TradeScan-AI's predicted edge on a cTrader FIX feed was smaller than retail costs, and Vigil's market making on OKX sat below the fee floor. So this build inverts the shape. The model is not asked to predict. It proposes, inside a whitelist of underlyings, structures and expiries. The strategy is a declared barbell, reserve, income sleeve, convex sleeve, not a forecast. And the boundary is enforced in continuous integration: the pure core cannot import anything that does input or output, and it cannot read the clock.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "Two earlier bots died on economics: TradeScan-AI (cTrader FIX) and Vigil (OKX)."
+        },
+        {
+          "at": 7,
+          "text": "Predicted edge below retail costs; market making below the fee floor."
+        },
+        {
+          "at": 13,
+          "text": "So this build inverts the shape: the model proposes, it does not predict."
+        },
+        {
+          "at": 19,
+          "text": "Proposals stay inside a whitelist of underlyings, structures and expiries."
+        },
+        {
+          "at": 25,
+          "text": "A declared barbell: reserve, income sleeve, convex sleeve. Not a forecast."
+        },
+        {
+          "at": 33,
+          "text": "CI forbids I/O imports and clock reads inside the pure core."
+        }
+      ]
+    },
+    "pnlAndLimits": {
+      "text": "Five hundred eighty-three dollars, fifty-eight basis points. One four-contract QQQ call caught an overnight gap. That single trade is sixty-one percent of the result. Peak fixed worst case was three thousand four hundred twenty-one dollars; the difference between that and what came back is path, not skill. On the last day, two things broke. The runner could not price the next session's expiries, so three closes never went out. The dead-man watchdog had been inert for a day, killed by its own wrapper. Fixed an hour before it was needed, it closed three structures. Two sessions of paper trading prove nothing about edge. No alpha is claimed.",
+      "cues": [
+        {
+          "at": 4,
+          "text": "One 4-contract QQQ long call caught an overnight gap: 61% of the result."
+        },
+        {
+          "at": 10,
+          "text": "Peak fixed worst case $3,421. The gap to $586 returned is path, not skill."
+        },
+        {
+          "at": 18,
+          "text": "$33.15 max drawdown is cycle-sampled; it never saw the overnight move."
+        },
+        {
+          "at": 24,
+          "text": "Last day: three closes never went out; the watchdog had been inert a day."
+        },
+        {
+          "at": 33,
+          "text": "Fixed an hour early. HALT WATCHDOG_TAKEOVER closed the last three."
+        },
+        {
+          "at": 41,
+          "text": "Two sessions of paper trading prove nothing about edge."
+        }
+      ]
+    },
+    "sourceAndTests": {
+      "text": "The repository is public under MIT: the pure core, its tests, the decision log and these build rules. The journal holds every candidate, every gate verdict and every broker order id. One test drives the ugly path, a journal failure with exposure open, and asserts that the agent reduces risk and records the audit gap. The pinned route stays addressable by journal revision and cutoff.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "Public under MIT: pure core, tests, decision log, build rules."
+        },
+        {
+          "at": 6,
+          "text": "The journal holds every candidate, every gate verdict, every broker order id."
+        },
+        {
+          "at": 12,
+          "text": "One test drives the ugly path: journal failure with exposure open."
+        },
+        {
+          "at": 18,
+          "text": "It asserts the agent reduces risk and records the audit gap."
+        },
+        {
+          "at": 23,
+          "text": "The pinned route stays addressable by journal revision and cutoff."
+        }
+      ]
+    },
+    "close": {
+      "text": "All of it is in the public journal.",
+      "cues": [
+        {
+          "at": 0,
+          "text": "All of it is in the public journal."
+        }
+      ]
+    }
+  }
+}
