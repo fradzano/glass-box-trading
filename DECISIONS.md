@@ -2396,3 +2396,18 @@ small, no ADR split).
   page: https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon/glass-box-trading/glass-box-trading. One agent-caused form edit is on record: while reading the
   dropdown options the agent's click selected `Options Alpha Agents` in the
   track field; the owner kept it.
+- **2026-09-04 — The competition tasks stop tonight; a three-month paper
+  run is a new deployment (P9), not a tail of this one.** The owner asked
+  whether the scheduled tasks could simply keep running for three months to
+  learn whether the strategy is viable. They cannot answer that question:
+  `config/policy.json` binds this deployment to `COMPETITION_START` and
+  `FLATTEN_DATE`, from which G11 vetoes every entry (S-G11-01), and the
+  standing halt blocks entries too, so the tasks would journal no-trade
+  cycles into a journal the spec freezes after `TERMINAL` (S-G11-04), while
+  the watchdog stands down after `TERMINAL` by design (G14). Ruling: both
+  tasks are disabled after tonight's `TERMINAL`; the long run becomes P9 in
+  the release plan with its own window regime (spec decision first), the
+  three parked fixes landed, certificate run four, a chosen account, fresh
+  task installation, a weekly publish routine and a cost model in the
+  projection, because paper fills at the limit and near-zero fees measure
+  the gross path only. Recorded in the release ahoy note as item 8.
