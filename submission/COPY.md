@@ -25,53 +25,13 @@ checks this).
 
 ## Long description
 
-> Glass Box Trading is an autonomous options trading agent built for the
-> Alpaca AI Trading Agents Hackathon, run against the dedicated $100k paper
-> competition account PA376WIK2ATL. Its central claim is architectural, not predictive:
-> the LLM analyst can propose a trade candidate but has no code path to an
-> order, and the deterministic decision core can place an order but evaluates
-> only structured, whitelist-constrained fields — the LLM's free-text
-> reasoning is stored in the journal for review, never read by a gate. Every
-> decision cycle — a proposed
-> candidate, a full risk-gate vector, and either an approval or a veto with
-> its reason — is written to an append-only public journal and rendered on a
-> live dashboard, with no authentication required to view it. Rejections are
-> logged with the same fidelity as executions, so the agent's caution is
-> visible, not just its wins.
+> Glass Box Trading is an autonomous options trading agent built for the Alpaca AI Trading Agents Hackathon, run on the dedicated $100k paper account PA376WIK2ATL. Its central claim is architectural, not predictive: the LLM analyst (Claude, reading Alpaca market data through a read-only MCP toolset) can propose a trade candidate but has no code path to an order. A pure, tested decision core prices every candidate from its own quotes and runs eight gates in a fixed order (defined risk only, sleeve budgets, max loss per position, concentration, liquidity, session, idempotency, schema and whitelist); only approved plans reach the executor, which sends multi-leg limit orders to the Alpaca REST API after revalidating against fresh broker truth. Every cycle, every gate verdict and every veto is written to an append-only public journal and rendered on a login-free dashboard, so the agent's caution is as visible as its fills.
 >
-> The strategy is a declared two-sleeve barbell: roughly 80 percent of the
-> account sits idle as reserve, about 12 percent (measured on a worst-case-loss
-> basis) funds defined-risk income structures such as credit spreads and iron
-> condors, and about 8 percent (measured on premium paid) funds convex,
-> capped-loss positions around scheduled events. No naked short options exist
-> anywhere in the strategy space; maximum loss is fixed at order construction
-> for every position. A pure, independently tested decision core owns every
-> risk gate — entry gates, lifecycle gates such as expiry eviction and
-> deadline flatten, and failure gates such as a drawdown kill-switch and a
-> dead-man watchdog — so unattended worst case is bounded by design rather
-> than by monitoring diligence.
+> The strategy is a declared two-sleeve barbell: about 80% reserve, ~12% defined-risk income structures on a max-loss basis, ~8% convex capped-loss positions on premium paid. No naked short options exist anywhere; maximum loss is fixed at order construction. Lifecycle gates (expiry eviction, reconciliation, deadline flatten, halt, drawdown kill-switch, dead-man watchdog) bound the unattended worst case by design.
 >
-> The submission includes a public repository with the pure core and its
-> tests, a live demo dashboard, a sub-five-minute video walking one decision
-> from candidate to broker fill, and a broker-reconciled P&L record at a
-> labelled presentation cutoff. The project makes no alpha or
-> risk-adjusted-performance claim: two sessions of paper trading cannot prove a
-> strategy has edge, and every result shown is explicitly framed as a bounded,
-> auditable exercise rather than proof of trading skill. The broker-reconciled
-> result at the presentation cutoff (2026-09-03T20:00:14.787Z) is +$583.59 on
-> $100,000.00, or 0.58%, with the book flat; 61% of it came from a single
-> four-contract QQQ call that caught an overnight gap, against a peak
-> simultaneous fixed worst case of $3,421.00. Two defects from the competition
-> week are named in the submission rather than left out: on the final trading
-> day the runner could not price the structures expiring the next session and
-> so never submitted their closes, and the watchdog's wrapper had been killing
-> the CLI on its first stderr line since arming, leaving the dead-man inert
-> for a day until it was fixed at 17:41 CEST that day. An hour later, after
-> the owner stood the writer down, the repaired dead-man watchdog took over,
-> closed all three remaining structures and left the account flat — the
-> safety-net path doing the job it was built for.
+> Result at the presentation cutoff (2026-09-03T20:00:14.787Z): +$583.59 on $100,000.00, or 0.58%, book flat; 61% of it came from one four-contract QQQ call on an overnight gap, against a peak fixed worst case of $3,421.00. Two sessions of paper trading prove nothing about edge, and no alpha is claimed. Two defects are named rather than hidden: on the final day the runner could not price next-session expiries and never submitted those closes, and the watchdog's wrapper had left the dead-man inert for a day until fixed an hour before it was needed. The repaired watchdog then closed the last three structures; the safety net held.
 
-- [x] Word count: 460 (≥100 required); 2870 characters including spaces.
+- [x] Word count: 308 (≥100 required); 1980 characters including spaces (form limit 600–2000).
       All three counts measured on the field text as pasted (quote markers and
       line wrapping stripped), not estimated.
 
