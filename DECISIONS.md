@@ -1543,7 +1543,7 @@ small, no ADR split).
   document is a test fixture. Lesson recorded for the axiom "the artifact under
   test is not the standard": broker-facing proofs need one recorded document
   per endpoint before they gate anything.
-- **2026-09-02 — Pre-freeze cleanup rulings.** `docs/cold-read-2026-08-24.md`
+- **2026-09-02 — Pre-freeze cleanup rulings.** `docs/COLD-READ-2026-08-24.md`
   stays: CONCEPT cites its finding numbers in four places, and a glass-box
   repository publishes the design's own failure modes. The broker port
   contracts move out of the fake into `src/shell/broker-ports.ts` so the real

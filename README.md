@@ -4,6 +4,14 @@ Glass Box Trading is a paper-only options agent whose deterministic core records
 
 P6 adds the public evidence pipeline: a pure performance projection over one committed journal revision at an explicit cutoff (`src/core/projection.ts`, S-J-09), the S-CYC-12 qualification state and its window vetoes (`src/core/qualification.ts`), the anonymous probe contract with promotion, rollback, push-retry, and branch-isolation rules (`src/core/publish.ts`, S-J-07/S-J-08/S-CYC-07), a static dashboard renderer, an atomic render-aside-then-swap site build with immutable revision routes, and a publisher that drives fake git/deploy ports (`src/shell/render-dashboard.ts`, `dashboard-build.ts`, `publisher.ts`). `npm run dashboard` builds `artifacts/dashboard/` from the recorded `fixtures/golden-journal.jsonl` — the deterministic golden path of `docs/SUBMISSION-SPEC.md` §3, navigable with markets closed. No GitHub or Vercel mutation exists in the repository; the real git and Vercel ports arrive with the kickoff release (P8).
 
+## Submission (Alpaca AI Trading Agents Hackathon, lablab.ai, 2026-09-04)
+
+- **Demo:** <https://glass-box-trading.vercel.app> — the judge-facing dashboard, no login. The immutable route every uploaded artifact cites is <https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/> (journal revision `sha256:7b82959a344a7c7e`, presentation cutoff `2026-09-03T20:00:14.787Z`).
+- **Paper account:** `PA376WIK2ATL` (competition profile, created after kickoff; evidence in [`submission/ACCOUNT-EVIDENCE.md`](submission/ACCOUNT-EVIDENCE.md)).
+- **Result at that cutoff:** $100,000.00 → $100,583.59, +$583.59 (0.58%), book flat; realized $586.00, unattributed −$2.41, peak simultaneous reserved worst case $3,421.00. Two sessions of paper trading prove nothing about edge; the one-pager and the deck say what the figures do and do not show.
+- **Uploaded artifacts:** one-pager [`submission/glass-box-trading-one-pager.pdf`](submission/glass-box-trading-one-pager.pdf), deck [`submission/glass-box-trading.pdf`](submission/glass-box-trading.pdf), cover [`submission/cover.png`](submission/cover.png), form copy [`submission/COPY.md`](submission/COPY.md); the video is rendered from [`video/`](video/README.md) and uploaded to the form (not committed). All figures come from one frozen dataset (`video/public/dataset/`) through [`submission/render/inject.mjs`](submission/render/inject.mjs).
+- **Where to look first:** the pure decision core [`src/core/decision.ts`](src/core/decision.ts), the gate catalog G1–G14 in [`docs/SPEC.md`](docs/SPEC.md), the S-CYC-06 evidence-debt test in [`tests/cyc-runner.spec.ts`](tests/cyc-runner.spec.ts), the decision log [`DECISIONS.md`](DECISIONS.md) — including the two defects found on the flatten day and the watchdog takeover that closed the book.
+
 ## Prerequisites
 
 - Node `24.9.0`

@@ -23,7 +23,7 @@
   `ALPACA_TOOLSETS`), CLI v0.0.13 (`~/tools/alpaca-cli/`, mleg + client-order-id
   + dry-run). CONCEPT §10.
 - CONCEPT baseline → single-round cold read (6A/6B/3C, all folded in,
-  `docs/cold-read-2026-08-24.md`) → initial 48-scenario catalog derived cold,
+  `docs/COLD-READ-2026-08-24.md`) → initial 48-scenario catalog derived cold,
   since extended to 71 (`docs/SCENARIOS.md`).
 - **External contract frozen:** `docs/HACKATHON-FACTS.md` records the rendered
   event page, source authority rules, account rules, judging criteria, deliverables,

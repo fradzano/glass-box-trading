@@ -17,7 +17,7 @@
 - `config/policy.json`
 - `DECISIONS.md` — DECISIONS
 - `docs/AXIOMS.md` — Behavioral Axioms — distilled from the scenario catalog
-- `docs/cold-read-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
+- `docs/COLD-READ-2026-08-24.md` — Cold read of CONCEPT.md — 2026-08-24
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
