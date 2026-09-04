@@ -2411,3 +2411,54 @@ small, no ADR split).
   task installation, a weekly publish routine and a cost model in the
   projection, because paper fills at the limit and near-zero fees measure
   the gross path only. Recorded in the release ahoy note as item 8.
+- **2026-09-04 — Competition closed: the `TERMINAL` entry stands and the
+  dashboard carries the deadline pin.** The event's last scheduled cycle ran
+  at 22:00 CEST (seq 104, ping `success` at 20:00:09.625Z); both task
+  triggers end their 6h30m repetition window at 22:00 local, so nothing
+  could fire again before Monday and the one-shot could not meet a live
+  writer. `node dist/shell/deadline-cli.js terminal` from the operating
+  checkout: exit 0, epoch 68 `WON`, `appended: true`, `remainder: null`,
+  `holdVisible: false`, ping `success`; the entry is seq 105 at
+  `2026-09-04T20:11:48.122Z` and the journal closes at 105 entries.
+  Published per `docs/PUBLISH-RUNBOOK.md` from the `gbt-publish` worktree
+  with `-PresentationCutoff 2026-09-03T20:00:14.787Z` unchanged and
+  `-DeadlineCutoff` at the `TERMINAL` instant: revision
+  `sha256:78af85c1c238a49d`, four routes (`/`, `latest`, `presentation`,
+  `deadline`), one discrepancy (`UNATTRIBUTED: -313 cents`), equity
+  $100,582.87 with zero positions, qualification `QUALIFIED` on six fills.
+  Candidate `https://glass-box-trading-oluchhl8s-glass-box-trading.vercel.app`,
+  promoted as `dpl_CzQg2ZSVJ4qD59KS2drZx7AmUSwV`. The route the submission
+  cites, `/revisions/sha256-7b82959a344a7c7e/presentation/`, is byte-stable
+  across both the render and the promotion: SHA-256 prefix
+  `c8745e3f5dc00401` over 157,652 bytes, measured on the live alias before
+  the render, on the candidate, and on the alias after promotion, equal to
+  the local deploy file; its `projection.json` still names
+  `sha256:7b82959a344a7c7e` at cutoff `2026-09-03T20:00:14.787Z`, last seq
+  76. Journal, `pings.log`, `watchdog-run.log` and both probe receipts are
+  archived in the verification store's `evidence/`. The two scheduled tasks
+  are the owner's step (elevation); they cannot fire before Monday
+  2026-09-07 15:30 either way.
+- **2026-09-04 — The dashboard probe asserts the wrong revision for
+  carried-forward JSON routes; the candidate was promoted against a red
+  probe on measured grounds (B, backlog).** `submission/publish/render-site.mjs`
+  builds the manifest's `jsonRoutes` from every `.json` in the deploy tree,
+  and `tools/probe-dashboard.ps1` expects each of them to name the
+  manifest's current `journalRevision`. An immutable carried-forward route
+  must name its own, older revision, so that expectation is false by
+  construction: both runs reported 47 of 48 with the single `[FAIL]` on
+  `/revisions/sha256-7b82959a344a7c7e/presentation/projection.json`
+  (`journalRevision sha256:7b82959a344a7c7e expected
+  sha256:78af85c1c238a49d`). It stayed green until today because no earlier
+  carried-forward route carried a `projection.json` — the first revision's
+  `latest` route predates the per-route JSON. What the failing check exists
+  to protect was measured by hand instead, on the candidate before the
+  promotion and on the alias after it: the served bytes and the pinned
+  `projection.json` identity recorded in the entry above. Ruling (PM,
+  22:15 CEST): promote. The deployment is correct and the instrument is
+  not, the submission-cited route is proven unchanged, and `vercel
+  rollback` keeps the step reversible; the owner was told in the same push
+  that carried the task hand-off. Fix in the release session: the manifest
+  states an expected revision per JSON route (for a carried-forward route,
+  the one spelled in its own path) and `tests/publish-dashboard.spec.ts`
+  pins that; until then the runbook's "a failed probe means the candidate
+  is not promoted" requires the operator to read *which* check failed.
