@@ -2435,9 +2435,10 @@ small, no ADR split).
   the local deploy file; its `projection.json` still names
   `sha256:7b82959a344a7c7e` at cutoff `2026-09-03T20:00:14.787Z`, last seq
   76. Journal, `pings.log`, `watchdog-run.log` and both probe receipts are
-  archived in the verification store's `evidence/`. The two scheduled tasks
-  are the owner's step (elevation); they cannot fire before Monday
-  2026-09-07 15:30 either way.
+  archived in the verification store's `evidence/`. The owner disabled both scheduled
+  tasks from an elevated shell at 22:37 CEST and each reads back
+  `Disabled`; they could not have fired before Monday 2026-09-07 15:30
+  either way.
 - **2026-09-04 — The dashboard probe asserts the wrong revision for
   carried-forward JSON routes; the candidate was promoted against a red
   probe on measured grounds (B, backlog).** `submission/publish/render-site.mjs`
