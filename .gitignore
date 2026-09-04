@@ -23,3 +23,10 @@ evidence/
 # Remotion (video/ is its own package; renders go to submission/ by hand)
 video/out/
 video/.remotion/
+
+# Submission renders that are generated or recorded (submission/render/render.mjs, video/README.md);
+# the video deliverable and the screen captures are uploaded to the form and archived in the
+# verification store, not committed (binary size); the one-pager, deck and cover are tracked.
+submission/render/out/
+submission/*.mp4
+video/public/captures/

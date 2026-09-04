@@ -81,10 +81,15 @@ figure here may be typed by hand or diverge from theirs.
 ## Broker-reconciled P&L and sleeve attribution
 
 - Account {{ACCOUNT_ID}}, journal revision {{JOURNAL_REVISION}}
-- Start equity {{START_EQUITY}} → {{PNL_ABS}} ({{PNL_PCT}}) at
-  {{PRESENTATION_CUTOFF_AT}}
-- Realized {{REALIZED_PNL}} · Unrealized {{UNREALIZED_PNL}}
-- Income sleeve {{INCOME_SLEEVE_PNL}} · Convex sleeve {{CONVEX_SLEEVE_PNL}}
+- Start equity {{START_EQUITY}} · Equity at cutoff {{CURRENT_EQUITY}} ·
+  P&L {{PNL_ABS}} ({{PNL_PCT}}) at {{PRESENTATION_CUTOFF_AT}}
+- Realized {{REALIZED_PNL}} · Unrealized {{UNREALIZED_PNL}} · Unattributed
+  {{UNATTRIBUTED}} — a fee-shaped residual the journal cannot explain, shown
+  and never assigned to a sleeve
+- Realized only, by sleeve: income {{INCOME_SLEEVE_PNL}} · convex
+  {{CONVEX_SLEEVE_PNL}}
+- Max drawdown {{MAX_DRAWDOWN}} ({{MAX_DRAWDOWN_PCT}} of peak
+  {{PEAK_EQUITY}}); book flat, zero positions, zero orders
 
 ---
 
@@ -100,25 +105,21 @@ figure here may be typed by hand or diverge from theirs.
 
 ---
 
-## Failure drills, tests, and explicit limitations
+## Failure drills, two defects found, and limitations
 
-- Named failure-path tests exercise reconciliation, kill-switch, watchdog,
-  and expiry lifecycle — public alongside the source
-- Paper trading only, on a dedicated competition account — never a live
-  brokerage account
-- One week of paper P&L cannot prove a strategy has edge; no alpha or
-  risk-adjusted-performance claim is made anywhere in this deck
-
-**Known broker-API limitation: the last-read-to-submit window**
-- Alpaca has no conditional submit — no book revision, no if-match — so the
-  gap between the pre-submit broker re-fetch and broker acceptance can't be
-  closed with today's API
-- That re-fetch's completion is the declared linearization point; manual
-  account mutation is prohibited outside a durable halt
-- Undetected only until the next cycle: phase 0 then classifies it
-  `RESIDUE` or `HUMAN_ACTION`, halts, and on the competition account
-  irreversibly breaks the provenance latch
-- Ask: an atomic conditional submit from Alpaca would close this window
+- Failure-path tests cover reconciliation, kill-switch, watchdog, expiry
+- **Defect 1:** on flatten day the runner could not price the structures
+  expiring next session (quote window starts at `EXPIRY_MIN_SESSIONS`); the
+  refusal reached only a discarded report, so no close was submitted
+- **Response:** owner stood the writer down, the certified dead-man watchdog
+  took over — `HALT WATCHDOG_TAKEOVER`, all three structures closed and
+  filled within a second, book flat at the deadline
+- **Defect 2:** that watchdog's wrapper had killed the CLI on its first
+  stderr line since arming — inert for a day, fixed at 17:41 CEST, an hour
+  before the takeover
+- **API limit:** no conditional submit at Alpaca; the pre-submit re-fetch is
+  the declared linearization point, a manual mutation halts the next cycle
+- Paper only; one week of paper P&L cannot prove edge — no alpha claim
 
 ---
 

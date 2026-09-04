@@ -4,8 +4,8 @@ Remotion source lives under this directory; the rendered deliverable is
 `submission/glass-box-trading.mp4` — under five minutes, under 300 MB. Every
 URL and number displayed on screen is injected at render time from the
 single frozen presentation-cutoff dataset (the pinned presentation route's
-`revisions/{{JOURNAL_REVISION}}/presentation/projection.json`, produced by
-the dashboard publish pipeline at {{PRESENTATION_CUTOFF_AT}}), the same
+`revisions/sha256:7b82959a344a7c7e/presentation/projection.json`, produced by
+the dashboard publish pipeline at 2026-09-03T20:00:14.787Z), the same
 dataset that feeds `submission/ONE-PAGER.md`, `submission/slides/deck.md`,
 and `submission/COPY.md`. No on-screen figure is typed by hand; a scene that
 needs a number reads it from that dataset, and the render step fails loudly
@@ -31,7 +31,7 @@ single block of the timeline.
 1. **Cold open (0:00–0:30).** Title card: "Glass Box Trading." One-line
    framing of the auditability problem, then the control model — "AI
    proposes; deterministic gates dispose" — with the headline result
-   ({{PNL_ABS}}, {{PNL_PCT}}) as of {{PRESENTATION_CUTOFF_AT}}.
+   ($583.59, 0.58%) as of 2026-09-03T20:00:14.787Z.
 2. **Dashboard open, no auth (0:30–~1:00).** Screen-record the public
    dashboard loading with no login. First viewport: $100k paper-account
    result, current exposure, control-model line.
@@ -53,7 +53,7 @@ single block of the timeline.
    trading cannot prove a strategy has edge.
 8. **Source and tests (4:25–4:55).** Open the public repository at the pure
    core and the test that executes one named evidence-debt path.
-9. **Close (4:55–5:00).** Demo URL ({{DEMO_URL}}) and project name on
+9. **Close (4:55–5:00).** Demo URL (https://glass-box-trading.vercel.app) and project name on
    screen.
 
 ## Constraints

@@ -1,28 +1,28 @@
 {
-  "journalRevision": "sha256:c1c8e14ea4035034",
+  "journalRevision": "sha256:7b82959a344a7c7e",
   "cutoff": {
-    "at": "2026-09-02T19:00:51.380Z",
+    "at": "2026-09-03T20:00:14.787Z",
     "kind": "presentation"
   },
-  "cutoffMs": 1788375651380,
-  "entriesFolded": 25,
+  "cutoffMs": 1788465614787,
+  "entriesFolded": 76,
   "entriesBeyondCutoff": 0,
-  "lastUpdatedAt": "2026-09-02T19:00:51.380Z",
-  "lastSeq": 25,
+  "lastUpdatedAt": "2026-09-03T20:00:14.787Z",
+  "lastSeq": 76,
   "accountId": "PA376WIK2ATL",
   "profile": "competition",
   "startEquityCents": 10000000,
   "initialCapitalCents": 10000000,
   "startEquityMatchesInitialCapital": true,
-  "currentEquityCents": 9998655,
-  "currentCashCents": 10047255,
-  "pnlAbsoluteCents": -1345,
-  "pnlBps": -1,
-  "realizedCents": 0,
-  "unrealizedCents": -400,
-  "unattributedCents": -945,
+  "currentEquityCents": 10058359,
+  "currentCashCents": 10058359,
+  "pnlAbsoluteCents": 58359,
+  "pnlBps": 58,
+  "realizedCents": 58600,
+  "unrealizedCents": 0,
+  "unattributedCents": -241,
   "discrepancies": [
-    "UNATTRIBUTED: -945 cents of the equity delta are not explained by joined fills and marks"
+    "UNATTRIBUTED: -241 cents of the equity delta are not explained by joined fills and marks"
   ],
   "equitySeries": [
     {
@@ -78,79 +78,186 @@
       "at": "2026-09-02T19:00:50.314Z",
       "equityCents": 9998655,
       "cashCents": 10047255
+    },
+    {
+      "seq": 26,
+      "at": "2026-09-02T19:15:57.112Z",
+      "equityCents": 10000855,
+      "cashCents": 10047255
+    },
+    {
+      "seq": 29,
+      "at": "2026-09-02T19:30:54.403Z",
+      "equityCents": 10004545,
+      "cashCents": 9911645
+    },
+    {
+      "seq": 34,
+      "at": "2026-09-02T19:45:52.378Z",
+      "equityCents": 10012530,
+      "cashCents": 9918830
+    },
+    {
+      "seq": 41,
+      "at": "2026-09-02T20:01:06.963Z",
+      "equityCents": 10009215,
+      "cashCents": 9932915
+    },
+    {
+      "seq": 42,
+      "at": "2026-09-03T13:30:24.684Z",
+      "equityCents": 10051344,
+      "cashCents": 9932844
+    },
+    {
+      "seq": 49,
+      "at": "2026-09-03T13:45:42.097Z",
+      "equityCents": 10058419,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 50,
+      "at": "2026-09-03T14:01:06.433Z",
+      "equityCents": 10058719,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 51,
+      "at": "2026-09-03T14:15:52.832Z",
+      "equityCents": 10059619,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 52,
+      "at": "2026-09-03T14:31:21.747Z",
+      "equityCents": 10058419,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 53,
+      "at": "2026-09-03T14:45:43.818Z",
+      "equityCents": 10058419,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 54,
+      "at": "2026-09-03T15:00:58.928Z",
+      "equityCents": 10059619,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 55,
+      "at": "2026-09-03T15:16:24.976Z",
+      "equityCents": 10057819,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 56,
+      "at": "2026-09-03T15:30:44.897Z",
+      "equityCents": 10057819,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 57,
+      "at": "2026-09-03T15:45:44.341Z",
+      "equityCents": 10058119,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 58,
+      "at": "2026-09-03T16:01:12.329Z",
+      "equityCents": 10058119,
+      "cashCents": 10089019
+    },
+    {
+      "seq": 66,
+      "at": "2026-09-03T17:30:24.668Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 67,
+      "at": "2026-09-03T17:45:13.278Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 68,
+      "at": "2026-09-03T18:00:15.785Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 69,
+      "at": "2026-09-03T18:15:13.433Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 70,
+      "at": "2026-09-03T18:30:13.053Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 71,
+      "at": "2026-09-03T18:45:13.435Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 72,
+      "at": "2026-09-03T19:00:14.763Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 73,
+      "at": "2026-09-03T19:15:14.148Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 74,
+      "at": "2026-09-03T19:30:13.797Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 75,
+      "at": "2026-09-03T19:45:13.992Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
+    },
+    {
+      "seq": 76,
+      "at": "2026-09-03T20:00:14.787Z",
+      "equityCents": 10058359,
+      "cashCents": 10058359
     }
   ],
-  "peakEquityCents": 10000000,
-  "maxDrawdownCents": 1345,
-  "maxDrawdownBps": 1,
+  "peakEquityCents": 10059619,
+  "maxDrawdownCents": 3315,
+  "maxDrawdownBps": 3,
   "sleeves": {
     "income": {
-      "realizedCents": 0,
-      "unrealizedCents": -400,
-      "unrealizedUnattributedLifecycles": [],
-      "budgetAtRiskCents": 154700,
-      "lifecycleCount": 4
-    },
-    "convex": {
-      "realizedCents": 0,
+      "realizedCents": 23000,
       "unrealizedCents": 0,
       "unrealizedUnattributedLifecycles": [],
       "budgetAtRiskCents": 0,
-      "lifecycleCount": 2
+      "lifecycleCount": 7
+    },
+    "convex": {
+      "realizedCents": 35600,
+      "unrealizedCents": 0,
+      "unrealizedUnattributedLifecycles": [],
+      "budgetAtRiskCents": 0,
+      "lifecycleCount": 4
     }
   },
-  "positions": [
-    {
-      "contractId": "SPY260904C00768000",
-      "quantity": -3,
-      "avgEntryPriceCents": 200,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260904C00769000",
-      "quantity": 3,
-      "avgEntryPriceCents": 159,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260904P00761000",
-      "quantity": 3,
-      "avgEntryPriceCents": 115,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260904P00762000",
-      "quantity": -3,
-      "avgEntryPriceCents": 137,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260908P00755000",
-      "quantity": 2,
-      "avgEntryPriceCents": 100,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260908P00757000",
-      "quantity": 1,
-      "avgEntryPriceCents": 121,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260908P00760000",
-      "quantity": -2,
-      "avgEntryPriceCents": 189,
-      "declaredExpiryHold": false
-    },
-    {
-      "contractId": "SPY260908P00762000",
-      "quantity": -1,
-      "avgEntryPriceCents": 227,
-      "declaredExpiryHold": false
-    }
-  ],
+  "positions": [],
   "openOrders": [],
-  "flatState": "not_flat",
+  "flatState": "flat",
   "lifecycles": [
     {
       "exposureLifecycleId": "exposure:entry:2026-09-02:5:90daa0a3283b8126268c8099",
@@ -169,11 +276,25 @@
       "limitKind": "credit",
       "submittedLimitCents": 105,
       "reservedMaxLossCents": 39500,
-      "closes": [],
-      "closedQuantity": 0,
-      "openQuantity": 1,
-      "realizedCents": 0,
-      "unrealizedCents": -650,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:5:90daa0a3283b8126268c8099:g0",
+          "route": "deadline",
+          "generation": 0,
+          "intentSeq": 43,
+          "outcomeSeq": 46,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 1,
+          "avgFillPriceCents": 58,
+          "limitKind": "debit",
+          "cashCents": -5800
+        }
+      ],
+      "closedQuantity": 1,
+      "openQuantity": 0,
+      "realizedCents": 4800,
+      "unrealizedCents": 0,
       "rationale": "Sell an OTM SPY put credit spread (vertical_credit) below spot to collect premium with defined max loss, using liquid 2026-09-08 SPY puts. [SPY vertical_credit entry:2026-09-02:5:90daa0a3283b8126268c8099]"
     },
     {
@@ -193,11 +314,25 @@
       "limitKind": "credit",
       "submittedLimitCents": 63,
       "reservedMaxLossCents": 11100,
-      "closes": [],
-      "closedQuantity": 0,
-      "openQuantity": 3,
-      "realizedCents": 0,
-      "unrealizedCents": -450,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:6:251a2181955c8f1bfee9aa10:g0",
+          "route": "watchdog",
+          "generation": 0,
+          "intentSeq": 60,
+          "outcomeSeq": 63,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 3,
+          "avgFillPriceCents": 92,
+          "limitKind": "debit",
+          "cashCents": -27600
+        }
+      ],
+      "closedQuantity": 3,
+      "openQuantity": 0,
+      "realizedCents": -8700,
+      "unrealizedCents": 0,
       "rationale": "Short-dated SPY iron_condor selling the 76800/76200 strikes against the 76900/76100 wings to harvest theta on SPY into Friday's expiry with defined risk on both sides. [SPY iron_condor entry:2026-09-02:6:251a2181955c8f1bfee9aa10]"
     },
     {
@@ -241,11 +376,25 @@
       "limitKind": "credit",
       "submittedLimitCents": 89,
       "reservedMaxLossCents": 82200,
-      "closes": [],
-      "closedQuantity": 0,
-      "openQuantity": 2,
-      "realizedCents": 0,
-      "unrealizedCents": 700,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:8:c4d5f9648c8a3087d98951d8:g0",
+          "route": "deadline",
+          "generation": 0,
+          "intentSeq": 44,
+          "outcomeSeq": 47,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 2,
+          "avgFillPriceCents": 46,
+          "limitKind": "debit",
+          "cashCents": -9200
+        }
+      ],
+      "closedQuantity": 2,
+      "openQuantity": 0,
+      "realizedCents": 8600,
+      "unrealizedCents": 0,
       "rationale": "Sell a SPY vertical_credit put spread (76000/75500) on SPY to collect premium from modest bullish/neutral drift into the 2026-09-08 expiry, with defined max loss. [SPY vertical_credit entry:2026-09-02:8:c4d5f9648c8a3087d98951d8]"
     },
     {
@@ -279,9 +428,9 @@
       "underlying": "SPY",
       "structureType": "vertical_credit",
       "intentSeq": 24,
-      "outcomeSeq": null,
-      "state": "fillable",
-      "resolution": "resting",
+      "outcomeSeq": 39,
+      "state": "expired",
+      "resolution": "released",
       "brokerOrderId": "d94826e7-bc0a-4ec7-aae0-359cf22e2a0f",
       "approvedQuantity": 3,
       "filledQuantity": 0,
@@ -295,6 +444,168 @@
       "realizedCents": 0,
       "unrealizedCents": 0,
       "rationale": "Sell the SPY 76200/76100 put vertical_credit spread on SPY as spot sits well above both strikes with tight liquid quotes into the 2026-09-04 expiry. [SPY vertical_credit entry:2026-09-02:9:722db2c5af62a49356591322]"
+    },
+    {
+      "exposureLifecycleId": "exposure:entry:2026-09-02:10:b1900aebf5240dca82f42c02",
+      "clientOrderId": "entry:2026-09-02:10:b1900aebf5240dca82f42c02",
+      "sleeve": "convex",
+      "underlying": "QQQ",
+      "structureType": "long_option",
+      "intentSeq": 27,
+      "outcomeSeq": 28,
+      "state": "filled",
+      "resolution": "filled",
+      "brokerOrderId": "bcd12d1a-921e-40ee-bae9-bdffa7bcdf41",
+      "approvedQuantity": 4,
+      "filledQuantity": 4,
+      "avgFillPriceCents": 339,
+      "limitKind": "debit",
+      "submittedLimitCents": 350,
+      "reservedMaxLossCents": 140000,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:10:b1900aebf5240dca82f42c02:g0",
+          "route": "deadline",
+          "generation": 0,
+          "intentSeq": 45,
+          "outcomeSeq": 48,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 4,
+          "avgFillPriceCents": 428,
+          "limitKind": "credit",
+          "cashCents": 171200
+        }
+      ],
+      "closedQuantity": 4,
+      "openQuantity": 0,
+      "realizedCents": 35600,
+      "unrealizedCents": 0,
+      "rationale": "Buy a QQQ long_option call at the 71200 strike for convex upside exposure on QQQ with the underlying near 70875c. [QQQ long_option entry:2026-09-02:10:b1900aebf5240dca82f42c02]"
+    },
+    {
+      "exposureLifecycleId": "exposure:entry:2026-09-02:11:722db2c5af62a49356591322",
+      "clientOrderId": "entry:2026-09-02:11:722db2c5af62a49356591322",
+      "sleeve": "income",
+      "underlying": "SPY",
+      "structureType": "vertical_credit",
+      "intentSeq": 30,
+      "outcomeSeq": 31,
+      "state": "filled",
+      "resolution": "filled",
+      "brokerOrderId": "6463175c-90dd-4167-9fe0-ecc3321083b4",
+      "approvedQuantity": 3,
+      "filledQuantity": 3,
+      "avgFillPriceCents": 24,
+      "limitKind": "credit",
+      "submittedLimitCents": 22,
+      "reservedMaxLossCents": 23400,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:11:722db2c5af62a49356591322:g0",
+          "route": "watchdog",
+          "generation": 0,
+          "intentSeq": 61,
+          "outcomeSeq": 64,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 3,
+          "avgFillPriceCents": 4,
+          "limitKind": "debit",
+          "cashCents": -1200
+        }
+      ],
+      "closedQuantity": 3,
+      "openQuantity": 0,
+      "realizedCents": 6000,
+      "unrealizedCents": 0,
+      "rationale": "SPY vertical_credit put spread sells the 762 put and buys the 761 put for defined-risk income on a small OTM credit near spot 765.46. [SPY vertical_credit entry:2026-09-02:11:722db2c5af62a49356591322]"
+    },
+    {
+      "exposureLifecycleId": "exposure:entry:2026-09-02:11:7f32de2dc2d4e7f5cd0afd74",
+      "clientOrderId": "entry:2026-09-02:11:7f32de2dc2d4e7f5cd0afd74",
+      "sleeve": "convex",
+      "underlying": "QQQ",
+      "structureType": "long_option",
+      "intentSeq": 32,
+      "outcomeSeq": null,
+      "state": "canceled",
+      "resolution": "released",
+      "brokerOrderId": null,
+      "approvedQuantity": 2,
+      "filledQuantity": 0,
+      "avgFillPriceCents": null,
+      "limitKind": "debit",
+      "submittedLimitCents": 132,
+      "reservedMaxLossCents": 26400,
+      "closes": [],
+      "closedQuantity": 0,
+      "openQuantity": 0,
+      "realizedCents": 0,
+      "unrealizedCents": 0,
+      "rationale": "QQQ long_option call at the 715 strike offers a cheap convex payoff for a short-dated upside move above spot 708.71. [QQQ long_option entry:2026-09-02:11:7f32de2dc2d4e7f5cd0afd74]"
+    },
+    {
+      "exposureLifecycleId": "exposure:entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2",
+      "clientOrderId": "entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2",
+      "sleeve": "income",
+      "underlying": "SPY",
+      "structureType": "vertical_credit",
+      "intentSeq": 35,
+      "outcomeSeq": 40,
+      "state": "filled",
+      "resolution": "filled",
+      "brokerOrderId": "a8845235-1163-482f-bab0-345f2391b1c1",
+      "approvedQuantity": 3,
+      "filledQuantity": 3,
+      "avgFillPriceCents": 47,
+      "limitKind": "credit",
+      "submittedLimitCents": 47,
+      "reservedMaxLossCents": 45900,
+      "closes": [
+        {
+          "attemptId": "close:exposure:entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2:g0",
+          "route": "watchdog",
+          "generation": 0,
+          "intentSeq": 62,
+          "outcomeSeq": 65,
+          "reconciliationSeq": null,
+          "status": "filled",
+          "filledQuantity": 3,
+          "avgFillPriceCents": 6,
+          "limitKind": "debit",
+          "cashCents": -1800
+        }
+      ],
+      "closedQuantity": 3,
+      "openQuantity": 0,
+      "realizedCents": 12300,
+      "unrealizedCents": 0,
+      "rationale": "Sell the nearer 76200 put and buy the farther 76000 put on SPY as a vertical_credit spread to collect short-dated premium with defined risk. [SPY vertical_credit entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2]"
+    },
+    {
+      "exposureLifecycleId": "exposure:entry:2026-09-02:12:a5d71f10126251948478cabb",
+      "clientOrderId": "entry:2026-09-02:12:a5d71f10126251948478cabb",
+      "sleeve": "income",
+      "underlying": "QQQ",
+      "structureType": "vertical_credit",
+      "intentSeq": 37,
+      "outcomeSeq": null,
+      "state": "canceled",
+      "resolution": "released",
+      "brokerOrderId": null,
+      "approvedQuantity": 3,
+      "filledQuantity": 0,
+      "avgFillPriceCents": null,
+      "limitKind": "credit",
+      "submittedLimitCents": 53,
+      "reservedMaxLossCents": 44100,
+      "closes": [],
+      "closedQuantity": 0,
+      "openQuantity": 0,
+      "realizedCents": 0,
+      "unrealizedCents": 0,
+      "rationale": "Sell the nearer 71600 call and buy the farther 71800 call on QQQ as a vertical_credit spread to harvest premium with a capped max loss. [QQQ vertical_credit entry:2026-09-02:12:a5d71f10126251948478cabb]"
     }
   ],
   "emergencyCloses": [],
@@ -1156,12 +1467,2174 @@
       "closeIntentSeqs": [],
       "equityCents": 9998655,
       "analystSkipped": false
+    },
+    {
+      "seq": 26,
+      "at": "2026-09-02T19:15:57.112Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-02",
+      "cycleIndex": 10,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-20260908-01",
+          "candidateRationale": "Sell the SPY 76000/75700 put vertical_credit spread on SPY for defined-risk income, collecting premium from OTM puts with the underlying at 76541c.",
+          "decision": "VETO",
+          "reservedMaxLossCents": 74400,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": false,
+              "code": "LIQUIDITY",
+              "reasons": [
+                "SPY260908P00757000: quote size below minimum"
+              ]
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-20260908-01",
+          "candidateRationale": "Buy a QQQ long_option call at the 71200 strike for convex upside exposure on QQQ with the underlying near 70875c.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 140000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        }
+      ],
+      "result": "proposal",
+      "intentSeqs": [
+        27
+      ],
+      "closeIntentSeqs": [],
+      "equityCents": 10000855,
+      "analystSkipped": false
+    },
+    {
+      "seq": 29,
+      "at": "2026-09-02T19:30:54.403Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-02",
+      "cycleIndex": 11,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-creditput-0904-01",
+          "candidateRationale": "SPY vertical_credit put spread sells the 762 put and buys the 761 put for defined-risk income on a small OTM credit near spot 765.46.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 23400,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-longcall-0904-01",
+          "candidateRationale": "QQQ long_option call at the 715 strike offers a cheap convex payoff for a short-dated upside move above spot 708.71.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 26400,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        }
+      ],
+      "result": "proposal",
+      "intentSeqs": [
+        30,
+        32
+      ],
+      "closeIntentSeqs": [],
+      "equityCents": 10004545,
+      "analystSkipped": false
+    },
+    {
+      "seq": 34,
+      "at": "2026-09-02T19:45:52.378Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-02",
+      "cycleIndex": 12,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-260904-762-760",
+          "candidateRationale": "Sell the nearer 76200 put and buy the farther 76000 put on SPY as a vertical_credit spread to collect short-dated premium with defined risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 45900,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-CCS-260908-716-718",
+          "candidateRationale": "Sell the nearer 71600 call and buy the farther 71800 call on QQQ as a vertical_credit spread to harvest premium with a capped max loss.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 44100,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        }
+      ],
+      "result": "proposal",
+      "intentSeqs": [
+        35,
+        37
+      ],
+      "closeIntentSeqs": [],
+      "equityCents": 10012530,
+      "analystSkipped": false
+    },
+    {
+      "seq": 41,
+      "at": "2026-09-02T20:01:06.963Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-02",
+      "cycleIndex": 13,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-VCR-0904-01",
+          "candidateRationale": "SPY vertical_credit put spread selling the 755 put and buying the 750 put captures rich short-dated theta while staying ~1.3% OTM with a small, fixed max loss.",
+          "decision": "VETO",
+          "reservedMaxLossCents": 142800,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": false,
+              "code": "LIQUIDITY",
+              "reasons": [
+                "SPY260904P00750000: relative spread exceeds limit"
+              ]
+            },
+            {
+              "gate": "G6",
+              "passed": false,
+              "code": "SESSION",
+              "reasons": [
+                "calendar is closed at explicit now"
+              ]
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-0908-01",
+          "candidateRationale": "QQQ long_option call at the 715 strike offers convex upside exposure into the 2026-09-08 expiry with risk capped at the modest premium paid.",
+          "decision": "VETO",
+          "reservedMaxLossCents": 74700,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": false,
+              "code": "SESSION",
+              "reasons": [
+                "calendar is closed at explicit now"
+              ]
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10009215,
+      "analystSkipped": false
+    },
+    {
+      "seq": 42,
+      "at": "2026-09-03T13:30:24.684Z",
+      "type": "GAP",
+      "tradingDay": null,
+      "cycleIndex": null,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [],
+      "result": "gap",
+      "intentSeqs": [],
+      "closeIntentSeqs": [
+        43,
+        44,
+        45
+      ],
+      "equityCents": 10051344,
+      "analystSkipped": false
+    },
+    {
+      "seq": 49,
+      "at": "2026-09-03T13:45:42.097Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 15,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-20260909-01",
+          "candidateRationale": "Sell the SPY vertical_credit put spread (765/760) on SPY to collect premium with a defined max loss while spot sits comfortably above both strikes.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 125400,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-20260910-01",
+          "candidateRationale": "Buy an at-the-money QQQ long_option call to capture convex upside with premium-only defined risk ahead of the 2026-09-10 expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 125400,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PCS-20260909-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-20260910-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058419,
+      "analystSkipped": false
+    },
+    {
+      "seq": 50,
+      "at": "2026-09-03T14:01:06.433Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 16,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-0908",
+          "candidateRationale": "Sell the SPY 76000 put and buy the SPY 75500 put for a defined-risk vertical_credit on SPY, collecting premium from the near OTM put while capping loss with the further put.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 90600,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-CCS-0908",
+          "candidateRationale": "Sell the QQQ 71800 call and buy the QQQ 72300 call for a defined-risk vertical_credit on QQQ, fading upside above spot with a capped-loss call spread.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 75600,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PCS-0908",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-CCS-0908",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058719,
+      "analystSkipped": false
+    },
+    {
+      "seq": 51,
+      "at": "2026-09-03T14:15:52.832Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 17,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-creditvert-0908-01",
+          "candidateRationale": "Sell SPY 760/758 put vertical_credit for defined-risk income as SPY spot sits well above both strikes with two sessions to expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 89500,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-longcall-0908-01",
+          "candidateRationale": "Buy QQQ 716 call as a long_option convex position to capture upside optionality on QQQ into the 09-08 expiry with limited defined premium at risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 77700,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-creditvert-0908-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-longcall-0908-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10059619,
+      "analystSkipped": false
+    },
+    {
+      "seq": 52,
+      "at": "2026-09-03T14:31:21.747Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 18,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PUT-CR-0908C18-1",
+          "candidateRationale": "Sell the SPY vertical_credit put spread (763/758 strikes) on SPY, collecting premium from OTM puts with defined 500c width risk ahead of the 2026-09-09 expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 85000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LONGCALL-0909C18-1",
+          "candidateRationale": "Buy QQQ long_option calls at the 725 strike on QQQ for convex upside exposure into the 2026-09-09 expiry with capped premium risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 28800,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PUT-CR-0908C18-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LONGCALL-0909C18-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058419,
+      "analystSkipped": false
+    },
+    {
+      "seq": 53,
+      "at": "2026-09-03T14:45:43.818Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 19,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-CR-PUT-0908C19-1",
+          "candidateRationale": "Sell a SPY vertical_credit put spread below spot to collect premium with defined max loss on SPY.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 133800,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-0909C19-1",
+          "candidateRationale": "Buy a modest QQQ long_option call for convex upside exposure with capped debit risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 52200,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-CR-PUT-0908C19-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-0909C19-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058419,
+      "analystSkipped": false
+    },
+    {
+      "seq": 54,
+      "at": "2026-09-03T15:00:58.928Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 20,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-0908-01",
+          "candidateRationale": "Sell a SPY vertical_credit put spread (short 76000P/long 75500P) expiring 2026-09-08, collecting premium from a modest downside cushion with defined max loss.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 235000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-0909-01",
+          "candidateRationale": "Buy a QQQ long_option call at the 72000 strike expiring 2026-09-09 for defined-risk convex upside exposure with limited premium at risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 118000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PCS-0908-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-0909-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10059619,
+      "analystSkipped": false
+    },
+    {
+      "seq": 55,
+      "at": "2026-09-03T15:16:24.976Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 21,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-IC-20260909-1",
+          "candidateRationale": "Sell an SPY iron_condor using the 2026-09-09 expiry, collecting premium from OTM put and call verticals well outside the 1000bps strike band around SPY spot.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 51300,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-1",
+          "candidateRationale": "Buy a QQQ long_option call slightly out-of-the-money on the 2026-09-09 expiry for convex upside exposure with defined, limited premium risk.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 50000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-IC-20260909-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10057819,
+      "analystSkipped": false
+    },
+    {
+      "seq": 56,
+      "at": "2026-09-03T15:30:44.897Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 22,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-20260908-1",
+          "candidateRationale": "Sell the SPY 76500/76000 put vertical_credit on SPY for defined-risk theta income as spot sits well above both strikes into the 2026-09-08 expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 135600,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-1",
+          "candidateRationale": "Buy the QQQ 72500 call as a long_option convex bet on QQQ for a defined-risk (premium-only) upside move into the 2026-09-09 expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 42800,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PCS-20260908-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-1",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10057819,
+      "analystSkipped": false
+    },
+    {
+      "seq": 57,
+      "at": "2026-09-03T15:45:44.341Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 23,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-0908-001",
+          "candidateRationale": "Sell the SPY 76500/76000 put vertical_credit spread on SPY to collect premium from a modest OTM buffer with defined max loss into the 2026-09-08 expiry.",
+          "decision": "VETO",
+          "reservedMaxLossCents": 227500,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": false,
+              "code": "LIQUIDITY",
+              "reasons": [
+                "SPY260908P00760000: quote size below minimum"
+              ]
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-PCS-0908-001",
+          "candidateRationale": "Sell the QQQ 71100/70600 put vertical_credit spread on QQQ to harvest liquid, tight-spread premium with a capped max loss into the 2026-09-08 expiry.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 205000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-PCS-0908-001",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058119,
+      "analystSkipped": false
+    },
+    {
+      "seq": 58,
+      "at": "2026-09-03T16:01:12.329Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 24,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [
+        {
+          "candidateId": "SPY-PCS-20260909-01",
+          "candidateRationale": "Sell a SPY vertical_credit put spread (short 76500/long 76300 puts) on SPY, collecting premium from a modest OTM buffer with defined max loss well under sleeve caps.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 89000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-01",
+          "candidateRationale": "Buy a QQQ long_option call (72500 strike) as a small convex upside bet on QQQ with capped premium risk well inside the convex sleeve budget.",
+          "decision": "PASS",
+          "reservedMaxLossCents": 99000,
+          "gateVector": [
+            {
+              "gate": "G1",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G2",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G3",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G4",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G5",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G6",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G7",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            },
+            {
+              "gate": "G8",
+              "passed": true,
+              "code": "PASS",
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "candidateId": "SPY-PCS-20260909-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        },
+        {
+          "candidateId": "QQQ-LC-20260909-01",
+          "decision": "VETO",
+          "code": "DEADLINE",
+          "reason": "entry actions are vetoed on and after FLATTEN_DATE; no position is opened on or after the day everything must die"
+        }
+      ],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [
+        60,
+        61,
+        62
+      ],
+      "equityCents": 10058119,
+      "analystSkipped": false
+    },
+    {
+      "seq": 66,
+      "at": "2026-09-03T17:30:24.668Z",
+      "type": "GAP",
+      "tradingDay": null,
+      "cycleIndex": null,
+      "reasonCodes": [],
+      "batchVerdicts": [],
+      "candidateVerdicts": [],
+      "result": "gap",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 67,
+      "at": "2026-09-03T17:45:13.278Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 26,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 68,
+      "at": "2026-09-03T18:00:15.785Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 27,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 69,
+      "at": "2026-09-03T18:15:13.433Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 28,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 70,
+      "at": "2026-09-03T18:30:13.053Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 29,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 71,
+      "at": "2026-09-03T18:45:13.435Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 30,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 72,
+      "at": "2026-09-03T19:00:14.763Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 31,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 73,
+      "at": "2026-09-03T19:15:14.148Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 32,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 74,
+      "at": "2026-09-03T19:30:13.797Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 33,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 75,
+      "at": "2026-09-03T19:45:13.992Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 34,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
+    },
+    {
+      "seq": 76,
+      "at": "2026-09-03T20:00:14.787Z",
+      "type": "CYCLE",
+      "tradingDay": "2026-09-03",
+      "cycleIndex": 35,
+      "reasonCodes": [],
+      "batchVerdicts": [
+        {
+          "code": "HALT",
+          "reason": "halt flag is set; entry actions are vetoed, management continues"
+        }
+      ],
+      "candidateVerdicts": [],
+      "result": "no_trade",
+      "intentSeqs": [],
+      "closeIntentSeqs": [],
+      "equityCents": 10058359,
+      "analystSkipped": false
     }
   ],
   "milestones": {
     "firstArmAt": "2026-09-02T16:42:14.658Z",
     "firstTradeAt": "2026-09-02T18:05:09.587Z",
-    "flattenAt": null,
+    "flattenAt": "2026-09-03T17:30:24.668Z",
     "deadlineAt": null,
     "terminalAt": null
   },
@@ -1197,6 +3670,36 @@
         "filledQuantity": 2,
         "avgFillPriceCents": 89,
         "sleeve": "income"
+      },
+      {
+        "clientOrderId": "entry:2026-09-02:10:b1900aebf5240dca82f42c02",
+        "exposureLifecycleId": "exposure:entry:2026-09-02:10:b1900aebf5240dca82f42c02",
+        "intentSeq": 27,
+        "outcomeSeq": 28,
+        "filledAt": "2026-09-02T19:15:57.872Z",
+        "filledQuantity": 4,
+        "avgFillPriceCents": 339,
+        "sleeve": "convex"
+      },
+      {
+        "clientOrderId": "entry:2026-09-02:11:722db2c5af62a49356591322",
+        "exposureLifecycleId": "exposure:entry:2026-09-02:11:722db2c5af62a49356591322",
+        "intentSeq": 30,
+        "outcomeSeq": 31,
+        "filledAt": "2026-09-02T19:30:55.231Z",
+        "filledQuantity": 3,
+        "avgFillPriceCents": 24,
+        "sleeve": "income"
+      },
+      {
+        "clientOrderId": "entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2",
+        "exposureLifecycleId": "exposure:entry:2026-09-02:12:ab1f465e5388f05ee4b6b6e2",
+        "intentSeq": 35,
+        "outcomeSeq": 40,
+        "filledAt": "2026-09-02T20:00:19.512Z",
+        "filledQuantity": 3,
+        "avgFillPriceCents": 47,
+        "sleeve": "income"
       }
     ],
     "checkpointMs": 1788292800000,
@@ -1204,8 +3707,8 @@
     "windowOpen": false
   },
   "halt": {
-    "halted": false,
-    "reason": null,
+    "halted": true,
+    "reason": "WATCHDOG_TAKEOVER",
     "sticky": false
   },
   "humanActions": [],

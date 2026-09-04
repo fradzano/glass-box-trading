@@ -94,12 +94,19 @@
 - `src/shell/watchdog-runtime.ts` — The composition root for one scheduled watchdog invocation (P8). It builds
 - `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
 - `STATE.md` — STATE — live cursor
+- `submission/ACCOUNT-EVIDENCE.md` — Account Evidence (SUB-08)
 - `submission/COPY.md` — Form copy — SUB-07
 - `submission/COVER.md` — Cover image brief — SUB-06
+- `submission/cover.png`
+- `submission/glass-box-trading-one-pager.pdf`
+- `submission/glass-box-trading.pdf`
 - `submission/ONE-PAGER.md`
 - `submission/PREFLIGHT.md` — Submission preflight — SUB-09
 - `submission/publish/render-site.d.mts` — Type surface of render-site.mjs for the test suite (tests/publish-dashboard.spec.ts).
 - `submission/publish/render-site.mjs` — Digest-neutral publication path for the judge-facing dashboard (SUB-02,
+- `submission/render/cover.html`
+- `submission/render/inject.mjs` — Placeholder injection for the submission texts (SUB-03/05/07/09): every
+- `submission/render/render.mjs` — Reproducible render pipeline for the three submission artifacts:
 - `submission/slides/deck.md`
 - `tests/alpaca-fixtures.ts` — Alpaca wire documents recorded from the paper accounts, shared by the suites
 - `tests/alpaca-mapping.spec.ts` — P7 — the pure Alpaca wire mapping, exercised against documents recorded
