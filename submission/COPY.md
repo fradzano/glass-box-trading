@@ -42,6 +42,21 @@ checks this).
 - [x] Equals `accountId` in the frozen dataset and the pinned dashboard page
       (`video/public/dataset/projection.json`, `submission/ACCOUNT-EVIDENCE.md`).
 
+## Additional Information (optional form field, step 3, max 2000 characters)
+
+> Where a judge can verify every claim without credentials:
+>
+> - Pinned, immutable evidence route (journal revision sha256:7b82959a344a7c7e, presentation cutoff 2026-09-03T20:00:14.787Z): https://glass-box-trading.vercel.app/revisions/sha256-7b82959a344a7c7e/presentation/ — the live route at the demo URL may advance to later snapshots; every uploaded artifact cites this pinned one.
+> - One-page write-up (PDF): https://github.com/fradzano/glass-box-trading/blob/main/submission/glass-box-trading-one-pager.pdf
+> - Slide deck (PDF, 10 slides): https://github.com/fradzano/glass-box-trading/blob/main/submission/glass-box-trading.pdf
+> - Account evidence (creation after kickoff, $100,000.00 BOOTSTRAP, every journal entry on PA376WIK2ATL): https://github.com/fradzano/glass-box-trading/blob/main/submission/ACCOUNT-EVIDENCE.md
+> - Decision log including the two defects found during the competition and the watchdog takeover: https://github.com/fradzano/glass-box-trading/blob/main/DECISIONS.md
+> - Pure decision core: src/core/decision.ts; gate catalog G1–G14: docs/SPEC.md; the S-CYC-06 evidence-debt test: tests/cyc-runner.spec.ts.
+>
+> Paper trading only, on a dedicated competition account created 2026-09-02 after kickoff. The result (+$583.59, 0.58%, book flat at the cutoff) is a sample of two sessions; 61% of it is one four-contract QQQ call on an overnight gap. No alpha or risk-adjusted-performance claim is made. All figures in the video, deck and write-up come from one frozen dataset (video/public/dataset/ in the repository) and match the pinned route.
+
+- [x] 1552 characters including spaces; links point at `main` (merge `b660987` or later).
+
 ## Proposed tags
 
 > options-trading, ai-agents, alpaca, risk-management, autonomous-trading,
