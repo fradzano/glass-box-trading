@@ -3706,3 +3706,29 @@ small, no ADR split).
   Verified after the fix: three consecutive full `npm run verify` runs sent
   **zero** pings; the counters stayed at 2 / 5 / 2. `npm run verify` exit 0 at
   48 files / 658 tests.
+- **2026-09-06 — owner steps 1 to 3 are done on the host; the checks are green
+  and paused.** The long run's account `PA3LPKKUDU97` was created at
+  2026-09-05T20:58:48Z and the read-only probe returns `PROVENANCE OK`. The
+  three checks were provisioned through the API after the URL exposure, tested
+  end to end — the operator confirmed all three alerts on his own device at
+  00:03 — resolved back to green, and paused until the evening of the gate.
+  Fingerprints `hc:a685fe10` (liveness), `hc:c4ad5b69` (readiness),
+  `hc:b76072aa` (watchdog); the URLs themselves have never been printed since
+  the masking landed.
+
+  **One half of gate condition 4 is still open and is recorded as such**: the
+  recurring “down” reminder was not waited out, because `-ResolveOnly` ran
+  before a second notification could arrive. It is ten minutes on any evening
+  before Tuesday 22:10 — ping, leave it down for one reminder period, confirm
+  the second message, resolve, pause — or an explicit owner decision to run
+  with one notification per transition, written here with its date. Until one of
+  those happens the gate is not complete, and that is the whole point of
+  writing it down rather than letting it pass as done.
+
+  **The calendar prompts got a single consolidated block.** Nine pastes into
+  Gemini was itself a transcription risk of the kind this project keeps paying
+  for; one block now carries all twelve remaining milestones with the corrected
+  times, plus the outstanding reminder test as its own dated entry. The
+  per-event blocks stay as the fallback, and block 9 — deriving new dates from
+  a moved anchor rather than shifting them — is unchanged and still the one to
+  use if the anchor moves.

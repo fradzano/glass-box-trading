@@ -10,6 +10,102 @@ All times are **Europe/Berlin**. The dates assume the first regular cycle on
 
 ---
 
+## The one prompt
+
+Owner steps 1 to 3 are done — account, `.env` and the three checks exist — so
+the preparation block below is history and this prompt starts at the
+certificate run. Paste this whole block into Gemini in the private Google
+Workspace. The per-event blocks that follow it are the fallback if Gemini
+mishandles a long request, and block 9 is still the one to use if the anchor
+moves.
+
+```
+Create these events in my personal Google Calendar only. No guests on any of them.
+If an event with the same title already exists, update it instead of creating a duplicate.
+All times are Europe/Berlin. Use exactly the dates and times I give; do not compute or shift any of them.
+
+1) "P12 Erinnerungs-Test nachholen"
+   Monday 7 September 2026, 19:00-19:30
+   Die Wiederholungs-Erinnerung der drei Healthchecks ist noch nicht bestaetigt: check-alert-path.ps1 ausfuehren, die Checks unten lassen, eine Erinnerungsperiode abwarten, die ZWEITE Meldung bestaetigen, dann -ResolveOnly und wieder pausieren. Das ist Bedingung 4 des Aktivierungs-Gates. Termin loeschen, falls schon vorher erledigt.
+   Notifications: popup 30 minutes before.
+
+2) "P12 Zertifikatslauf vier (Dev-Konto, betreut)"
+   Tuesday 8 September 2026, 15:30-17:00
+   Beaufsichtigt ab der US-Eroeffnung, auf dem DEV-Konto, gegen die endgueltige Konfiguration. Ablauf: docs\P12-RUNBOOK.md, Owner step 4. Erwartet: verdict PASS und ein flaches Dev-Konto, beides getrennt geprueft. Danach den Zertifikatspfad als PRE_ARM_CERTIFICATE in .env eintragen und das Fenster schliessen.
+   Abbruch bei allem ausser PASS: dann faellt der Anker am 9.9. aus und wird nach der Prozedur am Ende von Owner step 6 NEU HERGELEITET, nicht verschoben.
+   Notifications: popup 1 day before, popup 30 minutes before.
+
+3) "P12 Installation der Tasks"
+   Tuesday 8 September 2026, 17:00-18:00
+   Erst nach PASS. In einer ERHOEHTEN PowerShell: npm.cmd run build, dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-10, dann tools\verify-scheduled-tasks.ps1. Die Tasks werden registriert und sofort deaktiviert - Installieren ist nicht Aktivieren. Heute nichts einschalten.
+   Notifications: popup 30 minutes before.
+
+4) "P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)"
+   Tuesday 8 September 2026, 22:10 bis Wednesday 9 September 2026, 01:00
+   Erst NACH dem US-Schluss um 22:00. Checks fortsetzen, beide Tasks in einer ERHOEHTEN PowerShell aktivieren, der 22:10-Block muss vor der 22:15-Ausloesung fertig sein. Jede Probe rechnet von einer BEOBACHTETEN Ausloesung, nicht von der Wanduhr.
+   (a) 22:30 nur der Watchdog aus, nur gbt-watchdog darf fallen, danach wieder ein und gruen abwarten. (b) 23:05 abmelden, nicht sperren, die 23:15-Ausloesung muss eine Logzeile schreiben. (c) spaetestens 23:30 Stop-Computer -Force, kein Standby; die Alarme kommen gegen 23:55, 00:15 und 00:35, letzte Push bis 00:45. Danach die drei Checks vom Handy aus pausieren, der Rechner bleibt aus.
+   Notifications: popup 30 minutes before, popup at 00:40.
+
+5) "P12 Aktivierungs-Gate, Teil 2 (Kaltstart-Beweis und Gate)"
+   Wednesday 9 September 2026, 13:50-14:45
+   Der Rechner war ueber Nacht aus, das ist der Kaltstart. 13:50 einschalten, anmelden, Checks fortsetzen. Die 14:00-Ausloesung muss von selbst kommen - das ist der Neustart-Beweis, gelesen mit tools\show-run-log.ps1 -Since "14:00". Um 14:45 das Gate: verify-scheduled-tasks.ps1 -ExpectEnabled.
+   Haengt um 14:45 noch etwas offen, auch nur ein "bin mir nicht sicher": beide Tasks deaktivieren und den Anker neu herleiten.
+   Notifications: popup 1 day before, popup 15 minutes before.
+
+6) "P12 Erster regulaerer Zyklus (betreut) - Ankerdatum"
+   Wednesday 9 September 2026, 15:10-16:30
+   Der erste handelnde Zyklus ist die 15:15-Ausloesung, nicht 15:30: der Lead-in beginnt 20 Minuten vor der US-Eroeffnung. Pruefen mit tools\show-run-log.ps1 -Since "15:15": Aufruf und gedruckter Report, dessen letzte Zeile eine einzelne JSON-Zeile ist. Dann BOOTSTRAP im Journal, drei gruene Checks, verify-scheduled-tasks.ps1 -ExpectEnabled.
+   Dieser Zyklus ist das Ankerdatum. Faellt er aus, verschiebt sich alles Abgeleitete.
+   Notifications: popup 1 day before, popup 15 minutes before.
+
+7) "P12 Wochenreview und Dashboard-Publikation"
+   Recurring every Friday from Friday 11 September 2026 until Friday 4 December 2026 inclusive, 18:00-18:45
+   Dashboard ueber den digest-neutralen Pfad aus docs\PUBLISH-RUNBOOK.md veroeffentlichen und die Probe sauber sehen. Dann durchgehen: ausgefallene Zyklen, jeder Halt mit Grund und Klaerung, Alarme und Reaktionszeit, freie Plattenkapazitaet. Keine Strategie- oder Risikoparameter aendern - eine Aenderung beendet die Messperiode und startet eine neue.
+   Notifications: popup 30 minutes before.
+
+8) "P12 Kontrolle nach der EU-Zeitumstellung (25.10.)"
+   Monday 26 October 2026, 14:10-14:40
+   Die europaeische Sommerzeit endet am 25.10., die USA stellen erst am 1.11. um. In dieser Woche beginnt die US-Sitzung eine Stunde frueher lokal. Pruefen: tools\show-run-log.ps1 -Since "14:00" zeigt ab 14:15 einen laufenden Zyklus - nicht erst ab 14:30, wegen des Lead-in - und die drei Checks bleiben gruen.
+   Notifications: popup 3 days before, popup 15 minutes before.
+
+9) "P12 Kontrolle nach der US-Zeitumstellung (01.11.)"
+   Monday 2 November 2026, 15:10-15:40
+   Ab heute liegt die Sitzung wieder bei 15:30 lokal, beide Zonen sind synchron. Pruefen: bis 15:00 nur uebersprungene Aufrufe, ab 15:15 ein laufender Zyklus.
+   Notifications: popup 3 days before, popup 15 minutes before.
+
+10) "P12 Abschluss vorbereiten"
+    Monday 7 December 2026, 18:00-19:00
+    Zwei Tage vor dem Flatten. Offene Positionen und ihre Verfallstermine durchsehen, freie Plattenkapazitaet pruefen, den Ablauf fuer den 9. und 10.12. aus docs\P12-RUNBOOK.md, Abschnitt "Ending it", durchlesen.
+    Notifications: popup 1 day before.
+
+11) "P12 FLATTEN_DATE - Buch wird geschlossen"
+    Wednesday 9 December 2026, 15:25-22:15
+    Ab heute vetot G11 jede neue Position und jeder Zyklus schliesst das Buch ueber die Leiter. Bis zum US-Schluss muss gelten: keine risikotragende Position, kein nicht-terminaler Auftrag. Nicht eingreifen, solange die Leiter arbeitet; bei DEADLINE_FLATTEN_FAILED alarmiert der readiness-Check, und dann zaehlt die Sitzungszeit - nach 22:00 ist keine Option mehr handelbar.
+    Notifications: popup 1 day before, popup 15 minutes before.
+
+12) "P12 TERMINAL und Abschaltung"
+    Thursday 10 December 2026, 22:05-23:00
+    Heute ist Journaling-only. Nach dem US-Schluss: node dist\shell\deadline-cli.js terminal, Exit 0 nur wenn der Eintrag gelandet ist. Dann die letzte Revision veroeffentlichen und proben. Danach in einer ERHOEHTEN PowerShell beide Tasks deaktivieren und den Zustand als Disabled zurueklesen. Zum Schluss Journal, beide Logs und die Belege archivieren.
+    Notifications: popup 1 day before, popup 30 minutes before.
+
+13) "P12 Auswertung schreiben"
+    Monday 14 December 2026, 18:00-20:00
+    Strikt nach docs\P12-EVALUATION.md, das vor dem Lauf festgelegt wurde. Paper-Brutto und die drei Kostenszenarien getrennt ausweisen, Gebuehren aus einer veroeffentlichten Broker-Preisliste zitieren, kein Szenario "real netto" nennen. Wichtigste Zuverlaessigkeitszahl: Zeit ohne Handelsbereitschaft.
+    Notifications: popup 1 day before.
+
+Wenn du etwas nicht setzen kannst - eine bestimmte Benachrichtigung, ein Wiederholungsende, eine Zeitzone, ein Termin ueber Mitternacht - sag das fuer den betroffenen Termin ausdruecklich und liste, was ich von Hand nachtragen muss, statt den Termin still ohne die Einstellung anzulegen.
+Zum Schluss: liste alle angelegten Termine mit Datum und Uhrzeit auf, damit ich sie bestaetigen kann.
+```
+
+---
+
+### The per-event blocks
+
+Below, unchanged, in case Gemini mishandles the long request above and you want
+to feed it one event at a time. Block 1 is done and is kept only for the record.
+
+---
+
 ### 1 — Preparation deadline
 
 ```
