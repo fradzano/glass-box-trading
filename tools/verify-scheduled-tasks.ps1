@@ -53,10 +53,34 @@ $policy = Get-Content -LiteralPath (Join-Path $RepoRoot 'config\policy.json') -R
 $cycleIntervalMinutes = [math]::Round([int64]$policy.CYCLE_INTERVAL_MS / 60000.0)
 $deadManMinutes = [math]::Round([int64]$policy.DEAD_MAN_BOUND_MS / 60000.0)
 
+# R43-B7: the first version compared substrings, so a definition could carry
+# the expected script name inside an unrelated argument, run cmd.exe, start at
+# 01:00, fire only at weekends, or set the watchdog interval exactly at the
+# dead-man bound -- and still pass all 26 checks. Each expectation below is now
+# exact: the executable, the -File argument parsed out of the argument string,
+# the trigger's local start hour, the weekday set, and a strict inequality on
+# the watchdog cadence.
 $expected = @(
-    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; IntervalMinutes = $cycleIntervalMinutes; MaxIntervalMinutes = $cycleIntervalMinutes },
-    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; IntervalMinutes = $null; MaxIntervalMinutes = $deadManMinutes }
+    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; MaxIntervalMinutes = $cycleIntervalMinutes; StrictlyBelow = $false },
+    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; MaxIntervalMinutes = $deadManMinutes; StrictlyBelow = $true }
 )
+
+function Get-FileArgument {
+    # The value of -File, honouring quotes. Anything else in the argument
+    # string is irrelevant to what actually executes.
+    param([string]$Arguments)
+    if ($Arguments -match '-File\s+"([^"]+)"') { return $Matches[1] }
+    if ($Arguments -match '-File\s+(\S+)') { return $Matches[1] }
+    return $null
+}
+
+# The session in this machine's local time, so the trigger's start can be
+# checked against something real rather than against "not null".
+$eastern = try { [System.TimeZoneInfo]::FindSystemTimeZoneById('America/New_York') } catch { [System.TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time') }
+$todayEastern = [System.TimeZoneInfo]::ConvertTimeFromUtc([System.DateTime]::UtcNow, $eastern).Date
+$sessionOpenLocal = [System.TimeZoneInfo]::ConvertTimeToUtc([System.DateTime]::SpecifyKind($todayEastern.AddHours(9).AddMinutes(30), [System.DateTimeKind]::Unspecified), $eastern).ToLocalTime()
+$sessionCloseLocal = [System.TimeZoneInfo]::ConvertTimeToUtc([System.DateTime]::SpecifyKind($todayEastern.AddHours(16), [System.DateTimeKind]::Unspecified), $eastern).ToLocalTime()
+$MONDAY_TO_FRIDAY = 62
 
 foreach ($spec in $expected) {
     $task = Get-ScheduledTask -TaskName $spec.Name -TaskPath $TaskFolder -ErrorAction SilentlyContinue
@@ -75,8 +99,14 @@ foreach ($spec in $expected) {
     # --- the action actually invokes the script we think it does -------------
     $action = @($task.Actions)[0]
     $argument = "$($action.Arguments)"
-    $invokesScript = $argument -like "*$($spec.Script)*"
-    Add-Check -Name "$($spec.Name) invokes $($spec.Script)" -Ok $invokesScript -Detail "$($action.Execute) $argument"
+    $executable = [System.IO.Path]::GetFileName("$($action.Execute)")
+    Add-Check -Name "$($spec.Name) runs powershell.exe" -Ok ($executable -ieq 'powershell.exe') -Detail "Execute=$($action.Execute)"
+
+    $fileArgument = Get-FileArgument -Arguments $argument
+    $expectedFile = Join-Path $RepoRoot $spec.Script
+    $resolvedFile = if ([string]::IsNullOrWhiteSpace($fileArgument)) { $null } else { [System.IO.Path]::GetFullPath($fileArgument) }
+    $invokesScript = $null -ne $resolvedFile -and $resolvedFile -ieq [System.IO.Path]::GetFullPath($expectedFile)
+    Add-Check -Name "$($spec.Name) -File is exactly $($spec.Script)" -Ok $invokesScript -Detail "-File resolves to $(if ($null -eq $resolvedFile) { '(absent)' } else { $resolvedFile }); expected $([System.IO.Path]::GetFullPath($expectedFile))"
 
     $scriptPath = Join-Path $RepoRoot $spec.Script
     Add-Check -Name "$($spec.Name) target script exists" -Ok (Test-Path -LiteralPath $scriptPath) -Detail $scriptPath
@@ -92,8 +122,8 @@ foreach ($spec in $expected) {
     } else {
         $interval = [System.Xml.XmlConvert]::ToTimeSpan($repetition.Interval)
         $duration = if ([string]::IsNullOrWhiteSpace($repetition.Duration)) { $null } else { [System.Xml.XmlConvert]::ToTimeSpan($repetition.Duration) }
-        $fastEnough = $interval.TotalMinutes -le $spec.MaxIntervalMinutes
-        Add-Check -Name "$($spec.Name) repetition is inside its bound" -Ok $fastEnough -Detail "every $([math]::Round($interval.TotalMinutes)) min (bound $($spec.MaxIntervalMinutes) min)"
+        $fastEnough = if ($spec.StrictlyBelow) { $interval.TotalMinutes -lt $spec.MaxIntervalMinutes } else { $interval.TotalMinutes -le $spec.MaxIntervalMinutes }
+        Add-Check -Name "$($spec.Name) repetition is inside its bound" -Ok $fastEnough -Detail "every $([math]::Round($interval.TotalMinutes)) min (bound $($spec.MaxIntervalMinutes) min, $(if ($spec.StrictlyBelow) { 'strictly below' } else { 'at most' }))"
         if ($null -ne $duration) {
             Add-Check -Name "$($spec.Name) repetition window spans a session" -Ok ($duration.TotalMinutes -ge 390) -Detail "$([math]::Round($duration.TotalMinutes)) min (a regular session is 390 min)"
         } else {
@@ -101,8 +131,18 @@ foreach ($spec in $expected) {
         }
     }
 
+    # Exactly Monday to Friday, not "some days" (62 = Mon|Tue|Wed|Thu|Fri).
     $daysOfWeek = "$($trigger.DaysOfWeek)"
-    Add-Check -Name "$($spec.Name) fires on weekdays" -Ok ($null -ne $trigger.DaysOfWeek) -Detail "DaysOfWeek=$daysOfWeek"
+    Add-Check -Name "$($spec.Name) fires exactly Monday to Friday" -Ok ([int]$trigger.DaysOfWeek -eq $MONDAY_TO_FRIDAY) -Detail "DaysOfWeek=$daysOfWeek (expected $MONDAY_TO_FRIDAY)"
+
+    # The window must actually contain today's session in local time, with the
+    # padding the installer promises. A trigger starting at 01:00 passed before.
+    $start = [datetime]$trigger.StartBoundary
+    $windowEnd = if ($null -eq $repetition -or [string]::IsNullOrWhiteSpace($repetition.Duration)) { $start } else { $start.Add([System.Xml.XmlConvert]::ToTimeSpan($repetition.Duration)) }
+    $startsBeforeOpen = $start.TimeOfDay -le $sessionOpenLocal.TimeOfDay
+    $endsAfterClose = $windowEnd.TimeOfDay -ge $sessionCloseLocal.TimeOfDay -or $windowEnd.Date -gt $start.Date
+    Add-Check -Name "$($spec.Name) window opens no later than the session" -Ok $startsBeforeOpen -Detail "starts $($start.ToString('HH:mm')) local; session opens $($sessionOpenLocal.ToString('HH:mm'))"
+    Add-Check -Name "$($spec.Name) window closes no earlier than the session" -Ok $endsAfterClose -Detail "ends $($windowEnd.ToString('HH:mm')) local; session closes $($sessionCloseLocal.ToString('HH:mm'))"
 
     # --- it can run unattended ----------------------------------------------
     $logonType = "$($task.Principal.LogonType)"

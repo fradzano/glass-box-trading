@@ -145,6 +145,7 @@ if (-not $nowIsWeekday) {
     exit 0
 }
 
+
 $session = Get-TodaySessionUtc
 $nowMs = [System.DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $opensAtMs = [System.DateTimeOffset]::new($session.OpensAtUtc, [System.TimeSpan]::Zero).ToUnixTimeMilliseconds()
@@ -173,5 +174,37 @@ try {
     $ErrorActionPreference = $previousErrorActionPreference
 }
 $output | ForEach-Object { Write-RunLog "output: $_" }
-Write-RunLog "exit: $exitCode"
+
+# The watchdog's own heartbeat, on its own endpoint.
+#
+# Without it, both other checks stay green while the watchdog alone is dead or
+# disabled: liveness comes from the cycle wrapper, and readiness from the state
+# files, so a silent watchdog looks exactly like a healthy one. That is the
+# safety net whose failure is least visible, because it only ever acts when
+# something else has already gone wrong. Its absence is now detectable on its
+# own schedule; a non-zero exit is reported as a failure.
+function Send-WatchdogHeartbeat {
+    param([string]$BaseUrl, [int]$ExitCode, [string]$Note)
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) { return 'unset' }
+    $url = if ($ExitCode -eq 0) { $BaseUrl } else { ($BaseUrl.TrimEnd('/') + '/fail') }
+    try {
+        $previous = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $url -Method Post -Body $Note -TimeoutSec 10 -UseBasicParsing | Out-Null
+        } finally {
+            $ProgressPreference = $previous
+        }
+        return 'sent'
+    } catch {
+        return "undelivered: $($_.Exception.Message)"
+    }
+}
+
+$watchdogUrl = $env:HEALTHCHECK_WATCHDOG_URL
+if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
+    $watchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
+}
+$heartbeat = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode $exitCode -Note "watchdog exit $exitCode"
+Write-RunLog "exit: $exitCode; heartbeat $heartbeat"
 exit $exitCode

@@ -14,10 +14,13 @@ import { readFileSync, mkdtempSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
 
-const DIST = "file:///C:/Users/felix/source/repos/glass-box-trading/dist";
+// R43-C3: the build beside THIS script, so a measurement taken in a review
+// worktree measures that worktree rather than the main checkout.
+const DIST = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist")).href;
 
 function parseArgs(argv) {
   const options = { entries: 2000, checkpoints: 5 };
@@ -68,7 +71,7 @@ for (let index = 1; index <= options.checkpoints; index += 1) {
 }
 
 const scratch = mkdtempSync(path.join(tmpdir(), "gbt-scale-"));
-const styles = readFileSync(path.resolve("assets", "dashboard.css"), "utf8");
+const styles = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "assets", "dashboard.css"), "utf8");
 const expectations = { initialCapitalCents: 10_000_000, expectedAccountId: null, flattenDate: "2026-12-08", profile: "competition", qualification: null };
 
 process.stdout.write(`source ${options.source}: ${String(sourceLines.length)} entries, ${(bytesPerEntry / 1024).toFixed(1)} KiB per entry\n\n`);

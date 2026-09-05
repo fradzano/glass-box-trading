@@ -85,6 +85,7 @@
 - `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 - `src/shell/presentation-guard.ts` — P9 / R33 (B1) — the stylesheet is inlined verbatim into the published
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the
+- `src/shell/readiness-cli.ts` — Report trading readiness without running a cycle:
 - `src/shell/render-dashboard.ts` — The static dashboard renderer (S-J-07, SUBMISSION-SPEC §2/§3): one pure
 - `src/shell/render-decision-view.ts` — The P1 decision-view renderer: one pure function from a recorded decision
 - `src/shell/render-fixture.ts`

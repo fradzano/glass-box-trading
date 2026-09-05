@@ -113,11 +113,15 @@ function Get-EasternTimeZoneInfo {
 }
 
 function Test-InsideSession {
-    # S-G14-06: the exchange session decides, not the trigger. Holidays and
-    # early closes are NOT known here -- a firing on one is a normal, cheap,
-    # journaled no-trade cycle, which is the documented behaviour. What this
-    # prevents is the overnight and pre-open part of a deliberately wide
-    # trigger window.
+    # S-G14-06. Precisely: this converts the current instant into New York
+    # local time through the platform's zone tables and compares it with FIXED
+    # 09:30-16:00 session bounds. It does NOT consult an exchange calendar --
+    # holidays and early closes are unknown to it, so it will let a cycle run on
+    # Thanksgiving and after a 13:00 early close. That is safe and documented: a
+    # firing on a non-trading day is a normal, cheap, journaled no-trade cycle
+    # (S-CYC-08/S-CYC-03), because the RUNTIME does read the exchange calendar.
+    # What this prevents is only the overnight and pre-open part of a
+    # deliberately wide trigger window.
     param([int]$LeadInMinutes)
     $eastern = Get-EasternTimeZoneInfo
     $nowUtc = [System.DateTime]::UtcNow
@@ -178,8 +182,24 @@ function Write-RunLog {
 }
 
 if ($SkipOutsideSession -and -not (Test-InsideSession -LeadInMinutes $SessionLeadInMinutes)) {
+    # R43-B8: readiness reports on EVERY firing, not only the ones that run a
+    # cycle. The set of in-session firings moves by an hour in the week between
+    # the European and American clock changes, so no single expected-ping
+    # schedule can match it; reporting on every firing makes one schedule right
+    # for the whole run, and a halt overnight is heard before the open.
+    $readinessEntry = Join-Path $RepoRoot 'dist\shell\readiness-cli.js'
+    $readiness = 'skipped (readiness-cli.js missing; run npm run build)'
+    if (Test-Path -LiteralPath $readinessEntry) {
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $readiness = (& $NodePath $readinessEntry 2>&1) -join '; '
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+    }
     $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 0 -Note "skip: outside the exchange session"
-    Write-RunLog "skip: outside the exchange session (weekend or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in); liveness $delivery"
+    Write-RunLog "skip: outside the exchange session (weekend, or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in, computed from the zone tables -- holidays and early closes are NOT known here); liveness $delivery; $readiness"
     exit 0
 }
 

@@ -80,12 +80,23 @@ for (const date of weekdays(options.from, options.to)) {
   // A session that crosses local midnight would break the whole trigger shape;
   // report it rather than silently comparing minutes across different days.
   const crossesMidnight = close.date !== open.date;
+  // R43-B12: the trigger fires Monday to Friday in the SCHEDULER's local time.
+  // In a far-eastern zone a New York Friday session lands on the local
+  // Saturday, so every minute comparison passes while the task never fires.
+  // Berlin is never affected; an accepted `--zone` must not silently be.
+  const localWeekday = new Date(`${open.date}T12:00:00Z`).getUTCDay();
+  const firesOnThatDay = localWeekday >= 1 && localWeekday <= 5;
   const leadMargin = open.minutes - installedOpen;
   const tailMargin = installedClose - close.minutes;
-  rows.push({ date, openLocal: open.minutes, closeLocal: close.minutes, leadMargin, tailMargin, covered: !crossesMidnight && leadMargin >= 0 && tailMargin >= 0 });
+  rows.push({ date, localDate: open.date, openLocal: open.minutes, closeLocal: close.minutes, leadMargin, tailMargin, firesOnThatDay, covered: firesOnThatDay && !crossesMidnight && leadMargin >= 0 && tailMargin >= 0 });
 }
 
 const asClock = minutes => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+// R43-C5: a reversed or empty range produced zero rows and then a TypeError.
+if (rows.length === 0) {
+  process.stdout.write(`no weekdays between ${options.from} and ${options.to}; check the order of --from and --to\n`);
+  process.exit(1);
+}
 const uncovered = rows.filter(row => !row.covered);
 const worstLead = rows.reduce((worst, row) => (row.leadMargin < worst.leadMargin ? row : worst), rows[0]);
 const worstTail = rows.reduce((worst, row) => (row.tailMargin < worst.tailMargin ? row : worst), rows[0]);
@@ -100,7 +111,8 @@ for (const shift of shifts) {
 process.stdout.write(`worst lead margin ${String(worstLead.leadMargin)} min on ${worstLead.date}; worst tail margin ${String(worstTail.tailMargin)} min on ${worstTail.date}\n`);
 if (uncovered.length > 0) {
   for (const row of uncovered.slice(0, 10)) {
-    process.stdout.write(`  UNCOVERED ${row.date}: session ${asClock(row.openLocal)}..${asClock(row.closeLocal)} local, lead ${String(row.leadMargin)}, tail ${String(row.tailMargin)}\n`);
+    const why = row.firesOnThatDay ? `lead ${String(row.leadMargin)}, tail ${String(row.tailMargin)}` : `the session falls on local ${row.localDate}, which the Mon-Fri trigger does not cover`;
+    process.stdout.write(`  UNCOVERED ${row.date}: session ${asClock(row.openLocal)}..${asClock(row.closeLocal)} local, ${why}\n`);
   }
   process.stdout.write(`SCHEDULE COVERAGE FAILED: ${String(uncovered.length)} of ${String(rows.length)} weekdays are not fully covered.\n`);
   process.exitCode = 1;
