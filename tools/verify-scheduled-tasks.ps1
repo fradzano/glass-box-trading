@@ -132,12 +132,18 @@ foreach ($spec in $expected) {
         $interval = [System.Xml.XmlConvert]::ToTimeSpan($repetition.Interval)
         $duration = if ([string]::IsNullOrWhiteSpace($repetition.Duration)) { $null } else { [System.Xml.XmlConvert]::ToTimeSpan($repetition.Duration) }
         $fastEnough = if ($spec.StrictlyBelow) { $interval.TotalMinutes -lt $spec.MaxIntervalMinutes } else { $interval.TotalMinutes -le $spec.MaxIntervalMinutes }
-        Add-Check -Name "$($spec.Name) repetition is inside its bound" -Ok $fastEnough -Detail "every $([math]::Round($interval.TotalMinutes)) min (bound $($spec.MaxIntervalMinutes) min, $(if ($spec.StrictlyBelow) { 'strictly below' } else { 'at most' }))"
+        Add-Check -Name "$($spec.Name) repetition is inside its bound" -Ok $fastEnough -Detail "every $($interval.ToString()) (= $($interval.TotalMinutes) min; bound $($spec.MaxIntervalMinutes) min, $(if ($spec.StrictlyBelow) { 'strictly below' } else { 'at most' }))"
         # R44-B10: the cycle cadence is not merely bounded, it is fixed for the
         # measurement period -- a slower cycle is a different deployment, and
         # the external readiness cron is derived from this exact number.
         if ($null -ne $spec.ExactIntervalMinutes) {
-            Add-Check -Name "$($spec.Name) cadence is exactly the policy interval" -Ok ([math]::Round($interval.TotalMinutes) -eq $spec.ExactIntervalMinutes) -Detail "every $([math]::Round($interval.TotalMinutes)) min (policy CYCLE_INTERVAL_MS = $($spec.ExactIntervalMinutes) min)"
+            # R45: "exactly" must not be rounded into existence. A registered
+            # repetition of PT14M31S rounds to 15 and passed this check while
+            # every firing drifted away from the cron the external readiness
+            # check expects. The comparison is on total minutes with no
+            # rounding at all, and the detail prints the real value.
+            $exact = $interval.TotalMinutes -eq [double]$spec.ExactIntervalMinutes
+            Add-Check -Name "$($spec.Name) cadence is exactly the policy interval" -Ok $exact -Detail "every $($interval.ToString()) (= $($interval.TotalMinutes) min; policy CYCLE_INTERVAL_MS = $($spec.ExactIntervalMinutes) min)"
         }
         if ($null -ne $duration) {
             Add-Check -Name "$($spec.Name) repetition window spans a session" -Ok ($duration.TotalMinutes -ge 390) -Detail "$([math]::Round($duration.TotalMinutes)) min (a regular session is 390 min)"

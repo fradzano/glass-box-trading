@@ -286,6 +286,50 @@ describe("S-G12-08 — the fence mark is set before the entry is attempted and o
     expect(!dispatched.ok && dispatched.reason, "and it refuses for the fence, not for some unrelated reason").toMatch(/HALT|FENCE/);
   });
 
+  it("R45-A1: the account-bound port's own halt marks too -- the third entry point that used to write nothing", async () => {
+    // Written from a blind gate's reproduction. R44-A1 made dispatchSafetyHalt
+    // mark for both its reasons; this is the OTHER halt path -- the one the
+    // account-bound broker port takes from inside dispatch when the broker
+    // answers with a foreign account. With the journal read-only it appended
+    // nothing and marked nothing, and after recovery and a restart the same
+    // deployment submitted a risk-increasing order with no human release.
+    // Three findings on one rule is a duty spread over three call sites, so
+    // the marking now lives in one helper that both paths call.
+    const harness = await lifecycleHarness();
+    const gateway = gatewayFor(harness.paths, "binding-writer", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "virgin" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+    const epoch = acquired.kind === "WON" ? acquired.epoch : 1;
+
+    // The port rejects the binding, and the journal cannot record the halt.
+    makeJournalUnwritable(harness.paths);
+    let rejected: Awaited<ReturnType<typeof gateway.dispatch>>;
+    try {
+      rejected = await gateway.dispatch({
+        class: "authoritative",
+        epoch,
+        action: {
+          kind: "broker_mutation",
+          mutation: {
+            kind: "submit_order",
+            clientOrderId: "r45-a1-probe",
+            binding: { ...P5_BINDING, accountId: "a-foreign-account" },
+            payload: { legs: creditVertical().legs, quantity: 1, limit: { kind: "credit", priceCents: 198 }, intent: "open" },
+          },
+        },
+      });
+    } finally {
+      makeJournalWritable(harness.paths);
+    }
+    expect(rejected.ok, "the mutation is refused").toBe(false);
+
+    // The journal carries no HALT -- it could not -- and that is exactly when
+    // the mark has to be the thing that survives.
+    expect(readHaltState(harness.paths).halted).toBe(false);
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "the fence mark stands after the journal recovers").toBe(true);
+  });
+
   it("R43-B1: a cycle whose state cannot be recorded blocks entries before touching the broker, but still reduces risk", async () => {
     const harness = await lifecycleHarness();
     await harness.cycle();

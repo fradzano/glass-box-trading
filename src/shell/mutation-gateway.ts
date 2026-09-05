@@ -181,7 +181,42 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     return journal;
   }
 
+  /**
+   * R45-A1: the third seam. R44-A1 made `dispatchSafetyHalt` mark for both of
+   * its reasons, but this path -- the account-bound port rejecting inside a
+   * dispatch -- halts on its own and used to write no mark at all. A blind
+   * gate executed it: with the journal read-only the HALT never landed, the
+   * store still read `fencePending: false`, and after recovery and a restart
+   * the same deployment submitted a risk-increasing order with no human
+   * release. That is the same defect as R44-A1 at a different entry point,
+   * which is the signature of a duty living in several places instead of one.
+   *
+   * So the marking lives here, in the one helper both paths call. The mark
+   * goes down BEFORE the append is attempted, so a process that dies between
+   * the two leaves the strict state behind (S-G12-08). Its failure is returned
+   * rather than swallowed: the caller must be able to tell the declared
+   * "neither surface is writable" boundary from a fence that stands.
+   */
+  /**
+   * The one implementation of "a safety halt marks the fence before it tries
+   * to append" (S-G12-08). It exists because the rule kept being re-stated
+   * per entry point and kept being incomplete somewhere: R43-B3 found the
+   * startup path unmarked, R44-A1 found ACCOUNT_BINDING_MISMATCH unmarked in
+   * `dispatchSafetyHalt`, and R45-A1 found the account-bound port's own halt
+   * inside `dispatch` unmarked as well -- a blind gate drove that one to a
+   * risk-increasing order after recovery and a restart, with no human
+   * release. Three findings, one cause: a duty spread over three call sites.
+   * Both callers now go through here, and the mark goes down first, so a
+   * process that dies between the two steps leaves the strict state behind.
+   */
+  function markFenceBeforeHalt(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+    const store = readEpochStore(paths);
+    if (store.kind === "present" && store.fencePending) return { ok: true };
+    return setFencePending(paths, true);
+  }
+
   function haltForBindingMismatch(entries: readonly JournalEntry[], epoch: number, detail: string): void {
+    markFenceBeforeHalt();
     const current = reconcileHaltProjection(entries);
     if (current.halted && current.reason === "ACCOUNT_BINDING_MISMATCH") return;
     appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
@@ -426,19 +461,9 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
           if (store.kind !== "present") {
             return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
           }
-          // S-G12-08 / R43-B3 / R44-A1: a safety halt is a refusal to trade
-          // until a human looks, and the mark is what survives when the
-          // journal does not. It used to be set for AUTH_FAILURE only, on the
-          // taxonomic argument that an account-binding mismatch is not a
-          // credential rejection. That argument is about naming, not about
-          // safety: with the journal read-only, a refused
-          // ACCOUNT_BINDING_MISMATCH halt left nothing behind, and once the
-          // journal recovered the same epoch could submit a risk-increasing
-          // order without any human release (R44-A1). Both reasons this
-          // entry point accepts now mark, so the reason no longer decides.
-          // The mark goes down BEFORE the halt entry is attempted, under the
-          // same mutex, exactly as in the runner.
-          const marked = store.fencePending ? { ok: true as const } : setFencePending(paths, true);
+          // Both reasons this entry point accepts mark, so the reason no
+          // longer decides (R44-A1); the shared helper above says why.
+          const marked = markFenceBeforeHalt();
           const loaded = loadJournal();
           if ("corrupt" in loaded) {
             return {

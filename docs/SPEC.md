@@ -1311,7 +1311,13 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   behind, and once the journal recovered the same epoch submitted a
   risk-increasing order with no human release (R44-A1). Both reasons are a
   refusal to trade until a human looks, which is exactly what the mark
-  records, and the mark is cleared by exactly one thing: a human
+  records. **And the rule has exactly one implementation.** Three consecutive
+  gate rounds found it missing at a different entry point — the startup reads
+  (R43-B3), the safety-halt reason list (R44-A1), and the account-bound port's
+  own halt from inside a dispatch (R45-A1, driven to a risk-increasing order
+  after recovery and a restart). Three findings on one rule is a duty spread
+  over three call sites, not three defects, so every path that raises a safety
+  halt marks through the same helper, and the mark is cleared by exactly one thing: a human
   un-halt. While it stands, the gateway refuses every risk-increasing broker
   mutation exactly as a journaled halt does — no stricter, so a risk-reducing
   close stays possible and a fenced book can still be flattened — and every

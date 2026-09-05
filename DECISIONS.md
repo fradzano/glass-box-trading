@@ -3095,3 +3095,33 @@ small, no ADR split).
   file. What is *not* kept is silence about it — the figure belongs beside the
   173 MB disk budget in the runbook, so a slower machine has something to
   compare against.
+- **2026-09-05 — R45 aborted mid-run, and its two interim findings are closed;
+  no verdict was issued.** The counter-gate on the R44 fix set (job
+  `task-mtolstwm-23ntld`) died after sixteen minutes with its findings
+  half-written. It left two things behind, both reproducible, and both were
+  real.
+
+  **The fence's third entry point (A).** R44-A1 made `dispatchSafetyHalt` mark
+  for both of its reasons. It did not touch `haltForBindingMismatch` — the halt
+  the account-bound broker port raises from *inside* a dispatch when the broker
+  answers with a foreign account. The gate drove it: journal read-only, binding
+  rejected, no HALT appended, `fencePending` still false; after recovery and a
+  restart the same deployment submitted a risk-increasing order with no human
+  release. Instance three of one cause. Rather than mark in a third place, the
+  rule now has a single implementation, `markFenceBeforeHalt`, which both paths
+  call — the same move that closed the preservation problem in R43 by putting
+  inheritance inside `writeEpochStore`. The gate's own probe is kept as a
+  regression test, red without the fix.
+
+  **“Exactly” was rounded into existence (B).** The cadence check added for
+  R44-B10 compared `[math]::Round($interval.TotalMinutes)`, so a registered
+  repetition of `PT14M31S` read as “cadence is exactly … 15 min” and the
+  verifier passed 35 of 35 while every firing drifted away from the cron the
+  external readiness check expects. The comparison is on total minutes with no
+  rounding, and both interval details now print the real value
+  (`every 00:14:31 (= 14.5166666666667 min; policy … = 15 min)`). Verified by
+  re-running the gate's own probe against the fix: 1 of 35 fails, on that line.
+
+  A round that dies without a verdict is not a passing round, and this entry
+  does not claim one. `npm run verify` exit 0 at 47 files / 646 tests; the
+  counter-gate is relaunched on the new head.
