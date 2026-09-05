@@ -438,7 +438,7 @@ try {
     $cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
     $cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 
-    if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
+    if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($cycleWindowEnd.ToString('HH:mm')) local")) {
         Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
         if (-not $Activate) { Disable-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder | Out-Null }
     }
@@ -456,7 +456,7 @@ try {
     # Six minutes: the recovery run is bounded by CYCLE_WALLTIME_BUDGET_MS (5 min) plus composition; the kernel mutex serializes any overlap.
     $watchdogSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 6)
 
-    if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled task: watchdog-run.ps1 every $WatchdogIntervalMinutes min (< dead-man bound), Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
+    if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled task: watchdog-run.ps1 every $WatchdogIntervalMinutes min (< dead-man bound), Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($watchdogWindowEnd.ToString('HH:mm')) local")) {
         Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $watchdogSettings -Description 'Glass Box Trading: dead-man watchdog (S-G14). Fences, halts and flattens the open book on staleness; degrades to fence-and-halt-only when the configuration does not compose -- see tools/watchdog-run.ps1. Installed by tools/install-scheduled-task.ps1.' | Out-Null
         if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }
     }

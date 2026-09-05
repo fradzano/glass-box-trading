@@ -103,7 +103,7 @@ const worstTail = rows.reduce((worst, row) => (row.tailMargin < worst.tailMargin
 const shifts = rows.filter((row, index) => index > 0 && row.openLocal !== rows[index - 1].openLocal);
 
 process.stdout.write(`zone ${options.zone}; installed on ${options.installedOn}; margin ${String(options.margin)} min\n`);
-process.stdout.write(`trigger window (local): ${asClock(installedOpen)}..${asClock(installedClose)}\n`);
+process.stdout.write(`window checked against (local): ${asClock(installedOpen)}..${asClock(installedClose)} — the session padded by the margin, WITHOUT the outward snapping the installer applies, so this check is stricter than the window that gets registered and can never overstate coverage\n`);
 process.stdout.write(`${String(rows.length)} weekdays from ${options.from} to ${options.to}\n`);
 for (const shift of shifts) {
   process.stdout.write(`  local session start moves to ${asClock(shift.openLocal)} on ${shift.date}\n`);
