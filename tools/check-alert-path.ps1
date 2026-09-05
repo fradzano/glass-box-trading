@@ -77,15 +77,21 @@ function Format-Endpoint {
     param([string]$Url)
     if ([string]::IsNullOrWhiteSpace($Url)) { return 'NOT CONFIGURED' }
     if ($ShowUrls) { return $Url }
+    # Fingerprint the BASE url. Hashing the full one gave every check two
+    # different digests -- one for its success endpoint and one for its /fail --
+    # which destroys the only thing the fingerprint is for: seeing at a glance
+    # that three DISTINCT endpoints are configured. The variant is named
+    # separately instead, so the same check reads the same either way.
+    $isFail = $Url.TrimEnd('/').EndsWith('/fail')
+    $base = if ($isFail) { $Url.TrimEnd('/').Substring(0, $Url.TrimEnd('/').Length - 5).TrimEnd('/') } else { $Url.TrimEnd('/') }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Url))
+        $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($base))
     } finally {
         $sha.Dispose()
     }
     $fingerprint = -join ($digest[0..3] | ForEach-Object { $_.ToString('x2') })
-    $suffix = if ($Url.TrimEnd('/').EndsWith('/fail')) { ' (/fail)' } else { '' }
-    return "hc:$fingerprint$suffix"
+    return "hc:$fingerprint$(if ($isFail) { ' (/fail)' } else { '' })"
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
