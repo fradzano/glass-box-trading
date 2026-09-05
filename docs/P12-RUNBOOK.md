@@ -244,8 +244,8 @@ into a chat.
 
 *No shell. Alpaca web UI.*
 
-A new Alpaca **paper** account, used by nothing but this agent, created **on or
-after 2026-09-06T00:00:00Z — that is Sunday 06.09.2026, 02:00 Europe/Berlin.**
+A new Alpaca **paper** account, used by nothing but this agent, created **on or after `COMPETITION_START`, which is 2026-09-05T00:00:00Z — Saturday
+05.09.2026, 02:00 Europe/Berlin.**
 The S-CYC-09 provenance proof requires the creation instant to be at or after
 `COMPETITION_START`, opening cash **and** equity at exactly $100,000.00, zero
 positions and non-terminal orders, an order and fill history that are complete

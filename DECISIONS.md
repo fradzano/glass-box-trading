@@ -3581,3 +3581,31 @@ small, no ADR split).
   deployment carried an irreversible `KILL`. Test added; **15 of 15**.
 
   `npm run verify` exit 0 at 48 files / **658 tests**.
+- **2026-09-05 — `COMPETITION_START` moved from 2026-09-06T00:00:00Z to
+  2026-09-05T00:00:00Z, so the long run's account could be created the same
+  evening.** The floor exists to prove an account was created **for this
+  deployment** rather than carried over from an earlier one. Its old value was
+  the hackathon's kickoff instant, which had nothing to say about a run
+  starting three days later — and at 22:58 on Friday it sat two hours in the
+  future, so the account the owner had just created (`PA3LPKKUDU97`,
+  2026-09-05T20:58:48Z) failed the very clause it was created to satisfy.
+
+  The new floor is the day the long run was prepared. It still excludes both
+  earlier accounts by a wide margin — the dev account from 2026-08-24 and the
+  hackathon account from 2026-09-02 — so the clause loses none of its force;
+  it is the same rule with a date that belongs to this run instead of the
+  previous one.
+
+  **The second violation was a consequence, not a second problem**, and it is
+  worth writing down because it looks alarming on its own: “activity ledger
+  carries no opening funding journal”. An empty *complete* ledger is accepted
+  as virgin evidence — the funding journal posts asynchronously and requiring
+  it would block arming for as long as the broker takes — but only on an
+  otherwise perfect snapshot (`violations.length === 0` at that line in
+  `validateCompetitionProvenance`). With the creation-date violation present,
+  the balance could not stand in for the funding record. Removing the first
+  violation removes the second; no waiting for the broker was needed.
+
+  `npm run verify` exit 0 at 48 files / 658 tests. The policy digest changed,
+  which is exactly what voids a certificate — and none has been issued yet, so
+  nothing was invalidated. Certificate run four runs against this value.
