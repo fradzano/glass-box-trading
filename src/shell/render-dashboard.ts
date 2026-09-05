@@ -269,13 +269,31 @@ function cyclesTable(projection: PerformanceProjection): string {
   return `<table><thead><tr><th>Seq</th><th>At (UTC)</th><th>Day</th><th>Type</th><th>Result</th><th>Reason codes</th><th>Equity</th><th>Candidates</th><th>Refused closes</th></tr></thead><tbody>${projection.cycles.map(cycleRow).join("")}</tbody></table>`;
 }
 
+/**
+ * How many cycles get a full detail block on one page. The summary table stays
+ * complete — every cycle keeps its row, its result and its reason codes — but
+ * the per-cycle blocks are bounded, because they are what makes the page grow
+ * without limit. Measured 2026-09-05 with `tools/measure-longrun-scale.mjs`:
+ * 2,000 cycles, the size a three-month run reaches, rendered a **5.2 MiB**
+ * page at roughly 2.6 KiB of HTML per cycle. Nothing about that is a runtime
+ * problem (the whole render took 23 ms); it is a page nobody can open.
+ * 200 cycles is about eight sessions of full detail.
+ */
+const DETAILED_CYCLE_LIMIT = 200;
+
 function renderCyclesSection(projection: PerformanceProjection, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
+  const detailed = projection.cycles.slice(-DETAILED_CYCLE_LIMIT);
+  const omitted = projection.cycles.length - detailed.length;
+  const boundNote = omitted === 0
+    ? ""
+    : `<p class="bound">The table above is complete: every one of the ${String(projection.cycles.length)} cycles at this cutoff keeps its row, its result and its reason codes. Full detail blocks are shown for the most recent ${String(detailed.length)}; the ${String(omitted)} earlier ones are omitted from this page only, and their complete record — gate vectors, rationales, quotes — remains in the journal this page names above, which is the authoritative evidence either way.</p>`;
   return `<section id="cycles" aria-labelledby="cycles-title">
 <h2 id="cycles-title">Every cycle: proposal or no-trade, gate vector, rationale</h2>
 <p class="lead">This section lists every decision cycle, whether it produced a trade or a deliberate no-trade, and the gate vector each candidate passed or failed.</p>
 <p>${String(projection.cycles.length)} primary entries at this cutoff. A no-trade result is first-class evidence: the analyst proposed nothing usable or every candidate was vetoed. A <em>refused</em> result means the opposite of a quiet cycle — the agent planned to close a position and was turned away, with the reason named below.</p>
 ${cyclesTable(projection)}
-${projection.cycles.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
+${boundNote}
+${detailed.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
 </section>`;
 }
 

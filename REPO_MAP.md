@@ -171,6 +171,7 @@
 - `tools/derive_mcp_dependency_digest.py` — Derive the MCP dependency-site digest from a hash-locked clean wheel install.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
 - `tools/install-scheduled-task.ps1`
+- `tools/measure-longrun-scale.mjs` — What does a three-month journal cost to hold, fold and render?
 - `tools/probe-dashboard.ps1`
 - `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
