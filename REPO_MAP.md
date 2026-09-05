@@ -179,6 +179,7 @@
 - `tools/cycle-run.ps1`
 - `tools/derive_mcp_dependency_digest.py` — Derive the MCP dependency-site digest from a hash-locked clean wheel install.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
+- `tools/healthchecks-provision.mjs` — Create the three external checks through the healthchecks.io management API,
 - `tools/install-scheduled-task.ps1`
 - `tools/measure-longrun-scale.mjs` — What does a three-month journal cost to hold, fold and render?
 - `tools/probe-dashboard.ps1`

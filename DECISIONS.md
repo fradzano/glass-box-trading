@@ -3635,3 +3635,38 @@ small, no ADR split).
   The three checks exposed this way are being recreated with fresh URLs rather
   than kept; recreating them costs minutes at this stage and removes the
   question entirely.
+- **2026-09-06 — the three checks were rotated through the API, and two latent
+  `.env` faults surfaced on the way.** The exposed ping URLs are gone: the three
+  checks were deleted and recreated with fresh ones, and `tools/healthchecks-provision.mjs`
+  now does that job. It exists because owner step 3 was nine hand-transcriptions
+  — two cron expressions, a timezone and three graces into three web forms, then
+  three URLs copied back — and every one of them fails silently in a way nothing
+  later catches: a wrong cron alarms on a healthy night, two identical URLs
+  leave all three checks green with one signal simply gone. The tool prints
+  fingerprints, never a URL, and it asserts that the three it wrote are
+  distinct.
+
+  It also creates them **paused**. A cron check that has never been pinged goes
+  down at its first missed expectation and starts alarming — days before
+  anything is supposed to ping it, which is exactly what the old three were
+  doing at one in the morning. Pausing is not the weaker state it looks like:
+  the first ping resumes a paused check automatically, so the alert-path test
+  wakes them by itself and nothing has to be remembered.
+
+  **Two faults in `.env` that predate all of this.** `BOOTSTRAP_DIAGNOSTIC_SINK`
+  was present twice, and the two halves of this deployment resolve that
+  differently: node's `loadEnvironment` keeps the **last** occurrence, the
+  PowerShell wrappers' `Get-DotEnvValue` returns the **first**. The agent read
+  `longrun-1-bootstrap.log` and any wrapper asking would have read the
+  hackathon path — harmless only because no wrapper reads that key. The earlier
+  line is gone and owner step 2 now checks for duplicated keys, because the
+  class matters more than the instance. And `PRE_ARM_CERTIFICATE` still points
+  at the hackathon certificate from 2026-09-02; that is correct until
+  certificate run four replaces it, and arming against a stale one fails on the
+  digest, which is the designed behaviour rather than a risk.
+
+  Checked and NOT a fault: `ANALYST_ALPACA_PROFILE`,
+  `ANALYST_MCP_CAPABILITY_MANIFEST` and `ANALYST_MCP_RUNTIME_LOCK` read as
+  absent from `.env` and are required by `validateStartupConfig` — they come
+  from `config/policy.json`, which is merged into the same raw configuration.
+  Verified before reporting rather than after.

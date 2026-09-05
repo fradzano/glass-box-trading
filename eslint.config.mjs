@@ -36,7 +36,10 @@ export default tseslint.config(
       ...tseslint.configs.disableTypeChecked.languageOptions,
       globals: {
         console: "readonly",
-        process: "readonly"
+        process: "readonly",
+        // Node 18+ ships fetch; tools/healthchecks-provision.mjs talks to the
+        // healthchecks.io management API with it.
+        fetch: "readonly"
       }
     }
   }

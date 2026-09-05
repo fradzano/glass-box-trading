@@ -330,8 +330,20 @@ correct run (R44-B14):
 node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');const e=loadEnvironment(process.cwd(),process.env);for(const k of ['ALPACA_PROFILE','ALPACA_COMP_ACCOUNT_ID','ALPACA_COMP_KEY_ID','ALPACA_COMP_SECRET_KEY','STATE_DIR','BOOTSTRAP_DIAGNOSTIC_SINK'])console.log(k.padEnd(28), /KEY|SECRET|TOKEN|URL/.test(k)?(e[k]?'<set>':'<MISSING>'):(e[k]??'<MISSING>'))"
 ```
 
+**And check for a duplicated key**, because the two halves of this deployment
+resolve one differently: node keeps the **last** occurrence, the PowerShell
+wrappers' `.env` reader returns the **first**. A key written twice therefore
+means the agent and its wrappers disagree about its value, silently. It has
+happened here once already, with `BOOTSTRAP_DIAGNOSTIC_SINK`.
+
+```powershell
+node -e "const t=require('fs').readFileSync('.env','utf8');const seen=new Map();for(const l of t.split(/\r?\n/)){const s=l.trim();if(!s.length||s.startsWith('#'))continue;const k=s.slice(0,s.indexOf('='));seen.set(k,(seen.get(k)??0)+1)}const d=[...seen].filter(([,n])=>n>1);console.log(d.length?'DUPLICATE KEYS: '+d.map(([k,n])=>k+' x'+n).join(', '):'no duplicate keys')"
+# expect: "no duplicate keys". If not, delete the EARLIER line(s) -- the last
+#   one is what the agent uses.
+```
+
 **Abort if:** `ALPACA_PROFILE` is not `competition`, or any of these six reads
-`<MISSING>`, or `STATE_DIR` still ends in `competition-2` — that is the
+`<MISSING>`, or a key is duplicated, or `STATE_DIR` still ends in `competition-2` — that is the
 hackathon deployment's state directory, a closed archive of 105 journal
 entries. The long run must not inherit it, and appending to it would destroy
 the record of a finished run.
@@ -398,6 +410,28 @@ HEALTHCHECK_PING_URL=<readiness check ping URL>
 HEALTHCHECK_LIVENESS_URL=<liveness check ping URL>
 HEALTHCHECK_WATCHDOG_URL=<watchdog check ping URL>
 ```
+
+**Or let the API do all of it.** Creating three checks by hand means
+transcribing two cron expressions, a timezone and three graces into three web
+forms and copying three URLs back — nine chances to make a mistake that either
+alarms on a healthy night or silently disables a signal. With a project API key
+in `.env` as `HEALTHCHECK_IO_API_KEY`, one command does the same thing and
+prints no URL:
+
+```powershell
+node tools\healthchecks-provision.mjs --list
+node tools\healthchecks-provision.mjs --tz <timezone from the installer> `
+     --cycle-cron "<cycle cron from the installer>" `
+     --watchdog-cron "<watchdog cron from the installer>" --rotate --apply
+```
+
+It deletes the checks whose URLs are currently in `.env` (`--rotate`), creates
+the three with the right names, schedules and graces, assigns every
+notification channel in the project, writes the new URLs into `.env`, and
+leaves the checks **paused** — a cron check that has never been pinged would
+otherwise go down and start alarming days before anything is meant to ping it.
+The first ping resumes a paused check by itself, so the alert-path test below
+wakes them with no further step. Without `--apply` it is a dry run.
 
 Now exercise the path and **confirm receipt on your own device**. The order
 matters: `-ResolveOnly` turns every check green again, so the reminder has to be
