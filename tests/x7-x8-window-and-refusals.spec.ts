@@ -406,3 +406,144 @@ describe("R41-B2 — a refused close is visible on the public page, not only in 
     expect(html).toMatch(/result result--refused/u);
   });
 });
+
+describe("R42 — what the R41 closures themselves opened", () => {
+  it("B1: a 401 whose body never arrives still carries its status, instead of degrading to ordinary world trouble", async () => {
+    // The status is known as soon as the headers are; a body that rejects or
+    // stalls must not turn a credential rejection into a statusless error that
+    // every caller swallows (S-G12-06).
+    const brokenBody = (status: number): typeof fetch => ((url: string) => {
+      if (url.includes("/v2/options/contracts/")) {
+        const response = new Response(null, { status });
+        Object.defineProperty(response, "text", { value: () => Promise.reject(new Error("body stream aborted")) });
+        return Promise.resolve(response);
+      }
+      const json = (body: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+      if (url.includes("/v2/stocks/quotes/latest")) return json({ quotes: { SPY: { bp: 500, ap: 500.1, bs: 100, as: 100, t: "2026-08-31T13:30:59.871234567Z" } } });
+      if (url.includes("/v2/options/contracts?")) return json({ option_contracts: [], next_page_token: null });
+      if (url.includes("/v1beta1/options/quotes/latest")) return json({ quotes: {} });
+      throw new Error(`unexpected request ${url}`);
+    }) as unknown as typeof fetch;
+
+    for (const status of [401, 403]) {
+      const broker = createAlpacaBroker({
+        credentials: { keyId: "k", secretKey: "s" },
+        tradingOrigin: "https://paper-api.alpaca.markets",
+        dataOrigin: "https://data.alpaca.markets",
+        clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+        fetchImpl: brokenBody(status),
+      });
+      const failure = await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: ["SPY260904P00300000"] }).then(() => null, (error: unknown) => error);
+      expect(httpStatusOf(failure), `HTTP ${String(status)} with an unreadable body`).toBe(status);
+      expect(classifyBrokerFailure(httpStatusOf(failure))).toBe("AUTH_FAILURE");
+    }
+  });
+
+  it("B1: a non-2xx body failure that is not a credential rejection keeps degrading", async () => {
+    const brokenBody = ((url: string) => {
+      if (url.includes("/v2/options/contracts/")) {
+        const response = new Response(null, { status: 503 });
+        Object.defineProperty(response, "text", { value: () => Promise.reject(new Error("body stream aborted")) });
+        return Promise.resolve(response);
+      }
+      const json = (body: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+      if (url.includes("/v2/stocks/quotes/latest")) return json({ quotes: { SPY: { bp: 500, ap: 500.1, bs: 100, as: 100, t: "2026-08-31T13:30:59.871234567Z" } } });
+      if (url.includes("/v2/options/contracts?")) return json({ option_contracts: [], next_page_token: null });
+      if (url.includes("/v1beta1/options/quotes/latest")) return json({ quotes: {} });
+      throw new Error(`unexpected request ${url}`);
+    }) as unknown as typeof fetch;
+    const broker = createAlpacaBroker({
+      credentials: { keyId: "k", secretKey: "s" },
+      tradingOrigin: "https://paper-api.alpaca.markets",
+      dataOrigin: "https://data.alpaca.markets",
+      clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+      fetchImpl: brokenBody,
+    });
+    const observation = await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: ["SPY260904P00300000"] });
+    expect(Object.keys(observation.contractsById)).toEqual(["SPY"]);
+  });
+
+  it("B1: a 2xx whose body fails stays the body's own error, not a fabricated status error", async () => {
+    // The wrapper exists to preserve a status that means something. A
+    // successful response whose body breaks is a transport problem and must
+    // keep saying so, or `httpStatusOf` starts reporting statuses that never
+    // classified anything.
+    const brokenOkBody = ((url: string) => {
+      if (url.includes("/v2/clock") || url.includes("/v2/options/contracts/")) {
+        const response = new Response(null, { status: 200 });
+        Object.defineProperty(response, "text", { value: () => Promise.reject(new Error("SENTINEL body stream aborted")) });
+        return Promise.resolve(response);
+      }
+      const json = (body: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+      if (url.includes("/v2/stocks/quotes/latest")) return json({ quotes: { SPY: { bp: 500, ap: 500.1, bs: 100, as: 100, t: "2026-08-31T13:30:59.871234567Z" } } });
+      if (url.includes("/v2/options/contracts?")) return json({ option_contracts: [], next_page_token: null });
+      if (url.includes("/v1beta1/options/quotes/latest")) return json({ quotes: {} });
+      throw new Error(`unexpected request ${url}`);
+    }) as unknown as typeof fetch;
+
+    const broker = createAlpacaBroker({
+      credentials: { keyId: "k", secretKey: "s" },
+      tradingOrigin: "https://paper-api.alpaca.markets",
+      dataOrigin: "https://data.alpaca.markets",
+      clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+      fetchImpl: brokenOkBody,
+    });
+    // The held-identity loop swallows it, so probe the same code path through a
+    // call that does not swallow: the observation still succeeds without it.
+    const observation = await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: ["SPY260904P00300000"] });
+    expect(Object.keys(observation.contractsById)).toEqual(["SPY"]);
+    // Directly: an ordinary authenticated GET whose 200 body breaks must
+    // surface the body's own error, with no fabricated status attached.
+    const direct = await broker.clockIsOpen().then(() => null, (error: unknown) => error);
+    expect(direct).toBeInstanceOf(Error);
+    expect((direct as Error).message).toContain("SENTINEL");
+    expect(httpStatusOf(direct), "a 2xx body failure must not carry a fabricated status").toBeNull();
+  });
+
+  it("B3: a witness entry between a cycle and its refusal does not steal it", () => {
+    // SUPPRESSED is a primary type but is written by an instance that never
+    // ran a management step, so it can never own a refusal. Before the fix the
+    // refusal was attributed to the witness and the cycle read as quiet --
+    // exactly the misattribution scenario #74 exists to prevent.
+    const snapshot = {
+      accountId: TEST_ONLY_ACCOUNT_ID,
+      snapshotAt: "2026-09-03T16:00:00.000Z",
+      cashCents: 10_000_000,
+      equityCents: 10_000_000,
+      positions: [],
+      openOrders: [],
+      quoteSamples: {},
+    };
+    const entries = [
+      { seq: 1, at: "2026-09-03T15:00:00.000Z", epoch: 1, type: "BOOTSTRAP", snapshot, epochSeeded: true },
+      { seq: 2, at: "2026-09-03T16:00:00.000Z", epoch: 1, type: "CYCLE", cycleIndex: 1, tradingDay: "2026-09-03", reasonCodes: [], snapshot, batchVerdicts: [], candidateVerdicts: [] },
+      { seq: 3, at: "2026-09-03T16:00:01.000Z", epoch: null, type: "SUPPRESSED", instanceId: "second", holderId: "first", reason: "LOCK_HELD" },
+      { seq: 4, at: "2026-09-03T16:00:02.000Z", epoch: 1, type: "MANAGEMENT_REFUSAL", exposureLifecycleId: "exposure:entry:2026-09-02:5:abc:g0", route: "deadline", generation: 0, reason: "PRICE_UNAVAILABLE: QUOTE_MISSING" },
+    ] as unknown as Parameters<typeof projectPerformance>[0];
+
+    const projection = projectPerformance(entries, "sha256:0123456789abcdef", { at: "2026-09-03T16:00:02.000Z", kind: "latest" }, PROJECTION_EXPECTATIONS);
+    const cycle = projection.cycles.find(view => view.seq === 2);
+    const witness = projection.cycles.find(view => view.seq === 3);
+    expect(cycle?.managementRefusals.map(refusal => refusal.seq)).toEqual([4]);
+    expect(cycle?.result).toBe("refused");
+    expect(witness?.managementRefusals).toEqual([]);
+    expect(witness?.result).toBe("witness");
+  });
+
+  it("B3: a refusal after the last primary still belongs to it, and two cycles keep their own", () => {
+    const snapshot = { accountId: TEST_ONLY_ACCOUNT_ID, snapshotAt: "2026-09-03T16:00:00.000Z", cashCents: 10_000_000, equityCents: 10_000_000, positions: [], openOrders: [], quoteSamples: {} };
+    const cycleAt = (seq: number, index: number, at: string) => ({ seq, at, epoch: 1, type: "CYCLE", cycleIndex: index, tradingDay: "2026-09-03", reasonCodes: [], snapshot, batchVerdicts: [], candidateVerdicts: [] });
+    const refusalAt = (seq: number, at: string, reason: string) => ({ seq, at, epoch: 1, type: "MANAGEMENT_REFUSAL", exposureLifecycleId: "exposure:x", route: "expiry", generation: 0, reason });
+    const entries = [
+      { seq: 1, at: "2026-09-03T15:00:00.000Z", epoch: 1, type: "BOOTSTRAP", snapshot, epochSeeded: true },
+      cycleAt(2, 1, "2026-09-03T16:00:00.000Z"),
+      refusalAt(3, "2026-09-03T16:00:01.000Z", "PRICE_UNAVAILABLE: first"),
+      cycleAt(4, 2, "2026-09-03T16:15:00.000Z"),
+      refusalAt(5, "2026-09-03T16:15:01.000Z", "PRICE_UNAVAILABLE: second"),
+    ] as unknown as Parameters<typeof projectPerformance>[0];
+
+    const projection = projectPerformance(entries, "sha256:0123456789abcdef", { at: "2026-09-03T16:15:01.000Z", kind: "latest" }, PROJECTION_EXPECTATIONS);
+    expect(projection.cycles.find(view => view.seq === 2)?.managementRefusals.map(refusal => refusal.reason)).toEqual(["PRICE_UNAVAILABLE: first"]);
+    expect(projection.cycles.find(view => view.seq === 4)?.managementRefusals.map(refusal => refusal.reason)).toEqual(["PRICE_UNAVAILABLE: second"]);
+  });
+});

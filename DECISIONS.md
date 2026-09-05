@@ -2663,3 +2663,77 @@ small, no ADR split).
   and its fix round; a further delta gate on the fix set is the next step, and
   the four seams C2 found are a reminder that the store's earlier probes were
   narrower than their numbers suggested.
+- **2026-09-05 — R42 fix counter-gate at `4eb900e`: NO-GO (A=0, B=4, C=1);
+  three closed, one declared and put to the owner.** The gate ran blind in
+  `gbt-r33`, prompt `prompts/R42-fix-counter-gate.md`, job
+  `task-mto2k4l6-257q8u`, report archived under
+  `responses/R42-task-mto2k4l6-257q8u/`. It confirmed what held: ordinary
+  401/403 escape and 404/429/500, timeouts, network errors, a malformed 200
+  and a refused redirect all still degrade to a missing price; sixteen
+  book/market failure combinations keep their `WORLD_PARTIAL` /
+  `WORLD_UNREACHABLE` classes with auth taking precedence and halting once;
+  only `CYCLE` is ever labelled `refused`; an INTENT beside a refusal stays
+  `proposal` and shows the refusal as well; injection through `reason` and
+  `exposureLifecycleId` is escaped. This is the second gate round on this fix
+  set, and its findings are what the axiom "fixes carry defects" predicts.
+
+  - **B1 (closed) — the status was lost when the response body was not.** In
+    `request`, a body read that rejects or stalls escaped before the
+    status-carrying error was built, so a 401 with an aborted body became a
+    statusless error that every caller degraded into ordinary world trouble.
+    Reproduced at the parent too: a pre-existing gap that the new
+    held-identity lookup made reachable. The status is now attached at the
+    point it is known, for non-2xx responses only — a 200 whose body breaks
+    keeps its own transport error and gains no fabricated status.
+  - **B3 (closed, and mine) — a witness entry stole the following refusal.**
+    `SUPPRESSED` and `FENCED_OUT` are primary types, so a witness landing
+    between a cycle and its own `MANAGEMENT_REFUSAL` took the refusal into its
+    window: the projection labelled the real cycle `no_trade` and hung the
+    refusal on an instance that never ran a management step. That is precisely
+    the misattribution scenario #74 exists to prevent, introduced by the R41-B2
+    closure. Refusals are now attributed to the nearest preceding non-witness
+    primary, and a witness owns none.
+  - **B4 (closed) — the new exception reached an unfenced deadline abort.**
+    The held-identity lookup is authenticated, so a 401/403 can now abort a
+    `deadline-cli` one-shot; the CLI's generic catch fail-pinged and exited 1
+    without journalling anything, leaving `halted: false`. An abort satisfies
+    the deadline handover (S-G11-04) but not the shared fence duty of
+    S-G12-06. `composeDeadline` now exposes `recordCredentialFence`, shaped
+    like the watchdog's and using the same `recordStartupBrokerFence`, and the
+    CLI calls it before releasing authority.
+  - **B2 (NOT fixed — declared, and the owner's next decision) — a journal
+    write failure lets the credential fence disappear.** With the journal
+    unwritable, `haltForAuthFailure` appends nothing and `halted` stays false;
+    once the journal is writable again the next cycle opens a position without
+    any human un-halt. The gate reproduced it end to end through the real
+    gateway. **This is pre-existing** — the competition ran on it — and it is
+    not caused by the S-X-07 work, which only routes one more failure into the
+    same hole. It is not patched here on purpose: the obvious quick fix, write
+    the halt projection directly when the append fails, does not hold, because
+    `reconcileHaltProjection` lets the journal win whenever the journal
+    contains any halt transition at all, so an earlier HALT/UNHALT pair would
+    silently clear the flag again. The shape that does hold is a durable
+    marker in the epoch store beside `resetPending` and `seedPending` — call
+    it `fencePending` — set when a fence could not be journaled and blocking
+    every authoritative mutation until the HALT lands. That is a change to the
+    authority core with its own spec case, tests and gate round, and it should
+    not be bolted onto the end of a long session. **Consequence until it is
+    built: a credential rejection that coincides with an unwritable journal
+    can be followed by an armed cycle.** It belongs before P12's first armed
+    cycle, and it is listed there.
+  - **C (declared residual) — two composition-root bindings stay unmeasured.**
+    The two `cycleMarketPort` call sites in `buildRuntime`
+    (`src/shell/agent-runtime.ts`) pass all 600 tests when mutated to forward
+    an empty list, and so does the one-line `recordCredentialFence` call in
+    `deadline-cli.ts`. The functions themselves are directly tested; what is
+    untested is that the composition root wires them, and `buildRuntime` has
+    never been unit-tested because it spawns the pinned analyst MCP child,
+    composes a real broker and acquires an epoch. Declared rather than
+    smoothed: these are one-line bindings to tested functions, and the honest
+    statement is that a reviewer's eye is their only check today.
+
+  Fix-counter-probe over the three closures: **8 of 8 caught by tests** on a
+  green baseline, the last only after sharpening an assertion that had passed
+  for the wrong reason. `npm run verify` exit 0 at 44 files / 600 tests. Not
+  claimed: a bis-0 termination — two rounds, two fix rounds, and one B
+  deliberately open.

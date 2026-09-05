@@ -34,6 +34,8 @@ import type { StatePaths } from "../src/shell/state-dir.js";
 import { TEST_ONLY_ACCOUNT_ID } from "./journal-fixtures.js";
 import { cleanupLifecycleDirs, lifecycleHarness, lifecycleMarket, P5_NOW } from "./lifecycle-fixtures.js";
 import type { LifecycleHarness } from "./lifecycle-fixtures.js";
+import { BrokerHttpError } from "../src/shell/broker-errors.js";
+import { readHaltState } from "../src/shell/halt-state.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /** Past `LOCK_TAKEOVER_BOUND_MS` (400 s in the tracked policy) so the harness's own holder record no longer suppresses. */
@@ -410,6 +412,43 @@ describe("P10 — the command surface is a pure function", () => {
     expect(parseDeadlineCommand(["terminal", "--now", "not-a-number"])).toMatchObject({ ok: false });
     expect(parseDeadlineCommand(["terminal", "--now", "0"])).toMatchObject({ ok: false });
     expect(parseDeadlineCommand(["terminal", "--state-dir", "C:/elsewhere"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("R42-B4 — a credential rejection during a deadline entry is fenced, not only aborted", () => {
+  it("a 401 or 403 becomes a durable AUTH_FAILURE halt; anything else leaves the journal alone", async () => {
+    // Since S-X-07 the deadline observation performs an authenticated read of
+    // its own, so the new exception can abort the one-shot. An abort satisfies
+    // the deadline handover (S-G11-04) but not the shared fence duty of
+    // S-G12-06: the rejection must still halt the deployment durably.
+    for (const status of [401, 403]) {
+      const harness = await lifecycleHarness();
+      harness.clock.now = AFTER_TAKEOVER_BOUND;
+      const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot() });
+      expect(composition.ok).toBe(true);
+      if (!composition.ok) return;
+
+      expect(await composition.recordCredentialFence(new BrokerHttpError(status, `${String(status)} forbidden`))).toBe("AUTH_FAILURE");
+      const halts = harness.entries().filter(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
+      expect(halts, `HTTP ${String(status)} must fence`).toHaveLength(1);
+      expect(readHaltState(harness.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE" });
+      await composition.release();
+    }
+  });
+
+  it("an ordinary failure is classified as degraded and writes no halt", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = AFTER_TAKEOVER_BOUND;
+    const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot() });
+    expect(composition.ok).toBe(true);
+    if (!composition.ok) return;
+
+    for (const error of [new BrokerHttpError(500, "500 server error"), new Error("BROKER_TIMEOUT after 30000 ms")]) {
+      expect(await composition.recordCredentialFence(error)).toBe("WORLD_DEGRADED");
+    }
+    expect(harness.entries().some(entry => entry.type === "HALT")).toBe(false);
+    expect(readHaltState(harness.paths).halted).toBe(false);
+    await composition.release();
   });
 });
 

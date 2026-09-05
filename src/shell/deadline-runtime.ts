@@ -41,6 +41,9 @@ import type { EnvRecord } from "./runtime-config.js";
 import { ALERT_SLA_MS, CANONICAL_PAPER_TRADING_ORIGIN } from "./startup.js";
 import { resolveStateDir } from "./state-dir.js";
 import type { StatePaths } from "./state-dir.js";
+import { httpStatusOf } from "./broker-errors.js";
+import { classifyBrokerFailure } from "../core/startup.js";
+import { recordStartupBrokerFence } from "./startup-broker-fence.js";
 
 /**
  * The market-data origin, deliberately duplicated from `agent-runtime.ts`'s
@@ -108,6 +111,16 @@ export type DeadlineComposition =
     readonly entries: readonly JournalEntry[];
     /** Give up writer ownership. A crash instead lets the holder record age out (S-G12-01). */
     release(): Promise<void>;
+    /**
+     * S-G12-06 for this one-shot path (R42-B4). A deadline entry performs
+     * authenticated broker reads, and since S-X-07 the observation does too,
+     * so a credential rejection can abort the run. An abort alone satisfies
+     * the deadline handover but not the shared fence duty: the rejection must
+     * become a durable `AUTH_FAILURE` halt, exactly as the watchdog records
+     * it. Returns what the error was classified as; anything but a credential
+     * rejection is left alone.
+     */
+    recordCredentialFence(error: unknown): Promise<"AUTH_FAILURE" | "WORLD_DEGRADED">;
   }
   | { readonly ok: false; readonly stage: DeadlineRefusalStage; readonly reason: string };
 
@@ -196,6 +209,30 @@ function isoDate(ms: number, offsetDays: number): string {
  * configured strike distance. The calendar is the one already read after the
  * fence — a deadline entry issues no second calendar request.
  */
+/** The credential fence of S-G12-06 for the deadline one-shot, shaped like the watchdog's (R42-B4). */
+function credentialFence(options: DeadlineRuntimeOptions, paths: StatePaths, secrets: readonly string[], lockTakeoverBoundMs: number, ping: PingPort): (error: unknown) => Promise<"AUTH_FAILURE" | "WORLD_DEGRADED"> {
+  return async (error: unknown): Promise<"AUTH_FAILURE" | "WORLD_DEGRADED"> => {
+    const status = httpStatusOf(error);
+    if (classifyBrokerFailure(status) !== "AUTH_FAILURE") return "WORLD_DEGRADED";
+    try {
+      await recordStartupBrokerFence({
+        paths,
+        secrets,
+        clock: options.clock,
+        instanceId: options.instanceId,
+        lockTakeoverBoundMs,
+        reason: "AUTH_FAILURE",
+        detail: `active credentials were rejected during a deadline entry (HTTP ${String(status ?? 0)})`,
+        ping,
+      });
+    } catch (fenceError) {
+      // The abort signal already stands; the fence is an added distinction, never a precondition.
+      options.log(`deadline credential fence could not be journaled: ${messageOf(fenceError)}`);
+    }
+    return "AUTH_FAILURE";
+  };
+}
+
 function marketObservation(adapter: DeadlineBrokerAdapter, config: ValidatedStartup, days: readonly CalendarDay[], clock: () => number): (heldContractIds: readonly string[], deadlineAtMs?: number) => Promise<MarketObservation> {
   return (heldContractIds: readonly string[], deadlineAtMs?: number): Promise<MarketObservation> => {
     return adapter.market(closingWindow(days, newYorkDate(clock()), config.decision, heldContractIds), deadlineAtMs);
@@ -320,6 +357,7 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
     epoch,
     entries,
     release,
+    recordCredentialFence: credentialFence(options, paths, secrets, config.scheduling.lockTakeoverBoundMs, ping),
     deps: {
       gateway,
       epoch,

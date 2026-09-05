@@ -65,8 +65,13 @@ try {
   // fail to exist. `deadline.ts` raises the fail-signal for the two it can
   // see; this one only surfaces here, and it may not be quieter than those.
   const detail = error instanceof Error ? error.message : String(error);
+  // R42-B4: an abort satisfies the deadline handover, never the credential
+  // fence. Since S-X-07 the observation performs an authenticated read too, so
+  // a 401/403 can land here; it must still become the durable AUTH_FAILURE
+  // halt of S-G12-06 before this process gives up its authority.
+  const classification = await composed.recordCredentialFence(error);
   try {
-    await composed.deps.ping?.fail([`${DEADLINE_ENTRY_NOT_JOURNALED}:ENTRY_ABORTED:${detail}`]);
+    await composed.deps.ping?.fail([`${DEADLINE_ENTRY_NOT_JOURNALED}:ENTRY_ABORTED:${classification === "AUTH_FAILURE" ? "AUTH_FAILURE:" : ""}${detail}`]);
   } catch {
     // Delivery is best effort; stderr and the exit code carry it regardless.
   }

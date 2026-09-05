@@ -11,7 +11,7 @@
 // No I/O, no clock: the render time and the cutoff are inputs.
 import { foldLifecycles, utcIsoToEpochMs } from "./execution.js";
 import type { EntryLifecycleRecord } from "./execution.js";
-import { haltStateFrom, isPrimaryEntryType } from "./journal.js";
+import { haltStateFrom, isPrimaryEntryType, isWitnessEntryType } from "./journal.js";
 import type { HaltState, JournalEntry, JournalQuoteSample } from "./journal.js";
 import { declaredExpiryHolds } from "./lifecycle.js";
 import { projectQualification } from "./qualification.js";
@@ -462,6 +462,15 @@ function lifecycleLinks(records: readonly EntryLifecycleRecord[], closes: readon
   return links;
 }
 
+/** The sequence of the next primary that is not a witness, or `MAX_SAFE_INTEGER` when none follows. */
+function nextNonWitnessSeq(primaries: readonly JournalEntry[], index: number): number {
+  for (let ahead = index + 1; ahead < primaries.length; ahead += 1) {
+    const candidate = primaries[ahead];
+    if (candidate !== undefined && !isWitnessEntryType(candidate.type)) return candidate.seq;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
   const views: CycleView[] = [];
   const primaries = entries.filter(entry => isPrimaryEntryType(entry.type));
@@ -475,9 +484,19 @@ function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
     const snapshot = snapshotOf(primary);
     const equity = snapshot === null ? null : snapshot["equityCents"];
     const reasonCodes = stringList(primary["reasonCodes"]);
+    // R42-B3: a witness entry (SUPPRESSED, FENCED_OUT) is a primary, but it
+    // is written by an instance that never ran a management step, so it can
+    // never own a refusal. Without this, a witness landing between a cycle and
+    // its own refusal stole that refusal and left the cycle looking quiet —
+    // the exact misattribution scenario #74 exists to prevent. A refusal is
+    // therefore attributed to the nearest preceding non-witness primary, and
+    // a witness's own window is searched no further than the next primary.
+    const ownsRefusals = !isWitnessEntryType(primary.type);
+    const refusalWindowEnd = ownsRefusals ? nextNonWitnessSeq(primaries, index) : primary.seq;
     const managementRefusals: ManagementRefusalView[] = [];
-    for (const entry of between) {
+    for (const entry of entries) {
       if (entry.type !== "MANAGEMENT_REFUSAL") continue;
+      if (entry.seq <= primary.seq || entry.seq >= refusalWindowEnd) continue;
       managementRefusals.push({
         seq: entry.seq,
         exposureLifecycleId: typeof entry["exposureLifecycleId"] === "string" ? entry["exposureLifecycleId"] : "",

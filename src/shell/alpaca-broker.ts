@@ -166,8 +166,19 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     let text: string;
     try {
       response = await Promise.race([fetchPromise, timeout]);
-      // A fetch resolves when headers arrive; the same deadline must cover a stalled response body as well.
-      text = await Promise.race([response.text(), timeout]);
+      try {
+        // A fetch resolves when headers arrive; the same deadline must cover a stalled response body as well.
+        text = await Promise.race([response.text(), timeout]);
+      } catch (bodyError) {
+        // R42-B1: the status is already known here, and it is the part that
+        // decides whether this was a credential rejection (S-G12-06). A body
+        // that never arrives must not turn a 401 into a statusless error that
+        // every caller then degrades into ordinary world trouble.
+        if (response.status < 200 || response.status >= 300) {
+          throw new BrokerHttpError(response.status, `${String(response.status)} response body unreadable: ${bodyError instanceof Error ? bodyError.message : String(bodyError)}`);
+        }
+        throw bodyError;
+      }
     } finally {
       clearTimeout(timer);
     }
