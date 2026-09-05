@@ -247,12 +247,28 @@ into a chat.
 A new Alpaca **paper** account, used by nothing but this agent, created **on or
 after 2026-09-06T00:00:00Z — that is Sunday 06.09.2026, 02:00 Europe/Berlin.**
 The S-CYC-09 provenance proof requires the creation instant to be at or after
-`COMPETITION_START`. An older account makes the bootstrap refuse — and it does
-so at the **anchor cycle** on Wednesday, after the certificate and the whole
-activation gate, because nothing before that reaches the broker's account
-history. There is no earlier check; the defence is to create the account after
-Sunday and write its creation timestamp into `STATE.md` now, so the later
-refusal is one line to look up rather than an investigation.
+`COMPETITION_START`, opening cash **and** equity at exactly $100,000.00, zero
+positions and non-terminal orders, an order and fill history that are complete
+and empty, and an activity ledger carrying nothing but the opening funding
+journal.
+
+**Check it before anything depends on it.** Until this probe existed the only
+way to learn the verdict was to arm and watch the anchor cycle refuse — on
+Wednesday, after the certificate and the whole activation gate, leaving a
+sticky `PROVENANCE_BROKEN` mark behind. It asks the same question through the
+same pure function, reads only, and writes nothing at all:
+
+```powershell
+cd C:\Users\felix\source\repos\glass-box-trading
+npm.cmd run build      # only needed if dist\ is older than the checkout
+node tools\probe-provenance.mjs competition
+# expect: "PROVENANCE OK: this account would be accepted for arming ..."
+```
+
+Run it now, run it again after step 2, and run it once more on the morning of
+the anchor. It costs seconds and it is the only check that answers this
+question before the day it matters. Write the account's creation timestamp into
+`STATE.md` while you are here.
 
 If it does refuse: **do not edit `COMPETITION_START`.** That changes the policy
 digest, which voids the certificate, and it would also make the proof accept an

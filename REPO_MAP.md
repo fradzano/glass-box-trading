@@ -182,6 +182,7 @@
 - `tools/install-scheduled-task.ps1`
 - `tools/measure-longrun-scale.mjs` — What does a three-month journal cost to hold, fold and render?
 - `tools/probe-dashboard.ps1`
+- `tools/probe-provenance.mjs` — Read-only: does an account satisfy the S-CYC-09 provenance proof?
 - `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tools/scan-secrets.ps1`
