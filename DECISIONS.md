@@ -3289,3 +3289,98 @@ small, no ADR split).
   isolates the journal, and the mutant then dies. A test that passes for the
   wrong reason is worse than no test, and nothing but a probe finds those.
   `npm run verify` exit 0 at 48 files / 651 tests.
+- **2026-09-06 — owner-relayed review of `88a6a54` (operator documents only):
+  six findings, all six confirmed, none refuted.** The diff `fa2ebad..88a6a54`
+  touches no `src`, `tools`, `config` or package file, so R46's code findings
+  stand against this head unchanged; what needed re-checking was the prose that
+  changed twice in one evening. It needed it. **One of the six is a closure
+  that did not hold**: R46-B8 flagged the machine-off drill as unfittable, the
+  cold read found the same thing independently, and the fix I wrote for both
+  had arithmetic of its own that was wrong. That is the honest headline of this
+  entry, and it is why the answer this time is a shared model rather than
+  another set of corrected times.
+
+  **The shared model, now one section of the runbook ("Reading the clock"),
+  which everything else refers to.** Four rounds of time findings had one
+  cause: times were written where they were needed and each place did its own
+  arithmetic. The section states the detection formula once — *down at =
+  (first expected ping after the last observed ping) + grace* — with the three
+  checks' periods and graces, delivery kept separate as its own ten-minute
+  budget, the rule that **every drill is measured from an observed ping and
+  never from the wall clock**, the rule that the log is UTC and the
+  instructions are local, and the table that **derives** every date from the
+  anchor and the trading calendar instead of shifting it.
+
+  Per finding:
+
+  1. **Options cannot be sold at 23:00 on a Friday — confirmed.** The document
+     told the operator to close structures at an hour when the option market
+     has been shut for an hour, and this broker has no extended-hours session
+     for options. An instruction that cannot be carried out is worse than none:
+     it costs the half hour spent discovering that. **Fixed** by splitting the
+     question in two wherever it appears — *permission* (three named
+     situations, listed once) and *executability* (the regular US session,
+     15:30–22:00 local, 14:30–21:00 in the mismatch week) — and by writing the
+     after-hours branch out: record what is open, alarm for 15:20 on the next
+     trading day, note the earliest expiry, and rely on the defined-risk cap,
+     which is precisely the hour that choice was made for. “The one time” is
+     gone; two further “close in the broker UI” claims are bounded the same way.
+  2. **The Wednesday drill — confirmed, including both numbers.** With a last
+     observed ping at 14:00, readiness falls after the missed 14:15 expectation
+     plus 50 minutes of grace, i.e. **15:05** and not 15:20; and 15:00 to 15:05
+     is **five** minutes of reserve, not ten. The start condition was unsound
+     as well: enabling at 14:00 and expecting the 14:00 firing loses the
+     trigger if the enable lands a second late. **Fixed** by moving *all three*
+     drills into Tuesday's window — which has the room, because the checks keep
+     waiting long after the last firing of the day — and leaving Wednesday to a
+     cold-start proof and a gate at **14:45**, thirty minutes before the anchor.
+     The machine-off drill now also subsumes the separate “both tasks
+     disabled” drill: with the host switched off no ping can be produced by any
+     means, which is the stronger claim.
+  3. **The log is UTC — confirmed** (`tools/cycle-run.ps1:202` and
+     `tools/watchdog-run.ps1`, both `UtcNow.ToString('o')`). A healthy
+     signed-out drill writes `2026-09-08T21:15:…Z` for the firing the runbook
+     called “the 23:15 line”, so a working task reads as a failed drill.
+     **Fixed structurally** rather than by adding UTC examples that two clock
+     changes would rot: `tools/show-run-log.ps1` prints every line as
+     `local (UTC hh:mm:ss) message`, takes `-Since` in local time, and is what
+     all ten log reads in the runbook now use. It only reads, and `tools/*.ps1`
+     is not runtime-digest material, so it cannot affect the certificate. The
+     calendar's two clock-change checks were wrong for a second reason and are
+     corrected: the 20-minute lead-in means the first *running* cycle is at
+     14:15 on 26.10. and at **15:15** on 02.11., so “only skipped invocations
+     until 15:30” was false.
+  4. **The provenance failure state — confirmed against the test verbatim.**
+     `tests/p8-competition-provenance.spec.ts` case (b'') proves that a
+     first-ever arming with a rejected account journals **nothing**: zero
+     entries, no `HALT`, `primary: null`, `entriesBlocked` containing
+     `PROVENANCE`, `alarmConditions` containing `COMPETITION_PROVENANCE_FAILED`,
+     ping fail — the unspent epoch seed is what blocks every order, so there is
+     no halt to release and no fence to clear. The runbook told the operator to
+     look for a journaled `HALT PROVENANCE_BROKEN` that cannot exist. **Fixed:**
+     step 7 describes the real state and where to read it, and the account swap
+     is written out in full — all three `ALPACA_COMP_*` values (changing two of
+     them and leaving the account id produces an `ACCOUNT_BINDING_MISMATCH`
+     halt instead), and the two state-directory cases kept apart: an empty
+     first run has nothing persisted and may reuse the directory after
+     *verifying* that, while a persisted provenance halt is permanent and needs
+     a new one.
+  5. **Shifting across weekends — confirmed.** The runbook said two trading
+     days, calendar block 9 said the same number of calendar days; a Monday
+     anchor put the certificate run on a Sunday. And a Friday anchor gives a
+     Friday flatten date whose “day after” is a Saturday with no close and no
+     firings. **Fixed** by derivation: the certificate day is the trading day
+     before the anchor, `FLATTEN_DATE` is three calendar months after it rolled
+     forward to a trading day, the journaling-only day is the trading day after
+     that, and the coverage date is the journaling-only day. Block 9 now asks
+     the owner to compute the four dates and hand Gemini finished ones, with
+     the stale event title corrected.
+  6. **The recurring reminder — confirmed.** Step 3 said “note it and
+     continue”, step 6 made it a hard gate condition. **One decision now:** it
+     is required, and the only alternative is an explicit owner ruling taken
+     *before* activation and recorded in `STATE.md`, which then satisfies
+     condition 4 in its place. The drill's order was impossible as written —
+     `-ResolveOnly` had already turned everything green — so the reminder is
+     waited out first and resolved afterwards.
+
+  `npm run verify` exit 0 at 48 files / 651 tests. Nothing is activated.

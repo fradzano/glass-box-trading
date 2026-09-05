@@ -52,6 +52,124 @@ arm. There is no exception, including a slip of a single day.
 
 ---
 
+## Reading the clock
+
+Four separate rounds of findings came from times: a drill whose wait was
+shorter than the grace it was waiting out, a "23:15 line" that a healthy
+deployment writes as `21:15Z`, an alert budget counted twice, and a shift rule
+that moved a market-hours step onto a Sunday. They are one problem, so this
+section is the one place that answers it and everything below refers here.
+
+### The log is UTC; every instruction is local
+
+Both wrappers write `[DateTime]::UtcNow.ToString('o')`. So a firing you observe
+at **23:15 local** appears in the file as `2026-09-08T21:15:…Z`, and Wednesday's
+14:00 and 15:00 firings appear as `12:00Z` and `13:00Z`. **Never read the log
+with `Get-Content` during a drill.** Use:
+
+```powershell
+cd C:\Users\felix\source\repos\glass-box-trading
+.\tools\show-run-log.ps1 -Tail 5
+.\tools\show-run-log.ps1 -Log watchdog -Since "14:00"
+```
+
+It prints each line as `local (UTC hh:mm:ss) message`, so the times in this
+document and the times on the screen are the same times. It only reads.
+
+### When a check goes down, exactly
+
+An external check does not measure "how long since the last ping". It measures
+**the ping its schedule expected next, plus the grace**:
+
+    down at  =  (first expected ping after the last observed ping)  +  grace
+
+The three checks, with the schedules the installer prints:
+
+| Check | Expected every | Grace | Down at, after a last observed ping at T |
+|---|---|---|---|
+| `gbt-watchdog` | 5 min | 15 min | T + 5 + 15 = **T + 20** |
+| `gbt-liveness` | 15 min | 30 min | T + 15 + 30 = **T + 45** |
+| `gbt-readiness` | 15 min | 50 min | T + 15 + 50 = **T + 65** |
+
+Those are the values for a T that falls **on** the schedule (`:00`, `:15`,
+`:30`, `:45` for the two cycle checks). A ping observed at 14:03 is still
+followed by an expected one at 14:15, so it buys nothing.
+
+**Then delivery, which is a separate budget and never folded into the numbers
+above:** `ALERT_DELIVERY_BUDGET_MS` is 10 minutes. A drill is finished when the
+push is **on your phone**, not when the dashboard turns red, so plan
+`T + detection + 10` and note both times.
+
+### Every drill starts from an observed ping, never from a clock
+
+The first draft of the activation gate said "enable at 14:00, expect the 14:00
+firing". A task enabled at 14:00:30 misses that trigger entirely; a ping that
+lands at 14:16 pushes every following number by fifteen minutes. So:
+
+1. Do the thing (enable, disable, sign out, shut down).
+2. **Wait for a firing you can see** — a line from `show-run-log.ps1`, and the
+   check green on the dashboard. Write its local time down. That is **T**.
+3. Compute the drill's deadlines from T with the table above.
+4. Compare what happened against what you computed, then move on.
+
+A drill whose T you did not observe proves nothing, and a drill you start
+before the previous one is green again proves less than nothing.
+
+### The trading calendar decides every date
+
+Dates are **derived**, never shifted by a fixed number of calendar days. From
+the anchor — the first regular approved cycle — everything else follows:
+
+| Derived | Rule |
+|---|---|
+| Certificate day | the trading day **immediately before** the anchor |
+| Activation gate | the evening of the certificate day into the anchor morning |
+| `FLATTEN_DATE` | three calendar months after the anchor; **if that is not a US trading day, the next one that is** |
+| Journaling-only day | the **trading day after** `FLATTEN_DATE` — it needs firings and a US close, so a Saturday is never it |
+| `-CoverageThroughDate` | the journaling-only day |
+| `TERMINAL` | after the US close of the journaling-only day |
+
+Applied to the planned anchor of **Wed 2026-09-09**: certificate Tue 2026-09-08,
+`FLATTEN_DATE` Wed 2026-12-09, journaling-only Thu 2026-12-10, coverage through
+2026-12-10. Applied to a Friday anchor of 2026-09-11 it would be:
+`FLATTEN_DATE` Fri 2026-12-11, journaling-only **Mon 2026-12-14** — not
+Saturday the 12th, which has no close and no firings.
+
+### Manual intervention: permission and executability are two questions
+
+Owner step 1 forbids trading the competition account by hand while the agent
+operates. That prohibition lifts in exactly three situations, and **nowhere
+else**:
+
+1. The machine is unreachable and cannot be brought up while risk stands.
+2. A halt or credential fence stands **with an open book** — the agent will not
+   close anything until a human releases it.
+3. `DEADLINE_FLATTEN_FAILED` on the flatten date.
+
+Permission is not ability. **Options trade only during the regular US session**
+— 09:30–16:00 New York, i.e. 15:30–22:00 local, and 14:30–21:00 in the week
+between the two clock changes. There is no extended-hours session for options
+at this broker. Outside that window **nothing can be closed by anyone**, and an
+instruction to "close it now" at 23:00 on a Friday is an instruction that
+cannot be carried out.
+
+So the rule has two halves and both are always stated:
+
+* **Inside the session, with permission:** close the affected structures whole
+  in the broker dashboard, never leg by leg, and write every close into
+  `STATE.md` — the evaluation separates manual closes from the agent's own and
+  can only do that if they are named.
+* **Outside the session:** there is no risk-reducing action available. Do not
+  attempt one. Write down what you saw and what is open, set an alarm for
+  **15:20 local on the next trading day** (five minutes into the session), and
+  decide then, with the book in front of you. What protects the position until
+  then is the defined-risk structure itself: the maximum loss was fixed when
+  the position was opened and cannot grow overnight or over a weekend. That is
+  the whole reason this strategy is defined-risk, and it is doing its job in
+  exactly this hour.
+
+---
+
 ## Owner steps
 
 Every block below is meant to be pasted as-is. Each says which shell it needs.
@@ -80,7 +198,9 @@ owner step 6).
 
 Enable options level 3 (multi-leg). Never trade on it by hand while the agent
 operates — a manual mutation is detectable only one cycle later (owner ruling
-2026-09-02, S-CYC-05).
+2026-09-02, S-CYC-05). The three situations in which that prohibition lifts,
+and the market hours that decide whether anything can be done about them, are
+in [Manual intervention](#manual-intervention-permission-and-executability-are-two-questions).
 
 ### 2. Secrets and the new state directory — with step 1
 
@@ -175,13 +295,19 @@ prints the schedules before it touches anything that needs elevation.
 
 Configure the checks with **exactly** those values, set each check's schedule
 type to "cron", and point all three at the channel you will actually see at
-night. **Also switch on the account's recurring "down" reminder**, hourly if the
-account offers it — a check sends one notification when it goes down and one
-when it recovers, so without the reminder a single push missed at 22:00 is a
-silent night. If the setting is not available on this account, that is a finding
-to write into `STATE.md`, not a reason to stop: the run proceeds with one
-notification per transition, and you note that a missed push is a missed
-incident.
+night. **Switch on the account's recurring "down" reminder** — hourly if the
+account offers it, daily otherwise. A check sends one notification when it goes
+down and one when it recovers, so without the reminder a single push missed at
+22:00 is a silent night, and this run has one operator and no second pair of
+eyes. **It is a gate condition** (step 6, condition 4), not a nice-to-have, and
+the two places say the same thing on purpose.
+
+If the account genuinely cannot do it, that is not a shrug and not a silent
+downgrade: it is an owner decision to run with one notification per transition,
+and it is taken **before** activation and written into `STATE.md` with its date
+and its reason. Then condition 4 is met by that recorded decision instead of by
+a received reminder. What is not acceptable is discovering the gap at 23:00 in
+December.
 
 Then put the ping URLs into `.env`. **Getting these three the wrong way round is
 the one mistake nothing later catches**, because every check would still be
@@ -193,12 +319,24 @@ HEALTHCHECK_LIVENESS_URL=<liveness check ping URL>
 HEALTHCHECK_WATCHDOG_URL=<watchdog check ping URL>
 ```
 
-Now exercise the path and **confirm receipt on your own device**:
+Now exercise the path and **confirm receipt on your own device**. The order
+matters: `-ResolveOnly` turns every check green again, so the reminder has to be
+waited out **before** it, not after — otherwise there is nothing left down for a
+reminder to be about.
 
 ```powershell
 .\tools\check-alert-path.ps1
 # expect: six [SENT] lines and "ALERT PATH DELIVERED"
-# then wait for three alerts on your phone or mail, and read their bodies
+# then wait for three alerts on your phone or mail, and read their bodies:
+#   each names its check and the condition that failed.
+```
+
+Leave them down and wait out **one reminder period** (an hour, or a day if that
+is all the account offers). Confirm a **second** message arrives for at least
+one check — that is condition 4 of the activation gate, and it is the only
+evidence that a night-time incident reaches you more than once.
+
+```powershell
 .\tools\check-alert-path.ps1 -ResolveOnly
 # expect: three [SENT] lines, and all three checks green again
 ```
@@ -206,11 +344,9 @@ Now exercise the path and **confirm receipt on your own device**:
 **Abort if:** any signal says `UNDELIVERED` or `NOT CONFIGURED`, or an alert
 does not arrive. HTTP 200 is delivery, not receipt.
 
-Then confirm the reminder itself: leave **`gbt-watchdog`** down for one
-reminder period and check that a **second** message arrives. Resolve it
-afterwards with `.\tools\check-alert-path.ps1 -ResolveOnly`. If no second
-message arrives, the setting is not on, or not on that channel — see above:
-note it and continue.
+**If no second message arrives**, the setting is not on, or not on that
+channel. Fix it and repeat, or take the recorded owner decision above. Do not
+carry the question into the gate.
 
 **Then pause all three checks in the dashboard.** They now have cron schedules
 and nothing will ping them until Tuesday 22:10, so left running they would go
@@ -316,39 +452,35 @@ Then, still elevated:
 
 **Abort if:** any check fails. Do not enable anything yet.
 
-### 6. The activation gate — Tue 2026-09-08 22:10 CEST to Wed 2026-09-09 15:05 CEST
+### 6. The activation gate — Tue 2026-09-08 22:10 to Wed 2026-09-09 14:45 local
 
 *Elevated PowerShell for every command below — "Run as administrator" — and
 `cd C:\Users\felix\source\repos\glass-box-trading` in each new window, because
 the checks are invoked by relative path and this step spans two evenings.*
+Read **[Reading the clock](#reading-the-clock)** first; every wait below is
+computed from an observed ping, not from the wall clock.
 
-Two findings reshaped this step (R44-A2, R44-B15). The first draft enabled the
-cycle task during a **session** on Tuesday to run its drills — which lets a
-competition cycle trade a day before the anchor and silently starts the
-measurement period on the wrong date. The second draft was circular: drill (b)
-left both tasks disabled, drill (c) powered the machine off without recovering
-from it, and the restart and signed-out proofs need both tasks *enabled* — while
-the only enable command stood after all six conditions were already met.
-
-Both are answered by the same observation: **the drills need the tasks running,
-but they do not need the agent trading.** The trigger window is deliberately
-wider than the exchange session, and `cycle-run.ps1` skips outside the session
-while still firing, logging and reporting both signals. So the tasks are enabled
-inside the trigger window and **outside** every session, and the drills read
-exactly the signals they are about. The signed-out proof moved into the same
-Tuesday window for the same reason, and the machine-off drill is the only one
-left on Wednesday.
+The drills need the tasks **running**, and they do not need the agent
+**trading**. The trigger window is wider than the exchange session and
+`cycle-run.ps1` skips outside it while still firing, logging and reporting both
+signals — so the tasks are enabled inside the trigger window and outside every
+session, and every drill reads real firings that cannot trade.
 
 **The safety rule that replaces the old ordering, and it is absolute:** no
-firing may run a cycle before the anchor. Concretely — the tasks may be enabled
-only after **22:10 CEST** on Tuesday, and if any drill is still open at
-**15:05 CEST** on Wednesday, both tasks are disabled again and the anchor moves
-by **two** trading days — the procedure is written out at the end of this
-step, because "the anchor moves" is the sentence you will need at 15:04 with
-nothing else to read.
+firing may run a cycle before the anchor. Concretely, the tasks may be enabled
+only after **22:10** on Tuesday (the US close is 22:00), and anything still
+open at **14:45** on Wednesday moves the anchor — the procedure is at the end
+of this step.
 
-Conditions 1–4 must all be true **before** the drills begin. One and two are
-things you run now; three and four are things you did earlier and confirm.
+**All three drills are on Tuesday.** An earlier draft put the machine-off drill
+on Wednesday morning, where the pre-session window is 75 minutes and
+`gbt-readiness` alone needs 65 of them plus delivery: it could not finish before
+the gate it was a condition of. Tuesday's window has the room, because the
+checks keep waiting for the ping they expected long after the last firing of
+the day. Wednesday is then only the restart proof, with real reserve.
+
+Conditions 1–4 must all be true **before** the drills begin. One is something
+you run now; the others you did earlier and confirm.
 
 1. Run it now, *normal PowerShell, in the checkout*:
    ```powershell
@@ -358,133 +490,135 @@ things you run now; three and four are things you did earlier and confirm.
    #   "implementation phases OK: ..."
    ```
    **proven by test**
-2. `.\tools\verify-scheduled-tasks.ps1` passes. **proven on the host in step 5**
+2. `.\tools\verify-scheduled-tasks.ps1` passed in step 5. **proven on the host**
 3. Certificate run four PASS. **step 4**
-4. **Alert receipt**, all three checks, confirmed on your own device, including
-   one recurring "down" reminder. **step 3**
+4. **Alert receipt**, all three checks, confirmed on your own device, **and one
+   recurring reminder received**. **step 3**
 
-**Tue 22:10 — enable, outside the session.** The US close was 22:00 CEST, so
-every firing from here to 23:45 skips the cycle and reports both signals.
+**Tue 22:10 — enable, outside the session.**
 
 ```powershell
+# Un-pause all three checks in the dashboard first (step 3 paused them), then:
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
 # expect: SCHEDULER CHECK PASSED (43 checks), both states Ready
-Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
-# expect, within 15 min: a "skip: outside the exchange session" line, liveness sent, readiness reported.
-# If any line instead shows a cycle running, STOP and disable both tasks: the
-# session bound is wrong and the anchor must not be today.
 ```
 
-Wait until all three checks read green in the healthchecks dashboard before
-starting drill (a). A drill against a check that was already down proves
-nothing. The **watchdog** check goes green within 5 minutes, **liveness** and
-**readiness** at the next quarter hour.
+Now wait for a firing you can see, and write down its local time — this is the
+**T** every drill below is measured from:
 
-5. **Three silence drills**, each a different path, each confirmed. The waits
-   below are the check's period plus its grace: watchdog 20 min, liveness
-   45 min, readiness 65 min. **You watch the healthchecks dashboard for DOWN;
-   the push on your phone follows within the 10-minute delivery budget, and
-   both have to arrive** — the dashboard proves detection, the push proves it
-   reached you.
+```powershell
+.\tools\show-run-log.ps1 -Tail 3
+# expect, at the next quarter hour: a "skip: outside the exchange session" line,
+#   liveness sent, readiness reported.
+# If any line instead shows a cycle RUNNING, STOP and disable both tasks: the
+#   session bound is wrong and the anchor must not be today.
+```
 
-   **(a) Tue 22:30 — the watchdog alone.** It is the failure the other two
-   checks cannot see, which is why the third endpoint exists.
+All three checks must read green in the dashboard before the first drill.
+`gbt-watchdog` turns green within 5 minutes of enabling, the other two at the
+next quarter hour.
+
+5. **Three silence drills.** Each is: do the thing, observe, compute from T,
+   compare. Detection first, then the push within the 10-minute delivery
+   budget; **both have to arrive**.
+
+   **(a) ~22:30 — the watchdog alone.** The failure the other two checks cannot
+   see, which is why the third endpoint exists.
 
    ```powershell
+   .\tools\show-run-log.ps1 -Log watchdog -Tail 2   # note T
    Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
-   # wait 20 min. expect: gbt-watchdog DOWN; gbt-liveness and gbt-readiness still UP.
+   # expect at T+20: gbt-watchdog DOWN; gbt-liveness and gbt-readiness still UP.
+   # expect by T+30: the push on your phone.
    # If either of the other two also falls, STOP: they are wired to the wrong
-   # endpoint. Re-enable the watchdog and go back to owner step 3.
+   #   endpoint, and step 3 has to be redone.
    Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
-   # wait until gbt-watchdog is green again (<= 5 min) before continuing.
+   # wait until gbt-watchdog is green again (<= 5 min) before drill (b).
    ```
 
-   **(b) Tue 23:00 — signed out, with the tasks running.** This is the S4U
-   proof and it belongs here, in a window where no firing can trade, rather
-   than in the crowded hour before the anchor.
+   **(b) ~23:00 — signed out, tasks running.** The S4U proof, here rather than
+   in the crowded hour before the anchor because no firing here can trade.
 
    ```powershell
    # Sign out. Do NOT lock the screen and do NOT shut down: a locked session is
-   # still a session, and would prove nothing.
-   # The 23:15 firing runs with nobody signed in. Sign back in at ~23:20, then:
-   Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
-   # expect: a 23:15 line, written while nobody was signed in.
+   # still a session and would prove nothing.
+   # The next quarter-hour firing runs with nobody signed in. Sign back in about
+   # five minutes after it and read the log with its local column:
+   .\tools\show-run-log.ps1 -Tail 3
+   # expect: a line at the quarter hour you were signed out for -- e.g.
+   #   "2026-09-08 23:15:04  (UTC 21:15:04)  skip: ..." -- written while nobody
+   #   was signed in. The file itself holds 21:15Z; that is the same instant.
    # If there is none, S4U is not doing what it is configured to do. STOP:
-   # disable both tasks (commands in drill (c)) and do not activate.
+   #   disable both tasks and do not activate.
    ```
 
-   **(c) Tue 23:30 — both tasks, machine still running.** Silence from a live
-   machine must alarm. The last firing of the day is 23:45, and the checks keep
-   waiting for the ping they expected, so the alerts land around **00:15**
-   (liveness) and **00:35** (readiness). Set an alarm; a drill whose alert you
-   sleep through has proven nothing either way.
+   **(c) ~23:30 — the machine itself.** This is the drill that proves the alert
+   does not depend on the machine it reports about, and it subsumes the
+   "both tasks disabled" drill an earlier draft ran separately: with the host
+   switched off, no ping can be produced by any means.
 
    ```powershell
-   Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
-   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
-   # expect: gbt-watchdog DOWN by ~23:50, gbt-liveness ~00:15, gbt-readiness ~00:35.
-   # Then PAUSE all three checks in the dashboard and go to bed. Unpaused, they
-   # stay down until 14:00 and the recurring reminder will wake you hourly.
-   ```
-
-6. **Restart, and the alert path without the machine** — Wed 2026-09-09, in the
-   pre-session part of the trigger window, so again nothing can trade. Every
-   command below is elevated.
-
-   ```powershell
-   # 14:00 — un-pause all three checks in the dashboard, then:
-   Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
-   Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
-   Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 3
-   # expect: a 14:00 line, and all three checks green within 5-15 min.
-
-   # 14:05 — shut the machine down. A real shutdown, not sleep and not
-   # hibernate: a sleeping machine wakes and pings, which proves nothing.
+   .\tools\show-run-log.ps1 -Tail 2   # note T -- the last firing you can see
    Stop-Computer -Force
+   # A real shutdown. Not sleep, not hibernate: a sleeping machine wakes and
+   # pings, which proves the opposite of what this drill is for.
    ```
 
-   Leave it off for **45 minutes** (14:05 -> 14:50), then switch it on and sign
-   in normally.
+   From T, on your phone, with the machine off:
+
+   | Check | Down at | Push by |
+   |---|---|---|
+   | `gbt-watchdog` | T + 20 | T + 30 |
+   | `gbt-liveness` | T + 45 | T + 55 |
+   | `gbt-readiness` | T + 65 | T + 75 |
+
+   With T at 23:30 that is 23:50, 00:15 and 00:35, with the last push by 00:45.
+   Set an alarm: a drill whose alerts you sleep through has proven nothing
+   either way. **When all three have arrived, pause all three checks from your
+   phone** and go to bed — the machine stays off, nothing will ping until
+   Wednesday, and an unpaused check with the recurring reminder on will wake you
+   hourly until 14:00.
+
+6. **Restart — Wed 2026-09-09, before the session.** The machine has been off
+   since Tuesday night, so this is a cold boot, which is the proof that matters.
 
    ```powershell
-   # ~14:52, elevated again:
-   Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
-   # expect: gbt-watchdog went DOWN at ~14:20 and gbt-liveness at ~14:45 while
-   #   the machine was off -- that is the proof the alert does not depend on the
-   #   machine it reports about;
-   # expect: a firing at 15:00 without anyone starting anything -- the restart
-   #   proof. StartWhenAvailable is configuration, and configuration is not
-   #   evidence.
+   # ~13:50 — switch the machine on and sign in normally. Un-pause all three
+   #          checks in the dashboard.
+   # 14:00 is the first trigger of the day. Nobody starts anything.
+   # ~14:05, elevated:
+   .\tools\show-run-log.ps1 -Since "14:00"
+   # expect: a 14:00 (UTC 12:00) line, written without anyone starting it.
+   #   That is the restart proof; StartWhenAvailable is configuration, and
+   #   configuration is not evidence.
+   # If nothing fired, STOP: disable both tasks and move the anchor.
    ```
 
-   **`gbt-readiness` is deliberately not waited for here.** Its grace is 50
-   minutes, so it would only fall at ~15:20 — after the gate and after the
-   anchor. Drill (c) already showed that it falls; this drill's claim is
-   machine-independence, and two checks falling with the machine switched off
-   establish that. Waiting for the third would push the anchor into the next
-   week.
+   Then let one more firing pass and confirm all three checks are green again —
+   `gbt-watchdog` within 5 minutes, the other two by 14:20.
 
-**The gate itself, Wed 2026-09-09 by 15:05 CEST.** All six conditions hold,
-both tasks are enabled, and:
+**The gate itself, Wed by 14:45 local.** All six conditions hold, both tasks are
+enabled, and:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
 # expect: SCHEDULER CHECK PASSED (43 checks), and both states Ready
 ```
 
-**There are about ten minutes of slack between the 15:00 firing and this gate.**
-That is deliberate but thin: a Windows update on shutdown, a BitLocker prompt on
-boot, or a log line written a minute late will eat it. If anything is still open
-at 15:05 — including "I am not sure" — stop and move the anchor. Do not let the
-15:15 firing run into an unfinished gate.
+That leaves **30 minutes** before the 15:15 anchor firing — deliberately, so a
+slow boot, a Windows update or a log line a minute late costs the reserve and
+not the run. If anything is still open at 14:45, including "I am not sure",
+stop and move the anchor.
 
 #### If the gate is not met: moving the anchor
 
-The anchor moves by **two trading days, not one.** The certificate needs US
-market hours and the anchor fires at 15:15 the same afternoon, so they cannot
-share a day — that is the same reason they are separate days in the first place.
+Everything is **derived from the new anchor** through the table in
+[Reading the clock](#reading-the-clock). Do not shift dates by a fixed number of
+days: the certificate needs US market hours, so a linear shift can land it on a
+Sunday, and a flatten date can land on a Friday whose "day after" is a Saturday
+with no close and no firings.
 
 *Elevated PowerShell, immediately:*
 
@@ -495,57 +629,131 @@ Get-ScheduledTask -TaskPath '\GlassBoxTrading\' | Select-Object TaskName, State
 # expect: both Disabled. Nothing may fire until the new certificate exists.
 ```
 
-Then, in this order, and no other:
+Then, in this order and no other:
 
-1. Pick the new anchor: **two trading days later** (a Wednesday failure means
-   certificate Thursday, anchor Friday). Check it is not a US market holiday.
-2. Edit `config/policy.json`: set `"FLATTEN_DATE"` to exactly three calendar
-   months after the new anchor, as `"YYYY-MM-DD"`. Nothing else in that file
-   changes.
-3. `npm.cmd run verify` — exit 0. The policy digest has now changed, which is
+1. **Pick the new anchor**: the next US trading day on which you can supervise
+   both the evening before and the morning of. The certificate day is then the
+   trading day immediately before it — so a Monday anchor means a Friday
+   certificate, not a Sunday one.
+2. **Derive the rest** from the table: `FLATTEN_DATE` three calendar months
+   after the anchor and rolled forward to a trading day; journaling-only the
+   trading day after that; coverage through the journaling-only day.
+3. Edit `config/policy.json`: set `"FLATTEN_DATE"` to the derived date as
+   `"YYYY-MM-DD"`. Nothing else in that file changes.
+4. `npm.cmd run verify` — exit 0. The policy digest has now changed, which is
    what voids the old certificate.
-4. Re-run **owner step 4** (certificate run four) on the new certificate day,
-   and put the new path into `.env` as `PRE_ARM_CERTIFICATE=`.
-5. Re-run **owner step 5** with `-CoverageThroughDate` set to the day *after*
-   the new flatten date (the journaling-only day still needs firings).
-6. Re-run **owner step 6** in full. The drills were invalidated by the
+5. Re-run **owner step 4** on the new certificate day; put the new path into
+   `.env` as `PRE_ARM_CERTIFICATE=`.
+6. Re-run **owner step 5** with `-CoverageThroughDate <journaling-only day>`.
+7. Re-run **owner step 6** in full. The drills were invalidated by the
    re-installation; none of them carries over.
-7. Update the calendar from `docs/P12-CALENDAR-PROMPTS.md`, block 9.
+8. Update the calendar with block 9 of
+   [`P12-CALENDAR-PROMPTS.md`](P12-CALENDAR-PROMPTS.md), which asks for the new
+   anchor and derives the rest rather than shifting.
 
 **Record it**: append a dated line to `STATE.md` saying which day the anchor
 moved from, to, and why. That line is the whole audit trail for a run whose
 dates no longer match the document you are reading.
 
-### 7. The supervised first regular cycle — Wed 2026-09-09, from 15:15 CEST
+### 7. The supervised first regular cycle — Wed 2026-09-09, the 15:15 firing
 
-*Normal PowerShell.* The session lead-in starts 20 minutes before the US
-open, so the **15:15** firing is the first one that runs a cycle — not
-15:30. That firing is the anchor. Watch it and confirm, in order:
+*Normal PowerShell.* The session lead-in starts 20 minutes before the US open,
+so **15:15** is the first firing that runs a cycle — not 15:30. That firing is
+the anchor. Watch it and confirm, in order:
 
 ```powershell
-Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 20
-Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 2
+cd C:\Users\felix\source\repos\glass-box-trading
+.\tools\show-run-log.ps1 -Since "15:15"
+Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
 ```
 
-1. `cycle-run.log` shows the invocation and the printed report, which ends with
-   a single JSON line — that line is the report; if the log stops before it,
+1. The log shows the invocation and the printed report, which ends with a
+   single JSON line — that line **is** the report; if the log stops before it,
    the cycle did not finish.
-2. The journal's last entries include a `BOOTSTRAP` entry. **If instead you see
-   a `HALT` with reason `PROVENANCE_BROKEN`, the account was created too early
-   or has been used before.** Stop: disable both tasks, and the run needs a
-   different account, which means a new anchor (procedure at the end of step 6).
+2. The journal's last entries include a `BOOTSTRAP` entry. **What a rejected
+   account actually looks like is different from what you might expect** — see
+   below; it is not a journaled halt.
 3. `gbt-liveness`, `gbt-readiness` and `gbt-watchdog` are all green.
-4. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes — 35 checks,
+4. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes — 43 checks,
    from a **normal** shell, which is enough to read task definitions.
 
-If 1, 3 or 4 fails, disable both tasks from an elevated shell and treat it as a
-missed gate: the anchor moves (end of step 6).
+If 1, 3 or 4 fails, disable both tasks from an elevated shell and move the
+anchor (end of step 6).
+
+#### If the account is rejected: what you will actually see
+
+The provenance proof (S-CYC-09) refuses an account that existed, or traded,
+before `COMPETITION_START`. On a **first-ever** run the refusal **journals
+nothing at all** — no `HALT`, not even a `GAP` — because the epoch seed is
+still unspent and no authoritative append is possible until a valid `BOOTSTRAP`
+lands. Looking for a `HALT PROVENANCE_BROKEN` here would mean looking for
+something that cannot be there. What you see instead is in the **printed
+report** and on the endpoint:
+
+```powershell
+.\tools\show-run-log.ps1 -Since "15:15"
+# In the report's JSON line:
+#   "primary": null
+#   "entriesBlocked": [ ... "PROVENANCE" ... ]
+#   "alarmConditions": [ ... "COMPETITION_PROVENANCE_FAILED" ... ]
+#   "ping": "fail"
+# And in STATE_DIR: journal.jsonl is still EMPTY (0 entries).
+Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
+# expect on this path: nothing at all.
+```
+
+`gbt-readiness` goes red with `COMPETITION_PROVENANCE_FAILED`. Nothing traded
+and nothing can: the unspent seed is the thing that blocks every order, which is
+why there is no halt to release and no fence to clear.
+
+**Swapping the account.** The anchor procedure in step 6 changes dates; it does
+**not** change credentials, so both are needed and in this order:
+
+*Elevated PowerShell, first:*
+
+```powershell
+Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
+```
+
+Then:
+
+1. Create a new Alpaca paper account, options level 3, **created at or after**
+   `COMPETITION_START` (Sun 2026-09-06 02:00 local). Note its creation instant
+   in `STATE.md` before anything else.
+2. Replace **all three** values in `.env` — `ALPACA_COMP_KEY_ID`,
+   `ALPACA_COMP_SECRET_KEY` and `ALPACA_COMP_ACCOUNT_ID`. Changing the two
+   credentials and leaving the account id is the mistake this list exists to
+   prevent: the binding check would then refuse every mutation and halt the
+   deployment on `ACCOUNT_BINDING_MISMATCH`.
+3. **Decide what happens to the state directory, and the two cases differ:**
+   * *This failure, on a first-ever run:* the journal is empty and no halt was
+     persisted, so nothing irreversible was recorded. Delete the contents of
+     `longrun-1` (or point `STATE_DIR` at a fresh `longrun-2`) and continue.
+     Either is safe **because nothing is there**; verify that rather than
+     assume it:
+     ```powershell
+     Get-ChildItem C:\Users\felix\glass-box-state\longrun-1
+     # expect: journal.jsonl absent or 0 bytes, and no halt.json claiming a halt.
+     ```
+   * *A provenance halt that IS persisted* — a later run, where `GAP` or
+     `PROVENANCE_BROKEN` did land: that record is permanent and must not be
+     deleted or edited. Point `STATE_DIR` at a **new** directory, keep the old
+     one, and note in `STATE.md` which run it belongs to.
+4. Re-run the **step 2** configuration check (the first of the two), and the
+   **step 5** check for the certificate and ping URLs.
+5. The certificate binds to the *policy*, not to the account, so it survives an
+   account swap on its own. But the anchor has moved by now, and moving the
+   anchor changes `FLATTEN_DATE` and therefore the policy digest — so follow
+   the anchor procedure at the end of step 6 from its step 2 onward, which
+   re-certifies.
+6. Re-run **owner step 6** in full before enabling anything.
 
 **This cycle is the anchor for the flatten date.** If it does not happen on
-2026-09-09, the date moves and the certificate must be redone — use the
-procedure at the end of step 6 and record the change in `STATE.md`. Nobody else
-is watching this run: "report it" means write it down where the next session
-will read it.
+2026-09-09, the dates move: derive them again from the table in
+[Reading the clock](#reading-the-clock) and record the change in `STATE.md`.
+Nobody else is watching this run — "report it" means write it down where the
+next session will read it.
 
 ---
 
@@ -625,14 +833,17 @@ is why a flat book means it can wait and an open book usually means it cannot.
 * `CYCLE_ABORTED` — the cycle threw after starting. `cycle-run.log` holds the
   stack. If the next firing succeeds, the deployment healed itself; if three in
   a row abort, disable both tasks and stop.
-* `DEADLINE_FLATTEN_FAILED` — **the only one that cannot wait.** On
-  2026-12-09 the ladder could not close the book before the US close. Open the
-  broker dashboard and close the remaining structures by hand, as whole
-  structures, never leg by leg. The prohibition on manual trading in owner step
-  1 is lifted exactly here and in the two cases named in
-  [`P12-INCIDENT-PATHS.md`](P12-INCIDENT-PATHS.md) — machine unreachable, or a
-  standing fence with an open book — and nowhere else. Note every manual close
-  in `STATE.md`; the evaluation has to separate them from the agent's own.
+* `DEADLINE_FLATTEN_FAILED` — **the one alert whose window can close.** On the
+  flatten date the ladder could not close the book before the US close. This is
+  case 3 of
+  [Manual intervention](#manual-intervention-permission-and-executability-are-two-questions):
+  you may close by hand, and whether you *can* depends entirely on whether the
+  US session is still open. Inside it, close whole structures in the broker
+  dashboard and note every one in `STATE.md`. After the close there is nothing
+  to do tonight and nothing that could be done — options do not trade after
+  16:00 New York — so write down what is open and act at 15:20 local on the
+  next trading day. The position's maximum loss was fixed when it was opened;
+  that is what carries it overnight.
 
 The release, when you have done the procedure — *normal PowerShell*:
 
@@ -676,8 +887,8 @@ after a hard stop.
 protecting the book against a hung writer until it is back. Check the task state
 and `STATE_DIR\watchdog-run.log`.
 
-**Clock changes.** Every time in this document is written CEST, which is the
-offset until Sunday 2026-10-25. From Monday 2026-10-26 the same instants read
+**Clock changes.** Times in this document are local. Until Sunday 2026-10-25
+that is CEST; afterwards CET. From Monday 2026-10-26 the same instants read
 one hour earlier in local time, and for the week to 2026-11-01 the US session
 starts at **14:30** local instead of 15:30, because Europe changes first. The
 trigger window and the three cron schedules are stated in `Europe/Berlin` and

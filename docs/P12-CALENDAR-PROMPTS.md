@@ -66,17 +66,18 @@ Title: P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)
 Date: Tuesday 8 September 2026
 Time: 22:10–23:59, timezone Europe/Berlin
 Description: Erst NACH dem US-Schluss um 22:00. Zuerst die drei Checks im Dashboard wieder fortsetzen (sie stehen seit Owner-Schritt 3 auf Pause), dann beide Tasks in einer ERHÖHTEN PowerShell aktivieren — jede Auslösung ab jetzt überspringt den Zyklus und meldet trotzdem beide Signale, es kann also nichts handeln. Absolute Regel: vor dem Ankerdatum darf keine Auslösung einen Zyklus fahren.
-Drei Proben, alle am Dienstag: (a) ab 22:30 nur der Watchdog aus, 20 Minuten warten, nur gbt-watchdog darf fallen; (b) ab 23:00 abmelden (nicht sperren, nicht herunterfahren), die 23:15-Auslösung muss eine Logzeile schreiben, während niemand angemeldet ist — das ist der S4U-Beweis; (c) ab 23:30 beide Tasks aus, die Alarme kommen gegen 00:15 und 00:35. Wecker stellen: eine verschlafene Probe beweist nichts.
-Danach alle drei Checks pausieren und schlafen gehen — sonst weckt die Wiederholungs-Erinnerung stündlich bis 14:00. Ablauf im Wortlaut: docs\P12-RUNBOOK.md, Owner step 6.
+Jede Probe beginnt bei einer BEOBACHTETEN Auslösung, nicht bei der Wanduhr: deren lokale Zeit ist T, und alles rechnet von T. Erkennung ist Periode plus Karenz (Watchdog T+20, Liveness T+45, Readiness T+65), die Zustellung aufs Handy kommt mit 10 Minuten Budget obendrauf.
+Drei Proben, alle am Dienstag: (a) ab 22:30 nur der Watchdog aus — nur gbt-watchdog darf fallen; (b) ab 23:00 abmelden (nicht sperren, nicht herunterfahren), die nächste Viertelstunden-Auslösung muss eine Logzeile schreiben, während niemand angemeldet ist — S4U-Beweis; (c) ab 23:30 den Rechner wirklich ausschalten (Stop-Computer -Force, kein Standby) — alle drei Checks fallen bei T=23:30 gegen 23:50, 00:15 und 00:35, letzte Push bis 00:45. Wecker stellen: eine verschlafene Probe beweist nichts.
+Wenn alle drei Meldungen da sind, die drei Checks VOM HANDY AUS pausieren; der Rechner bleibt aus. Ablauf im Wortlaut: docs\P12-RUNBOOK.md, Owner step 6.
 Notifications: popup 30 minutes before.
 
 Event two:
-Title: P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart)
+Title: P12 Aktivierungs-Gate, Teil 2 (Kaltstart-Beweis und Gate)
 Date: Wednesday 9 September 2026
-Time: 14:00–15:05, timezone Europe/Berlin
-Description: Vor der Sitzung, also wieder ohne Handelsrisiko. Um 14:00 die drei Checks fortsetzen, beide Tasks aktivieren, die 14:00-Auslösung im Log bestätigen. Um 14:05 den Rechner wirklich ausschalten (Stop-Computer -Force, kein Standby) und 45 Minuten aus lassen. Erwartet: gbt-watchdog fällt gegen 14:20, gbt-liveness gegen 14:45, während die Maschine aus ist — das ist der Beweis, dass der Alarm nicht von der Maschine abhängt, über die er berichtet. gbt-readiness wird hier bewusst nicht abgewartet: seine Karenz von 50 Minuten würde erst gegen 15:20 fallen, also nach dem Gate.
-Um 14:50 einschalten; die 15:00-Auslösung muss von selbst kommen — das ist der Neustart-Beweis.
-WICHTIG: Hängt um 15:05 noch etwas offen, auch nur ein "bin mir nicht sicher": beide Tasks deaktivieren. Dann verschiebt sich das Ankerdatum um ZWEI Handelstage, samt FLATTEN_DATE, Policy-Digest und Zertifikat; die Prozedur steht am Ende von Owner step 6.
+Time: 13:50–14:45, timezone Europe/Berlin
+Description: Der Rechner war seit Dienstagnacht aus — das ist der Kaltstart, auf den es ankommt. Um 13:50 einschalten, anmelden, die drei Checks im Dashboard fortsetzen. Um 14:00 fällt der erste Trigger des Tages; niemand startet etwas. Danach tools\show-run-log.ps1 -Since "14:00": eine 14:00-Zeile (UTC 12:00), von selbst geschrieben, ist der Neustart-Beweis. Kommt keine, beide Tasks deaktivieren und den Anker verschieben.
+Dann eine weitere Auslösung abwarten, bis alle drei Checks wieder grün sind, und um 14:45 das Gate: verify-scheduled-tasks.ps1 -ExpectEnabled, 43 Checks, beide Tasks Ready. Bis zum Anker um 15:15 bleiben damit 30 Minuten Reserve.
+WICHTIG: Hängt um 14:45 noch etwas offen, auch nur ein "bin mir nicht sicher": beide Tasks deaktivieren. Der Anker wird dann NEU HERGELEITET (nicht linear verschoben) — Zertifikatstag ist der Handelstag davor, FLATTEN_DATE drei Kalendermonate nach dem Anker und nötigenfalls auf den nächsten Handelstag vorgerückt, Journaling-Tag der Handelstag danach. Prozedur am Ende von Owner step 6.
 Notifications: popup 1 day before, popup 15 minutes before.
 ```
 
@@ -89,7 +90,8 @@ If an event with the same title already exists, update it instead of creating a 
 Title: P12 Erster regulärer Zyklus (betreut) — Ankerdatum
 Date: Wednesday 9 September 2026
 Time: 15:10–16:30, timezone Europe/Berlin
-Description: Der erste Zyklus läuft um 15:15, nicht 15:30: der Lead-in beginnt 20 Minuten vor der US-Eröffnung. Einen vollständigen Zyklus beobachten. Prüfen: cycle-run.log im neuen STATE_DIR zeigt den Aufruf und den gedruckten Report; das Journal enthält einen BOOTSTRAP-Eintrag und der Provenance-Beweis ist bestanden; alle drei Healthchecks sind grün; tools\verify-scheduled-tasks.ps1 -ExpectEnabled läuft weiterhin durch.
+Description: Der erste Zyklus läuft um 15:15, nicht 15:30: der Lead-in beginnt 20 Minuten vor der US-Eröffnung. Einen vollständigen Zyklus beobachten. Prüfen mit tools\show-run-log.ps1 -Since "15:15": der Aufruf und der gedruckte Report, dessen letzte Zeile eine einzelne JSON-Zeile ist. Dann: das Journal enthält einen BOOTSTRAP-Eintrag; alle drei Healthchecks sind grün; tools\verify-scheduled-tasks.ps1 -ExpectEnabled läuft durch (43 Checks).
+Wird das Konto abgelehnt, steht KEIN Halt im Journal — das Journal bleibt leer, und der Report zeigt primary null, entriesBlocked PROVENANCE und alarmConditions COMPETITION_PROVENANCE_FAILED. Vorgehen dann: docs\P12-RUNBOOK.md, Owner step 7, Abschnitt zum Kontowechsel.
 WICHTIG: Dieser Zyklus ist das Ankerdatum. Findet er nicht heute statt, verschiebt sich das Flatten-Datum, die Konfiguration muss geändert werden und das Zertifikat wird ungültig — dann erst neu zertifizieren, dann starten.
 Notifications: popup 1 day before, popup 15 minutes before.
 ```
@@ -117,7 +119,7 @@ If an event with the same title already exists, update it instead of creating a 
 Title: P12 Kontrolle vor der EU-Zeitumstellung (25.10.)
 Date: Friday 23 October 2026
 Time: 18:00–18:30, timezone Europe/Berlin
-Description: Am Sonntag 25.10. endet die europäische Sommerzeit, die USA stellen erst am 1.11. um. In der Woche vom 26.10. beginnt die US-Sitzung deshalb eine Stunde früher in lokaler Zeit — 14:30 statt 15:30. Das Trigger-Fenster ist dafür gepolstert (gemessen: schlechtester Rand 30 Minuten), es ist also nichts zu tun ausser zu kontrollieren: Am Montag 26.10. prüfen, dass cycle-run.log ab 14:30 Einträge zeigt und die drei Healthchecks grün bleiben.
+Description: Am Sonntag 25.10. endet die europäische Sommerzeit, die USA stellen erst am 1.11. um. In der Woche vom 26.10. beginnt die US-Sitzung deshalb eine Stunde früher in lokaler Zeit — 14:30 statt 15:30. Das Trigger-Fenster ist dafür gepolstert (gemessen: schlechtester Rand 30 Minuten), es ist also nichts zu tun ausser zu kontrollieren: Am Montag 26.10. prüfen: tools\show-run-log.ps1 -Since "14:00" zeigt ab 14:15 einen laufenden Zyklus — nicht erst ab 14:30, weil der Lead-in 20 Minuten vor der Eröffnung beginnt — und die drei Healthchecks bleiben grün. Das Log selbst steht in UTC; show-run-log.ps1 druckt beide Zeiten nebeneinander.
 Notifications: popup 1 day before.
 ```
 
@@ -128,7 +130,7 @@ If an event with the same title already exists, update it instead of creating a 
 Title: P12 Kontrolle vor der US-Zeitumstellung (01.11.)
 Date: Friday 30 October 2026
 Time: 18:00–18:30, timezone Europe/Berlin
-Description: Am Sonntag 1.11. endet die US-Sommerzeit; ab Montag 2.11. liegt die Sitzung wieder bei 15:30 lokal und beide Zonen sind wieder synchron. Am Montag 2.11. prüfen, dass cycle-run.log ab 15:30 Einträge zeigt und dass zwischen 14:30 und 15:30 nur übersprungene Aufrufe stehen.
+Description: Am Sonntag 1.11. endet die US-Sommerzeit; ab Montag 2.11. liegt die Sitzung wieder bei 15:30 lokal und beide Zonen sind wieder synchron. Am Montag 2.11. prüfen: tools\show-run-log.ps1 -Since "14:00" zeigt bis 15:00 nur übersprungene Aufrufe und ab **15:15** einen laufenden Zyklus — nicht erst ab 15:30, weil der Lead-in 20 Minuten vor der Eröffnung beginnt. Das Log selbst steht in UTC; show-run-log.ps1 druckt beide Zeiten nebeneinander.
 Notifications: popup 1 day before.
 ```
 
@@ -180,15 +182,42 @@ Description: Auswertung strikt nach docs\P12-EVALUATION.md, das vor dem Lauf fes
 Notifications: popup 1 day before.
 ```
 
-### 9 — If the start slips
+### 9 — If the anchor moves
+
+Do **not** ask for a linear shift. A P12 date is derived from the anchor and the
+US trading calendar, and shifting every event by the same number of calendar
+days puts the certificate run on a Sunday as soon as the anchor lands on a
+Monday. Work out the four derived dates yourself first — the rules are in
+`docs\P12-RUNBOOK.md`, section "Reading the clock" — and then give Gemini the
+finished dates:
+
+* **Anchor** = the new first regular cycle (a US trading day).
+* **Certificate day** = the trading day immediately *before* the anchor.
+* **Gate** = the evening of the certificate day into the anchor morning.
+* **FLATTEN_DATE** = three calendar months after the anchor; if that is not a
+  trading day, the next one that is.
+* **Journaling-only day** = the trading day *after* FLATTEN_DATE. For a Friday
+  flatten date that is the following Monday, never the Saturday.
 
 ```
-In my personal Google Calendar only, no guests: my P12 start moved from Wednesday 9 September 2026 to <NEW DATE>.
-Shift these events by the same number of days, updating the existing events rather than creating new ones:
-"P12 Vorbereitung fällig — Konto, .env, Alarmkanäle", "P12 Zertifikatslauf vier (Dev-Konto, betreut)", "P12 Installation der Tasks", "P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)", "P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart, abgemeldet)", "P12 Erster regulärer Zyklus (betreut) — Ankerdatum", "P12 Abschluss vorbereiten", "P12 FLATTEN_DATE — Buch wird geschlossen", "P12 TERMINAL und Abschaltung", "P12 Auswertung schreiben".
-Move the start of the recurring "P12 Wochenreview und Dashboard-Publikation" to the first Friday after the new start date, and its end to the last Friday before the new FLATTEN_DATE.
-Leave the two clock-change checks on 23 October and 30 October 2026 where they are: they depend on the calendar, not on my start date.
-Then tell me the new date of each event so I can confirm it.
+In my personal Google Calendar only, no guests. Update the existing events rather than creating new ones.
+My P12 anchor moved from Wednesday 9 September 2026 to <NEW ANCHOR, weekday and date>.
+Set these events to the dates I give here — do not compute them yourself and do not shift them by a fixed number of days:
+
+"P12 Vorbereitung fällig — Konto, .env, Alarmkanäle"            -> <two days before the certificate day>, 19:00-22:00
+"P12 Zertifikatslauf vier (Dev-Konto, betreut)"                 -> <CERTIFICATE DAY>, 15:15-17:00
+"P12 Installation der Tasks"                                    -> <CERTIFICATE DAY>, 17:00-18:00
+"P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)"                 -> <CERTIFICATE DAY>, 22:10-23:59
+"P12 Aktivierungs-Gate, Teil 2 (Kaltstart-Beweis und Gate)"     -> <ANCHOR DAY>, 13:50-14:45
+"P12 Erster regulärer Zyklus (betreut) — Ankerdatum"             -> <ANCHOR DAY>, 15:10-16:30
+"P12 Abschluss vorbereiten"                                     -> <two trading days before FLATTEN_DATE>, 18:00-19:00
+"P12 FLATTEN_DATE — Buch wird geschlossen"                       -> <FLATTEN_DATE>, 15:20-22:15
+"P12 TERMINAL und Abschaltung"                                  -> <JOURNALING-ONLY DAY>, 22:05-23:00
+"P12 Auswertung schreiben"                                      -> <the Monday after the journaling-only day>, 18:00-20:00
+
+Move the recurring "P12 Wochenreview und Dashboard-Publikation" to start on the first Friday after the new anchor and end on the last Friday before the new FLATTEN_DATE.
+Leave the two clock-change checks on 23 October and 30 October 2026 where they are: they depend on the calendar, not on my anchor.
+Then list every event with its new date so I can confirm it.
 ```
 
 ---

@@ -78,8 +78,12 @@ particular:
   structures cap the loss at what was reserved at entry, and that cap is the
   only thing still working while the machine is off.
 - If the machine is off on `FLATTEN_DATE` (2026-12-09), the book is **not**
-  flattened. The ladder needs a process. That is an owner intervention: bring
-  the machine up, or close in the broker UI.
+  flattened. The ladder needs a process. That is an owner intervention, and it
+  is bounded by the same market hours as everything else: bring the machine up,
+  or close whole structures in the broker dashboard — **but only while the US
+  session is open**, 15:30–22:00 local. After 22:00 neither the agent nor you
+  can place an option order, and the flatten becomes the next trading day's
+  first task.
 - The dead-man watchdog cannot help, because it is a scheduled task on the same
   machine. A watchdog that dies with its host is not a fallback for its host,
   and this document does not pretend otherwise.
@@ -170,8 +174,11 @@ transient error to retry through. `dispatchSafetyHalt` journals a halt *and*
 sets the durable fence mark on `AUTH_FAILURE`, so even a restart with a fresh
 state projection stays fenced. The agent will not place, amend or close an order
 until I release it by hand. If that happens with an open book, the risk cap set
-at entry is again the only thing still working, and closing early means the
-broker UI.
+at entry is again the only thing still working. Closing early means the broker
+dashboard **and an open US session**: outside 15:30–22:00 local there is no
+order to place, so the honest answer at 23:00 is to write down what is open and
+act at 15:20 on the next trading day — see the Friday case at the end of this
+document, which is the same situation on a worse day.
 
 One honest limit: with the journal, the epoch store *and* the halt projection
 all unwritable at the instant of rejection, and full recovery afterwards, no
@@ -223,12 +230,35 @@ book with a standing halt cannot, because nothing will close it by itself.
 Outside 14:00–23:45 Berlin on weekdays, every row above waits for the next
 weekday at 14:00. That is the deliberate cost of not being paged on weekends.
 
-**The Friday-evening case, stated because the silence rule creates it.** An
-alert that arrives Friday at 23:00 with an open book is the one time the
-prohibition on manual trading gives way: the agent will not act again until
-Monday, and three days of an unmanaged position is a larger risk than a manual
-close the evaluation has to account for. Close the affected structures whole in
-the broker dashboard, never leg by leg, and write every one of them into
-`STATE.md` — the evaluation separates manual closes from the agent's own, and
-it can only do that if they are named. A flat book on Friday evening waits for
-Monday.
+**The Friday-evening case, stated because the silence rule creates it — and
+because the obvious answer to it is wrong.** An alert arriving Friday at 23:00
+with an open book is one of the three situations in which the prohibition on
+manual trading lifts (the list is in the runbook, under *Manual intervention*).
+It is also a situation in which **there is nothing you can do that evening**:
+options trade only in the regular US session, 09:30–16:00 New York, and this
+broker offers no extended-hours session for them. Friday 23:00 local is 17:00
+in New York. The market closed an hour ago; no order will be accepted, by the
+agent or by you.
+
+An earlier version of this document told you to close the structures anyway.
+That instruction could not be carried out, and an instruction that cannot be
+carried out is worse than none: it costs the half hour you spend discovering
+that, at the exact moment you most want to be doing something.
+
+So, concretely:
+
+* **Write down what is open** — which structures, which expiries, and what the
+  alert said. `node dist\shell\readiness-cli.js` names the impediment; the
+  broker dashboard shows the book, and reading it is always possible even when
+  trading is not.
+* **Set an alarm for 15:20 local on the next trading day**, five minutes into
+  the session, and decide then with the book in front of you.
+* **What carries the position until then is the structure itself.** Every
+  position this agent opens has a maximum loss fixed at entry and it cannot
+  grow over a weekend. That is the whole reason the strategy is defined-risk,
+  and this is the hour in which that choice pays for itself.
+* **The exception to the wait** is an expiry inside the silence: a structure
+  expiring on the Monday needs the Monday open, not the Monday afternoon.
+  Note the earliest expiry in the book beside the alarm.
+
+A flat book on Friday evening waits for Monday and needs no alarm at all.

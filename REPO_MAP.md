@@ -185,6 +185,7 @@
 - `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
 - `tools/scan-secrets.ps1`
+- `tools/show-run-log.ps1`
 - `tools/verify-scheduled-tasks.ps1`
 - `tools/watchdog-run.ps1`
 - `tsconfig.build.json`
