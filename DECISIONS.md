@@ -3080,3 +3080,18 @@ small, no ADR split).
   lost at flush — is not producible from a test on this platform. The call
   stays, because it is what makes the probe answer the question it claims to.
   `npm run verify` exit 0 at 47 files / 645 tests.
+- **2026-09-05 — the cost of reading the journal in `standingImpediment`,
+  measured rather than assumed.** R44-B6 made every readiness report answer
+  “would a writer refuse this state?”, which for a corrupt journal means
+  parsing it. That is a new read on four paths (cycle runner, deadline
+  one-shots, watchdog, readiness CLI), each once per invocation, and the
+  readiness CLI fires every 15 minutes for three months. Measured at the size a
+  three-month run reaches — 2,000 entries, **152.7 MiB** — a full read and
+  per-line parse takes **162 ms** and peaks around **500 MiB** of RSS. The time
+  is irrelevant against a 15-minute cadence; the memory is the real number, and
+  it is transient in a process that exits immediately afterwards. Kept as is:
+  the cheaper alternatives either answer a different question (a tail-only scan
+  cannot see corruption further back) or add a cache that can disagree with the
+  file. What is *not* kept is silence about it — the figure belongs beside the
+  173 MB disk budget in the runbook, so a slower machine has something to
+  compare against.

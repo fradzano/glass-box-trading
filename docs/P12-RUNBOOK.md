@@ -436,6 +436,13 @@ must change, the measurement period **ends** and a new one begins
 **Disk:** budget about 200 MB for the journal plus the publish tree. Measured at
 69.4 KiB per entry, roughly 2,000 entries.
 
+**Runtime at that size:** every readiness report reads and parses the journal,
+because “no impediment stands” includes “no writer would refuse this state”.
+Measured on a 152.7 MiB journal: 162 ms and about 500 MiB of transient memory,
+in a process that exits immediately. If that ever becomes visible — a firing
+that takes minutes, or memory pressure — it is a machine problem, not a
+mystery; the number to compare against is here.
+
 ## Ending it
 
 1. **Wed 2026-12-09**, `FLATTEN_DATE`: every cycle closes the book through the
