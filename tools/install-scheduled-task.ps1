@@ -74,6 +74,21 @@
     from config/policy.json) or the script refuses to register anything.
     Default 5.
 
+.PARAMETER EdgeMarginMinutes
+    How far the trigger window is padded beyond the exchange session on each
+    side. The default of 90 covers the one-hour offset that exists in the week
+    between the European and American clock changes, with half an hour to spare
+    in either direction, measured by tools\check-schedule-coverage.mjs
+    (S-G14-06). tools\cycle-run.ps1 skips outside the real session, so the
+    padding is inert.
+
+.PARAMETER CoverageThroughDate
+    `yyyy-MM-dd`. Registration is refused unless the trigger window provably
+    contains the exchange session on every weekday up to this date -- for a long
+    deployment, pass its planned flatten date. Defaults to 120 days out. This is
+    the check that makes "the task is registered" mean something across a clock
+    change; `Ready` on its own never did.
+
 .PARAMETER TaskFolder
     Task Scheduler folder the two tasks live in. Default '\GlassBoxTrading\'.
 
@@ -105,6 +120,9 @@ param(
     [string]$LogonType = 'S4U',
     [ValidateRange(1, 1000)]
     [int]$WatchdogIntervalMinutes = 5,
+    [ValidateRange(0, 240)]
+    [int]$EdgeMarginMinutes = 90,
+    [string]$CoverageThroughDate,
     [string]$TaskFolder = '\GlassBoxTrading\',
     [switch]$Uninstall
 )
@@ -130,16 +148,28 @@ function Get-EasternTimeZoneInfo {
     }
 }
 
-function Get-TodaySessionLocal {
-    # Regular-hours 09:30-16:00 America/New_York for "today" (New York
-    # wall-clock date), converted to this machine's local time, DST-correct
-    # via .NET's zone tables. Declared limitation: this does NOT know about
-    # NYSE holidays or early-close days (e.g. the hackathon's partial
-    # Fridays) -- a weekly Mon-Fri trigger fires on those days too. Operating
-    # policy already treats "not actually a trading day" as a normal, safe,
-    # empty cycle (see S-CYC-08/S-CYC-03 in docs/SPEC.md), so a spurious
-    # firing on a holiday is inert, not unsafe; it is called out here because
-    # it means "task fired" is not the same claim as "market was open."
+function Get-SessionWindowLocal {
+    # The trigger window in THIS machine's local time, wide enough to contain
+    # the American regular session under every offset the deployment will live
+    # through (S-G14-06, scenario #80).
+    #
+    # Why wide: the trigger is registered at a fixed local wall-clock time,
+    # but the American and European clock changes fall on different Sundays --
+    # in 2026, Europe ends summer time on Oct 25 and the United States ends
+    # daylight saving on Nov 1. For the week between them the New York session
+    # starts an hour earlier in local terms, and a trigger pinned to the
+    # installation day's local time would have missed the first hour of every
+    # session that week. So the window is computed for the session on the
+    # installation date and then padded by -EdgeMarginMinutes on both sides,
+    # which covers a one-hour shift in either direction.
+    #
+    # What keeps this from being wasteful: tools\cycle-run.ps1 asks the
+    # exchange clock on every firing and skips outside the real session, so the
+    # extra width costs a few cheap wrapper invocations, not agent cycles.
+    # Holidays and early closes remain unknown to both -- a firing on one is a
+    # normal, journaled no-trade cycle (S-CYC-08/S-CYC-03), which is why "task
+    # fired" is never the same claim as "market was open".
+    param([int]$EdgeMarginMinutes = 75)
     $eastern = Get-EasternTimeZoneInfo
     $nowUtc = [System.DateTime]::UtcNow
     $todayEasternDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($nowUtc, $eastern).Date
@@ -148,8 +178,10 @@ function Get-TodaySessionLocal {
     $openUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($openEastern, $eastern)
     $closeUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($closeEastern, $eastern)
     return [pscustomobject]@{
-        OpenLocal  = $openUtc.ToLocalTime()
-        CloseLocal = $closeUtc.ToLocalTime()
+        OpenLocal    = $openUtc.ToLocalTime().AddMinutes(-$EdgeMarginMinutes)
+        CloseLocal   = $closeUtc.ToLocalTime().AddMinutes($EdgeMarginMinutes)
+        SessionOpen  = $openUtc.ToLocalTime()
+        SessionClose = $closeUtc.ToLocalTime()
     }
 }
 
@@ -212,18 +244,45 @@ if (($WatchdogIntervalMinutes * 60000) -ge $deadManBoundMs) {
     throw "WatchdogIntervalMinutes=$WatchdogIntervalMinutes min (= $($WatchdogIntervalMinutes * 60000) ms) is not below config/policy.json DEAD_MAN_BOUND_MS=$deadManBoundMs ms ($([math]::Round($deadManBoundMs / 60000.0)) min). Pick a smaller -WatchdogIntervalMinutes."
 }
 
-$session = Get-TodaySessionLocal
+$session = Get-SessionWindowLocal -EdgeMarginMinutes $EdgeMarginMinutes
 $sessionDuration = New-TimeSpan -Start $session.OpenLocal -End $session.CloseLocal
 if ($sessionDuration.TotalMinutes -le 0) {
     throw "Computed session window is empty or inverted (open=$($session.OpenLocal), close=$($session.CloseLocal)); refusing to register a trigger with no repetition span."
 }
 
 Write-Host "Policy: CYCLE_INTERVAL_MS=$cycleIntervalMs ($cycleIntervalMinutes min), DEAD_MAN_BOUND_MS=$deadManBoundMs ($([math]::Round($deadManBoundMs / 60000.0)) min)"
-Write-Host "Session window (local time, computed from America/New_York 09:30-16:00 for today's NY date): $($session.OpenLocal) .. $($session.CloseLocal) ($([math]::Round($sessionDuration.TotalMinutes)) min)"
+Write-Host "Exchange session today (local time, from America/New_York 09:30-16:00): $($session.SessionOpen) .. $($session.SessionClose)"
+Write-Host "Trigger window (that session padded by $EdgeMarginMinutes min on both sides, so it still contains the session across both DST changes): $($session.OpenLocal) .. $($session.CloseLocal) ($([math]::Round($sessionDuration.TotalMinutes)) min)"
+Write-Host "cycle-run.ps1 skips outside the real session on every firing, so the padding costs wrapper invocations, not agent cycles."
 
 # ---------------------------------------------------------------------------
 # Principal and settings shared by both tasks
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# S-G14-06: prove the trigger window contains every session it must, before
+# registering anything. A registered task that silently misses the first hour
+# of each session for a week is worse than a refused installation.
+# ---------------------------------------------------------------------------
+$coverageScript = Join-Path $RepoRoot 'tools\check-schedule-coverage.mjs'
+if (-not (Test-Path -LiteralPath $coverageScript)) { throw "'$coverageScript' is missing; it ships alongside this installer." }
+if ([string]::IsNullOrWhiteSpace($CoverageThroughDate)) { $CoverageThroughDate = [System.DateTime]::UtcNow.AddDays(120).ToString('yyyy-MM-dd') }
+$installedOn = [System.DateTime]::UtcNow.ToString('yyyy-MM-dd')
+$coverageArgs = @($coverageScript, '--from', $installedOn, '--to', $CoverageThroughDate, '--installed-on', $installedOn, '--margin', "$EdgeMarginMinutes")
+Write-Host ''
+Write-Host "Schedule coverage check: $NodePath $($coverageArgs -join ' ')"
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $coverageOutput = & $NodePath @coverageArgs 2>&1
+    $coverageExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
+$coverageOutput | ForEach-Object { Write-Host "  $_" }
+if ($coverageExit -ne 0) {
+    throw "The trigger window does not contain every exchange session through $CoverageThroughDate (exit $coverageExit). Raise -EdgeMarginMinutes or re-install closer to the deployment; nothing was registered."
+}
+
 $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
 $commonSettings = @{
     StartWhenAvailable        = $true

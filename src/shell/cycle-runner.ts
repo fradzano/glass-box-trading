@@ -245,6 +245,14 @@ export interface CycleReport {
   readonly declaredHolds: readonly string[];
   readonly alarmConditions: readonly string[];
   readonly ping: PingPlan["kind"] | null;
+  /**
+   * The conditions the readiness signal carries (S-G14-05). Reported
+   * separately from `alarmConditions` because a standing halt is a condition
+   * the ping plan adds and the cycle itself never raised: delivering
+   * `alarmConditions` instead sent an EMPTY alert body for a fenced cycle,
+   * measured end to end on 2026-09-05.
+   */
+  readonly pingConditions: readonly string[];
 }
 
 function messageOf(error: unknown): string {
@@ -329,7 +337,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   /** Every exit funnels here: the ping decision is pure and fires exactly once per invocation (S-G14-03). */
-  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "managementRefusals" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
+  async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "managementRefusals" | "declaredHolds" | "alarmConditions" | "ping" | "pingConditions">): Promise<CycleReport> {
     await heartbeatBoundary("phase 5");
     // S-G14-05: readiness, not liveness. The halt state is re-read here rather
     // than reused from phase 1, because this cycle may have halted since.
@@ -352,7 +360,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
         // The check is best-effort delivery; a failed ping never blocks the cycle result.
       }
     }
-    return { ...partial, classification, lifecycleVetoes, managementCloses, managementRefusals, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind };
+    return { ...partial, classification, lifecycleVetoes, managementCloses, managementRefusals, declaredHolds, alarmConditions, ping: deps.ping === null ? null : plan.kind, pingConditions: plan.kind === "fail" ? plan.conditions : [] };
   }
 
   async function append(draft: JournalDraft): Promise<boolean> {

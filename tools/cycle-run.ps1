@@ -31,6 +31,16 @@
 .PARAMETER NodePath
     Absolute path to node.exe. Defaults to `(Get-Command node).Source`.
 
+.PARAMETER SkipOutsideSession
+    Refuse to invoke the agent outside the exchange session for today, computed
+    from America/New_York 09:30-16:00 with a lead-in, and on weekends. The
+    trigger window is deliberately wider than the session (S-G14-06) so that it
+    still covers the session during the weeks when the American and European
+    clock changes have not yet met; this switch is what keeps the wide trigger
+    from producing pointless invocations. Liveness is still reported on a
+    skipped firing -- the scheduler fired and this script ran, which is exactly
+    what liveness claims. Default on; -SkipOutsideSession:$false runs always.
+
 .PARAMETER MaxLogBytes
     Rotate cycle-run.log to cycle-run.log.1 once it exceeds this size. A cycle
     report is a few kilobytes and the task fires every 15 minutes, so an
@@ -42,7 +52,10 @@ param(
     [string]$RepoRoot,
     [string]$NodePath,
     [ValidateRange(0, 1073741824)]
-    [int]$MaxLogBytes = 16777216
+    [int]$MaxLogBytes = 16777216,
+    [bool]$SkipOutsideSession = $true,
+    [ValidateRange(0, 240)]
+    [int]$SessionLeadInMinutes = 20
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,6 +103,63 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { throw "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
+function Get-EasternTimeZoneInfo {
+    # Kept in sync by hand with the identical helper in watchdog-run.ps1.
+    try {
+        return [System.TimeZoneInfo]::FindSystemTimeZoneById('America/New_York')
+    } catch {
+        return [System.TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
+    }
+}
+
+function Test-InsideSession {
+    # S-G14-06: the exchange session decides, not the trigger. Holidays and
+    # early closes are NOT known here -- a firing on one is a normal, cheap,
+    # journaled no-trade cycle, which is the documented behaviour. What this
+    # prevents is the overnight and pre-open part of a deliberately wide
+    # trigger window.
+    param([int]$LeadInMinutes)
+    $eastern = Get-EasternTimeZoneInfo
+    $nowUtc = [System.DateTime]::UtcNow
+    $nowEastern = [System.TimeZoneInfo]::ConvertTimeFromUtc($nowUtc, $eastern)
+    if ($nowEastern.DayOfWeek -eq [System.DayOfWeek]::Saturday -or $nowEastern.DayOfWeek -eq [System.DayOfWeek]::Sunday) { return $false }
+    $open = $nowEastern.Date.AddHours(9).AddMinutes(30).AddMinutes(-$LeadInMinutes)
+    $close = $nowEastern.Date.AddHours(16)
+    return ($nowEastern -ge $open) -and ($nowEastern -le $close)
+}
+
+function Send-Liveness {
+    <#
+      S-G14-05 / A31: liveness is a different claim from readiness and travels
+      on its own endpoint. It says the scheduler fired, this wrapper ran and
+      the process reached its end -- nothing about whether the deployment can
+      trade, which the runtime reports separately through HEALTHCHECK_PING_URL.
+      A non-zero exit is reported as a liveness failure, so a crash-loop is
+      visible immediately instead of waiting out a dead-man period. Delivery is
+      best effort and never changes this script's exit code.
+    #>
+    param([string]$BaseUrl, [int]$ExitCode, [string]$Note)
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) { return 'unset' }
+    $url = if ($ExitCode -eq 0) { $BaseUrl } else { ($BaseUrl.TrimEnd('/') + '/fail') }
+    try {
+        $previous = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $url -Method Post -Body $Note -TimeoutSec 10 -UseBasicParsing | Out-Null
+        } finally {
+            $ProgressPreference = $previous
+        }
+        return 'sent'
+    } catch {
+        return "undelivered: $($_.Exception.Message)"
+    }
+}
+
+$livenessUrl = $env:HEALTHCHECK_LIVENESS_URL
+if ([string]::IsNullOrWhiteSpace($livenessUrl)) {
+    $livenessUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_LIVENESS_URL'
+}
+
 $logPath = Join-Path $stateDir 'cycle-run.log'
 if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
     $existing = Get-Item -LiteralPath $logPath
@@ -107,6 +177,12 @@ function Write-RunLog {
     Write-Verbose $line
 }
 
+if ($SkipOutsideSession -and -not (Test-InsideSession -LeadInMinutes $SessionLeadInMinutes)) {
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 0 -Note "skip: outside the exchange session"
+    Write-RunLog "skip: outside the exchange session (weekend or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in); liveness $delivery"
+    exit 0
+}
+
 Write-RunLog "run: pid=$PID stateDir=$stateDir entry=$agentEntry"
 
 $previousErrorActionPreference = $ErrorActionPreference
@@ -118,5 +194,6 @@ try {
     $ErrorActionPreference = $previousErrorActionPreference
 }
 $output | ForEach-Object { Write-RunLog "output: $_" }
-Write-RunLog "exit: $exitCode"
+$delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode $exitCode -Note "cycle exit $exitCode"
+Write-RunLog "exit: $exitCode; liveness $delivery"
 exit $exitCode

@@ -162,7 +162,9 @@
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
 - `tests/x7-close-outcomes-resolve.spec.ts` — Live finding six (2026-09-02): the entry-lifecycle terminality resolver
 - `tests/x7-x8-window-and-refusals.spec.ts` — S-X-07 the cycle's market observation covers the book, and S-X-08 a
+- `tools/check-alert-path.ps1`
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
+- `tools/check-schedule-coverage.mjs` — S-G14-06 / scenario #80: does the registered trigger window actually contain
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`
 - `tools/cycle-run.ps1`

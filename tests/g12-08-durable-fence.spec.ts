@@ -164,6 +164,23 @@ describe("S-G14-05 — liveness and readiness are two claims", () => {
     expect(readHaltState(harness.paths).halted).toBe(true);
   });
 
+  it("the conditions travel with the signal: an alert with an empty body names nothing", async () => {
+    // Measured end to end on 2026-09-05 against a real HTTP endpoint: the
+    // composition root delivered `alarmConditions` rather than the ping plan's
+    // conditions, so a fenced cycle POSTed an EMPTY body and the operator would
+    // have been woken by an alert that said nothing at all.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const rejected = (): Promise<MarketObservation> => Promise.reject(new BrokerHttpError(401, "401 unauthorized"));
+    const fenced = await harness.cycle({ market: rejected });
+
+    expect(fenced.ping).toBe("fail");
+    expect(fenced.alarmConditions, "the cycle itself raised no alarm; the impediment is the halt").toEqual([]);
+    expect(fenced.pingConditions).toContain("HALT_STANDING:AUTH_FAILURE");
+    expect(fenced.pingConditions).toContain("CREDENTIAL_FENCE_UNRELEASED");
+    expect(harness.ping.record.failures.at(-1)?.conditions).toEqual(fenced.pingConditions);
+  });
+
   it("and it goes green again only after the human release", async () => {
     const harness = await lifecycleHarness();
     await harness.cycle();

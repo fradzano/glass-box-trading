@@ -470,7 +470,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
         // delivery to the remaining absolute deadline as well.
         try {
           if (report.ping === "success") await ping.success(deadlineAtMs);
-          if (report.ping === "fail") await ping.fail(report.alarmConditions, deadlineAtMs);
+          if (report.ping === "fail") await ping.fail(report.pingConditions, deadlineAtMs);
         } catch {
           // Delivery is best effort; a missed success is visible to the dead-man check.
         }
