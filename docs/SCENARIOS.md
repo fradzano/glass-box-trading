@@ -492,6 +492,62 @@ behind a quiet cycle is gone. What must hold: a scheduled cycle keeps its
 printed report where the operator can read it afterwards, alongside the journal
 and the watchdog log.
 
+**76. The credential fence cannot be written down**
+Actors: cycle runner, broker, journal, operator. Trigger: the broker rejects the
+active credentials with 401/403 in the same minute that the journal becomes
+unwritable — a full disk is the ordinary cause, and a journal that has grown for
+three months is the ordinary reason the disk is full. The halt entry never
+lands, so the halt projection still reads "not halted"; when the disk frees up,
+the next scheduled cycle opens a position, and nobody has run the fence
+procedure. What must hold: a credential rejection ends the deployment's trading
+until a human releases it, whether or not anything could be written at the
+moment of the rejection. Writing the flag into a second file is not enough on
+its own — the journal is authoritative for the halt, so a prior HALT/UNHALT pair
+would overrule a flag reconstructed from nowhere.
+
+**77. Nothing durable can be written at all**
+Actors: cycle runner, epoch store, journal. Trigger: the state directory is
+entirely unwritable — the journal and the epoch store alike — while a credential
+rejection or any other fence-worthy condition occurs. There is no medium left to
+record the fence on. What must hold: the guarantee cannot be "we recorded it",
+so it has to be "nothing can act". A writer that cannot durably take the epoch
+has no authority, and without authority no order may be placed; the failure
+boundary must be stated in exactly those terms rather than implied.
+
+**78. The agent is stopped and the alert says everything is fine**
+Actors: dead-man check, operator, scheduled task. Trigger: a halt stands — from
+a credential fence, a kill switch, a failed flatten — and later cycles keep
+running, journaling their entries correctly and pinging success, because
+"success" means "my append landed", not "I am able to trade". The operator's
+phone stays quiet for days while the account does nothing. What must hold: the
+signal an operator watches must distinguish *the process is alive* from *the
+deployment is able to trade*, and a standing halt must keep saying so on every
+cycle until a human clears it. A later successful append, or a different
+process's ping, may not overwrite that.
+
+**79. The alert never had anywhere to go**
+Actors: operator, ping endpoint, configuration. Trigger: the ping URL is unset,
+so every ping is written to a local file beside the journal — on the machine
+that is the thing most likely to have died. Nothing about the deployment looks
+wrong; the alert path was simply never connected, and the first time anyone
+notices is when they look. What must hold: before an unattended run begins, the
+whole path is exercised end to end to the operator's own device — an explicit
+failure, a cycle that does not arrive, and a machine that is switched off —
+and each is confirmed received, not merely sent.
+
+**80. Two clocks change on different Sundays**
+Actors: scheduler, exchange calendar, operator. Trigger: a run spans late
+October, when European summer time ends a week before American daylight saving
+does. The scheduled trigger was registered at a fixed local wall-clock time
+computed from the exchange session on installation day; for that one week the
+American session starts an hour earlier in local terms than the trigger expects.
+The task fires late every day of that week, the first cycles of each session are
+missing, and the silence-detector has no reason to complain because it was told
+the same wrong schedule. What must hold: the trigger window covers the session
+under both offsets and the decision about whether a cycle is due comes from the
+exchange calendar, not from the trigger; the silence-detector's expectation must
+follow the same rule.
+
 ---
 
 ## Cross-cutting observation (not a scenario)

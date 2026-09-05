@@ -10,7 +10,7 @@ import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisi
 import type { AccountVirginity, EpochStoreState } from "../core/authority.js";
 import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, HaltReason, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
-import { readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
+import { setFencePending, readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
 import { readHaltState, writeHaltState } from "./halt-state.js";
 import { appendJournalLine, quarantineTornTail, readJournalFile } from "./journal-store.js";
 import type { JournalFile } from "./journal-store.js";
@@ -96,8 +96,16 @@ export interface MutationGateway {
    * broker, or clears a halt.
    */
   dispatchSafetyHalt(action: { readonly reason: Extract<HaltReason, "AUTH_FAILURE" | "ACCOUNT_BINDING_MISMATCH">; readonly detail: string }): Promise<DispatchResult>;
-  /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04. */
+  /** Reachable only from src/shell/manual-unhalt.ts: the human path of S-G12-04, and the only way to clear a fence. */
   dispatchManualUnhalt(action: { readonly operator: string; readonly reason: string; readonly expectedHaltSeq?: number; readonly expectedHaltReason?: string; readonly expectedEpoch?: number; readonly expectedHolderId?: string; readonly expectedJournalSeq?: number }): Promise<DispatchResult>;
+  /**
+   * S-G12-08: record that a credential fence was detected, before its HALT is
+   * attempted. Fails only when the epoch store itself cannot be written, which
+   * is exactly the state in which no authority can be taken either.
+   */
+  markCredentialFence(): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }>;
+  /** Whether an unreleased fence mark stands right now (S-G12-08); read for reporting, never for permission. */
+  fencePending(): boolean;
 }
 
 function utcIso(ms: number): string {
@@ -154,6 +162,23 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       writeHaltState(paths, authoritative);
     }
     return authoritative;
+  }
+
+  /**
+   * S-G12-08 / A30: what a cycle must actually obey. The journal is
+   * authoritative for the halt, but a fence that could not be journaled lives
+   * in the epoch store, and it must weigh the same. Deliberately NOT stricter
+   * than a journaled halt: a risk-reducing close stays possible, so a fenced
+   * book can still be flattened once the credentials work again.
+   */
+  function effectiveHaltState(entries: readonly JournalEntry[]): HaltState {
+    const journal = reconcileHaltProjection(entries);
+    if (journal.halted) return journal;
+    const store = readEpochStore(paths);
+    if (store.kind === "present" && store.fencePending) {
+      return { halted: true, reason: "AUTH_FAILURE", sticky: false };
+    }
+    return journal;
   }
 
   function haltForBindingMismatch(entries: readonly JournalEntry[], epoch: number, detail: string): void {
@@ -231,7 +256,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       // an entry before broker I/O, including after a projection-write crash.
       // Explicit close submissions, cancels and close_position remain usable
       // for reconciliation and flattening under S-G12-03.
-      if (isRiskIncreasingEntry(request.action.mutation) && reconcileHaltProjection(entries).halted) {
+      if (isRiskIncreasingEntry(request.action.mutation) && effectiveHaltState(entries).halted) {
         return { ok: false, reason: "HALT", lockHeld: true };
       }
       try {
@@ -310,7 +335,9 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         if (decision.kind === "CHANGED") return { kind: "LOST", observedEpoch: decision.observed };
         // G2-F1: a seed that has not been journaled yet is inherited by the new acquirer, never cleared by acquisition.
         // G5-F1: likewise a pending reset is inherited and completed by the new acquirer under its own epoch.
-        writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending, resetPending: plan.resetPending });
+        // S-G12-08: and so is an unreleased credential fence — a restart, a takeover or any other acquisition
+        // must not be a way to get trading back without the human release the fence is waiting for.
+        writeEpochStore(paths, { epoch: decision.next, holderId: instanceId, acquiredAt: utcIso(now), seedPending: plan.seedPending, resetPending: plan.resetPending, fencePending: plan.fencePending });
         writeHolder(paths, { holderId: instanceId, heartbeatAt: now });
         if (plan.resetPending) return completeReset(entries, decision.next, now);
         ownEpoch = decision.next;
@@ -343,7 +370,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         const loaded = loadJournal();
         if ("corrupt" in loaded) throw new Error(loaded.corrupt);
         const entries = loaded.file.parsed.entries;
-        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: reconcileHaltProjection(entries) };
+        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: effectiveHaltState(entries) };
       });
     },
 
@@ -355,7 +382,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         if ("corrupt" in loaded) throw new Error(loaded.corrupt);
         writeHolder(paths, { holderId: instanceId, heartbeatAt: clock() });
         const entries = loaded.file.parsed.entries;
-        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: reconcileHaltProjection(entries) };
+        return { entries, quarantined: loaded.quarantined === null ? [] : [loaded.quarantined], halt: effectiveHaltState(entries) };
       });
     },
 
@@ -426,6 +453,23 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
       }
     },
 
+    /**
+     * S-G12-08: mark the fence BEFORE the HALT append is attempted, under the
+     * same mutex, so a process that dies between the two steps leaves the
+     * strict state behind. Only `dispatchManualUnhalt` clears it. Returns the
+     * failure when the epoch store itself could not be written — the caller
+     * must not treat that as a fence, because it is the case where authority
+     * cannot be taken either.
+     */
+    async markCredentialFence() {
+      return withMutex(paths, () => Promise.resolve(setFencePending(paths, true)));
+    },
+
+    fencePending() {
+      const store = readEpochStore(paths);
+      return store.kind === "present" && store.fencePending;
+    },
+
     async dispatchManualUnhalt(action) {
       if (action.operator.trim().length === 0) return { ok: false, reason: "OPERATOR_REQUIRED", lockHeld: false };
       return withMutex(paths, () => {
@@ -448,9 +492,17 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         if (action.expectedJournalSeq !== undefined && (entries.at(-1)?.seq ?? 0) !== action.expectedJournalSeq) {
           return { ok: false, reason: "JOURNAL_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
         }
-        const current = reconcileHaltProjection(entries);
+        const current = effectiveHaltState(entries);
         if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
         if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };
+        // S-G12-08: the human release is the only thing that clears the fence
+        // mark, and a release that cannot clear it is refused rather than
+        // half-applied — the operator must not believe they lifted a fence
+        // that will still be standing at the next cycle.
+        if (store.fencePending) {
+          const cleared = setFencePending(paths, false);
+          if (!cleared.ok) return { ok: false, reason: `FENCE_NOT_CLEARED:${cleared.reason}`, lockHeld: true };
+        }
         if (action.expectedHaltSeq !== undefined || action.expectedHaltReason !== undefined) {
           const transition = [...entries].reverse().find(entry => entry.type === "HALT" || entry.type === "UNHALT");
           if (transition === undefined || transition.type !== "HALT"

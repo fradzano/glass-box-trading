@@ -16,7 +16,7 @@ owner calls (A–D) were decided 2026-08-25 — see DECISIONS.md; the axioms bel
 cite the decisions where they bind parameters.
 
 Each axiom cites the scenarios it distills. The coverage index at the bottom
-maps all 75 scenarios back to axioms — an uncovered scenario is a defect of
+maps all 80 scenarios back to axioms — an uncovered scenario is a defect of
 this file.
 
 ---
@@ -342,6 +342,37 @@ this file.
   or with spot silently disarms it. Added 2026-09-05 after the 2026-09-03
   incident. (#72 #73)
 
+- **A30 — A fence that could not be recorded still fences.** A safety stop is a
+  property of the deployment, not of the file it was written to. When a
+  credential rejection, a kill or any other fence-worthy condition is detected,
+  the deployment stops placing risk-increasing orders until a human releases
+  it — whether or not the journal, the projection or anything else could be
+  written at that instant. Three consequences that are part of the axiom, not
+  of one implementation: the marker is set *before* the record is attempted, so
+  a process that dies between the two steps leaves the strict state behind;
+  only a human release clears it, so no later successful write and no other
+  process can undo it; and where nothing durable can be written at all, the
+  guarantee has to come from the authority rule instead — a writer that cannot
+  durably take the epoch has no authority, and without authority nothing may be
+  ordered. The last clause is what makes the boundary stateable: either the
+  fence is recorded, or nobody can act. Added 2026-09-05 after R42-B2.
+  (#76 #77)
+
+- **A31 — Alive and able to trade are two different claims.** The signal an
+  operator watches must separate them, because they fail apart: a process can
+  run every fifteen minutes, journal correctly and be unable to place a single
+  order, and a deployment that is perfectly able to trade can be on a machine
+  that is switched off. One signal therefore reports that the scheduled
+  invocation happened at all, and the other that no halt, fence or alarm stands
+  — and the second keeps reporting the impediment on every invocation until a
+  human clears it, since a later successful append is not permission to say all
+  is well. Both are useless until the path to the operator's own device has
+  been exercised end to end against an explicit failure, a missing invocation
+  and a dead machine. Deadlines come from the operating requirements already
+  fixed (A18's 45–60 minute SLA, the cycle interval, the exchange calendar),
+  never from what is convenient to configure. Added 2026-09-05.
+  (#78 #79)
+
 ---
 
 ## Owner calls — all decided 2026-08-25
@@ -393,7 +424,11 @@ this file.
 
 | # | Axioms | # | Axioms | # | Axioms | # | Axioms |
 |---|---|---|---|---|---|---|---|
-| 72 | A17 A29 | 73 | A17 A29 | 74 | A4 A18 | 75 | A4 A18 |
+| 72 | A17 A29 | 73 | A17 A29 | 74 | A4 A29 | 75 | A4 A18 |
+
+| # | Axioms | # | Axioms | # | Axioms | # | Axioms | # | Axioms |
+|---|---|---|---|---|---|---|---|---|---|
+| 76 | A19 A30 | 77 | A13 A30 | 78 | A18 A31 | 79 | A18 A31 | 80 | A16 A18 |
 
 A24 originally appeared in no row by design: it was requirement-derived
 (account separation), not scenario-derived. Scenario #49 now supplies the

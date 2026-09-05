@@ -14,6 +14,7 @@
 - `tests/g10-reconciliation.spec.ts`
 - `tests/g11-deadline.spec.ts`
 - `tests/g12-06-credential-fence.spec.ts`
+- `tests/g12-08-durable-fence.spec.ts`
 - `tests/g12-fencing.spec.ts`
 - `tests/g12-halt.spec.ts`
 - `tests/g14-watchdog.spec.ts`

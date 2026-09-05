@@ -127,6 +127,7 @@
 - `tests/g10-reconciliation.spec.ts` — G10 — reconciliation of unexplained state (S-G10-01..05): the closed
 - `tests/g11-deadline.spec.ts` — G11 — deadline flatten and the Friday regime (S-G11-01..04, DOM-3): the
 - `tests/g12-06-credential-fence.spec.ts` — S-G12-06 — the credential fence (AUS-3): a broker 401/403 mid-run is
+- `tests/g12-08-durable-fence.spec.ts` — S-G12-08 (A30, scenarios #76/#77) and S-G14-05 (A31, #78): a credential
 - `tests/g12-fencing.spec.ts`
 - `tests/g12-halt.spec.ts`
 - `tests/g14-watchdog.spec.ts` — G14 — the dead-man watchdog (S-G14-01..03, WIN-8): market-hours-aware

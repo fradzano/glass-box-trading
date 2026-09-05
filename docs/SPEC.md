@@ -1292,6 +1292,57 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   task redirects the printed report to a kept file next to the journal, so the
   full report survives the run that produced it.
 
+- **S-G12-08** A fence that could not be recorded still fences (A30, #76,
+  #77). When the runner detects a credential rejection it marks
+  `fencePending` in the epoch store **before** it attempts the `HALT` append,
+  under the same mutex, and the mark is cleared by exactly one thing: a human
+  un-halt. While it stands, the gateway refuses every risk-increasing broker
+  mutation exactly as a journaled halt does — no stricter, so a risk-reducing
+  close stays possible and a fenced book can still be flattened — and every
+  cycle reports the fence as a standing impediment (S-G14-05). The effective
+  halt state a cycle acts on is therefore the journal-authoritative state OR
+  the fence mark, and a journaled `UNHALT` cannot clear the mark, because the
+  mark does not live in the journal and `reconcileHaltProjection` governs only
+  the projection. The **guaranteed failure boundary**, which is the point of
+  the case and must be stated rather than implied:
+
+  | What is writable at the moment of the rejection | What holds |
+  |---|---|
+  | Journal and epoch store | `HALT` is journaled and the mark is set; the deployment is halted twice over |
+  | Epoch store only (journal full, read-only, locked) | The mark is set; every later cycle is fenced until a human un-halt, whatever the journal's older `HALT`/`UNHALT` history says |
+  | Neither | No mark and no entry — **and no authority**: `acquireAuthority` writes the epoch store, a failed durable write is `REFUSED`, and a writer without the epoch may not mutate (S-G12-01/02). Nothing can act, so nothing needs to be recorded |
+  | The process dies between the mark and the append | The mark stands, because it is written first. Fail-closed by ordering, not by hope |
+
+  Outside the boundary, and declared: a state directory that is destroyed or
+  replaced after the mark was written carries no fence, exactly as it carries
+  no journal. The manual un-halt refuses when it cannot clear the mark, so a
+  release is never half-applied.
+- **S-G14-05** Liveness and trading readiness are two signals (A31, #78, #79).
+  Every scheduled invocation reports **liveness** — that the scheduler fired,
+  the wrapper ran and the process reached its end — independently of what the
+  cycle decided; its absence is the S-G14 dead-man condition and means the
+  machine, the scheduler or the process is gone. Separately, every cycle
+  reports **readiness**: a success signal only when no halt, no fence and no
+  alarm condition stands, and a failure signal naming the impediment
+  otherwise. A standing halt therefore re-reports itself on every cycle for as
+  long as it stands; a later durable append is not permission to claim
+  readiness, which is the defect this case exists to prevent — before it, a
+  cycle that correctly halted on `AUTH_FAILURE` sent `success` because its
+  append had landed. The readiness signal's conditions are the union of the
+  cycle's alarm conditions and the effective halt state; `HALT` reasons are
+  alarm conditions in their own right. Both signals are undeliverable when the
+  endpoint is unset, and an unattended deployment may not begin until the path
+  to the operator has been exercised against an explicit failure, a missing
+  invocation and a powered-off machine.
+- **S-G14-06** The trigger is wide and the calendar decides (A16, A31, #80).
+  The scheduled trigger's local-time window must cover the exchange session
+  under every offset the deployment will live through, including the weeks when
+  the American and European clock changes have not yet met; the decision
+  whether a cycle is due comes from the exchange calendar inside the run, never
+  from the trigger's shape. A firing outside the session is a normal, cheap,
+  journaled no-trade cycle, and the liveness expectation is stated over the
+  trigger window in the scheduler's own local time, so it is stable across both
+  clock changes.
 ---
 
 ## Traceability
@@ -1302,9 +1353,9 @@ G5), A4 (S-CYC-01/03/09, S-J-03, S-X-08), A5 (S-CYC-06, S-J-04, S-G10-04, S-X-03
 (S-J-01), A7 (S-CYC-06), A8 (S-J-05), A9 (S-CYC-07, S-J-07), A10 (S-J-07/09),
 A11 (G1, S-G9-03, S-G10-03, S-X-05/06), A12 (G8, S-CYC-01/11), A13 (G7,
 S-CYC-05, S-G12-01/02/07, S-J-08), A14 (G1–G4, S-G8-06), A15 (§7), A16 (G6),
-A17 (G9, G11, S-X-06/07), A18 (S-G14-02/03, S-CYC-11), A19 (S-G12-03/04/06,
+A17 (G9, G11, S-X-06/07), A18 (S-G14-02/03/05/06, S-CYC-11), A19 (S-G12-03/04/06,
 G13), A20 (S-CYC-08/09), A21 (S-J-02), A22 (G11), A23 (G2 counting,
 S-G14-04, S-X-06), A24 (S-ARM-01, S-J-06, S-CYC-11), A25 (S-CYC-09,
 S-J-03/06/09), A26
 (`SUBMISSION-SPEC.md` acceptance gates), A27 (S-CYC-12, S-J-03/09 and
-`SUBMISSION-SPEC.md` criterion contract), A28 (S-ARM-01, S-CYC-11, G8), A29 (S-X-07).
+`SUBMISSION-SPEC.md` criterion contract), A28 (S-ARM-01, S-CYC-11, G8), A29 (S-X-07), A30 (S-G12-08), A31 (S-G14-05/06).

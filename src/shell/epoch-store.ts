@@ -72,15 +72,36 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
   const acquiredAt = record["acquiredAt"];
   const seedPending = record["seedPending"];
   const resetPending = record["resetPending"];
+  const fencePending = record["fencePending"];
   if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string"
-    || (seedPending !== undefined && typeof seedPending !== "boolean") || (resetPending !== undefined && typeof resetPending !== "boolean")) {
+    || (seedPending !== undefined && typeof seedPending !== "boolean") || (resetPending !== undefined && typeof resetPending !== "boolean")
+    || (fencePending !== undefined && typeof fencePending !== "boolean")) {
     return { kind: "unreadable", detail: "epoch store record is malformed" };
   }
-  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true };
+  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true, fencePending: fencePending === true };
 }
 
-export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean }): void {
-  writeJsonAtomically(paths.epoch, record);
+export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean; readonly fencePending?: boolean }): void {
+  writeJsonAtomically(paths.epoch, { ...record, fencePending: record.fencePending === true });
+}
+
+/**
+ * S-G12-08 / A30: set or clear the fence mark while preserving everything else
+ * the store holds. The caller holds the gateway mutex; the write is atomic, and
+ * a failure throws so the caller can treat an unrecordable fence as what it is.
+ * An absent or unreadable store is NOT quietly created here — a deployment
+ * without a readable epoch store has no authority anyway, which is the other
+ * half of the guarantee.
+ */
+export function setFencePending(paths: StatePaths, pending: boolean): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  const store = readEpochStore(paths);
+  if (store.kind !== "present") return { ok: false, reason: `EPOCH_STORE_${store.kind.toUpperCase()}` };
+  try {
+    writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: store.seedPending, resetPending: store.resetPending, fencePending: pending });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  return { ok: true };
 }
 
 export function readHolder(paths: StatePaths): HolderRecord | null {

@@ -225,10 +225,17 @@ describe("S-X-06 at the runner — the declared expiry hold ends escalation, lif
     expect(holdEntry).toBeDefined();
     const proof = (holdEntry?.["items"] as readonly Record<string, unknown>[])[0];
     expect(proof).toMatchObject({ contractId: LONG_CALL, bidCents: 0, statement: "hold to expiry, zero additional liability" });
-    // The next cycle does not re-enqueue the hold (S-G9-02) and the fail-ping stays lifted; the position is still not-flat.
+    // The next cycle does not re-enqueue the hold (S-G9-02) and raises no alarm
+    // of its own; the position is still not-flat. Readiness stays red on
+    // purpose (S-G14-05, changed 2026-09-05): the RESIDUE_UNRESOLVED halt from
+    // the declaring cycle still stands, so this deployment cannot open a
+    // position, and a check that said "success" here told the operator the
+    // opposite for as long as the hold lasted. The alarm lifting and the
+    // deployment being able to trade are two different claims.
     const after = await harness.cycle({ lifecycle: withProof, market: lifecycleMarket(() => harness.clock.now, holdMarket) });
     expect(after.managementCloses).toEqual([]);
-    expect(after.ping).toBe("success");
+    expect(after.alarmConditions).toEqual([]);
+    expect(after.ping).toBe("fail");
     expect(after.declaredHolds).toContain(LONG_CALL);
     expect(await harness.fake.read.positions()).toMatchObject([{ contractId: LONG_CALL, quantity: 1 }]);
   });

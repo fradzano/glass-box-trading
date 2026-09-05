@@ -410,21 +410,21 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
 
   it("S-G12-07 the pure authority core decides acquisition, compare-and-increment, and authorization without any clock", () => {
     const absent: EpochStoreState = { kind: "absent" };
-    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false };
+    const present: EpochStoreState = { kind: "present", epoch: 3, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false, fencePending: false };
     const unreadable: EpochStoreState = { kind: "unreadable", detail: "x" };
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: true })).toEqual({ kind: "SEED_BOOTSTRAP", epoch: 1 });
     expect(planEpochAcquisition(absent, { account: "virgin", journalEmpty: false })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "non_virgin", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
     expect(planEpochAcquisition(absent, { account: "unknown", journalEmpty: true })).toEqual({ kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" });
-    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: false });
-    expect(planEpochAcquisition({ ...present, seedPending: true }, { account: "non_virgin", journalEmpty: false })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: true, resetPending: false });
-    expect(planEpochAcquisition({ ...present, resetPending: true }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: true });
+    expect(planEpochAcquisition(present, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: false, fencePending: false });
+    expect(planEpochAcquisition({ ...present, seedPending: true }, { account: "non_virgin", journalEmpty: false })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: true, resetPending: false, fencePending: false });
+    expect(planEpochAcquisition({ ...present, resetPending: true }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "INCREMENT", expected: 3, next: 4, seedPending: false, resetPending: true, fencePending: false });
     expect(resetPairPresent([cycleEntry(1), { ...cycleEntry(2), type: "GAP", reasonCodes: [], snapshot: null, detail: "x" } as unknown as JournalEntry, { ...cycleEntry(3), type: "HALT", reason: "EPOCH_STORE_RESET", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(true);
     expect(resetPairPresent([cycleEntry(1), { ...cycleEntry(2), type: "HALT", reason: "EPOCH_STORE_RESET", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(false);
     expect(resetPairPresent([{ ...cycleEntry(1), type: "GAP", reasonCodes: [], snapshot: null, detail: "x" } as unknown as JournalEntry, { ...cycleEntry(2), type: "HALT", reason: "MANUAL", detail: "x", sticky: false } as unknown as JournalEntry])).toBe(false);
     expect(resetPairPresent([])).toBe(false);
     expect(planEpochAcquisition(unreadable, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_UNREADABLE" });
-    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
+    expect(planEpochAcquisition({ kind: "present", epoch: Number.MAX_SAFE_INTEGER, holderId: "a", acquiredAt: TEST_ONLY_AT, seedPending: false, resetPending: false, fencePending: false }, { account: "virgin", journalEmpty: true })).toEqual({ kind: "REFUSE", reason: "EPOCH_EXHAUSTED" });
     expect(compareAndIncrement(present, 3)).toEqual({ kind: "COMMIT", next: 4 });
     expect(compareAndIncrement({ ...present, epoch: 4 }, 3)).toEqual({ kind: "CHANGED", observed: 4 });
     expect(compareAndIncrement(absent, 3)).toEqual({ kind: "CHANGED", observed: null });

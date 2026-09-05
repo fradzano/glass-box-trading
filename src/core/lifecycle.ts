@@ -760,8 +760,23 @@ export type PingPlan =
  * never refreshes liveness. A cycle that journals an alarm-worthy condition
  * sends the fail-ping INSTEAD of the success ping.
  */
-export function planPing(input: { readonly durableAppendLanded: boolean; readonly alarmConditions: readonly string[] }): PingPlan {
-  if (input.alarmConditions.length > 0) return { kind: "fail", conditions: input.alarmConditions };
+/**
+ * S-G14-05 / A31: the READINESS decision. `success` claims the deployment is
+ * able to trade, so a standing halt or an unreleased credential fence has to
+ * outrank a landed append — before this, a cycle that correctly halted on
+ * `AUTH_FAILURE` reported success because its own entry had been written, and
+ * the operator's check stayed green while the account did nothing (#78).
+ * A standing impediment re-reports itself on every invocation, for as long as
+ * it stands, until a human clears it. Liveness is a separate signal and is not
+ * decided here.
+ */
+export function planPing(input: { readonly durableAppendLanded: boolean; readonly alarmConditions: readonly string[]; readonly standingHalt?: { readonly reason: string; readonly fencePending: boolean } | null }): PingPlan {
+  const standing = input.standingHalt ?? null;
+  const haltConditions = standing === null
+    ? []
+    : [`HALT_STANDING:${standing.reason}`, ...(standing.fencePending ? ["CREDENTIAL_FENCE_UNRELEASED"] : [])];
+  const conditions = [...haltConditions, ...input.alarmConditions];
+  if (conditions.length > 0) return { kind: "fail", conditions };
   if (input.durableAppendLanded) return { kind: "success" };
   return { kind: "none", detail: "no durable authoritative append landed and no alarm condition exists" };
 }

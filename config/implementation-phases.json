@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "expectedDefinedCases": 93,
-  "expectedTestCases": 92,
+  "expectedDefinedCases": 96,
+  "expectedTestCases": 95,
   "declaredLimits": [
     "S-G14-04"
   ],
@@ -27,8 +27,8 @@
     "P5": [
       "^S-CYC-(03|08|09|10)$",
       "^S-G(9|10|11)-[0-9]+$",
-      "^S-G14-[0-9]+$",
-      "^S-X-0[56]$"
+      "^S-X-0[56]$",
+      "^S-G14-0[1-4]$"
     ],
     "P6": [
       "^S-CYC-(07|12)$",
@@ -39,6 +39,10 @@
     ],
     "P11": [
       "^S-X-0[78]$"
+    ],
+    "P12": [
+      "^S-G12-08$",
+      "^S-G14-0[56]$"
     ]
   }
 }

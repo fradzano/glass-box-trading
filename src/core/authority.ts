@@ -24,6 +24,16 @@ export type EpochStoreState =
      * A pending epoch authorizes nothing; acquisition completes the pair (once) and promotes it (G5-F1).
      */
     readonly resetPending: boolean;
+    /**
+     * S-G12-08 / A30: a credential fence was detected and may or may not have
+     * reached the journal. It is set BEFORE the HALT append is attempted and
+     * cleared by exactly one thing, a human un-halt, so neither a later
+     * successful append nor a journaled UNHALT from an earlier incident can
+     * undo it. It lives here rather than in the halt projection because the
+     * journal is authoritative for the projection: a prior HALT/UNHALT pair
+     * would otherwise overrule a fence that could not be journaled.
+     */
+    readonly fencePending: boolean;
   };
 
 export type AccountVirginity = "virgin" | "non_virgin" | "unknown";
@@ -36,7 +46,7 @@ export interface AcquisitionEvidence {
 export type AcquisitionPlan =
   | { readonly kind: "SEED_BOOTSTRAP"; readonly epoch: 1 }
   | { readonly kind: "SEED_GAP"; readonly epoch: 1; readonly haltReason: "EPOCH_STORE_RESET" }
-  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number; /** inherited from the store: the seed is still unjournaled (G2-F1) */ readonly seedPending: boolean; /** inherited from the store: a reset pair still has to be completed and promoted (G5-F1) */ readonly resetPending: boolean }
+  | { readonly kind: "INCREMENT"; readonly expected: number; readonly next: number; /** inherited from the store: the seed is still unjournaled (G2-F1) */ readonly seedPending: boolean; /** inherited from the store: a reset pair still has to be completed and promoted (G5-F1) */ readonly resetPending: boolean; /** inherited from the store: an unreleased credential fence survives every acquisition, or a restart would clear it (S-G12-08) */ readonly fencePending: boolean }
   | { readonly kind: "REFUSE"; readonly reason: "EPOCH_UNREADABLE" | "EPOCH_EXHAUSTED" };
 
 /**
@@ -55,7 +65,7 @@ export function planEpochAcquisition(store: EpochStoreState, evidence: Acquisiti
         : { kind: "SEED_GAP", epoch: 1, haltReason: "EPOCH_STORE_RESET" };
     case "present":
       if (store.epoch >= Number.MAX_SAFE_INTEGER) return { kind: "REFUSE", reason: "EPOCH_EXHAUSTED" };
-      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1, seedPending: store.seedPending, resetPending: store.resetPending };
+      return { kind: "INCREMENT", expected: store.epoch, next: store.epoch + 1, seedPending: store.seedPending, resetPending: store.resetPending, fencePending: store.fencePending };
   }
 }
 

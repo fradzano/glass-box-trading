@@ -331,7 +331,15 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   /** Every exit funnels here: the ping decision is pure and fires exactly once per invocation (S-G14-03). */
   async function finish(partial: Omit<CycleReport, "classification" | "lifecycleVetoes" | "managementCloses" | "managementRefusals" | "declaredHolds" | "alarmConditions" | "ping">): Promise<CycleReport> {
     await heartbeatBoundary("phase 5");
-    const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions });
+    // S-G14-05: readiness, not liveness. The halt state is re-read here rather
+    // than reused from phase 1, because this cycle may have halted since.
+    const standingHalt = ((): { readonly reason: string; readonly fencePending: boolean } | null => {
+      const fencePending = gateway.fencePending();
+      const persisted = readHaltState(deps.paths);
+      if (!persisted.halted && !fencePending) return null;
+      return { reason: persisted.halted ? (persisted.reason ?? "UNKNOWN") : "AUTH_FAILURE", fencePending };
+    })();
+    const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions, standingHalt });
     // A cycle under an aggregate deadline only computes the ping plan here.
     // Its composition root delivers after the work Promise wins the outer
     // deadline race; a losing background continuation can therefore never
@@ -800,10 +808,20 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   }
 
   /** S-G12-06: an auth failure blocks all orders; re-arm only under halt, after full reconciliation and the documented fence procedure. */
+  /**
+   * S-G12-08 / A30: the mark goes down BEFORE the entry is attempted, so a
+   * journal that cannot be written, or a process that dies between the two
+   * steps, still leaves a fenced deployment behind. Only a human un-halt
+   * clears it. When even the epoch store refuses the mark, this run says so
+   * loudly: that is the case where no authority can be taken either, so
+   * nothing can act, and the alarm is the whole handover.
+   */
   async function haltForAuthFailure(detail: string): Promise<void> {
     if (!entriesBlocked.includes("AUTH_FAILURE")) entriesBlocked.push("AUTH_FAILURE");
+    const marked = await gateway.markCredentialFence();
+    if (!marked.ok) alarmConditions.push(`CREDENTIAL_FENCE_NOT_RECORDED:${marked.reason}`);
     if (readHaltState(deps.paths).halted) return;
-    await append(haltDraft(context(), "AUTH_FAILURE", `broker credential rejected (401/403): ${detail}; all orders blocked; run the fence procedure (working-order check/cancel in the broker dashboard) before un-halt`));
+    await append(haltDraft(context(), "AUTH_FAILURE", `broker credential rejected (401/403): ${detail}; every risk-increasing order is blocked until a human un-halt (a risk-reducing close stays possible so the book can still be flattened); run the fence procedure (working-order check/cancel in the broker dashboard) before un-halt`));
   }
 
   function assembleFold(journal: readonly JournalEntry[]): { readonly lifecycles: readonly EntryLifecycleRecord[]; readonly closes: readonly CloseAttemptRecord[] } | null {
