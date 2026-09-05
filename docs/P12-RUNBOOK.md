@@ -407,6 +407,11 @@ reminder to be about.
 ```powershell
 .\tools\check-alert-path.ps1
 # expect: six [SENT] lines and "ALERT PATH DELIVERED"
+# The endpoints print as fingerprints (hc:xxxxxxxx), not as URLs: a ping URL is
+#   a credential -- anyone who has it can send SUCCESS pings and so suppress a
+#   real silence alarm -- and this output is meant to be read and compared.
+#   Check the three fingerprints are DIFFERENT; two the same means two of the
+#   .env values are the same URL, which is the swap nothing later catches.
 # then wait for three alerts on your phone or mail, and read their bodies:
 #   each names its check and the condition that failed.
 ```

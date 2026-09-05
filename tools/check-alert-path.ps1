@@ -53,10 +53,40 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot,
-    [switch]$ResolveOnly
+    [switch]$ResolveOnly,
+    # A ping URL is a credential: anyone who has it can send success pings to
+    # your check and thereby SUPPRESS a real silence alarm. This script used to
+    # print all three in full, which made its normal output something the
+    # operator could not paste anywhere -- and the whole point of the output is
+    # to be read and compared. It prints fingerprints now. Pass this switch
+    # only if you genuinely need the URL itself in a local shell.
+    [switch]$ShowUrls
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Format-Endpoint {
+    <#
+      A ping URL identifies a check AND authorises pinging it, so it is a
+      credential and belongs in .env, never in output that gets read aloud,
+      screenshotted or pasted into a chat. What the operator actually needs
+      from this script is different: that three DISTINCT endpoints are
+      configured, and which one each signal went to. A short digest gives both
+      and gives nothing else away.
+    #>
+    param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return 'NOT CONFIGURED' }
+    if ($ShowUrls) { return $Url }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Url))
+    } finally {
+        $sha.Dispose()
+    }
+    $fingerprint = -join ($digest[0..3] | ForEach-Object { $_.ToString('x2') })
+    $suffix = if ($Url.TrimEnd('/').EndsWith('/fail')) { ' (/fail)' } else { '' }
+    return "hc:$fingerprint$suffix"
+}
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
@@ -107,8 +137,9 @@ function Send-Signal {
         } finally {
             $ProgressPreference = $previous
         }
-        $results.Add([pscustomobject]@{ signal = $Name; outcome = "HTTP $($response.StatusCode)"; detail = $Url })
-        Write-Host "[SENT] $Name -- HTTP $($response.StatusCode) to $Url"
+        $shown = Format-Endpoint -Url $Url
+        $results.Add([pscustomobject]@{ signal = $Name; outcome = "HTTP $($response.StatusCode)"; detail = $shown })
+        Write-Host "[SENT] $Name -- HTTP $($response.StatusCode) to $shown"
     } catch {
         $results.Add([pscustomobject]@{ signal = $Name; outcome = 'UNDELIVERED'; detail = $_.Exception.Message })
         Write-Host "[FAIL] $Name -- $($_.Exception.Message)"
@@ -126,9 +157,13 @@ $deadManMinutes = [math]::Round([int64]$policy.DEAD_MAN_BOUND_MS / 60000.0)
 $alertSlaMinutes = [math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000.0)
 
 Write-Host ''
-Write-Host "Readiness endpoint: $(if ([string]::IsNullOrWhiteSpace($readiness)) { 'NOT CONFIGURED' } else { $readiness })"
-Write-Host "Liveness  endpoint: $(if ([string]::IsNullOrWhiteSpace($liveness)) { 'NOT CONFIGURED' } else { $liveness })"
-Write-Host "Watchdog  endpoint: $(if ([string]::IsNullOrWhiteSpace($watchdog)) { 'NOT CONFIGURED' } else { $watchdog })"
+Write-Host "Readiness endpoint: $(Format-Endpoint -Url $readiness)"
+Write-Host "Liveness  endpoint: $(Format-Endpoint -Url $liveness)"
+Write-Host "Watchdog  endpoint: $(Format-Endpoint -Url $watchdog)"
+if (-not $ShowUrls) {
+    Write-Host 'Fingerprints, not URLs: enough to tell the three apart and to catch a swap, safe to paste anywhere.'
+    Write-Host 'Pass -ShowUrls if you need the URL itself, and then do not copy the output out of this shell.'
+}
 Write-Host ''
 
 $stamp = [System.DateTime]::UtcNow.ToString('o')

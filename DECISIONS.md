@@ -3609,3 +3609,29 @@ small, no ADR split).
   `npm run verify` exit 0 at 48 files / 658 tests. The policy digest changed,
   which is exactly what voids a certificate — and none has been issued yet, so
   nothing was invalidated. Certificate run four runs against this value.
+- **2026-09-05 — `check-alert-path.ps1` printed the three ping URLs in full,
+  and the owner pasted its output into a chat. The tool was the defect.** The
+  standing instruction for this project is that secrets stay in the local
+  `.env` and that no step may require output which is then copied into a chat.
+  This script's *normal, intended* output — the thing an operator reads to
+  check the endpoints are right — contained three credentials. An instruction
+  not to paste output that exists to be read is not a safeguard; it is a trap
+  with a warning label.
+
+  A healthchecks.io ping URL authorises pinging: whoever holds it can send
+  **success** pings to that check and thereby suppress a genuine silence alarm.
+  It grants no read access, no reach into the machine and no ability to trade,
+  so the exposure is bounded — but the one thing it does grant is the
+  suppression of exactly the alerting this unattended run depends on.
+
+  The script prints **fingerprints** now (`hc:` plus four bytes of a SHA-256 of
+  the URL), which serves what the output is actually for: telling the three
+  apart and catching the case where two `.env` values hold the same URL — the
+  swap that no later check finds, because all three checks stay green. The full
+  URL is available behind `-ShowUrls` for a local shell. The two wrappers never
+  printed a URL, and the runbook's configuration check already masks anything
+  matching `KEY|SECRET|TOKEN|URL`, so this was the only leak of its kind.
+
+  The three checks exposed this way are being recreated with fresh URLs rather
+  than kept; recreating them costs minutes at this stage and removes the
+  question entirely.
