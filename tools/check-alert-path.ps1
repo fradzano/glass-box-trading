@@ -8,7 +8,7 @@
     at all -- HEALTHCHECK_PING_URL was unset, so seventy pings were written to a
     file on the machine that is the thing most likely to have died.
 
-    This script sends the four signals a deployment can produce, in order, to
+    This script sends the six signals a deployment can produce, in order, to
     whatever endpoints are configured, and reports the HTTP outcome of each. It
     proves DELIVERY. Only the operator can confirm RECEIPT, which is the point:
     after running it, check the device that is supposed to wake you.
@@ -17,31 +17,38 @@
       2. readiness failure  POST <HEALTHCHECK_PING_URL>/fail   (with conditions)
       3. liveness  success  POST <HEALTHCHECK_LIVENESS_URL>
       4. liveness  failure  POST <HEALTHCHECK_LIVENESS_URL>/fail
+      5. watchdog  success  POST <HEALTHCHECK_WATCHDOG_URL>
+      6. watchdog  failure  POST <HEALTHCHECK_WATCHDOG_URL>/fail
 
-    It deliberately ends on a FAILURE for both checks, so the operator sees two
-    alerts arrive and then has to resolve them by re-running with -ResolveOnly.
+    The watchdog has its own check because the other two cannot see it: liveness
+    comes from the cycle wrapper and readiness from the state files, so a
+    watchdog that is disabled or broken leaves both of them green.
+
+    It deliberately ends on a FAILURE for all three checks, so the operator sees
+    three alerts arrive and then has to resolve them by re-running with
+    -ResolveOnly.
     A silent check is indistinguishable from a healthy one until something has
     actually failed once.
 
-    The third case the operator must test is silence, and no script can send
-    it: stop the scheduled tasks (or disconnect the machine) and wait out the
-    check's period plus grace. The expected timings are printed at the end,
-    derived from config\policy.json rather than chosen freely.
+    The cases no script can send are the SILENCES, and there are three distinct
+    ones -- watchdog alone, both tasks, and a powered-off machine. They are
+    listed at the end with the timings, derived from config\policy.json rather
+    than chosen freely.
 
 .PARAMETER RepoRoot
     Absolute path to the checkout. Defaults to the parent of this script's dir.
 
 .PARAMETER ResolveOnly
-    Send only the two success signals, to clear checks left failing by a
+    Send only the three success signals, to clear checks left failing by a
     previous run.
 
 .EXAMPLE
     .\tools\check-alert-path.ps1
-    Full exercise; ends with both checks in a failed state on purpose.
+    Full exercise; ends with all three checks in a failed state on purpose.
 
 .EXAMPLE
     .\tools\check-alert-path.ps1 -ResolveOnly
-    Put both checks back to healthy after confirming the alerts arrived.
+    Put all three checks back to healthy after confirming the alerts arrived.
 #>
 [CmdletBinding()]
 param(
@@ -110,6 +117,7 @@ function Send-Signal {
 
 $readiness = Resolve-Endpoint -Key 'HEALTHCHECK_PING_URL'
 $liveness = Resolve-Endpoint -Key 'HEALTHCHECK_LIVENESS_URL'
+$watchdog = Resolve-Endpoint -Key 'HEALTHCHECK_WATCHDOG_URL'
 
 $policyPath = Join-Path $RepoRoot 'config\policy.json'
 $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
@@ -120,14 +128,16 @@ $alertSlaMinutes = [math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000
 Write-Host ''
 Write-Host "Readiness endpoint: $(if ([string]::IsNullOrWhiteSpace($readiness)) { 'NOT CONFIGURED' } else { $readiness })"
 Write-Host "Liveness  endpoint: $(if ([string]::IsNullOrWhiteSpace($liveness)) { 'NOT CONFIGURED' } else { $liveness })"
+Write-Host "Watchdog  endpoint: $(if ([string]::IsNullOrWhiteSpace($watchdog)) { 'NOT CONFIGURED' } else { $watchdog })"
 Write-Host ''
 
 $stamp = [System.DateTime]::UtcNow.ToString('o')
 
 if ($ResolveOnly) {
-    Write-Host 'Resolve-only: sending the two success signals.'
+    Write-Host 'Resolve-only: sending the three success signals.'
     Send-Signal -Name 'readiness success' -Url $readiness -Method 'GET'
     Send-Signal -Name 'liveness success' -Url $liveness -Method 'POST' -Body "alert-path check resolved at $stamp"
+    Send-Signal -Name 'watchdog success' -Url $watchdog -Method 'POST' -Body "alert-path check resolved at $stamp"
 } else {
     Send-Signal -Name 'readiness success' -Url $readiness -Method 'GET'
     Start-Sleep -Seconds 2
@@ -136,6 +146,10 @@ if ($ResolveOnly) {
     Send-Signal -Name 'readiness failure' -Url $(if ([string]::IsNullOrWhiteSpace($readiness)) { $null } else { $readiness.TrimEnd('/') + '/fail' }) -Method 'POST' -Body "ALERT PATH CHECK $stamp`nHALT_STANDING:AUTH_FAILURE`nCREDENTIAL_FENCE_UNRELEASED"
     Start-Sleep -Seconds 2
     Send-Signal -Name 'liveness failure' -Url $(if ([string]::IsNullOrWhiteSpace($liveness)) { $null } else { $liveness.TrimEnd('/') + '/fail' }) -Method 'POST' -Body "ALERT PATH CHECK $stamp`ncycle exit 1"
+    Start-Sleep -Seconds 2
+    Send-Signal -Name 'watchdog success' -Url $watchdog -Method 'POST' -Body "alert-path check: watchdog healthy at $stamp"
+    Start-Sleep -Seconds 2
+    Send-Signal -Name 'watchdog failure' -Url $(if ([string]::IsNullOrWhiteSpace($watchdog)) { $null } else { $watchdog.TrimEnd('/') + '/fail' }) -Method 'POST' -Body "ALERT PATH CHECK $stamp`nwatchdog exit 1"
 }
 
 Write-Host ''
@@ -146,21 +160,33 @@ Write-Host 'What the operator must now confirm, on the device that is supposed t
 if (-not $ResolveOnly) {
     Write-Host '  1. An alert for the READINESS check, naming HALT_STANDING:AUTH_FAILURE.'
     Write-Host '  2. An alert for the LIVENESS check, naming the non-zero cycle exit.'
-    Write-Host '  3. Then re-run with -ResolveOnly and confirm both checks return to healthy.'
+    Write-Host '  3. An alert for the WATCHDOG check, naming the non-zero watchdog exit.'
+    Write-Host '  4. Then re-run with -ResolveOnly and confirm all three return to healthy.'
     Write-Host ''
-    Write-Host '  4. Silence, which no script can send. Stop both scheduled tasks (or disconnect'
-    Write-Host '     the machine) during a session and wait out the check period plus grace.'
+    Write-Host '  5. Silence, which no script can send, and each of these is a DIFFERENT path:'
+    Write-Host '       a. disable ONLY the watchdog task during a session -> watchdog check alone'
+    Write-Host '          goes down while the other two stay green. This is the case that was'
+    Write-Host '          invisible before the watchdog got its own heartbeat.'
+    Write-Host '       b. disable BOTH tasks during a session -> liveness and readiness go down.'
+    Write-Host '       c. power the machine off during a session -> all three go down.'
+    Write-Host '     Wait out each period plus grace and confirm the alert on your own device.'
 }
 Write-Host ''
+Write-Host 'Schedules: run tools\install-scheduled-task.ps1 -WhatIf. It prints the exact cron'
+Write-Host 'expression and timezone for each check, derived from the trigger it registers.'
+Write-Host ''
 Write-Host 'Timings to configure, derived from config\policy.json -- not chosen freely:'
-Write-Host "  Liveness check period: $cycleIntervalMinutes min (CYCLE_INTERVAL_MS), grace 2 intervals = $($cycleIntervalMinutes * 2) min."
-Write-Host "    Its schedule must cover the TRIGGER window in this machine's local time, Mon-Fri,"
-Write-Host '    not the exchange session: the wrapper fires and reports liveness even when it skips.'
-Write-Host "  Readiness check period: $cycleIntervalMinutes min, grace $deadManMinutes min (DEAD_MAN_BOUND_MS)."
-Write-Host "  Alert delivery budget: $alertSlaMinutes min (ALERT_DELIVERY_BUDGET_MS) -- the owner-decided SLA (A18, owner call C)."
-Write-Host '  Both checks are expected to be silent outside the trigger window, overnight and at'
-Write-Host '  weekends; configure them with a cron schedule in the scheduler machine`s own zone so a'
-Write-Host '  quiet Sunday is not an alert. Holidays and early closes still ping: the wrapper runs.'
+Write-Host "  liveness   grace 30 min. Detection: up to $cycleIntervalMinutes min to the next expected"
+Write-Host '             ping, plus grace. Means: the machine, the scheduler or the process is gone.'
+Write-Host "  readiness  grace $deadManMinutes min (DEAD_MAN_BOUND_MS). Detection: up to $cycleIntervalMinutes min plus grace."
+Write-Host '             Means: a halt, an unreleased credential fence, or an unwritable state dir.'
+Write-Host "  watchdog   grace 15 min. Detection: up to the watchdog interval plus grace."
+Write-Host '             Means: the safety net itself is not running.'
+Write-Host "  Alert DELIVERY budget is separate and additional: $alertSlaMinutes min (ALERT_DELIVERY_BUDGET_MS,"
+Write-Host '             owner call C). Detection + delivery is what you actually wait.'
+Write-Host '  All three are expected to be silent outside the trigger window, overnight and at'
+Write-Host '  weekends: use the cron expressions the installer prints, in the machine`s own zone,'
+Write-Host '  so a quiet Sunday is not an alert. Holidays and early closes still ping.'
 
 if ($undelivered.Count -gt 0) {
     Write-Host ''

@@ -92,6 +92,12 @@
 .PARAMETER TaskFolder
     Task Scheduler folder the two tasks live in. Default '\GlassBoxTrading\'.
 
+.PARAMETER Activate
+    Register the tasks ENABLED. Without it they are registered and immediately
+    disabled, so installing is not the same act as going live: the activation
+    gate (verifier, certificate, confirmed alarm receipt, supervised first
+    cycle) sits between the two on purpose.
+
 .PARAMETER Uninstall
     Remove both tasks (and nothing else) instead of installing them.
 
@@ -124,6 +130,7 @@ param(
     [int]$EdgeMarginMinutes = 90,
     [string]$CoverageThroughDate,
     [string]$TaskFolder = '\GlassBoxTrading\',
+    [switch]$Activate,
     [switch]$Uninstall
 )
 
@@ -177,12 +184,32 @@ function Get-SessionWindowLocal {
     $closeEastern = [System.DateTime]::SpecifyKind($todayEasternDate.AddHours(16), [System.DateTimeKind]::Unspecified)
     $openUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($openEastern, $eastern)
     $closeUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($closeEastern, $eastern)
+    # The window is then snapped outward so its firings land on a schedule an
+    # external check can state exactly (R43-B8): the start drops to the hour and
+    # the end rises to the last quarter of an hour. Without that, a cron of
+    # `0,15,30,45 <hours>` expects a ping at :45 of the final hour that the
+    # trigger never produces, and the check alerts every single evening.
+    $paddedOpen = $openUtc.ToLocalTime().AddMinutes(-$EdgeMarginMinutes)
+    $paddedClose = $closeUtc.ToLocalTime().AddMinutes($EdgeMarginMinutes)
+    $snappedOpen = $paddedOpen.Date.AddHours($paddedOpen.Hour)
+    $snappedClose = $paddedClose.Date.AddHours($paddedClose.Hour).AddMinutes(45)
+    if ($snappedClose -lt $paddedClose) { $snappedClose = $snappedClose.AddHours(1) }
     return [pscustomobject]@{
-        OpenLocal    = $openUtc.ToLocalTime().AddMinutes(-$EdgeMarginMinutes)
-        CloseLocal   = $closeUtc.ToLocalTime().AddMinutes($EdgeMarginMinutes)
+        OpenLocal    = $snappedOpen
+        CloseLocal   = $snappedClose
         SessionOpen  = $openUtc.ToLocalTime()
         SessionClose = $closeUtc.ToLocalTime()
     }
+}
+
+function Get-CronExpression {
+    # The expected-ping schedule for a check, stated exactly from the trigger
+    # this installer is about to register, in THIS machine's local time.
+    param([datetime]$Start, [datetime]$End, [int]$IntervalMinutes)
+    $minutes = @()
+    for ($minute = 0; $minute -lt 60; $minute += $IntervalMinutes) { $minutes += $minute }
+    $minuteField = if ($IntervalMinutes -eq 1) { '*' } elseif (60 % $IntervalMinutes -eq 0) { ($minutes -join ',') } else { "*/$IntervalMinutes" }
+    return "$minuteField $($Start.Hour)-$($End.Hour) * * 1-5"
 }
 
 function Remove-ExistingTask {
@@ -308,6 +335,7 @@ $cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimi
 
 if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
     Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
+    if (-not $Activate) { Disable-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder | Out-Null }
 }
 
 # ---------------------------------------------------------------------------
@@ -325,8 +353,25 @@ $watchdogSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeL
 
 if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled task: watchdog-run.ps1 every $WatchdogIntervalMinutes min (< dead-man bound), Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
     Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $watchdogSettings -Description 'Glass Box Trading: dead-man watchdog (S-G14). Fences, halts and flattens the open book on staleness; degrades to fence-and-halt-only when the configuration does not compose -- see tools/watchdog-run.ps1. Installed by tools/install-scheduled-task.ps1.' | Out-Null
+    if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }
 }
+
+$cycleCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $cycleIntervalMinutes
+$watchdogCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $WatchdogIntervalMinutes
+$localZone = [System.TimeZoneInfo]::Local.Id
 
 Write-Host ''
 Write-Host "Registration $(if ($WhatIfPreference) { '(preview only, -WhatIf) ' })complete for user '$UserId', LogonType '$LogonType', folder '$TaskFolder'."
+Write-Host "Tasks were registered $(if ($Activate) { 'ENABLED (-Activate was passed)' } else { 'and immediately DISABLED. Installing is not activating: enable them only after the activation gate in docs/P12-RUNBOOK.md.' })"
+Write-Host ''
+Write-Host 'Configure the three external checks with EXACTLY these schedules (timezone below, not UTC):'
+Write-Host "  timezone for all three:  $localZone"
+Write-Host "  liveness   cron: $cycleCron      grace 30 min   (every cycle firing, session or not)"
+Write-Host "  readiness  cron: $cycleCron      grace 50 min   (every cycle firing reports; DEAD_MAN_BOUND_MS)"
+Write-Host "  watchdog   cron: $watchdogCron   grace 15 min   (every watchdog firing)"
+Write-Host ''
+Write-Host 'Detection time = the check period until the next expected ping, plus its grace.'
+Write-Host "Alert delivery budget is separate: $([math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000.0)) min (ALERT_DELIVERY_BUDGET_MS)."
+Write-Host 'Weekends and nights are outside every expression above, so silence there is expected and never alerts.'
+Write-Host 'Holidays and early closes still ping: the wrappers fire and report on them.'
 Write-Host "Reminder: watchdog-cli.ts fences, halts, flattens the open book and pings; it degrades to fence+halt+ping (and logs why) when the configuration, credentials or account binding do not compose -- see tools\watchdog-run.ps1 header."
