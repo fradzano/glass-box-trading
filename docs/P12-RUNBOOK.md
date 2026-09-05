@@ -1024,10 +1024,15 @@ revisions.
 
 **Runtime at that size:** every readiness report reads and parses the journal,
 because “no impediment stands” includes “no writer would refuse this state”.
-Measured on a 152.7 MiB journal: 162 ms and about 500 MiB of transient memory,
-in a process that exits immediately. If that ever becomes visible — a firing
-that takes minutes, or memory pressure — it is a machine problem, not a
-mystery; the number to compare against is here.
+The first figure published here (162 ms, ~500 MiB) was measured against a
+journal of *invalid* entries, so the parser stopped at the first line and the
+number meant nothing. A gate measured it properly on **150 MiB of valid
+entries: about 1.5 s and 1.2 GiB of transient memory** for the two reads it did
+then; the reads were merged into one afterwards, so expect roughly half of
+that, in a process that exits immediately. If it ever becomes visible — a
+firing that takes minutes, or memory pressure on this machine — that is the
+number to compare against, and the honest reading of the earlier one is that a
+measurement whose fixture avoids the work measures nothing.
 
 ## Ending it
 

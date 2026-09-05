@@ -57,8 +57,12 @@ export function standingImpediment(paths: StatePaths): { readonly reason: string
   // would have carried the stop was the one that said all-clear. The journal
   // is consulted first; the projection then only adds what the journal cannot
   // contradict.
-  const journal = journalHaltState(paths);
-  if (journal !== null && journal.halted) return { reason: journal.reason ?? "UNKNOWN", fencePending };
+  // R47: the journal is read ONCE. The halt state and the corruption check
+  // each used to open and parse it, so every call paid for two full reads of a
+  // file that reaches ~150 MiB by the end of a three-month run -- a gate
+  // measured the pair at 1.5 s and 1.2 GiB of transient memory.
+  const journal = journalState(paths);
+  if (journal.halt !== null && journal.halt.halted) return { reason: journal.halt.reason ?? "UNKNOWN", fencePending };
   // Most specific first, so the operator is told the thing they must act on
   // rather than a symptom of it.
   if (persisted.halted) return { reason: persisted.reason ?? "UNKNOWN", fencePending };
@@ -74,32 +78,23 @@ export function standingImpediment(paths: StatePaths): { readonly reason: string
   // refuses it with JOURNAL_CORRUPT, so reporting readiness over it would
   // report the opposite of the truth. This module only ever READS the journal;
   // appending stays inside the gateway (asserted in tests/g12-fencing).
-  const corruption = journalCorruption(paths);
-  return corruption === null ? null : { reason: `JOURNAL_CORRUPT:${corruption}`, fencePending: false };
+  return journal.corruption === null ? null : { reason: `JOURNAL_CORRUPT:${journal.corruption}`, fencePending: false };
 }
 
 /**
- * The halt state the JOURNAL asserts, or null when the journal cannot be read
- * at all (which `journalCorruption` reports separately). This module only ever
- * reads the journal; appending stays inside the gateway.
+ * What the JOURNAL says, from a single read: the halt state it asserts (null
+ * when it does not parse) and the first line that does not parse (null when it
+ * reads cleanly, or cannot be read at all -- an unreadable file is the
+ * durability probe's finding, not this one). This module only ever reads the
+ * journal; appending stays inside the gateway.
  */
-function journalHaltState(paths: StatePaths): HaltState | null {
+function journalState(paths: StatePaths): { readonly halt: HaltState | null; readonly corruption: string | null } {
   try {
     const file = readJournalFile(paths);
-    if (file.parsed.corrupt.length > 0) return null;
-    return haltStateFrom(file.parsed.entries);
+    const first = file.parsed.corrupt[0];
+    if (first !== undefined) return { halt: null, corruption: `line ${String(first.line)}` };
+    return { halt: haltStateFrom(file.parsed.entries), corruption: null };
   } catch {
-    return null;
-  }
-}
-
-/** The first unparseable line of the journal, or null when it reads cleanly (or cannot be read at all). */
-function journalCorruption(paths: StatePaths): string | null {
-  try {
-    const first = readJournalFile(paths).parsed.corrupt[0];
-    return first === undefined ? null : `line ${String(first.line)}`;
-  } catch {
-    // An unreadable journal file is the durability probe's finding, not this one.
-    return null;
+    return { halt: null, corruption: null };
   }
 }

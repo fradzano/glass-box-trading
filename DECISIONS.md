@@ -3480,3 +3480,19 @@ small, no ADR split).
     number and the operator's job is that it passed and did not change.
 
   `npm run verify` exit 0 at 48 files / 651 tests.
+- **2026-09-06 — the runtime figure for `standingImpediment` was measured
+  against a fixture that avoided the work; the real one is ten times larger.**
+  The 162 ms / 500 MiB published on 2026-09-05 came from a synthetic journal of
+  entries that fail validation, so `parseJournalText` stopped at the first line
+  and the measurement described almost nothing. R47 measured it on 150 MiB of
+  **valid** entries: **1.5 s and 1.2 GiB** of transient RSS — and found the
+  reason it was that large, which is that the halt state and the corruption
+  check each opened and parsed the file. They are one read now, so expect
+  roughly half. Recorded rather than quietly replaced: “Grün ≠ korrekt” applies
+  to measurements as much as to tests, and a fixture that skips the expensive
+  path produces a number that is worse than no number, because it gets believed.
+
+- **2026-09-06 — R47 fix-set mutation probe: 12 of 12.** Two new mutants for
+  this round's blockers — marking after the journal read instead of before it,
+  and a marker-only KILL mapped as non-sticky — both caught, alongside the ten
+  from R44 through R46. `npm run verify` exit 0 at 48 files / **654 tests**.

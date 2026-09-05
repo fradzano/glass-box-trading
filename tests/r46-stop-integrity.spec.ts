@@ -8,7 +8,7 @@
 // narrower than the problem: it covered the two reasons `dispatchSafetyHalt`
 // accepts, and every other halt — KILL above all — reached the journal by an
 // ordinary append that marked nothing.
-import { chmodSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
 import { readEpochStore, setFencePending } from "../src/shell/epoch-store.js";
@@ -126,6 +126,70 @@ describe("R46-A3 — the journal is the authority, the projection is a cache of 
     const harness = await lifecycleHarness();
     writeHaltState(harness.paths, { halted: false, reason: null, sticky: false });
     expect(standingImpediment(harness.paths)).toBeNull();
+    cleanupLifecycleDirs();
+  });
+});
+
+describe("R47 — the marking may not depend on a second file, and a marker keeps its strength", () => {
+  it("R47-A1: a HALT whose journal cannot even be READ still leaves the mark", async () => {
+    // The fifth place this rule was missing, and the first where the journal
+    // was unreadable rather than unwritable: the mark used to be set after
+    // `loadJournal()`, so anything that made the read fail -- a Windows handle
+    // with FileShare.None, in the gate's own probe -- skipped the marking with
+    // every other line after it, and once the journal came back the same
+    // writer accepted a risk-increasing order. The mark is a claim about the
+    // EPOCH STORE, and it may not be conditional on a second file.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const gateway = gatewayFor(harness.paths, "unreadable-journal", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    const epoch = acquired.kind === "WON" ? acquired.epoch : 1;
+
+    // A journal the loader refuses is the portable stand-in for one it cannot
+    // open: both make `loadJournal` fail before anything downstream runs.
+    appendFileSync(harness.paths.journal, "this line is not a journal entry\n", "utf8");
+
+    const dispatched = await gateway.dispatch({
+      class: "authoritative",
+      epoch,
+      action: { kind: "journal_append", entry: { at: "2026-08-31T13:44:00.000Z", epoch, type: "HALT", reason: "KILL", detail: "equity below the kill threshold", sticky: true } },
+    });
+    expect(dispatched.ok, "the HALT cannot land on a journal that will not load").toBe(false);
+    expect(!dispatched.ok && dispatched.reason).toContain("JOURNAL_CORRUPT");
+
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "and the mark is there anyway").toBe(true);
+    expect(store.kind === "present" ? store.fenceReason : null).toBe("KILL");
+  });
+
+  it("R47-A2: a marker-only KILL is as irreversible as a journaled one", async () => {
+    // R46 let a KILL set the mark; the mapping of a marker-only state to
+    // `AUTH_FAILURE, sticky: false` was already there. Together they
+    // downgraded the strongest stop in the system: after a sticky KILL whose
+    // append failed, a softer halt could land on top and an ordinary manual
+    // release cleared both.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    expect(setFencePending(harness.paths, true, "KILL")).toEqual({ ok: true });
+    expect(readHaltState(harness.paths).halted, "nothing is journaled: the mark is all there is").toBe(false);
+
+    const gateway = gatewayFor(harness.paths, "post-kill", P5_NOW + 180_000);
+    const released = await gateway.dispatchManualUnhalt({ operator: "felix", reason: "probe: releasing a marker-only kill" });
+    expect(released.ok, "an ordinary release may not clear a kill").toBe(false);
+
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "the mark stands").toBe(true);
+  });
+
+  it("...while a marker-only credential fence stays releasable, so the distinction is real", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    expect(setFencePending(harness.paths, true, "AUTH_FAILURE")).toEqual({ ok: true });
+    const gateway = gatewayFor(harness.paths, "post-auth", P5_NOW + 180_000);
+    const released = await gateway.dispatchManualUnhalt({ operator: "felix", reason: "probe: credentials checked and replaced" });
+    expect(released.ok, "a credential fence is exactly what the manual release is for").toBe(true);
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending).toBe(false);
     cleanupLifecycleDirs();
   });
 });
