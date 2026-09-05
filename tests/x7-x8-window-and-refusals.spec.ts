@@ -9,6 +9,10 @@ import { closingWindow, cycleWindow, entryWindow, ENTRY_EXPIRY_COUNT, ENTRY_STRI
 import type { WindowConfig } from "../src/shell/market-window.js";
 import type { CalendarDay } from "../src/shell/market-calendar.js";
 import { journalEntryTypes, primaryEntryTypes, validateJournalEntry } from "../src/core/journal.js";
+import type { MarketObservation } from "../src/core/execution.js";
+import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
+import { defaultLifecycleDeps, lifecycleHarness, lifecycleMarket } from "./lifecycle-fixtures.js";
+import { SHORT_CALL, LONG_CALL } from "./execution-fixtures.js";
 import { managementRefusalDraft } from "../src/core/execution.js";
 
 const CONFIG: WindowConfig = { underlyingUniverse: ["SPY", "QQQ"], expiryMinSessions: 2, expiryMaxSessions: 30, maxStrikeDistanceBps: 1000 };
@@ -103,5 +107,137 @@ describe("S-X-08 a management refusal is journaled, not merely printed", () => {
     const draft = managementRefusalDraft({ atIso: "2026-09-03T16:01:12.000Z", epoch: 27 }, { exposureLifecycleId: "exposure:entry:2026-09-02:5:abc:g0", route: "expiry", generation: 2, reason: "NOT_ELIGIBLE: position no longer in the book" });
     expect(draft).toEqual({ at: "2026-09-03T16:01:12.000Z", epoch: 27, type: "MANAGEMENT_REFUSAL", exposureLifecycleId: "exposure:entry:2026-09-02:5:abc:g0", route: "expiry", generation: 2, reason: "NOT_ELIGIBLE: position no longer in the book" });
     expect(validateJournalEntry({ seq: 9, ...draft })).toMatchObject({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The wiring, not only the pure builder. A mutation probe on 2026-09-05 showed
+// that every pure decision below was measured and every SHELL seam that
+// carries it was not: dropping the held identities in phase 1, in the
+// watchdog, or in the adapter, and skipping the refusal append entirely, all
+// survived the suite. These cases close that.
+// ---------------------------------------------------------------------------
+
+/** Records the held identities each observation was asked for, and answers as the default fixture does. */
+function recordingMarket(clock: () => number, calls: string[][], overrides: Parameters<typeof lifecycleMarket>[1] = {}) {
+  const inner = lifecycleMarket(clock, overrides);
+  return (heldContractIds: readonly string[] = []): Promise<MarketObservation> => {
+    calls.push([...heldContractIds]);
+    return inner();
+  };
+}
+
+describe("S-X-07 wiring — the cycle asks for the identities its own book holds", () => {
+  it("passes no identity on an empty book and every held identity once a structure is filled", async () => {
+    const harness = await lifecycleHarness();
+    const calls: string[][] = [];
+    const market = recordingMarket(() => harness.clock.now, calls);
+
+    await harness.cycle({ market });
+    expect(calls[0], "the first cycle starts flat").toEqual([]);
+    expect(await harness.fake.read.positions()).not.toHaveLength(0);
+
+    await harness.cycle({ market });
+    const held = (await harness.fake.read.positions()).map(position => position.contractId).sort();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(held);
+    expect(calls[1]).toEqual(expect.arrayContaining([SHORT_CALL, LONG_CALL]));
+  });
+});
+
+describe("S-X-08 wiring — the refusal reaches the journal, not only the report", () => {
+  it("reproduces 2026-09-03: the held structure has no quote, the close is refused, and the refusal is journaled", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle(); // the entry fills under the normal calendar
+
+    // The 2026-09-03 shape, without the calendar: the observation carries no
+    // quote for either leg of the held structure, so the ladder cannot price
+    // its close. Before this change the refusal existed only in the printed
+    // report, which the scheduled task discarded.
+    const blind = async (): Promise<MarketObservation> => {
+      const full = await lifecycleMarket(() => harness.clock.now)();
+      const drop = <T,>(record: Readonly<Record<string, T>>): Record<string, T> =>
+        Object.fromEntries(Object.entries(record).filter(([id]) => id !== SHORT_CALL && id !== LONG_CALL));
+      return { ...full, quotesByContract: drop(full.quotesByContract), contractsById: drop(full.contractsById) };
+    };
+    const report = await harness.cycle({
+      market: blind,
+      tradingDay: "2026-09-03",
+      lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }),
+    });
+
+    expect(report.managementRefusals).not.toHaveLength(0);
+    expect(report.managementRefusals[0]).toMatchObject({ route: "deadline", reason: expect.stringContaining("PRICE_UNAVAILABLE") });
+    expect(report.managementCloses).toHaveLength(0);
+
+    const journaled = harness.entries().filter(entry => entry.type === "MANAGEMENT_REFUSAL");
+    expect(journaled, "the journal, not the printed report, is the record a judge has").not.toHaveLength(0);
+    expect(journaled[0]).toMatchObject({
+      exposureLifecycleId: report.managementRefusals[0]?.exposureLifecycleId,
+      route: report.managementRefusals[0]?.route,
+      reason: report.managementRefusals[0]?.reason,
+    });
+    // Two invocations, two primary entries: the refusals are additions beside
+    // the CYCLE entry, never a second primary for the same cycle (S-J-03).
+    expect(harness.entries().filter(entry => entry.type === "CYCLE")).toHaveLength(2);
+    expect(journaled.every(entry => typeof entry["generation"] === "number" || entry["generation"] === null)).toBe(true);
+  });
+
+  it("journals nothing when nothing was refused", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    expect(harness.entries().filter(entry => entry.type === "MANAGEMENT_REFUSAL")).toHaveLength(0);
+  });
+});
+
+describe("S-X-07 wiring — the adapter quotes a held identity the chain walk never produced", () => {
+  const SPOT = { bp: 500.0, ap: 500.1, bs: 100, as: 100, t: "2026-08-31T13:30:59.871234567Z" };
+  const HELD = "SPY260904P00300000"; // far outside any band the walk would take
+
+  function fakeFetch(seen: string[]) {
+    return (url: string): Promise<Response> => {
+      seen.push(url);
+      const json = (body: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+      if (url.includes("/v2/stocks/quotes/latest")) return json({ quotes: { SPY: { bp: SPOT.bp, ap: SPOT.ap, bs: SPOT.bs, as: SPOT.as, t: SPOT.t } } });
+      if (url.includes("/v2/options/contracts/")) {
+        return json({ symbol: HELD, underlying_symbol: "SPY", expiration_date: "2026-09-04", strike_price: "300", type: "put", tradable: false });
+      }
+      if (url.includes("/v2/options/contracts?")) return json({ option_contracts: [], next_page_token: null });
+      if (url.includes("/v1beta1/options/quotes/latest")) return json({ quotes: {} });
+      throw new Error(`unexpected request ${url}`);
+    };
+  }
+
+  it("resolves the held contract by identity and keeps it even when the broker returns no quote for it", async () => {
+    const seen: string[] = [];
+    const broker = createAlpacaBroker({
+      credentials: { keyId: "k", secretKey: "s" },
+      tradingOrigin: "https://paper-api.alpaca.markets",
+      dataOrigin: "https://data.alpaca.markets",
+      clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+      fetchImpl: fakeFetch(seen) as unknown as typeof fetch,
+    });
+
+    const observation = await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: [HELD] });
+    expect(seen.some(url => url.includes(`/v2/options/contracts/${HELD}`)), "the held identity is resolved directly").toBe(true);
+    // It has no quote, and it is still in the observation: the management step
+    // must report a missing price for a contract it holds, not for one it has
+    // never heard of.
+    expect(Object.keys(observation.contractsById)).toContain(HELD);
+    expect(observation.quotesByContract[HELD]).toBeUndefined();
+  });
+
+  it("does not look up a held identity the chain walk already produced, nor an underlying", async () => {
+    const seen: string[] = [];
+    const broker = createAlpacaBroker({
+      credentials: { keyId: "k", secretKey: "s" },
+      tradingOrigin: "https://paper-api.alpaca.markets",
+      dataOrigin: "https://data.alpaca.markets",
+      clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+      fetchImpl: fakeFetch(seen) as unknown as typeof fetch,
+    });
+
+    await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: ["SPY"] });
+    expect(seen.some(url => url.includes("/v2/options/contracts/SPY?") || url.endsWith("/v2/options/contracts/SPY"))).toBe(false);
   });
 });
