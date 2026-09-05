@@ -8,7 +8,7 @@ one.
 
 ## The measurement period
 
-One period, from the first regular approved cycle to the `TERMINAL` entry.
+One period, from the first regular approved cycle (Wed 2026-09-09) to the `TERMINAL` entry after the Thu 2026-12-10 US close.
 Strategy parameters and risk limits stay constant for its whole length: the
 sleeve budgets, the per-position and per-underlying caps, the structure
 whitelist, the expiry bounds, the cycle cadence, the analyst model. If any of

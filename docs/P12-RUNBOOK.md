@@ -1,211 +1,351 @@
 # P12 runbook — the three-month paper run
 
-Prepared 2026-09-05. Everything here that could be done without the owner has
-been done and is committed; what remains needs an account, a secret, a
-notification channel or a supervised market-hours slot, and is listed under
-**Owner steps** with the latest sensible time for each.
+Prepared 2026-09-05, revised after two blind gate rounds. Everything that could
+be done without the owner is done, committed and pushed. What remains needs an
+account, a secret, a notification channel or a supervised market-hours slot, and
+is in **[Owner steps](#owner-steps)** with a latest time for each.
 
-**Purpose, from the owner's brief:** operational reliability and economic
-plausibility of the concept over a quarter. What it cannot answer is written
-down in [`P12-EVALUATION.md`](P12-EVALUATION.md) and stays written down.
+**Purpose:** operational reliability and economic plausibility over a quarter.
+What the run cannot answer is in [`P12-EVALUATION.md`](P12-EVALUATION.md).
+
+**Three states are kept apart throughout this document and must stay apart:**
+
+| State | Means |
+|---|---|
+| **prepared** | the code exists and is committed |
+| **proven by test** | a test or an executed probe demonstrates it in this repository |
+| **live on the host** | registered, enabled and observed on the real machine, with the alert received on the owner's own device |
+
+Nothing below is **live on the host** yet. The tasks are registered disabled or
+not at all; `tools/install-scheduled-task.ps1` no longer enables anything unless
+`-Activate` is passed, so *installing is not activating*.
 
 ---
 
-## What is already true
-
-| Piece | State | Evidence |
-|---|---|---|
-| Credential fence survives an unwritable journal | done | S-G12-08, `tests/g12-08-durable-fence.spec.ts` (12 cases incl. restart, prior UNHALT, unwritable epoch store) |
-| Readiness never reports healthy under a standing halt | done | S-G14-05, same file |
-| Liveness is a separate signal | done | `tools/cycle-run.ps1`, measured against a real HTTP endpoint |
-| Alert path is exercisable end to end | done | `tools/check-alert-path.ps1` — delivery proven locally; **receipt is an owner step** |
-| Trigger survives both clock changes | done | `tools/check-schedule-coverage.mjs`; installer refuses to register without proof |
-| Long-run scale is measured | done | `tools/measure-longrun-scale.mjs`: 2,000 entries = 173 MB journal, render 23 ms, page 1.2 MiB after bounding detail blocks |
-| Qualification window decoupled | done | config only; `tests/p12-qualification-decoupling.spec.ts` |
-| Config for the run | done | `config/policy.json`, four values, validated fail-closed |
-| Evaluation fixed before the run | done | [`P12-EVALUATION.md`](P12-EVALUATION.md) |
-
 ## The dates
 
-| | |
-|---|---|
-| First regular cycle | Tuesday **2026-09-08**, from 15:30 CEST, supervised |
-| `FLATTEN_DATE` | **2026-12-08** (a Tuesday) — three calendar months |
-| Journaling-only day | Wednesday 2026-12-09 |
-| `TERMINAL` and shutdown | after the 2026-12-09 US close |
+The rule, applied in this order: **fix the first regular cycle first, derive the
+flatten date from it, then certify.** Three calendar months from the first
+regular cycle.
 
-**If the start slips.** `FLATTEN_DATE` is three calendar months from the first
-regular cycle, so a later start moves it. Changing it edits `config/policy.json`,
-which changes the **policy digest**, which **voids the certificate** — the
-arming gate compares the deployment's policy digest with the certificate's. So a
-slipped start means: change the date first, then run the certificate again, then
-arm. Never the other way round. A slip inside the same week that keeps
-2026-12-08 needs no config change and no new certificate.
+| Event | When | Note |
+|---|---|---|
+| Account, secrets, notification channel | by **Mon 2026-09-07, 22:00** | owner steps 1–3 |
+| Certificate run four (dev account, supervised) | **Tue 2026-09-08**, from 15:30 CEST | owner step 4 |
+| Install + verify + activation gate | Tue 2026-09-08, after PASS | owner steps 5–6 |
+| **First regular cycle** | **Wed 2026-09-09**, from 15:30 CEST, supervised | owner step 7 — the anchor |
+| `FLATTEN_DATE` | **Wed 2026-12-09** | three calendar months |
+| Journaling-only day | Thu 2026-12-10 | |
+| `TERMINAL` and shutdown | after the Thu 2026-12-10 US close | |
+
+The certificate and the first regular cycle are **different days on purpose**:
+the first cycle may only happen after PASS *and* after the activation gate, and
+squeezing both into one afternoon turns a gate into a formality.
+
+**If the start slips.** The flatten date moves with it — three calendar months
+from the first regular cycle, always. Changing `FLATTEN_DATE` edits
+`config/policy.json`, which changes the **policy digest**, which **voids the
+certificate**, because the arming gate compares the deployment's policy digest
+with the certificate's. So a slip means: change the date, *then* certify, *then*
+arm. There is no exception, including a slip of a single day.
+
+---
 
 ## Owner steps
 
-Each one needs you. The latest time assumes a Tuesday 2026-09-08 start.
+Every block below is meant to be pasted as-is. Each says which shell it needs.
+**No step asks you to print a secret**, and nothing here should be copied back
+into a chat.
 
-### 1. Create the fresh paper account — by Monday 2026-09-07 evening
+### 1. Create the fresh paper account — by Mon 2026-09-07, 22:00
 
-A new Alpaca **paper** account used by nothing but this agent. It must be
-created **on or after 2026-09-06T00:00:00Z**: the S-CYC-09 provenance proof
-requires the creation instant to be at or after `COMPETITION_START`, and an
-older account makes the bootstrap refuse. That refusal is the fail-closed
-direction — if it happens, tell me rather than editing the date, because
-editing it voids the certificate.
+*No shell. Alpaca web UI.*
 
-Enable options level 3 (multi-leg). Do not trade on it by hand, ever: a manual
-mutation while the agent operates is detectable only one cycle later (owner
-ruling 2026-09-02, S-CYC-05).
+A new Alpaca **paper** account, used by nothing but this agent, created **on or
+after 2026-09-06T00:00:00Z — that is Sunday 06.09.2026, 02:00 Europe/Berlin.**
+The S-CYC-09 provenance proof requires the creation instant to be at or after
+`COMPETITION_START`; an older account makes the bootstrap refuse. If that
+happens, tell me rather than editing the date: editing it voids the certificate.
 
-### 2. Put the secrets in the local `.env` — with step 1
+Enable options level 3 (multi-leg). Never trade on it by hand while the agent
+operates — a manual mutation is detectable only one cycle later (owner ruling
+2026-09-02, S-CYC-05).
 
-Never in chat, never in the repo. `.env` is gitignored; `.env.example`
-documents the shape. Set, in the repository root `.env`:
+### 2. Secrets and the new state directory — with step 1
+
+*Normal PowerShell. Working directory: the checkout.*
+
+Edit `.env` in an editor (it is gitignored; `.env.example` documents the shape).
+Set:
 
 ```
 ALPACA_PROFILE=competition
 ALPACA_COMP_KEY_ID=<the new account's key>
 ALPACA_COMP_SECRET_KEY=<the new account's secret>
-ALPACA_COMP_ACCOUNT_ID=<the new account number, e.g. PA........>
+ALPACA_COMP_ACCOUNT_ID=<the new account number>
 STATE_DIR=C:\Users\felix\glass-box-state\longrun-1
 BOOTSTRAP_DIAGNOSTIC_SINK=C:\Users\felix\glass-box-state\longrun-1-bootstrap.log
 ```
 
-`STATE_DIR` **must** be a new directory. The competition journal at
-`glass-box-state\competition-2` is a closed archive with `TERMINAL` as its last
-entry; it is never reopened, and the long run must not inherit it. Create the
-directory empty; the bootstrap seeds it.
-
-Leave `PRE_ARM_CERTIFICATE` pointing at whatever certificate run four produces
-(step 5 prints the path).
-
-### 3. Create the two notification checks — by Monday 2026-09-07 evening
-
-At healthchecks.io (the free tier is enough), two separate checks:
-
-| Check | Period | Grace | What its silence means |
-|---|---|---|---|
-| **liveness** | 15 min | 30 min | the machine, the scheduler or the process is gone |
-| **readiness** | 15 min | 50 min | the agent has not completed a cycle able to trade |
-
-Both must be scheduled to expect pings only **Mon–Fri inside the trigger
-window in this machine's local time** — use a cron schedule with the
-`Europe/Berlin` timezone, roughly `*/15 14-23 * * 1-5`, so a quiet Sunday is not
-an alert. Holidays and early closes still ping: the wrapper runs and reports
-liveness even when it skips.
-
-Point both at the channel you will actually see at night. Then add to `.env`:
-
-```
-HEALTHCHECK_PING_URL=<the readiness check's ping URL>
-HEALTHCHECK_LIVENESS_URL=<the liveness check's ping URL>
-```
-
-Then run, and **confirm on your own device**:
+Then create the directory — it must be **new and empty**; the competition
+journal is a closed archive and the long run must not inherit it:
 
 ```powershell
-.\tools\check-alert-path.ps1          # sends 4 signals, ends both checks failing
-# ... confirm two alerts arrived ...
-.\tools\check-alert-path.ps1 -ResolveOnly
+cd C:\Users\felix\source\repos\glass-box-trading
+New-Item -ItemType Directory -Force C:\Users\felix\glass-box-state\longrun-1 | Out-Null
+Get-ChildItem C:\Users\felix\glass-box-state\longrun-1   # expect: nothing
 ```
 
-The third case no script can send is silence. Before arming, stop both tasks
-during a session (or disconnect the machine) and let the liveness check expire.
-An alert path that has never carried an alert is not a safety net — during the
-competition it was not connected at all, and seventy pings went into a file on
-the machine most likely to have died.
+Check the configuration without printing any secret:
 
-### 4. Certificate run four — Tuesday 2026-09-08, US market hours, supervised
+```powershell
+node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');const e=loadEnvironment(process.cwd(),process.env);for(const k of ['ALPACA_PROFILE','ALPACA_COMP_ACCOUNT_ID','STATE_DIR','BOOTSTRAP_DIAGNOSTIC_SINK','PRE_ARM_CERTIFICATE','HEALTHCHECK_PING_URL','HEALTHCHECK_LIVENESS_URL','HEALTHCHECK_WATCHDOG_URL'])console.log(k.padEnd(28), /KEY|SECRET|TOKEN|URL/.test(k)?(e[k]?'<set>':'<MISSING>'):(e[k]??'<MISSING>'))"
+```
 
-On the **dev** account, with the dev scheduled tasks disabled for its duration
-(R40 C-2). It runs against the final config, so nothing in `config/` may change
+**Abort if:** `ALPACA_PROFILE` is not `competition`, `STATE_DIR` still points at
+`competition-2`, or anything reads `<MISSING>`.
+
+### 3. The three notification checks — by Mon 2026-09-07, 22:00
+
+*Browser, then normal PowerShell.*
+
+At healthchecks.io (free tier is enough), create **three** checks. The third
+exists because the other two cannot see the watchdog: liveness comes from the
+cycle wrapper and readiness from the state files, so a watchdog that is disabled
+or broken leaves both green.
+
+Get the exact schedules — the installer derives them from the trigger it will
+register, so they match the real firings rather than an approximation:
+
+```powershell
+cd C:\Users\felix\source\repos\glass-box-trading
+.\tools\install-scheduled-task.ps1 -WhatIf -CoverageThroughDate 2026-12-09
+```
+
+It prints, near the end, a cron expression, a timezone and a grace for each of
+the three checks. Configure them with **exactly** those values, set each check's
+schedule type to "cron", and point all three at the channel you will actually
+see at night. Then put the ping URLs into `.env`:
+
+```
+HEALTHCHECK_PING_URL=<readiness check ping URL>
+HEALTHCHECK_LIVENESS_URL=<liveness check ping URL>
+HEALTHCHECK_WATCHDOG_URL=<watchdog check ping URL>
+```
+
+Now exercise the path and **confirm receipt on your own device**:
+
+```powershell
+.\tools\check-alert-path.ps1
+# expect: six [SENT] lines and "ALERT PATH DELIVERED"
+# then wait for three alerts on your phone or mail, and read their bodies
+.\tools\check-alert-path.ps1 -ResolveOnly
+# expect: three [SENT] lines, and all three checks green again
+```
+
+**Abort if:** any signal says `UNDELIVERED` or `NOT CONFIGURED`, or an alert
+does not arrive. HTTP 200 is delivery, not receipt.
+
+The silence drills are separate and cannot be scripted. Do them in step 6.
+
+### 4. Certificate run four — Tue 2026-09-08, US market hours, supervised
+
+*Normal PowerShell. Working directory: the checkout.* This runs on the **dev**
+account against the final configuration; nothing in `config/` may change
 afterwards.
 
+The block sets dev values for this run only and restores your session afterwards
+**even if it fails**:
+
 ```powershell
-# dev credentials and dev STATE_DIR in the environment for this run only
-$env:ALPACA_PROFILE = 'dev'
-$env:STATE_DIR = 'C:\Users\felix\glass-box-state\dev'
-npm run certificate -- --owner-go
+cd C:\Users\felix\source\repos\glass-box-trading
+
+# Make sure no scheduled task can run while the certificate does.
+Get-ScheduledTask -TaskPath '\GlassBoxTrading\' | Select-Object TaskName, State
+# expect: both Disabled, or not registered at all. If either is Ready, stop and
+# disable it from an elevated shell before continuing.
+
+$saved = @{}
+foreach ($name in 'ALPACA_PROFILE','STATE_DIR','BOOTSTRAP_DIAGNOSTIC_SINK','PRE_ARM_CERTIFICATE') {
+    $saved[$name] = [System.Environment]::GetEnvironmentVariable($name)
+}
+try {
+    $env:ALPACA_PROFILE            = 'dev'
+    $env:STATE_DIR                 = 'C:\Users\felix\glass-box-state\dev'
+    $env:BOOTSTRAP_DIAGNOSTIC_SINK = 'C:\Users\felix\glass-box-state\dev-bootstrap.log'
+    $env:PRE_ARM_CERTIFICATE       = ''
+    npm run certificate -- --owner-go
+} finally {
+    foreach ($name in $saved.Keys) {
+        if ($null -eq $saved[$name]) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+        else { Set-Item "env:$name" $saved[$name] }
+    }
+    Write-Host 'dev environment variables restored for this shell.'
+}
 ```
 
-It must end `verdict: PASS` with the dev account flat. Note the certificate
-path it prints and set `PRE_ARM_CERTIFICATE` to it.
+**Expect:** `verdict: PASS`, the dev account flat, and a printed certificate
+path under `evidence/pre-arm/`.
+**Abort if:** the verdict is anything but PASS, or the dev account is not flat.
 
-### 5. Install the tasks — after step 4 passes
+Then put that path into `.env` as `PRE_ARM_CERTIFICATE=` and re-run the
+configuration check from step 2. **Close this PowerShell window** before step 5,
+so no dev variable can survive in it.
+
+### 5. Install the tasks — Tue 2026-09-08, after PASS
+
+*Elevated PowerShell ("Run as administrator").* Registration needs it.
 
 ```powershell
-.\tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-08
+cd C:\Users\felix\source\repos\glass-box-trading
+npm run build
+.\tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-09
 ```
 
-It refuses to register unless the trigger window provably contains every
-exchange session through that date. Then, from an elevated shell:
+**Expect:** `SCHEDULE COVERAGE OK`, then both tasks registered **and
+immediately disabled** — the output says so. It refuses to register at all if
+the trigger window does not provably contain every exchange session through the
+given date.
+
+Then, still elevated:
 
 ```powershell
+.\tools\verify-scheduled-tasks.ps1
+# expect: SCHEDULER CHECK PASSED (30 checks)
+```
+
+**Abort if:** any check fails. Do not enable anything yet.
+
+### 6. The activation gate — Tue 2026-09-08
+
+*Elevated PowerShell for the enable/disable steps.*
+
+All six of these must hold before the run is allowed to be unattended. The first
+three are proven in this repository; the last three can only be proven on this
+machine, and none of them has been.
+
+1. `npm run verify` exit 0. **proven by test**
+2. `.\tools\verify-scheduled-tasks.ps1` passes. **proven on the host in step 5**
+3. Certificate run four PASS. **step 4**
+4. **Alert receipt**, all three checks, confirmed on your device. **step 3**
+5. **Three silence drills**, each a different path, each confirmed:
+   ```powershell
+   # a. the watchdog alone — the case that was invisible until it got its own check
+   Enable-ScheduledTask  -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
+   # wait out the watchdog check's period + grace during a session.
+   # expect: watchdog check DOWN, liveness and readiness still UP.
+
+   # b. both tasks
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+   # expect: liveness and readiness DOWN as well.
+
+   # c. the machine itself — shut it down during a session for one period + grace.
+   # expect: all three DOWN. This is the only drill that proves the alert does not
+   # depend on the machine it is reporting about.
+   ```
+6. **Restart and signed-out operation**, neither of which any script can assert:
+   ```powershell
+   # restart: with both tasks enabled, reboot during a session and confirm from
+   #   the liveness check and STATE_DIR\cycle-run.log that firings resumed.
+   # signed out: with both tasks enabled, sign out (do not shut down) and confirm
+   #   the next firing still produced a cycle-run.log line. S4U is configured for
+   #   exactly this, and configuration is not evidence.
+   ```
+
+Only when all six hold:
+
+```powershell
+Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
+# expect: SCHEDULER CHECK PASSED, and both states Ready
 ```
 
-Every check must pass. It will fail today against the tasks currently
-registered, correctly: they still invoke `node` directly, from before
-`cycle-run.ps1` existed.
+### 7. The supervised first regular cycle — Wed 2026-09-09, from 15:30 CEST
 
-### 6. The supervised first cycle — Tuesday 2026-09-08
+*Normal PowerShell.* Watch one full cycle and confirm, in order:
 
-Watch one full cycle end to end with the tasks enabled. Confirm, in order:
+```powershell
+Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 20
+Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 2
+```
 
-1. `cycle-run.log` in the new `STATE_DIR` shows the invocation and the full
-   printed report.
+1. `cycle-run.log` shows the invocation and the whole printed report.
 2. The journal has a `BOOTSTRAP` entry and the provenance proof passed.
-3. The liveness check went green.
-4. The readiness check went green.
-5. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes.
+3. Liveness, readiness and watchdog checks are all green.
+4. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes.
 
-Only then is the run started. This is the moment the deployment becomes
-unattended, and it is the last one that is free.
+**This cycle is the anchor for the flatten date.** If it does not happen on
+2026-09-09, stop and tell me: the date moves and the certificate must be redone.
 
 ---
 
 ## During the run
 
-**Weekly, and after any alert:** publish the dashboard through the
-digest-neutral path in [`PUBLISH-RUNBOOK.md`](PUBLISH-RUNBOOK.md), from the
-`gbt-publish` worktree, and check the probe comes back clean.
+**Weekly:** publish the dashboard through the digest-neutral path in
+[`PUBLISH-RUNBOOK.md`](PUBLISH-RUNBOOK.md), from the `gbt-publish` worktree, and
+check the probe comes back clean.
 
-**On a readiness alert:** the body names the impediment. `HALT_STANDING:<reason>`
-means the deployment stopped and needs a decision; `CREDENTIAL_FENCE_UNRELEASED`
-means a credential rejection stands and the fence procedure has to be run —
-check and cancel working orders in the broker dashboard **before** the un-halt,
-because the whole point of the fence is that we do not know what is resting
-there. The release is `dist/shell/manual-unhalt.js` and it is the only thing
-that clears the mark.
+**On a readiness alert.** The body names the impediment.
 
-**On a liveness alert:** the machine, the scheduler or the process. The journal
-and `cycle-run.log` say which. Recovery is normally just letting the schedule
+* `HALT_STANDING:<reason>` — the deployment stopped and needs a decision.
+* `CREDENTIAL_FENCE_UNRELEASED` — a credential rejection stands. Run the fence
+  procedure **before** releasing: the agent could not read its working orders
+  when the credentials were refused, so it does not know what is resting at the
+  broker. Check and cancel in the broker dashboard first.
+* `STATE_NOT_DURABLE:<detail>` — the journal, epoch store or halt file cannot be
+  written. Usually a full disk. Entries are blocked until it is fixed;
+  risk-reducing closes still run.
+
+The release, when you have done the procedure — *normal PowerShell*:
+
+```powershell
+cd C:\Users\felix\source\repos\glass-box-trading
+node dist\shell\unhalt-cli.js --operator felix --reason "what you checked and why you are releasing"
+# prints the standing state and the fence procedure, and changes NOTHING without --confirm
+node dist\shell\unhalt-cli.js --operator felix --reason "..." --confirm
+# expect: "RELEASED: UNHALT seq <n>" and "fence mark now false"
+```
+
+**On a liveness alert:** the machine, the scheduler or the process. `cycle-run.log`
+and the journal say which. Recovery is normally just letting the schedule
 resume — `StartWhenAvailable` is set — but a killed writer holds the epoch until
 `LOCK_TAKEOVER_BOUND_MS` (6.7 min) elapses, so expect at most one lost cycle
 after a hard stop.
+
+**On a watchdog alert:** the safety net itself is not running. Nothing is
+protecting the book against a hung writer until it is back. Check the task state
+and `STATE_DIR\watchdog-run.log`.
 
 **Never during the run:** change a strategy parameter or a risk limit. If one
 must change, the measurement period **ends** and a new one begins
 ([`P12-EVALUATION.md`](P12-EVALUATION.md)); the two are never summed.
 
-**Disk:** budget about 200 MB for the journal, plus the publish tree. Measured:
+**Disk:** budget about 200 MB for the journal plus the publish tree. Measured at
 69.4 KiB per entry, roughly 2,000 entries.
 
 ## Ending it
 
-1. **2026-12-08**, `FLATTEN_DATE`: every cycle closes the book through the
+1. **Wed 2026-12-09**, `FLATTEN_DATE`: every cycle closes the book through the
    ladder; by the close the assertion is zero risk-bearing positions and zero
    non-terminal orders (S-G11-01).
-2. **2026-12-09**, journaling-only: no entries; if anything is still open the
-   failure path keeps closing it (S-G11-02).
-3. After the 2026-12-09 US close: `node dist/shell/deadline-cli.js terminal`
-   from the operating checkout, exit 0 only when the entry landed (S-G11-04).
+2. **Thu 2026-12-10**, journaling-only: no entries; a still-open position keeps
+   being closed by the failure path (S-G11-02).
+3. After the Thu 2026-12-10 US close, *normal PowerShell*:
+   ```powershell
+   node dist\shell\deadline-cli.js terminal
+   # exit 0 only when the entry landed
+   ```
 4. Publish the final revision and probe it.
-5. **Disable both scheduled tasks** from an elevated shell and read the state
-   back as `Disabled` — the same step that closed the competition.
-6. Archive the journal, the logs and both receipts in the verification store,
+5. *Elevated PowerShell*: disable both tasks and read the state back.
+   ```powershell
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
+   Get-ScheduledTask -TaskPath '\GlassBoxTrading\' | Select-Object TaskName, State
+   # expect: both Disabled
+   ```
+6. Archive the journal, both logs and the receipts in the verification store,
    then write the evaluation from [`P12-EVALUATION.md`](P12-EVALUATION.md).
 
 The journal is then a closed archive, exactly like the competition's.
