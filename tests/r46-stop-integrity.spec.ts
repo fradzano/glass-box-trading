@@ -193,3 +193,100 @@ describe("R47 — the marking may not depend on a second file, and a marker keep
     cleanupLifecycleDirs();
   });
 });
+
+describe("R48 — the strongest stop wins, whatever order the reasons arrive in", () => {
+  it("a KILL whose append fails upgrades a standing AUTH_FAILURE mark instead of hiding behind it", async () => {
+    // The counter-example, executed: an AUTH_FAILURE halt is journaled and
+    // marked; a KILL is then requested and its append fails.
+    // `markFenceBeforeHalt` returned early because a mark was already there, so
+    // the mark still said AUTH_FAILURE, `effectiveHaltState` preferred the
+    // journaled soft halt, and an ordinary manual release cleared both. The
+    // strongest stop in the system was erased by the order the reasons
+    // happened to arrive in.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const gateway = gatewayFor(harness.paths, "escalating", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    const epoch = acquired.kind === "WON" ? acquired.epoch : 1;
+
+    // 1. a soft halt that lands, and marks
+    expect((await gateway.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "credentials rejected" })).ok).toBe(true);
+    const afterSoft = readEpochStore(harness.paths);
+    expect(afterSoft.kind === "present" && afterSoft.fenceReason).toBe("AUTH_FAILURE");
+
+    // 2. a KILL that cannot be journaled
+    makeJournalUnwritable(harness.paths);
+    try {
+      const killed = await gateway.dispatch({
+        class: "authoritative",
+        epoch,
+        action: { kind: "journal_append", entry: { at: "2026-08-31T13:50:00.000Z", epoch, type: "HALT", reason: "KILL", detail: "equity below the kill threshold", sticky: true } },
+      });
+      expect(killed.ok, "the KILL could not be journaled").toBe(false);
+    } finally {
+      makeJournalWritable(harness.paths);
+    }
+
+    // 3. the mark must now carry the STRONGER reason, not the older one
+    const afterKill = readEpochStore(harness.paths);
+    expect(afterKill.kind === "present" && afterKill.fencePending).toBe(true);
+    expect(afterKill.kind === "present" ? afterKill.fenceReason : null, "the mark records the strongest stop it has seen").toBe("KILL");
+
+    // 4. ...and an ordinary release must not clear it, even though the JOURNAL
+    //    only knows about the soft halt.
+    const released = await gateway.dispatchManualUnhalt({ operator: "felix", reason: "probe: releasing the soft halt" });
+    expect(released.ok, "a kill hidden behind a soft halt is still a kill").toBe(false);
+    expect(!released.ok && released.reason).toBe("HALT_IS_STICKY");
+    const afterRelease = readEpochStore(harness.paths);
+    expect(afterRelease.kind === "present" && afterRelease.fencePending).toBe(true);
+  });
+
+  it("and the other order too: a marker-only KILL is not hidden by a soft halt that lands afterwards", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    expect(setFencePending(harness.paths, true, "KILL")).toEqual({ ok: true });
+
+    const gateway = gatewayFor(harness.paths, "soft-after-kill", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+    // A soft safety halt lands on top of the marker-only kill.
+    await gateway.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "credentials rejected after the kill" });
+
+    const released = await gateway.dispatchManualUnhalt({ operator: "felix", reason: "probe: releasing the soft halt" });
+    expect(released.ok, "the journal's softer halt may not shadow the marker's kill").toBe(false);
+    expect(!released.ok && released.reason).toBe("HALT_IS_STICKY");
+  });
+
+  it("readiness reports the STRONGER stop, not the one the journal happens to know", async () => {
+    // Found by the mutation probe, not by reading: reverting
+    // `standingImpediment` to "journal first, mark only if the journal is
+    // clear" changed no test at all. The operator would then have been told a
+    // releasable AUTH_FAILURE stands while the deployment actually carried an
+    // irreversible KILL -- the same defect as the gateway's, one layer out.
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const gateway = gatewayFor(harness.paths, "readiness-merge", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+    expect((await gateway.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "credentials rejected" })).ok).toBe(true);
+    // The journal knows only the soft halt; the mark carries the kill.
+    expect(setFencePending(harness.paths, true, "KILL")).toEqual({ ok: true });
+
+    expect(standingImpediment(harness.paths)).toMatchObject({ reason: "KILL", fencePending: true });
+  });
+
+  it("a soft mark under a soft journaled halt still releases, so the rule is about strength and not about refusing everything", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const gateway = gatewayFor(harness.paths, "soft-only", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "unknown" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+    expect((await gateway.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "credentials rejected" })).ok).toBe(true);
+
+    const released = await gateway.dispatchManualUnhalt({ operator: "felix", reason: "probe: credentials replaced" });
+    expect(released.ok, "this is exactly what the manual release exists for").toBe(true);
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending).toBe(false);
+    cleanupLifecycleDirs();
+  });
+});

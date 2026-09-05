@@ -255,10 +255,21 @@ So, concretely:
 * **Set an alarm for 15:35 local on the next trading day** — five minutes
   *after* the open, which is 15:30 local, or 14:35 in the week between the two
   clock changes — and decide then with the book in front of you.
-* **What carries the position until then is the structure itself.** Every
-  position this agent opens has a maximum loss fixed at entry and it cannot
-  grow over a weekend. That is the whole reason the strategy is defined-risk,
-  and this is the hour in which that choice pays for itself.
+* **What carries an INTACT structure until then is the structure itself.**
+  Every position this agent opens has a maximum loss fixed at entry, and while
+  all its legs are there that cap cannot grow over a weekend. That is the whole
+  reason the strategy is defined-risk, and this is the hour in which that
+  choice pays for itself.
+* **A residue is the exception, and it is not a small one.** A share position
+  from an assignment, or a short leg whose long wing expired, is outside that
+  cap — the spec's own S-X-06 is the assignment exception to A23's
+  constructive worst case, which is why the runner raises
+  `UNBOUNDED_RESIDUE_RECOVERY` and closes such a residue with no price cap. A
+  short share residue is unbounded. Options still cannot be traded after
+  22:00 local, but a share residue is an equity position and equities have
+  extended-hours sessions; whether an order is accepted depends on the broker
+  and the order type, so look rather than assume. This is the one thing in this
+  document that can get materially worse while you sleep.
 * **The exception to the wait** is an expiry inside the silence: a structure
   expiring on the Monday needs the Monday open, not the Monday afternoon.
   Note the earliest expiry in the book beside the alarm.

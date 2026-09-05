@@ -16,7 +16,7 @@ import type { LifecycleComposition, ProvenanceSource } from "../src/shell/agent-
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
 import { runCycle } from "../src/shell/cycle-runner.js";
 import type { CycleReport } from "../src/shell/cycle-runner.js";
-import { writeEpochStore } from "../src/shell/epoch-store.js";
+import { readEpochStore, writeEpochStore } from "../src/shell/epoch-store.js";
 import { createFakeBroker } from "../src/shell/fake-broker.js";
 import type { FakeBroker } from "../src/shell/fake-broker.js";
 import { readHaltState } from "../src/shell/halt-state.js";
@@ -282,6 +282,19 @@ describe("P8 / S-CYC-09 — the executed competition bootstrap", () => {
     // the seed gate itself is what makes an order impossible (P5 decision, mirrored in cyc-recovery-bootstrap).
     expect(harness.entries()).toHaveLength(0);
     expect(harness.fake.mutations).toHaveLength(0);
+
+    // R48: what the JOURNAL does not record, the durable mark now does. Since
+    // every refused HALT marks before it appends, this refusal leaves a
+    // PROVENANCE_BROKEN mark in the epoch store -- and because that reason is
+    // sticky, no manual release can clear it. The runbook told the operator
+    // there was "no fence to clear" here and that the state directory could be
+    // emptied; both were false, and this assertion is what makes them stay
+    // false-proof.
+    const store = readEpochStore(harness.paths);
+    expect(store.kind).toBe("present");
+    expect(store.kind === "present" && store.fencePending, "the refusal is durable even with an empty journal").toBe(true);
+    expect(store.kind === "present" ? store.fenceReason : null).toBe("PROVENANCE_BROKEN");
+    expect(readHaltState(harness.paths).halted, "and it is NOT in the halt projection either").toBe(false);
     const blocked = await harness.gateway.dispatch({ class: "authoritative", epoch: 1, action: { kind: "journal_append", entry: { at: "2026-08-31T13:32:00.000Z", epoch: 1, type: "SKIP", reasonCodes: [], snapshot: null } } });
     expect(blocked).toMatchObject({ ok: false, reason: "SEED_NOT_JOURNALED" });
   });

@@ -3,7 +3,7 @@
 // the shell into the snapshot the core receives. The core never reads it.
 // An unreadable or malformed flag counts as halted (fail closed).
 import { readFileSync } from "node:fs";
-import { haltStateFrom, notHalted } from "../core/journal.js";
+import { haltIsSticky, haltStateFrom, notHalted, strongerHalt } from "../core/journal.js";
 import type { HaltState } from "../core/journal.js";
 import { writeJsonAtomically } from "./epoch-store.js";
 import type { StatePaths } from "./state-dir.js";
@@ -49,26 +49,26 @@ export function writeHaltState(paths: StatePaths, state: HaltState): void {
 export function standingImpediment(paths: StatePaths): { readonly reason: string; readonly fencePending: boolean } | null {
   const store = readEpochStore(paths);
   const fencePending = store.kind === "present" && store.fencePending;
-  const persisted = readHaltState(paths);
-  // R46-A3: the journal is the authority and the projection is a cache of it.
-  // Reading only the cache reported readiness SUCCESS over a real, journaled
-  // `HALT KILL` whose projection write had failed -- and repeated success
-  // pings suppress the external silence alarm too, so the one signal that
-  // would have carried the stop was the one that said all-clear. The journal
-  // is consulted first; the projection then only adds what the journal cannot
-  // contradict.
   // R47: the journal is read ONCE. The halt state and the corruption check
   // each used to open and parse it, so every call paid for two full reads of a
   // file that reaches ~150 MiB by the end of a three-month run -- a gate
   // measured the pair at 1.5 s and 1.2 GiB of transient memory.
   const journal = journalState(paths);
-  if (journal.halt !== null && journal.halt.halted) return { reason: journal.halt.reason ?? "UNKNOWN", fencePending };
-  // Most specific first, so the operator is told the thing they must act on
-  // rather than a symptom of it.
-  if (persisted.halted) return { reason: persisted.reason ?? "UNKNOWN", fencePending };
-  // fencePending can only be true for a present store, so the reason it
-  // carries is readable here without another narrowing.
-  if (fencePending) return { reason: store.fenceReason ?? "AUTH_FAILURE", fencePending: true };
+  const persisted = readHaltState(paths);
+
+  // R48: the same merge the gateway makes, for the same reason. Reporting the
+  // journal's halt and ignoring a stronger mark would tell the operator that a
+  // releasable AUTH_FAILURE stands while the deployment actually carries an
+  // irreversible KILL. The reason reported is the reason of the strongest stop.
+  // R46-A3: the journal outranks its own projection, which is a cache of it --
+  // a real HALT whose projection write failed used to read as all-clear.
+  const marked: HaltState = fencePending
+    ? { halted: true, reason: store.fenceReason ?? "AUTH_FAILURE", sticky: haltIsSticky(store.fenceReason ?? "AUTH_FAILURE") }
+    : notHalted();
+  const journaled = journal.halt ?? (persisted.halted ? persisted : notHalted());
+  const effective = strongerHalt(journaled, marked);
+  if (effective.halted) return { reason: effective.reason ?? "UNKNOWN", fencePending };
+
   // R44-B6: an unreadable authority state used to read as "no fence", so a
   // corrupt epoch.json reported readiness SUCCESS while every acquisition
   // returned EPOCH_UNREADABLE. An ABSENT store is a different thing entirely

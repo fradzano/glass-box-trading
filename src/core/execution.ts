@@ -34,7 +34,7 @@ import type {
   Sleeve,
   StrikeCents,
 } from "./domain.js";
-import { isUtcIsoTimestamp, latestQuoteSamples } from "./journal.js";
+import { haltIsSticky, isUtcIsoTimestamp, latestQuoteSamples } from "./journal.js";
 import type { AccountBinding, CloseRouteLabel, JournalDraft, JournalEntry, JournalQuoteSample, JournalSnapshot, OutcomeStatus, ReasonCode } from "./journal.js";
 import { closeAttemptId, closeLifecycleId } from "./order-identity.js";
 
@@ -1566,7 +1566,7 @@ export type RunnerHaltReason =
  * (S-G14-02), and a failed Thursday flatten assertion (S-G11-01).
  */
 export function haltDraft(context: DraftContext, reason: RunnerHaltReason, detail: string): JournalDraft {
-  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: reason === "KILL" || reason === "PROVENANCE_BROKEN" };
+  return { at: context.atIso, epoch: context.epoch, type: "HALT", reason, detail, sticky: haltIsSticky(reason) };
 }
 
 export function killDraft(context: DraftContext, equityCents: number, thresholdCents: number): JournalDraft {

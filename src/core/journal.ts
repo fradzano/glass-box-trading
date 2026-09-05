@@ -62,6 +62,33 @@ export type HaltReason =
   | "RESIDUE_UNRESOLVED" | "CONFIG_INVALID" | "BROKER_PRICE_BREACH" | "WATCHDOG_TAKEOVER" | "DEADLINE_FLATTEN_FAILED"
   | "EXPIRY_EVICTION_STUCK" | "CLOSE_LADDER_CAPPED";
 
+/**
+ * Which halt reasons are irreversible. A sticky halt is not cleared by the
+ * ordinary manual release; it needs the deployment to be reconciled and
+ * re-certified. The rule lives here because three places used to restate it:
+ * `haltDraft` when it builds an entry, the gateway when it maps a durable
+ * mark, and the manual release when it decides whether it may proceed.
+ */
+export function haltIsSticky(reason: string): boolean {
+  return reason === "KILL" || reason === "PROVENANCE_BROKEN";
+}
+
+/**
+ * The stronger of two stops, for the merge of journal, projection and durable
+ * mark. A gate executed what a missing merge costs: an `AUTH_FAILURE` halt was
+ * journaled and marked, a `KILL` was then requested and its append failed, and
+ * because the mark was already set and the journal knew only the soft halt,
+ * an ordinary manual release cleared both. Strength, not order of arrival,
+ * decides -- sticky outranks non-sticky, and a halt outranks no halt.
+ */
+export function strongerHalt(left: HaltState, right: HaltState): HaltState {
+  if (!left.halted) return right;
+  if (!right.halted) return left;
+  if (left.sticky && !right.sticky) return left;
+  if (right.sticky && !left.sticky) return right;
+  return left;
+}
+
 export function haltReasons(): readonly HaltReason[] {
   return [
     "MANUAL", "GAP", "EPOCH_STORE_RESET", "ACCOUNT_BINDING_MISMATCH", "KILL", "AUTH_FAILURE", "PROVENANCE_BROKEN",

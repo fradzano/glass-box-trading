@@ -33,7 +33,7 @@ regular cycle.
 | Account, secrets, notification channel | by **Mon 2026-09-07, 22:00** | owner steps 1–3 |
 | Certificate run four (dev account, supervised) | **Tue 2026-09-08**, from 15:30 CEST | owner step 4 |
 | Install + verify | Tue 2026-09-08, after PASS | owner step 5 |
-| Activation gate (drills, restart, signed out) | Tue 2026-09-08 22:10 CEST → Wed 2026-09-09 15:05 CEST | owner step 6 — outside every session, so nothing trades |
+| Activation gate (drills, cold start) | Tue 2026-09-08 22:10 → Wed 2026-09-09 **14:45** | owner step 6 — outside every session, so nothing trades |
 | **First regular cycle** | **Wed 2026-09-09**, the 15:15 CEST firing, supervised | owner step 7 — the anchor |
 | `FLATTEN_DATE` | **Wed 2026-12-09** | three calendar months |
 | Journaling-only day | Thu 2026-12-10 | |
@@ -164,11 +164,16 @@ assume an ordinary session:**
   equivalents). The close is 19:00 local, not 22:00, so "enable at 22:10"
   wastes three hours; and as a *certificate* day an early close cuts the
   supervised window short.
-* **A day whose three-month run crosses the American spring change without the
-  European one** (14 to 28 March 2027, for anchors from mid-December on). The
-  session opens at 13:30 local in those two weeks, and the trigger window
-  starts at 14:00 — the installer's coverage check will refuse to register, and
-  the answer is a wider `-EdgeMarginMinutes`, not a later anchor.
+* **A day in the corresponding spring mismatch**, 14 to 28 March 2027, when
+  the United States has changed and Europe has not. An earlier version of this
+  list claimed the session opens at 13:30 local then and that the trigger
+  window would not cover it. That was wrong, and checking it is one line:
+  09:30 New York on 2027-03-15 is 13:30 UTC and therefore **14:30 Berlin** —
+  exactly like the October mismatch, comfortably inside a window that starts at
+  14:00. The coverage check is not the problem. The problem is the same one as
+  above: at a 14:30 open the first firing that runs a cycle is 14:15, before
+  the gate, so those five days are forbidden as an **anchor** and are entirely
+  ordinary as run days.
 
 Applied to the planned anchor of **Wed 2026-09-09**: certificate Tue 2026-09-08,
 `FLATTEN_DATE` Wed 2026-12-09, journaling-only Thu 2026-12-10, coverage through
@@ -200,17 +205,32 @@ So the rule has two halves and both are always stated:
   in the broker dashboard, never leg by leg, and write every close into
   `STATE.md` — the evaluation separates manual closes from the agent's own and
   can only do that if they are named.
-* **Outside the session:** there is no risk-reducing action available. Do not
-  attempt one. Write down what you saw and what is open, set an alarm for
-  **15:35 local on the next trading day** — five minutes *after* the open,
-  which is at 15:30; in the week between the two clock changes the session
-  opens at 14:30, so the alarm is 14:35 — and decide then, with the book in
-  front of you. An alarm at 15:20 would ring ten minutes before anything could
-  be done, which is the mistake this whole paragraph exists to prevent. What protects the position until
-  then is the defined-risk structure itself: the maximum loss was fixed when
-  the position was opened and cannot grow overnight or over a weekend. That is
-  the whole reason this strategy is defined-risk, and it is doing its job in
-  exactly this hour.
+* **Outside the session, and what to do depends on what is actually in the
+  book.** Look before concluding: the broker dashboard reads at any hour, even
+  when it will not accept an order.
+
+  * **Intact option structures.** Nothing can be done and nothing needs to be.
+    Every leg is still there, so the maximum loss is the one fixed at entry and
+    it cannot grow overnight or over a weekend. That is the whole reason this
+    strategy is defined-risk, and this is the hour it earns its keep.
+  * **A residue — shares from an assignment, or a short leg whose long wing
+    expired.** The cap does **not** hold here, and the spec says so itself:
+    S-X-06 is the assignment exception to A23's constructive worst case, which
+    is why the runner raises `UNBOUNDED_RESIDUE_RECOVERY` and closes such a
+    residue with **no price cap** — the realised cost may exceed the original
+    maximum loss, and a short share residue has no upper bound at all. This is
+    the one thing here that can get materially worse while you sleep.
+    Options still cannot be traded outside 15:30–22:00 local. A **share**
+    residue is an equity position, and equities do have pre- and post-market
+    sessions — whether an order is accepted depends on the broker's
+    extended-hours support and the order type, so **check in the dashboard
+    rather than assume either way**. If it can be closed, close it and note it.
+
+  Either way, write down what is open — which structures, which residues, what
+  size and direction — and set an alarm for **15:35 local on the next trading
+  day**, five minutes *after* the open at 15:30 (14:35 in the week between the
+  two clock changes). An alarm at 15:20 would ring ten minutes before anything
+  could be done, which is the mistake this paragraph exists to prevent.
 
 ---
 
@@ -749,14 +769,16 @@ Then, in this order and no other:
 5. Re-run **owner step 4** on the new certificate day; put the new path into
    `.env` as `PRE_ARM_CERTIFICATE=`.
 6. Re-run **owner step 5** with `-CoverageThroughDate <journaling-only day>`.
-7. Re-run **owner step 6** in full. The drills were invalidated by the
+7. **Re-check the three external checks, before any drill.**
+   `install-scheduled-task.ps1` derives the cron expressions from the trigger
+   it registers, so a different coverage date can print different ones. Compare
+   what it just printed with what the three checks are configured with and
+   update any that differ. This comes **first**, because the drills measure
+   those checks: a drill against a check on the old schedule proves something
+   about a deployment that no longer exists, and it would have to be repeated
+   anyway.
+8. Re-run **owner step 6** in full. The drills were invalidated by the
    re-installation; none of them carries over.
-8. **Re-check the three external checks.** `install-scheduled-task.ps1` derives
-   the cron expressions from the trigger it registers, so re-running step 5
-   with a different coverage date can print different ones. Compare what it
-   prints now with what the three checks are configured with, and update any
-   that differ — a check on the wrong schedule alarms at the wrong time, and
-   that is the same class of mistake as swapping two of the ping URLs.
 9. Update the calendar with block 9 of
    [`P12-CALENDAR-PROMPTS.md`](P12-CALENDAR-PROMPTS.md), which asks for the new
    anchor and derives the rest rather than shifting.
@@ -816,8 +838,23 @@ Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
 ```
 
 `gbt-readiness` goes red with `COMPETITION_PROVENANCE_FAILED`. Nothing traded
-and nothing can: the unspent seed is the thing that blocks every order, which is
-why there is no halt to release and no fence to clear.
+and nothing can: the unspent seed is what blocks every order.
+
+**But the state directory is not empty of consequence, and an earlier version of
+this document said it was.** Since every refused halt marks the durable fence
+before it attempts its entry, this refusal leaves a mark behind even though the
+journal is untouched — and its reason, `PROVENANCE_BROKEN`, is **sticky**, so
+no manual release can clear it. Look at all three files, not two:
+
+```powershell
+Get-Content C:\Users\felix\glass-box-state\longrun-1\epoch.json
+# expect on this path: "seedPending": true, "fencePending": true,
+#   "fenceReason": "PROVENANCE_BROKEN"
+```
+
+That mark is the record of a rejected account, it is irreversible by design,
+and it is the reason the next step is a **new state directory** rather than a
+cleaned-out one.
 
 **Swapping the account.** The anchor procedure in step 6 changes dates; it does
 **not** change credentials, so both are needed and in this order:
@@ -839,20 +876,26 @@ Then:
    credentials and leaving the account id is the mistake this list exists to
    prevent: the binding check would then refuse every mutation and halt the
    deployment on `ACCOUNT_BINDING_MISMATCH`.
-3. **Decide what happens to the state directory, and the two cases differ:**
-   * *This failure, on a first-ever run:* the journal is empty and no halt was
-     persisted, so nothing irreversible was recorded. Delete the contents of
-     `longrun-1` (or point `STATE_DIR` at a fresh `longrun-2`) and continue.
-     Either is safe **because nothing is there**; verify that rather than
-     assume it:
-     ```powershell
-     Get-ChildItem C:\Users\felix\glass-box-state\longrun-1
-     # expect: journal.jsonl absent or 0 bytes, and no halt.json claiming a halt.
-     ```
-   * *A provenance halt that IS persisted* — a later run, where `GAP` or
-     `PROVENANCE_BROKEN` did land: that record is permanent and must not be
-     deleted or edited. Point `STATE_DIR` at a **new** directory, keep the old
-     one, and note in `STATE.md` which run it belongs to.
+3. **Point `STATE_DIR` at a NEW directory and keep the old one.** Not
+   emptied, not edited, not reused:
+   ```
+   STATE_DIR=C:\Users\felix\glass-box-state\longrun-2
+   BOOTSTRAP_DIAGNOSTIC_SINK=C:\Users\felix\glass-box-state\longrun-2-bootstrap.log
+   ```
+   ```powershell
+   New-Item -ItemType Directory -Force C:\Users\felix\glass-box-state\longrun-2 | Out-Null
+   Get-ChildItem C:\Users\felix\glass-box-state\longrun-2   # expect: nothing
+   ```
+   An earlier version of this document said the first-ever failure left nothing
+   irreversible and that `longrun-1` could simply be emptied. That was wrong
+   and it was wrong in the dangerous direction: the refusal leaves a sticky
+   `PROVENANCE_BROKEN` mark in `epoch.json`, so emptying the directory would
+   have deleted a durable stop by hand — the single thing the whole fence
+   mechanism exists to make impossible. The failed attempt is evidence: keep
+   `longrun-1`, and note in `STATE.md` which account and which day it belongs
+   to. This holds for both shapes of the failure, the empty first run and a
+   later one where a `GAP` or halt did land; the difference is only in what is
+   inside, never in whether it is kept.
 4. Re-run the **step 2** configuration check (the first of the two), and the
    **step 5** check for the certificate and ping URLs.
 5. The certificate binds to the *policy*, not to the account, so it survives an

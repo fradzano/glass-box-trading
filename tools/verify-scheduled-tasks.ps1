@@ -78,19 +78,75 @@ $expected = @(
 # second weekend trigger passed all 30. A task runs EVERY action and honours
 # EVERY trigger, so anything beyond the first is unverified execution.
 
-function Get-QuotedArgument {
-    # The value of a named parameter, honouring quotes. Used for -File and, since
-    # R47-B4, for the wrapper's own -RepoRoot and -NodePath: the right script
-    # pointed at someone else's checkout is not this deployment.
-    param([string]$Arguments, [string]$Name)
-    if ($Arguments -match ("-" + [regex]::Escape($Name) + '\s+"([^"]+)"')) { return $Matches[1] }
-    if ($Arguments -match ("-" + [regex]::Escape($Name) + '\s+(\S+)')) { return $Matches[1] }
-    return $null
+# R48: the argument string is parsed ONCE, as a whole, with PowerShell's own
+# prefix rule -- and every parameter it contains is resolved to its canonical
+# name before anything is judged. Two rounds were lost to the other approach:
+# R46 forbade the exact spellings `-Command` and `-EncodedCommand`, R47 found
+# `-Co`; R47-B4 then checked `-RepoRoot` by its full name and this round found
+# `-R`, which PowerShell binds to it just as happily. Another forbidden prefix
+# would have been the same fix a third time. Anything that does not resolve to
+# exactly one known parameter is a finding in itself.
+$POWERSHELL_PARAMETERS = @('NoProfile', 'NonInteractive', 'NoLogo', 'ExecutionPolicy', 'WindowStyle', 'File', 'Command', 'EncodedCommand', 'Version', 'Sta', 'Mta', 'InputFormat', 'OutputFormat')
+$WRAPPER_PARAMETERS = @('RepoRoot', 'NodePath', 'WatchdogIntervalMinutes', 'MaxLogBytes', 'SkipOutsideSession', 'SessionLeadInMinutes')
+$VALUELESS_PARAMETERS = @('NoProfile', 'NonInteractive', 'NoLogo', 'Sta', 'Mta')
+
+function Resolve-ParameterName {
+    <#
+      PowerShell binds the shortest unambiguous prefix. `-e` is a prefix of both
+      EncodedCommand and ExecutionPolicy and powershell.exe resolves it to
+      EncodedCommand, which is why it is listed first below and why ties are
+      reported rather than guessed.
+    #>
+    param([string]$Token, [string[]]$Candidates)
+    $lower = $Token.ToLowerInvariant()
+    $matched = @($Candidates | Where-Object { $_.ToLowerInvariant().StartsWith($lower) })
+    if ($matched.Count -eq 1) { return $matched[0] }
+    if ($matched.Count -gt 1) {
+        # powershell.exe's own tie-breaks, the only two that occur in practice.
+        if ($lower -eq 'e' -and $matched -contains 'EncodedCommand') { return 'EncodedCommand' }
+        if ($lower -eq 'c' -and $matched -contains 'Command') { return 'Command' }
+        return "AMBIGUOUS:$Token"
+    }
+    return "UNKNOWN:$Token"
+}
+
+function Get-ParsedArguments {
+    <#
+      Splits the argument string into resolved (name, value) pairs. Parameters
+      before -File are powershell.exe's own; everything after it belongs to the
+      script and is resolved against the wrapper's parameter set.
+    #>
+    param([string]$Arguments)
+    # @() so a single match is still an array: indexing a bare string yields Char.
+    $tokens = @([regex]::Matches($Arguments, '"[^"]*"|\S+') | ForEach-Object { $_.Value })
+    $parsed = @()
+    $afterFile = $false
+    for ($i = 0; $i -lt $tokens.Count; $i += 1) {
+        $token = $tokens[$i]
+        if (-not $token.StartsWith('-')) { continue }
+        $bare = $token.TrimStart('-')
+        $name = Resolve-ParameterName -Token $bare -Candidates $(if ($afterFile) { $WRAPPER_PARAMETERS } else { $POWERSHELL_PARAMETERS })
+        $value = $null
+        if ($name -notin $VALUELESS_PARAMETERS -and ($i + 1) -lt $tokens.Count -and -not $tokens[$i + 1].StartsWith('-')) {
+            $value = $tokens[$i + 1].Trim('"')
+            $i += 1
+        }
+        $parsed += [pscustomobject]@{ Token = $token; Name = $name; Value = $value }
+        if ($name -eq 'File') { $afterFile = $true }
+    }
+    return $parsed
+}
+
+function Get-ResolvedValue {
+    param([object[]]$Parsed, [string]$Name)
+    $hit = @($Parsed | Where-Object { $_.Name -eq $Name })
+    if ($hit.Count -eq 0) { return $null }
+    return $hit[0].Value
 }
 
 function Get-FileArgument {
     param([string]$Arguments)
-    return Get-QuotedArgument -Arguments $Arguments -Name 'File'
+    return Get-ResolvedValue -Parsed (Get-ParsedArguments -Arguments $Arguments) -Name 'File'
 }
 
 # The session in this machine's local time, so the trigger's start can be
@@ -139,14 +195,15 @@ foreach ($spec in $expected) {
     # prefix of both EncodedCommand and ExecutionPolicy, and powershell.exe
     # resolves it to EncodedCommand, so it is rejected; `-ex` and longer are
     # unambiguous ExecutionPolicy and stay allowed.
-    $commandLike = @()
-    foreach ($token in [regex]::Matches($argument, '(?<=^|\s)-([A-Za-z]+)')) {
-        $name = $token.Groups[1].Value.ToLowerInvariant()
-        $isCommand = 'command'.StartsWith($name)
-        $isEncoded = 'encodedcommand'.StartsWith($name) -and -not ('executionpolicy'.StartsWith($name) -and $name.Length -ge 2)
-        if ($isCommand -or $isEncoded) { $commandLike += "-$($token.Groups[1].Value)" }
-    }
-    Add-Check -Name "$($spec.Name) uses -File and nothing else runs" -Ok ($commandLike.Count -eq 0) -Detail "$(if ($commandLike.Count -eq 0) { 'no -Command/-EncodedCommand prefix present' } else { "command-like parameter(s): $($commandLike -join ', ')" }); arguments: $argument"
+    $parsed = Get-ParsedArguments -Arguments $argument
+    $commandLike = @($parsed | Where-Object { $_.Name -eq 'Command' -or $_.Name -eq 'EncodedCommand' } | ForEach-Object { $_.Token })
+    Add-Check -Name "$($spec.Name) uses -File and nothing else runs" -Ok ($commandLike.Count -eq 0) -Detail "$(if ($commandLike.Count -eq 0) { 'no parameter resolves to -Command or -EncodedCommand' } else { "resolves to a command form: $($commandLike -join ', ')" }); arguments: $argument"
+
+    # Anything the parser cannot resolve to exactly one known parameter is a
+    # finding by itself: it is either a typo the scheduler will pass on
+    # verbatim, or a parameter this verifier has never been taught to judge.
+    $unresolved = @($parsed | Where-Object { $_.Name -like 'UNKNOWN:*' -or $_.Name -like 'AMBIGUOUS:*' } | ForEach-Object { "$($_.Token) -> $($_.Name)" })
+    Add-Check -Name "$($spec.Name) passes only parameters this check understands" -Ok ($unresolved.Count -eq 0) -Detail "$(if ($unresolved.Count -eq 0) { 'every parameter resolves to exactly one known name' } else { $unresolved -join '; ' })"
 
     $fileArgument = Get-FileArgument -Arguments $argument
     $expectedFile = Join-Path $RepoRoot $spec.Script
@@ -160,12 +217,12 @@ foreach ($spec in $expected) {
     # R47-B4: the right script invoked with someone else's -RepoRoot or
     # -NodePath is not this deployment. Both wrappers accept those parameters,
     # and the installer passes them, so they are checked rather than forbidden.
-    $passedRepoRoot = Get-QuotedArgument -Arguments $argument -Name 'RepoRoot'
+    $passedRepoRoot = Get-ResolvedValue -Parsed $parsed -Name 'RepoRoot'
     $repoRootOk = [string]::IsNullOrWhiteSpace($passedRepoRoot) -or
         ((Test-Path -LiteralPath $passedRepoRoot) -and ([System.IO.Path]::GetFullPath($passedRepoRoot).TrimEnd('\') -ieq [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')))
     Add-Check -Name "$($spec.Name) -RepoRoot is this checkout" -Ok $repoRootOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedRepoRoot)) { '(not passed; the wrapper defaults to its own parent)' } else { $passedRepoRoot })"
 
-    $passedNodePath = Get-QuotedArgument -Arguments $argument -Name 'NodePath'
+    $passedNodePath = Get-ResolvedValue -Parsed $parsed -Name 'NodePath'
     $nodePathOk = [string]::IsNullOrWhiteSpace($passedNodePath) -or (Test-Path -LiteralPath $passedNodePath)
     Add-Check -Name "$($spec.Name) -NodePath exists" -Ok $nodePathOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedNodePath)) { '(not passed; the wrapper resolves node from PATH)' } else { $passedNodePath })"
 

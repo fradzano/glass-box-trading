@@ -202,6 +202,29 @@ function Get-SessionWindowLocal {
     }
 }
 
+function Get-TaskWindowEnd {
+    <#
+      R48. The printed cron enumerates every interval step of every hour in its
+      range, so for a five-minute watchdog it expects :50 and :55 of the last
+      hour as well. The repetition duration ended at 23:45 for both tasks, so
+      the watchdog never fired at 23:50 or 23:55 -- and an expected ping that
+      never comes is a silence alarm on a perfectly healthy deployment, due
+      around 00:05 every night. (The reverse is harmless: an extra firing the
+      cron does not expect only resets the timer.)
+
+      The window therefore ends, per task, at the LAST interval step of the
+      closing hour: 23:45 for a fifteen-minute cycle, 23:55 for a five-minute
+      watchdog. Both are still inside the same trigger hour, so the coverage
+      guarantee is unchanged -- the window only ever grows.
+    #>
+    param([datetime]$Start, [datetime]$End, [int]$IntervalMinutes)
+    $lastStep = 60 - $IntervalMinutes
+    $candidate = $End.Date.AddHours($End.Hour).AddMinutes($lastStep)
+    if ($candidate -lt $End) { $candidate = $End }
+    if ($candidate -lt $Start) { $candidate = $Start }
+    return $candidate
+}
+
 function Get-CronExpression {
     # The expected-ping schedule for a check, stated exactly from the trigger
     # this installer is about to register, in THIS machine's local time.
@@ -304,7 +327,15 @@ if ($sessionDuration.TotalMinutes -le 0) {
 
 Write-Host "Policy: CYCLE_INTERVAL_MS=$cycleIntervalMs ($cycleIntervalMinutes min), DEAD_MAN_BOUND_MS=$deadManBoundMs ($([math]::Round($deadManBoundMs / 60000.0)) min)"
 Write-Host "Exchange session today (local time, from America/New_York 09:30-16:00): $($session.SessionOpen) .. $($session.SessionClose)"
+# R48: each task's repetition ends at the last step of its own interval within
+# the closing hour, so the printed cron expects exactly the firings it gets.
+$cycleWindowEnd = Get-TaskWindowEnd -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $cycleIntervalMinutes
+$watchdogWindowEnd = Get-TaskWindowEnd -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $WatchdogIntervalMinutes
+$cycleDuration = New-TimeSpan -Start $session.OpenLocal -End $cycleWindowEnd
+$watchdogDuration = New-TimeSpan -Start $session.OpenLocal -End $watchdogWindowEnd
+
 Write-Host "Trigger window (that session padded by $EdgeMarginMinutes min on both sides, so it still contains the session across both DST changes): $($session.OpenLocal) .. $($session.CloseLocal) ($([math]::Round($sessionDuration.TotalMinutes)) min)"
+Write-Host "Last firing per task, so each cron expects exactly what it gets: cycle $($cycleWindowEnd.ToString('HH:mm')), watchdog $($watchdogWindowEnd.ToString('HH:mm'))."
 Write-Host "cycle-run.ps1 skips outside the real session on every firing, so the padding costs wrapper invocations, not agent cycles."
 
 # ---------------------------------------------------------------------------
@@ -359,9 +390,9 @@ if ([string]::IsNullOrWhiteSpace($localZone)) {
 Write-Host ''
 Write-Host 'Configure the three external checks with EXACTLY these schedules (timezone below, not UTC):'
 Write-Host "  timezone for all three:  $localZone"
-Write-Host "  liveness   cron: $cycleCron      grace 30 min   (every cycle firing, session or not)"
+Write-Host "  liveness   cron: $cycleCron      grace 30 min   (every cycle firing, session or not, last at $($cycleWindowEnd.ToString('HH:mm')))"
 Write-Host "  readiness  cron: $cycleCron      grace 50 min   (every cycle firing reports; DEAD_MAN_BOUND_MS)"
-Write-Host "  watchdog   cron: $watchdogCron   grace 15 min   (every watchdog firing)"
+Write-Host "  watchdog   cron: $watchdogCron   grace 15 min   (every watchdog firing, last at $($watchdogWindowEnd.ToString('HH:mm')))"
 Write-Host ''
 Write-Host 'Detection time = the check period until the next expected ping, plus its grace.'
 Write-Host "Alert delivery budget is separate: $([math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000.0)) min (ALERT_DELIVERY_BUDGET_MS)."
@@ -402,7 +433,7 @@ try {
     # cycle report in STATE_DIR\cycle-run.log (scenario #75).
     $cycleArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$cycleRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`""
     $cycleAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs -WorkingDirectory $RepoRoot
-    $cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $sessionDuration
+    $cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $cycleDuration
     $cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
     $cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
     $cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
@@ -419,7 +450,7 @@ try {
 
     $watchdogArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watchdogRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`" -WatchdogIntervalMinutes $WatchdogIntervalMinutes"
     $watchdogAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $watchdogArgs -WorkingDirectory $RepoRoot
-    $watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $sessionDuration
+    $watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $watchdogDuration
     $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
     $watchdogTrigger.Repetition = $watchdogOnceTrigger.Repetition
     # Six minutes: the recovery run is bounded by CYCLE_WALLTIME_BUDGET_MS (5 min) plus composition; the kernel mutex serializes any overlap.

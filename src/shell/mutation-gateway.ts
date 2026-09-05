@@ -8,7 +8,7 @@
 // interlock for startup auth/account failures; it can never reach the broker.
 import { authorizeMutation, bindingsEqual, compareAndIncrement, planEpochAcquisition, resetPairPresent, shouldAttemptTakeover } from "../core/authority.js";
 import type { AccountVirginity, EpochStoreState } from "../core/authority.js";
-import { haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, planAppend, redactSecrets } from "../core/journal.js";
+import { haltIsSticky, haltStateAfter, haltStateFrom, intentRationaleTexts, isWitnessEntryType, notHalted, planAppend, redactSecrets, strongerHalt } from "../core/journal.js";
 import type { AccountBinding, HaltReason, HaltState, JournalDraft, JournalEntry } from "../core/journal.js";
 import { setFencePending, readEpochStore, readHolder, withMutex, writeEpochStore, writeHolder } from "./epoch-store.js";
 import { readHaltState, writeHaltState } from "./halt-state.js";
@@ -172,21 +172,26 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
    * book can still be flattened once the credentials work again.
    */
   function effectiveHaltState(entries: readonly JournalEntry[]): HaltState {
-    const journal = reconcileHaltProjection(entries);
-    if (journal.halted) return journal;
+    // R48: the two sources are MERGED by strength, not tried in order. Reading
+    // the journal first and the mark only when the journal was clear meant a
+    // soft journaled halt shadowed a stronger mark: an AUTH_FAILURE that
+    // landed, then a KILL whose append failed, and an ordinary release cleared
+    // both. Order of arrival decided which stop survived, which is exactly
+    // what a durable mark exists to prevent.
+    return strongerHalt(reconcileHaltProjection(entries), markedHaltState());
+  }
+
+  /**
+   * The halt the durable mark asserts on its own. Its reason travels with it
+   * (R46-A2) and its stickiness follows the same rule the pure `haltDraft`
+   * uses (R47-A2), so a marker-only KILL is exactly as irreversible as a
+   * journaled one.
+   */
+  function markedHaltState(): HaltState {
     const store = readEpochStore(paths);
-    if (store.kind === "present" && store.fencePending) {
-      // R47-A2: the mark used to be reported as `AUTH_FAILURE, sticky: false`
-      // whatever it recorded. Once R46 let a KILL set it, that mapping quietly
-      // downgraded the strongest stop in the system: after a sticky KILL whose
-      // append failed, a softer halt could land on top and an ordinary manual
-      // release then cleared both. The reason travels with the mark, and
-      // stickiness follows the same rule the pure `haltDraft` uses, so a
-      // marker-only KILL is exactly as irreversible as a journaled one.
-      const reason = store.fenceReason ?? "AUTH_FAILURE";
-      return { halted: true, reason, sticky: reason === "KILL" || reason === "PROVENANCE_BROKEN" };
-    }
-    return journal;
+    if (store.kind !== "present" || !store.fencePending) return notHalted();
+    const reason = store.fenceReason ?? "AUTH_FAILURE";
+    return { halted: true, reason, sticky: haltIsSticky(reason) };
   }
 
   /**
@@ -219,7 +224,16 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
    */
   function markFenceBeforeHalt(reason: string): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
     const store = readEpochStore(paths);
-    if (store.kind === "present" && store.fencePending) return { ok: true };
+    if (store.kind === "present" && store.fencePending) {
+      // R48: an already-standing mark is not the end of the matter. A KILL
+      // arriving after an AUTH_FAILURE used to return here unchanged, so the
+      // mark kept the weaker reason and the stop it recorded was releasable.
+      // The mark records the STRONGEST stop it has seen; it is never
+      // downgraded, and only the manual release clears it.
+      const standing = store.fenceReason ?? "AUTH_FAILURE";
+      if (haltIsSticky(reason) && !haltIsSticky(standing)) return setFencePending(paths, true, reason);
+      return { ok: true };
+    }
     return setFencePending(paths, true, reason);
   }
 

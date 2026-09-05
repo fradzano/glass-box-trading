@@ -3496,3 +3496,88 @@ small, no ADR split).
   this round's blockers — marking after the journal read instead of before it,
   and a marker-only KILL mapped as non-sticky — both caught, alongside the ten
   from R44 through R46. `npm run verify` exit 0 at 48 files / **654 tests**.
+- **2026-09-06 — owner-relayed review of `7041a8e`: five executed
+  counter-examples and three inconsistencies, all confirmed, all closed with a
+  regression test or an executable probe first.** None was refuted. Two of the
+  five are defects that *this evening's own fixes* created, which is the useful
+  part of the round.
+
+  **1. The strongest stop did not survive the order the reasons arrived in.**
+  An `AUTH_FAILURE` halt is journaled and marked; a `KILL` is then requested
+  and its append fails. `markFenceBeforeHalt` returned early because a mark was
+  already there, so the mark kept the weaker reason; `effectiveHaltState` read
+  the journal first and found the softer halt; an ordinary `manualUnhalt`
+  cleared both. The strongest stop in the system was erased by chronology. The
+  merge is now by **strength, not by source order**: `strongerHalt` in the pure
+  core, sticky outranking non-sticky, used by the gateway and by
+  `standingImpediment` alike, and the mark records the strongest reason it has
+  seen and is never downgraded. Three tests cover both arrival orders and the
+  case that must still release. `haltIsSticky` replaces the rule that had been
+  restated in three places.
+
+  **2. The provenance guidance contradicted the new fence code and told the
+  operator to delete a real stop.** Since every refused halt marks before it
+  appends, a first-ever arming against a rejected account now leaves
+  `fencePending: true, fenceReason: PROVENANCE_BROKEN` in `epoch.json` — with
+  an empty journal and a clean `halt.json`, which is exactly where the runbook
+  told the operator to look. “No fence to clear” was true when it was written
+  and false by the time it was read, and the instruction that followed — empty
+  `longrun-1` and continue — would have deleted a durable, sticky stop by hand.
+  That is the one act the whole fence mechanism exists to make impossible. The
+  guidance now names all three files, keeps the failed attempt, and requires a
+  **new** state directory in both shapes of the failure. The existing
+  first-start test asserts the marker, so the documentation cannot drift away
+  from the code again without a test going red.
+
+  **3. The scheduler verifier still took a foreign checkout, through a
+  prefix.** PowerShell binds `-R` to `-RepoRoot`; the check read only the full
+  spelling. This was the third round of the same shape — R46 forbade
+  `-Command`, R47 found `-Co`, R47-B4 checked `-RepoRoot` by name and this
+  found `-R` — so the fix is not a fourth forbidden spelling. The argument
+  string is **parsed once, as a whole**, resolving every token by PowerShell's
+  own prefix rule against the parameters that are legal in that position, and
+  **anything that does not resolve to exactly one known parameter is itself a
+  finding**. An executable probe covers a clean definition (must pass), the
+  `-R`, `-Co` and `-N` prefixes, and an unknown parameter; the clean case
+  passes and all four attacks fail on exactly the right check.
+
+  **4. The watchdog cron expected two pings the task never produced.** The
+  expression enumerates every five-minute step of every hour in range, so it
+  expected 23:50 and 23:55, while the repetition duration ended at 23:45 for
+  both tasks — a nightly silence alarm on a healthy deployment, due around
+  00:05. Each task's window now ends at the last step of **its own** interval
+  within the closing hour: 23:45 for the cycle, 23:55 for the watchdog. The
+  probe reads the installer's own functions rather than re-implementing them,
+  and compares produced firings against expected pings; both are now exact.
+  (The asymmetry is deliberate: an unexpected extra ping only resets a timer,
+  an expected missing one alarms.)
+
+  **5. The after-hours path promised a cap the spec does not give.** “The
+  maximum loss cannot grow overnight” holds for an **intact** structure and not
+  for a residue: S-X-06 is the assignment exception to A23's constructive worst
+  case, and the runner raises `UNBOUNDED_RESIDUE_RECOVERY` and closes such a
+  residue with no price cap precisely because the realised cost may exceed the
+  original maximum loss. Both documents now split the two cases, and the
+  correct observation “no option can be sold at this hour” no longer implies
+  “nothing can be done”: a share residue is an equity position, equities have
+  extended-hours sessions, and the instruction is to look rather than assume.
+
+  **The three inconsistencies.** The dates table still said the gate ran to
+  15:05 while step 6 said 14:45. The anchor procedure re-read the external
+  check schedules *after* repeating the drills, which would have measured the
+  old schedules — it comes first now, with the reason. And the claim that the
+  American spring change opens the session at 13:30 Berlin was **wrong**: 09:30
+  New York on 2027-03-15 is 13:30 UTC and therefore 14:30 Berlin, exactly like
+  the October mismatch. Verified against the zone tables. The forbidden-anchor
+  rule survives for the right reason instead of the invented one — at a 14:30
+  open the first trading firing is 14:15, before the gate — and the coverage
+  claim is withdrawn.
+
+  **The probe found one more thing than the review did.** With all five closed,
+  the mutation probe was extended and reported a survivor: reverting
+  `standingImpediment` to “journal first, mark only if clear” changed no test.
+  The gateway's merge was covered and readiness's was not, so the operator
+  could still have been told a releasable `AUTH_FAILURE` stands while the
+  deployment carried an irreversible `KILL`. Test added; **15 of 15**.
+
+  `npm run verify` exit 0 at 48 files / **658 tests**.
