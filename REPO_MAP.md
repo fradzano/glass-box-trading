@@ -21,6 +21,7 @@
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
+- `docs/P12-CALENDAR-PROMPTS.md` — P12 — calendar prompts for Gemini
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/P12-RUNBOOK.md` — P12 runbook — the three-month paper run
 - `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
