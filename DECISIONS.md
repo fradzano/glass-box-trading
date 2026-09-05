@@ -2737,3 +2737,110 @@ small, no ADR split).
   for the wrong reason. `npm run verify` exit 0 at 44 files / 600 tests. Not
   claimed: a bis-0 termination — two rounds, two fix rounds, and one B
   deliberately open.
+- **2026-09-05 — P12 commissioned and prepared: a three-month paper run on a
+  fresh account, with the fence fixed and the alerting connected first.** The
+  owner's brief: measure operational reliability and economic plausibility over
+  a quarter; R42-B2 fixed before the unattended start and external notification
+  as well, explicitly *not* "notification instead of the fence fix"; a fresh,
+  agent-only paper account under the competition profile's protections with the
+  dev account kept for the certificate and tests; three calendar months from the
+  first regular cycle. The competition journal, the submitted revisions and the
+  competition account stay a closed archive, and the long run gets its own
+  `STATE_DIR`.
+
+  **The fence (S-G12-08, A30, scenarios #76/#77).** The mark lives in the epoch
+  store, is written *before* the HALT append is attempted, and is cleared by
+  exactly one thing: the human un-halt, which is refused if it cannot clear it.
+  The owner's demand was that "a second file" is not a proof, so the boundary is
+  stated as a table and each row is a test: journal unwritable (mark stands,
+  next cycle fenced although nothing was journaled); an earlier HALT/UNHALT pair
+  in the journal (cannot clear it — this is precisely why the mark is not in the
+  halt projection, where `reconcileHaltProjection` lets the journal win);
+  restart (acquisition *inherits* it); process death between the two steps
+  (fail-closed by ordering); epoch store also unwritable (no mark — **and no
+  authority**: `acquireAuthority` writes the store and a failed durable write is
+  `REFUSED`, so nothing can act and nothing needs recording). Found while
+  building it and worth recording because it would have made the whole fix
+  worthless: `acquireUnderLock` rewrote the store without the mark, so **every
+  restart cleared the fence**; it is now carried through the pure
+  `planEpochAcquisition` plan beside `seedPending` and `resetPending`.
+  Deliberately no stricter than a journaled halt — a risk-reducing close stays
+  possible, so a fenced book can still be flattened.
+
+  **The alerting (S-G14-05/06, A31, #78/#79/#80).** Two claims, two endpoints.
+  Liveness is the wrapper's: it reports on every scheduled firing, including
+  the ones it skips outside the session, and reports a non-zero agent exit as a
+  failure so a crash-loop shows immediately. Readiness is the runtime's, and
+  `planPing` now lets a standing halt or unreleased fence outrank a landed
+  append — before this a cycle that correctly halted on `AUTH_FAILURE` reported
+  *success*, and the S-X-06 expiry-hold test encoded exactly that defect
+  (a standing `RESIDUE_UNRESOLVED` halt with a green check) and now asserts the
+  opposite. Measuring the path end to end against a real HTTP endpoint rather
+  than trusting it found a second defect: the composition root delivered
+  `alarmConditions` instead of the ping plan's conditions, so a fenced cycle
+  POSTed an **empty** alert body; the report now carries `pingConditions` and a
+  regression test pins it. `HEALTHCHECK_PING_URL` was **absent** from the
+  environment for the whole competition — seventy pings into a local file on the
+  machine most likely to have died — so `tools/check-alert-path.ps1` exercises
+  all four signals and prints the timings derived from `config/policy.json`.
+  Delivery is proven; receipt stays an owner step, as does the silence test.
+
+  **The scheduler.** Measured, not assumed: `tools/check-schedule-coverage.mjs`
+  walks every weekday of a deployment and reports the worst-case margin. For
+  2026-09-08..2026-12-08 from `Europe/Berlin` the local session start moves to
+  14:30 on **2026-10-26** and back to 15:30 on **2026-11-02** — the week between
+  the European and American clock changes, in which a trigger pinned to
+  installation-day local time would have missed the first hour of every session.
+  The window is padded 90 minutes on both sides (worst margin 30 min either
+  direction) and `cycle-run.ps1` asks the exchange clock on every firing, so the
+  padding costs wrapper invocations rather than agent cycles. The installer now
+  **refuses to register** without that proof. `tools/verify-scheduled-tasks.ps1`
+  asserts what a registered task will actually do, and earned its keep on the
+  first run: the currently registered cycle task still invokes `node` directly,
+  from before the wrapper existed, so as registered it would discard the report
+  and send no liveness ping — while reading `Ready` either way.
+
+  **Scale.** `tools/measure-longrun-scale.mjs` replays real entries at length.
+  At 2,000 entries (about a quarter): journal 173 MB, parse 890 ms,
+  fold+project 20–34 ms, render 23 ms — and a **5.2 MiB page**, growing at
+  ~2.6 KiB per cycle. Runtime was never the problem; the page was. Detail
+  blocks are bounded to the most recent 200 while the summary table stays
+  complete (every cycle keeps its row, result and reason codes, which is what
+  CONCEPT and SUBMISSION-SPEC require), with a note naming what was omitted and
+  where the complete record is. Re-measured: 1.2 MiB.
+
+  **The qualification decoupling.** The owner is right that it is not a display
+  state: while open it issues an analyst brief and applies three entry vetoes.
+  Everything it does hangs off `windowOpen`, which is true only between the
+  checkpoint and the window end, so the smallest clean decoupling is
+  **configuration only** — put both instants beyond the deployment's own flatten
+  date and the window never opens. No code path is weakened, nothing is
+  special-cased for "long run", and the competition profile keeps the arming
+  certificate gate and the S-J-06 account binding (a dev profile would have
+  switched both off: `arming-gate.ts` returns armed without reading the
+  certificate for any non-competition profile). Pinned at the first cycle,
+  mid-run and on the flatten day.
+
+  **Config,** four values, nothing else — strategy and risk limits stay constant
+  for the measurement period as the owner required: `FLATTEN_DATE` 2026-12-08,
+  `COMPETITION_START` 2026-09-06T00:00:00Z (the fresh account must be created at
+  or after it or the provenance proof refuses — fail-closed), and the two
+  qualification instants moved past the end. Validated against the real
+  `ALERT_SLA_MS` and canonical origin. A slipped start changes the flatten date,
+  which changes the policy digest, which **voids the certificate**: the runbook
+  says so and orders the steps accordingly.
+
+  **The evaluation is fixed before the run** (`docs/P12-EVALUATION.md`): result
+  per sleeve, open-at-end kept separate, unattributed as its own line,
+  cycle-sampled drawdown declared as a lower bound, risk deployed, completed
+  trades with counts rather than a bare win rate, no-trade reasons, and — as the
+  reliability figure that matters most — time not able to trade as a share of
+  session time. Paper gross stays separate from three explicit cost scenarios
+  whose per-contract fees are to be cited from a published schedule at
+  evaluation time, never invented, and no scenario is ever labelled "real net".
+  Two benchmarks (buy-and-hold SPY, and zero); no Sharpe-style ratio, because
+  sixty sessions and a few dozen trades cannot support one. What the run cannot
+  answer is written down in the same file.
+
+  Not claimed: that this is verified beyond the tests and the gate round on it.
+  `npm run verify` exit 0 at 46 files / 619 tests.
