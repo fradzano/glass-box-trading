@@ -3149,3 +3149,59 @@ small, no ADR split).
   rounds found this rule missing somewhere, and the fourth candidate held. That
   is the first evidence that the single implementation has actually closed the
   generator rather than moved it.
+- **2026-09-05 — cold read of the operator documents: the activation drill was
+  arithmetically impossible, and eleven other things an operator could not have
+  executed.** An agent with no project context was given exactly
+  `docs/P12-RUNBOOK.md` and `docs/P12-INCIDENT-PATHS.md` and asked where it
+  would have to guess, where the clock does not work, where it could strand the
+  system, what the two documents contradict, and what it would still not know at
+  23:00 with a red alert. The findings were about the documents, and the worst
+  of them was mine from the same afternoon.
+
+  **Drill (c) could not do what it claimed.** “Shut the machine down for 25
+  minutes … expect: all three DOWN” — with graces of 30 and 50 minutes, liveness
+  and readiness cannot fall inside 25. Worse, the drill and the signed-out proof
+  both claimed the **same 15:00 firing**, one with the machine off and one with
+  it on, and both were conditions of the same gate. And the chain from 14:16 to
+  the 15:05 gate had no slack at all. The fix moves the signed-out proof into
+  Tuesday's window, where firings are plentiful and none can trade, and leaves
+  Wednesday to the machine-off drill alone: off at 14:05 for 45 minutes, which
+  fells the watchdog at ~14:20 and liveness at ~14:45 while the machine is
+  demonstrably dead. **Readiness is explicitly not waited for**, with the reason
+  written down — its 50-minute grace lands at 15:20, after the anchor, and
+  Tuesday's drill already showed that it falls. A drill that cannot finish
+  before the thing it gates is not a drill.
+
+  **“The anchor moves” was a sentence, not a procedure** — and the sentence was
+  wrong: it said *next trading day*, but the certificate needs US market hours
+  and the new anchor fires at 15:15 the same afternoon, which is exactly the
+  collision the dates section forbids elsewhere. It is **two** trading days now,
+  with the seven steps written out in order, including which key in
+  `config/policy.json` changes and that the drills do not carry over.
+
+  **Three sentences carrying the weight in an emergency pointed nowhere.**
+  “tell me”, “report” and “run the fence procedure” appear at the three most
+  serious abort paths; there is no recipient for the first two — Felix is alone
+  with this run — and the third existed only as CLI output, so a broken CLI
+  took the procedure with it. The fence procedure is written out in five steps
+  now, “report” means a dated line in `STATE.md`, and the provenance refusal
+  says what to do instead of whom to tell.
+
+  **The rest, briefly:** step 2's check ran the compiled loader while `npm run
+  build` was in step 5; the three checks had no names, so a push notification
+  could not be mapped to a row in the incident document; step 3 left all three
+  checks alarming for a day before activation, with hourly reminders, and never
+  said to pause them; there was no uninstall command anywhere;
+  `-CoverageThroughDate` stopped at the flatten date although firings are needed
+  on the journaling-only day after it; the readiness action list omitted
+  `STARTUP_REFUSED`, `CYCLE_ABORTED` and `DEADLINE_FLATTEN_FAILED` — the last
+  being the only alert that cannot wait; the prohibition on manual trading and
+  the incident document's instruction to close in the broker UI contradicted
+  each other with no rule for when the prohibition lifts; “200 MB” for the
+  journal sat next to a measured 152.7 MiB; and every time was written CEST for
+  a run that crosses two clock changes.
+
+  What the read did **not** find is worth recording too: the dates table is
+  internally consistent, three calendar months from 2026-09-09 is 2026-12-09,
+  and owner step 5 was executable as written, start to finish. `npm run verify`
+  exit 0 at 47 files / 647 tests.

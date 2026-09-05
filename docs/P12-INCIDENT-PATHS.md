@@ -17,11 +17,14 @@ The installer derives these from the trigger it registers; the values below are
 what `install-scheduled-task.ps1 -WhatIf -CoverageThroughDate 2026-12-09`
 printed on this machine on 2026-09-05.
 
+The names are the ones the runbook has you create, and they are how a push
+notification maps to a row here:
+
 | Check | Pinged by | Expected schedule (Europe/Berlin) | Grace | Worst-case detection |
 |---|---|---|---|---|
-| liveness | `tools\cycle-run.ps1`, every firing, session or not | `0,15,30,45 14-23 * * 1-5` | 30 min | 45 min |
-| readiness | `dist\shell\readiness-cli.js`, every firing | `0,15,30,45 14-23 * * 1-5` | 50 min | 65 min |
-| watchdog | `tools\watchdog-run.ps1`, every firing | `0,5,...,55 14-23 * * 1-5` | 15 min | 20 min |
+| `gbt-liveness` | `tools\cycle-run.ps1`, every firing, session or not | `0,15,30,45 14-23 * * 1-5` | 30 min | 45 min |
+| `gbt-readiness` | `dist\shell\readiness-cli.js`, every firing | `0,15,30,45 14-23 * * 1-5` | 50 min | 65 min |
+| `gbt-watchdog` | `tools\watchdog-run.ps1`, every firing | `0,5,...,55 14-23 * * 1-5` | 15 min | 20 min |
 
 **Worst-case detection** is one full period plus the grace: the failure begins a
 second after a good ping, so the next expected ping is a whole period away and
@@ -203,13 +206,29 @@ and check whether a stale journal accumulated meanwhile.
 
 ## The summary I actually need at 23:00
 
-| What broke | First check to go red | Worst case | Heals itself? |
-|---|---|---|---|
-| Machine off or offline | watchdog, then liveness, then readiness | 20 / 45 / 65 min | no |
-| Cycle exits with an error | liveness (immediate `/fail`) and readiness | delivery only | no, if it recurs |
-| Cycle hangs | liveness (silence) | 45 min | the kill is automatic, the cause is not |
-| Halt or credential fence | readiness | 15 min + delivery | **never** — release is manual by design |
-| Watchdog alone | watchdog | 20 min | no |
+**Answer one question before reading the table: is the book exposed?** Run
+`node dist\shell\readiness-cli.js` and open the broker dashboard. A flat book
+turns every row below into something that can wait for the morning; an open
+book with a standing halt cannot, because nothing will close it by itself.
+
+| What broke | First check to go red | Worst case | Heals itself? | Tonight, or tomorrow? |
+|---|---|---|---|---|
+| Machine off or offline | `gbt-watchdog`, then `gbt-liveness`, then `gbt-readiness` | 20 / 45 / 65 min | no | tonight if the book is open, otherwise tomorrow |
+| Cycle exits with an error | `gbt-liveness` (immediate `/fail`) and `gbt-readiness` | delivery only | no, if it recurs | tomorrow, unless it is the third in a row |
+| Cycle hangs | `gbt-liveness` (silence) | 45 min | the kill is automatic, the cause is not | tomorrow |
+| Halt or credential fence | `gbt-readiness` | 15 min + delivery | **never** — release is manual by design | tonight if the book is open |
+| `DEADLINE_FLATTEN_FAILED` on 2026-12-09 | `gbt-readiness` | 15 min + delivery | no | **tonight, before the US close** |
+| Watchdog alone | `gbt-watchdog` | 20 min | no | tomorrow morning — promptness, not urgency |
 
 Outside 14:00–23:45 Berlin on weekdays, every row above waits for the next
 weekday at 14:00. That is the deliberate cost of not being paged on weekends.
+
+**The Friday-evening case, stated because the silence rule creates it.** An
+alert that arrives Friday at 23:00 with an open book is the one time the
+prohibition on manual trading gives way: the agent will not act again until
+Monday, and three days of an unmanaged position is a larger risk than a manual
+close the evaluation has to account for. Close the affected structures whole in
+the broker dashboard, never leg by leg, and write every one of them into
+`STATE.md` — the evaluation separates manual closes from the agent's own, and
+it can only do that if they are named. A flat book on Friday evening waits for
+Monday.

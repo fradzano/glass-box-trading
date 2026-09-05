@@ -50,7 +50,7 @@ If an event with the same title already exists, update it instead of creating a 
 Title: P12 Installation der Tasks
 Date: Tuesday 8 September 2026
 Time: 17:00–18:00, timezone Europe/Berlin
-Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm.cmd run build (npm.cmd, nicht npm — npm.ps1 ist von der Execution Policy gesperrt), dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-09 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 35 Checks bestanden).
+Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm.cmd run build (npm.cmd, nicht npm — npm.ps1 ist von der Execution Policy gesperrt), dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-10 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 35 Checks bestanden).
 Noch nichts aktivieren: das Gate ist der nächste Termin.
 Notifications: popup 30 minutes before.
 ```
@@ -65,15 +65,18 @@ Event one:
 Title: P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)
 Date: Tuesday 8 September 2026
 Time: 22:10–23:59, timezone Europe/Berlin
-Description: Erst NACH dem US-Schluss um 22:00. Beide Tasks in einer ERHÖHTEN PowerShell aktivieren — jede Auslösung ab jetzt überspringt den Zyklus und meldet trotzdem beide Signale, es kann also nichts handeln. Absolute Regel: vor dem Ankerdatum darf keine Auslösung einen Zyklus fahren. Dann Probe (a) ab ca. 22:40, nur der Watchdog aus, 20 Minuten warten; Probe (b) ab ca. 23:15, beide Tasks aus, die Alarme kommen gegen 00:00 und 00:20 — Wecker stellen, eine verschlafene Probe beweist nichts. Ablauf im Wortlaut: docs\P12-RUNBOOK.md, Owner step 6.
+Description: Erst NACH dem US-Schluss um 22:00. Zuerst die drei Checks im Dashboard wieder fortsetzen (sie stehen seit Owner-Schritt 3 auf Pause), dann beide Tasks in einer ERHÖHTEN PowerShell aktivieren — jede Auslösung ab jetzt überspringt den Zyklus und meldet trotzdem beide Signale, es kann also nichts handeln. Absolute Regel: vor dem Ankerdatum darf keine Auslösung einen Zyklus fahren.
+Drei Proben, alle am Dienstag: (a) ab 22:30 nur der Watchdog aus, 20 Minuten warten, nur gbt-watchdog darf fallen; (b) ab 23:00 abmelden (nicht sperren, nicht herunterfahren), die 23:15-Auslösung muss eine Logzeile schreiben, während niemand angemeldet ist — das ist der S4U-Beweis; (c) ab 23:30 beide Tasks aus, die Alarme kommen gegen 00:15 und 00:35. Wecker stellen: eine verschlafene Probe beweist nichts.
+Danach alle drei Checks pausieren und schlafen gehen — sonst weckt die Wiederholungs-Erinnerung stündlich bis 14:00. Ablauf im Wortlaut: docs\P12-RUNBOOK.md, Owner step 6.
 Notifications: popup 30 minutes before.
 
 Event two:
-Title: P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart, abgemeldet)
+Title: P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart)
 Date: Wednesday 9 September 2026
 Time: 14:00–15:05, timezone Europe/Berlin
-Description: Vor der Sitzung, also wieder ohne Handelsrisiko. Beide Tasks aktivieren, eine grüne Auslösung abwarten, dann den Rechner 25 Minuten ausschalten (Probe c: alle drei Checks unten — der einzige Beweis, dass der Alarm nicht von der Maschine abhängt, über die er berichtet). Nach dem Hochfahren müssen die Auslösungen von selbst weiterlaufen (Neustart-Beweis); um ca. 14:50 abmelden und prüfen, dass die 15:00-Auslösung eine Logzeile geschrieben hat (S4U-Beweis).
-WICHTIG: Hängt um 15:05 noch eine Bedingung offen, beide Tasks deaktivieren — dann verschiebt sich das Ankerdatum, und damit FLATTEN_DATE, Policy-Digest und Zertifikat.
+Description: Vor der Sitzung, also wieder ohne Handelsrisiko. Um 14:00 die drei Checks fortsetzen, beide Tasks aktivieren, die 14:00-Auslösung im Log bestätigen. Um 14:05 den Rechner wirklich ausschalten (Stop-Computer -Force, kein Standby) und 45 Minuten aus lassen. Erwartet: gbt-watchdog fällt gegen 14:20, gbt-liveness gegen 14:45, während die Maschine aus ist — das ist der Beweis, dass der Alarm nicht von der Maschine abhängt, über die er berichtet. gbt-readiness wird hier bewusst nicht abgewartet: seine Karenz von 50 Minuten würde erst gegen 15:20 fallen, also nach dem Gate.
+Um 14:50 einschalten; die 15:00-Auslösung muss von selbst kommen — das ist der Neustart-Beweis.
+WICHTIG: Hängt um 15:05 noch etwas offen, auch nur ein "bin mir nicht sicher": beide Tasks deaktivieren. Dann verschiebt sich das Ankerdatum um ZWEI Handelstage, samt FLATTEN_DATE, Policy-Digest und Zertifikat; die Prozedur steht am Ende von Owner step 6.
 Notifications: popup 1 day before, popup 15 minutes before.
 ```
 
