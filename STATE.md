@@ -501,6 +501,15 @@ One phase per session; every session ends with the handoff protocol in
   set; the merge of these four commits into `main`; certificate run four on
   the dev account with the dev tasks disabled (R40 C-2), earliest Tuesday
   2026-09-08 from 15:30 CEST because Monday 2026-09-07 is Labor Day.
+- **Open B-class finding, declared not fixed (R42-B2, DECISIONS 2026-09-05):**
+  a credential rejection that coincides with an unwritable journal never
+  persists its fence, so the next cycle arms and opens a position with no human
+  un-halt. Pre-existing — the competition ran on it — and deliberately not
+  patched at the tail of a long session: the quick fix does not hold, because
+  `reconcileHaltProjection` lets the journal win whenever it carries any halt
+  transition. The shape that holds is a `fencePending` marker in the epoch
+  store, which is a change to the authority core and needs its own spec case
+  and gate round. It is prerequisite zero for P12.
 - **Worktree hygiene, open:** `gbt-fix` and `gbt-r33-scratch` can go (both
   clean, both at `9b2e155`, whose content is now on the branch); `gbt-r33`
   after the R41 gate; `gbt-main` after the last merge. `gbt-publish` is

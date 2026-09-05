@@ -335,6 +335,17 @@ run stays on the dev account with the owner watching it weekly.
 
 1. P11 landed (done) — the closing-window defect alone would bite every week
    of a quarter.
+0. **The credential fence must survive an unwritable journal (R42-B2, open).**
+   Today a 401/403 that coincides with a journal write failure leaves
+   `halted: false`, and the next cycle arms and opens a position with no human
+   un-halt. It is pre-existing — the competition ran on it — and it is the one
+   B-class finding of 2026-09-05 left open on purpose, because the shape that
+   holds is a `fencePending` marker in the epoch store beside `resetPending`
+   and `seedPending`, blocking every authoritative mutation until the HALT
+   lands. That is a change to the authority core: scenario, axiom check, spec
+   case, tests, gate round. An unattended quarter is exactly the deployment
+   that must not re-arm itself after a credential rejection, so this comes
+   before the first armed cycle, not after.
 2. Certificate run four green on the dev account during market hours, with the
    dev scheduled tasks disabled for its duration (R40 C-2). Monday 2026-09-07
    is Labor Day, so the earliest is Tuesday 2026-09-08 from 15:30 CEST.
@@ -360,6 +371,12 @@ run stays on the dev account with the owner watching it weekly.
 - **Retention.** Whether a quarter of quote samples belongs in the journal at
   all, or whether the sample should be bounded to the contracts a cycle
   actually reasoned about.
+- **Two composition-root bindings and one CLI binding are unmeasured**
+  (declared 2026-09-05): `buildRuntime`'s two `cycleMarketPort` call sites and
+  `deadline-cli.ts`'s `recordCredentialFence` call pass the whole suite when
+  mutated. The functions are tested; the wiring is not, because `buildRuntime`
+  spawns the pinned analyst child and acquires an epoch. Whether that is worth
+  a harness is a P12 question, not a P11 one.
 
 ## Handoff protocol
 
