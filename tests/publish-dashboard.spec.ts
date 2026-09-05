@@ -11,7 +11,7 @@ import { afterEach, describe, expect, inject, it } from "vitest";
 import { parseJournalText } from "../src/core/journal.js";
 import { TEST_ONLY_GOLDEN_EXPECTATIONS, goldenPresentationCutoffAt } from "../src/fixtures/p6-golden.js";
 import { readPageMeta } from "../src/shell/dashboard-build.js";
-import { completeJournalText, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
+import { completeJournalText, expectedRevisionForJsonRoute, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
 
 const REPO_ROOT = path.resolve();
 const GOLDEN_JOURNAL = path.join(REPO_ROOT, "fixtures", "golden-journal.jsonl");
@@ -113,7 +113,10 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     }
     expect(manifest.accountId).toBe(TEST_ONLY_GOLDEN_EXPECTATIONS.expectedAccountId);
     expect(deployIndex).toContain(manifest.accountId);
-    expect(manifest.jsonRoutes).toEqual(["/data/projection.json", `/${safe}/presentation/projection.json`]);
+    expect(manifest.jsonRoutes).toEqual([
+      { url: "/data/projection.json", expectedJournalRevision: manifest.journalRevision },
+      { url: `/${safe}/presentation/projection.json`, expectedJournalRevision: manifest.journalRevision },
+    ]);
     expect(JSON.parse(read(path.join(out, "deploy"), `${safe}/presentation/projection.json`)) as { journalRevision: string }).toMatchObject({ journalRevision: manifest.journalRevision });
   });
 
@@ -130,6 +133,51 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     expect(read(path.join(out, "deploy"), `${safe}/presentation/index.html`)).toBe(pinnedBefore);
     expect(read(path.join(out, "deploy"), "index.html")).not.toBe(indexBefore);
     expect(readPageMeta(read(path.join(out, "deploy"), "index.html"))["glass-box-rendered-at"]).toBe("2026-09-03T22:00:00.000Z");
+  });
+
+  it("expects a carried-forward JSON route to name its own revision, not the current one (DECISIONS 2026-09-04, B)", async () => {
+    const out = scratchDir();
+    const full = readFileSync(GOLDEN_JOURNAL, "utf8");
+    const lines = full.trimEnd().split("\n");
+    const shortJournal = path.join(scratchDir(), "journal-copy.jsonl");
+    writeFileSync(shortJournal, `${lines.slice(0, -1).join("\n")}\n`, "utf8");
+
+    const first = await renderSite(goldenOptions(shortJournal, out));
+    const grownJournal = path.join(scratchDir(), "journal-copy.jsonl");
+    writeFileSync(grownJournal, full, "utf8");
+    const second = await renderSite(goldenOptions(grownJournal, out, NOW_MS + 60_000));
+    expect(second.journalRevision).not.toBe(first.journalRevision);
+
+    const safeOf = (revision: string): string => `revisions/${revision.replace(":", "-")}`;
+    const byUrl = new Map(second.jsonRoutes.map((route: { url: string; expectedJournalRevision: string | null }) => [route.url, route.expectedJournalRevision]));
+
+    // The route this render wrote, and the live one, expect the new revision.
+    expect(byUrl.get("/data/projection.json")).toBe(second.journalRevision);
+    expect(byUrl.get(`/${safeOf(second.journalRevision)}/presentation/projection.json`)).toBe(second.journalRevision);
+
+    // The carried-forward route is immutable and still belongs to the first
+    // revision: expecting the current one is what produced the red line.
+    const carried = `/${safeOf(first.journalRevision)}/presentation/projection.json`;
+    expect(byUrl.has(carried)).toBe(true);
+    expect(byUrl.get(carried)).toBe(first.journalRevision);
+    expect(JSON.parse(read(path.join(out, "deploy"), carried.replace(/^\//u, ""))) as { journalRevision: string }).toMatchObject({ journalRevision: first.journalRevision });
+
+    // Every expectation the manifest states is met by the bytes on disk.
+    for (const [url, expected] of byUrl) {
+      const served = JSON.parse(read(path.join(out, "deploy"), url === "/" ? "index.html" : url.replace(/^\//u, ""))) as { journalRevision: string };
+      expect(served.journalRevision, url).toBe(expected);
+    }
+  });
+
+  it("derives a JSON route's expected revision from the route, and refuses to guess an unknown immutable spelling", () => {
+    const current = "sha256:78af85c1c238a49d";
+    expect(expectedRevisionForJsonRoute("/data/projection.json", current)).toBe(current);
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49d/latest/projection.json", current)).toBe(current);
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-7b82959a344a7c7e/presentation/projection.json", current)).toBe("sha256:7b82959a344a7c7e");
+    // No expectation is better than a wrong one: the probe fails these loudly.
+    expect(expectedRevisionForJsonRoute("/revisions/", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/md5-abc/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-NOTHEX/presentation/projection.json", current)).toBeNull();
   });
 
   it("carries the Vercel project link (.vercel/) in the deploy directory forward through a re-render", async () => {

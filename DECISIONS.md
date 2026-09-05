@@ -2560,3 +2560,35 @@ small, no ADR split).
   a scratch `STATE_DIR` on the dev profile: exit 0, three lines of composition
   output and the full JSON report in `cycle-run.log`, the real dev and
   competition journals untouched at 70 and 105 entries.
+- **2026-09-05 — The publish manifest states an expected journal revision per
+  JSON route, and a failed probe now names its failed checks.** The B-class
+  backlog of the close session (DECISIONS 2026-09-04). `jsonRoutes` was a flat
+  list of URLs and `tools/probe-dashboard.ps1` expected every one of them to
+  name the manifest's current `journalRevision`, which is false for a
+  carried-forward immutable route by construction — the 2026-09-04 probe
+  reported 47 of 48 against a deployment that was correct. It is now a list of
+  `{ url, expectedJournalRevision }`: the current revision for a route this
+  render wrote, the route's own older revision for a carried-forward immutable
+  one, and `null` for an immutable spelling this project cannot produce, which
+  the probe fails loudly rather than passing on a guess. `render-site.d.mts`
+  carries the type. The summary line also lists the failing checks instead of
+  only counting them — the count alone sent the operator scrolling back through
+  48 lines to find the single red one, which is exactly the friction the
+  runbook's "a failed probe means the candidate is not promoted" cannot afford.
+  `tests/publish-dashboard.spec.ts` pins both halves: a unit case over
+  `expectedRevisionForJsonRoute` (current route, matching immutable route, the
+  2026-09-04 carried-forward route, and three spellings it must refuse) and an
+  end-to-end case that renders a shortened golden journal, renders the grown
+  one into the same deploy tree, and asserts every stated expectation against
+  the bytes on disk. Mutation-probed: forcing the function to return the
+  current revision reddens exactly those two cases and nothing else.
+  **Measured against the live site, read-only:** the archived competition
+  journal (105 entries) re-rendered at the same two cutoffs into a copy of the
+  owner's publish tree reproduces revision `sha256:78af85c1c238a49d` and its
+  four JSON routes; `probe-dashboard.ps1` against
+  `https://glass-box-trading.vercel.app` with that manifest returns **48 of 48**
+  — the route that was red on 2026-09-04,
+  `/revisions/sha256-7b82959a344a7c7e/presentation/projection.json`, passes
+  against its own revision. A tampered manifest with that expectation removed
+  fails the route, exits 1, and prints the failed check by name. The owner's
+  publish tree and the promoted deployment were not touched.

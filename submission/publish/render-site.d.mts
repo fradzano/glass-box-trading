@@ -30,6 +30,13 @@ export interface ManifestRoute {
   readonly expectedMeta: Readonly<Record<string, string>>;
 }
 
+/** One JSON route with the journal revision it must name (DECISIONS 2026-09-04, B). */
+export interface ManifestJsonRoute {
+  readonly url: string;
+  /** `null` when the route is immutable in a spelling this project does not produce; the probe fails it rather than guessing. */
+  readonly expectedJournalRevision: string | null;
+}
+
 export interface PublishManifest {
   readonly renderedAt: string;
   readonly journalPath: string;
@@ -45,7 +52,7 @@ export interface PublishManifest {
   readonly build: { readonly written: readonly string[]; readonly carriedForward: readonly string[]; readonly preservedImmutable: readonly string[] };
   readonly files: readonly DeployedFile[];
   readonly routes: readonly ManifestRoute[];
-  readonly jsonRoutes: readonly string[];
+  readonly jsonRoutes: readonly ManifestJsonRoute[];
 }
 
 export function hostSafeSegment(segment: string): string;
@@ -53,6 +60,7 @@ export function hostSafeRelativePath(relativePath: string): string;
 export function hostSafeHref(href: string): string;
 export function rewritePinHrefs(html: string): string;
 export function routeUrlPath(deployRelativePath: string): string;
+export function expectedRevisionForJsonRoute(url: string, currentRevision: string): string | null;
 export function deriveDeployTree(siteDir: string, deployDir: string, nonce: string): DeployedFile[];
 export function liveStateDirMarker(journalPath: string): string | null;
 export function completeJournalText(raw: string): string;

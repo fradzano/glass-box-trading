@@ -61,6 +61,34 @@ export function hostSafeRelativePath(relativePath) {
   return segments.map((segment, index) => (index === 0 ? segment : hostSafeSegment(segment))).join("/");
 }
 
+/**
+ * The journal revision a JSON route must name (DECISIONS 2026-09-04, B).
+ *
+ * The manifest used to expect every `.json` in the deploy tree to carry the
+ * revision of the render that produced the manifest. That is false for a
+ * carried-forward immutable route: it is immutable precisely because it still
+ * belongs to the older revision spelled in its own path, so the probe reported
+ * a red line for a deployment that was correct. The expectation therefore
+ * comes from the route itself.
+ *
+ * Returns `null` when the route sits under `revisions/` in a spelling this
+ * project does not produce. That is deliberate: the probe then fails that
+ * route loudly rather than guessing an expectation, because an unrecognised
+ * immutable route is exactly the case where a silent pass would be worst.
+ */
+export function expectedRevisionForJsonRoute(url, currentRevision) {
+  const segments = url.split("/").filter(segment => segment.length > 0);
+  if (segments[0] !== "revisions") return currentRevision;
+  const segment = segments[1];
+  if (segment === undefined) return null;
+  if (segment === hostSafeSegment(currentRevision)) return currentRevision;
+  // The only revision spelling this project produces is `sha256:<hex>`, whose
+  // host-safe form replaces the single colon with a hyphen; that inverse is
+  // exact for this shape and refuses every other.
+  const match = /^sha256-([0-9a-f]+)$/u.exec(segment);
+  return match === null ? null : `sha256:${match[1]}`;
+}
+
 /** The renderer's pin href (`revisions/<enc>/<kind>/index.html`) as a root-absolute directory URL (`/revisions/<safe>/<kind>/`). */
 export function hostSafeHref(href) {
   const safe = hostSafeRelativePath(href);
@@ -257,7 +285,10 @@ export async function renderSite(options) {
     build: { written: build.written, carriedForward: build.carriedForward, preservedImmutable: build.preservedImmutable },
     files,
     routes,
-    jsonRoutes: files.filter(file => file.deploy.endsWith(".json")).map(file => file.url),
+    // Each JSON route with the revision it must name: the current one for a
+    // route this render wrote, its own older one for a carried-forward
+    // immutable route, `null` for a spelling this project cannot produce.
+    jsonRoutes: files.filter(file => file.deploy.endsWith(".json")).map(file => ({ url: file.url, expectedJournalRevision: expectedRevisionForJsonRoute(file.url, revision) })),
   };
   writeFileSync(path.join(outDir, "publish-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
