@@ -2090,6 +2090,38 @@ small, no ADR split).
   passed three times alone and in the repeated full verify — a
   timing-sensitive test for the backlog, same class as the MCP stall tests
   ported to a timers port this morning.
+- **2026-09-02 — Live finding six: every journaled close fill made the
+  certificate driver refuse its fence drill; the entry-lifecycle resolver
+  now ignores close attempts.** Certificate run three (19:43 CEST, on the
+  branch head with the one-lot fix but — a PM sequencing slip — a `dist/`
+  still built from freeze two) entered and filled a SPY 765/764 put credit
+  vertical, closed it inside the flatten interval, and then aborted:
+  "refusing fence drill: unresolved entry lifecycle(s):
+  close:exposure:entry:2026-09-02:10:…:g0" — run two's close, whose OUTCOME
+  the 19:30 scheduled dev cycle had journaled in the meantime. Root cause in
+  `unresolvedEntryLifecycleIds` (`src/core/execution.ts`): the resolver seeds
+  states from entry INTENTs only, then treats every OUTCOME or reconciliation
+  item for an id it has not seen as an unknown, invalid entry — and a close
+  attempt's OUTCOME is exactly such an id. Run two passed only because its
+  close fill was journaled after its certificate. The same resolver runs
+  inside `buildCertificate` over the window journal, so a run whose close
+  fill lands inside its window would have failed the certificate. The cycle
+  runner does not use it: competition trading was never affected. Fix: close
+  attempt ids (INTENT `action: "close"`) are collected first and their
+  OUTCOME and reconciliation lines are skipped — they belong to the S-G7
+  close fold; an OUTCOME whose id no INTENT owns stays invalid (foreign
+  evidence is never adopted). Red-first on the golden journal, which carries
+  the exact shape: the pre-fix build returns the close id, the fix returns
+  `[]`; two adjacent cases pinned. The abort left the dev journal under a
+  `MANUAL` halt with the account flat ($99,997.80, two round trips today);
+  the driver's recovery loop kept cycling because the same resolver kept
+  reporting the two closes, and ran to its 20-attempt bound. Operational
+  consequences the same evening: the competition account was re-armed on
+  the freeze-two build (sources restored to `f464a66` on the working tree,
+  `dist/` untouched, the 19:15 `CONFIG_INVALID` halt — caused by the PM's
+  cherry-pick of the one-lot fix before the scheduled tasks were disabled —
+  cleared by manual un-halt, seq 5), while the one-lot fix and this fix
+  await a gate and certificate run four.
 - **2026-09-02 — First competition fill on the freeze-two build; no swap
   tonight.** After the competition account was re-armed on the freeze-two
   build (20:03 CEST, epoch 6, a GAP cycle re-deriving state after 62
@@ -2463,3 +2495,245 @@ small, no ADR split).
   the one spelled in its own path) and `tests/publish-dashboard.spec.ts`
   pins that; until then the runbook's "a failed probe means the candidate
   is not promoted" requires the operator to read *which* check failed.
+- **2026-09-05 — The A-class backlog of 2026-09-03 is fixed: one window
+  builder, held contracts quoted by identity, refusals journaled, the printed
+  report kept.** The competition is over and both scheduled tasks are
+  disabled, so the digest may change again; this is the first change set of
+  the post-competition branch and it invalidates certificate two by design.
+  Built in the house order — four new scenarios (#72–#75), one new axiom
+  (A29, "the observation covers the book"), two new SPEC cases (S-X-07,
+  S-X-08, phase P8 in `config/implementation-phases.json`), then tests, then
+  code. `npm run verify` exit 0 at 44 files / 574 tests.
+
+  **S-X-07 — the window.** All three window sites now build through one pure
+  module, `src/shell/market-window.ts`: `entryWindow` (nearest three eligible
+  expiries, 300 bps — unchanged discovery for the runner), `closingWindow`
+  (from zero remaining sessions, full `MAX_STRIKE_DISTANCE_BPS` — the
+  watchdog's and the deadline runtime's behaviour, unchanged, now defined in
+  one place) and `cycleWindow` (the entry window plus the identities the book
+  holds). **Deviation from the backlog as written, deliberate:** the recorded
+  item said the runner's management step should adopt the close-oriented
+  window from zero sessions. It does not, and should not. That window walks
+  every expiry in `[0, EXPIRY_MAX_SESSIONS]` at ten percent of spot — roughly
+  25 chain requests and several thousand quoted symbols per cycle against the
+  current three-expiry, three-percent walk — which a fifteen-minute cycle
+  would pay for every firing, and every quoted contract also enters the
+  journaled `quoteSamples` (the dev journal is already 50 KB per entry). It
+  would also still miss a contract whose strike had drifted past the wider
+  band, so it buys cost without buying the invariant. `MarketWindow` therefore
+  gained `heldContractIds`: the adapter resolves each held identity through
+  `/v2/options/contracts/{symbol}` when the chain walk did not already produce
+  it, quotes it with the rest, and keeps it in the observation even unquoted,
+  so the management step reports a missing price for a contract it holds
+  rather than one it has never heard of. Cost: at most one extra request per
+  held leg. It covers both the observed defect (expiry nearer than
+  `EXPIRY_MIN_SESSIONS`, #72) and its unobserved sibling (spot drifts out of
+  the entry band, #73). Consequence in the runner: phase 1 reads the book
+  *before* the market instead of beside it, because the window is now built
+  from the book; either read failing is still the same S-CYC-02 abstention.
+  The deadline entry serializes the same way.
+
+  **S-X-08 — the refusal.** A refused management close appends a
+  `MANAGEMENT_REFUSAL` entry — exposure lifecycle, close route, the generation
+  the attempt would have carried (`null` when the close plan itself was
+  vetoed), the reason. It is an entry of its own rather than a field on
+  `CYCLE` because the order forbids the field: the primary entry is written
+  before any order exists (A5, A7) and management runs after phase 4, so at
+  `CYCLE` time no refusal has happened. It is not a primary type — one primary
+  per invocation still holds (S-J-03) — and it is appended at the instant of
+  the refusal, so a process that dies mid-management keeps what it had already
+  reached. A refused append is the ordinary A7 case. The 105 archived
+  competition entries are unaffected: they simply contain no such entry.
+
+  **#75 — the printed report.** The cycle task ran `node
+  dist\shell\agent-cli.js` directly and discarded standard output, which is
+  why the seven refused cycles of 2026-09-03 left nothing outside the journal.
+  It now runs `tools\cycle-run.ps1`, which appends the whole report to
+  `cycle-run.log` in `STATE_DIR` beside the journal and the watchdog log, with
+  one rotation generation at 16 MiB. It deliberately mirrors
+  `watchdog-run.ps1` including the trap that cost a day: the native call runs
+  under `$ErrorActionPreference = 'Continue'`, because PowerShell 5.1 wraps
+  every stderr line of a redirected native command in an ErrorRecord and
+  `agent-cli.js` writes its composition line to stderr. `tools/*.ps1` is not
+  digest material, so the wrapper alone is digest-neutral; the installer
+  refuses to register if either runner is missing. Measured end to end against
+  a scratch `STATE_DIR` on the dev profile: exit 0, three lines of composition
+  output and the full JSON report in `cycle-run.log`, the real dev and
+  competition journals untouched at 70 and 105 entries.
+- **2026-09-05 — The publish manifest states an expected journal revision per
+  JSON route, and a failed probe now names its failed checks.** The B-class
+  backlog of the close session (DECISIONS 2026-09-04). `jsonRoutes` was a flat
+  list of URLs and `tools/probe-dashboard.ps1` expected every one of them to
+  name the manifest's current `journalRevision`, which is false for a
+  carried-forward immutable route by construction — the 2026-09-04 probe
+  reported 47 of 48 against a deployment that was correct. It is now a list of
+  `{ url, expectedJournalRevision }`: the current revision for a route this
+  render wrote, the route's own older revision for a carried-forward immutable
+  one, and `null` for an immutable spelling this project cannot produce, which
+  the probe fails loudly rather than passing on a guess. `render-site.d.mts`
+  carries the type. The summary line also lists the failing checks instead of
+  only counting them — the count alone sent the operator scrolling back through
+  48 lines to find the single red one, which is exactly the friction the
+  runbook's "a failed probe means the candidate is not promoted" cannot afford.
+  `tests/publish-dashboard.spec.ts` pins both halves: a unit case over
+  `expectedRevisionForJsonRoute` (current route, matching immutable route, the
+  2026-09-04 carried-forward route, and three spellings it must refuse) and an
+  end-to-end case that renders a shortened golden journal, renders the grown
+  one into the same deploy tree, and asserts every stated expectation against
+  the bytes on disk. Mutation-probed: forcing the function to return the
+  current revision reddens exactly those two cases and nothing else.
+  **Measured against the live site, read-only:** the archived competition
+  journal (105 entries) re-rendered at the same two cutoffs into a copy of the
+  owner's publish tree reproduces revision `sha256:78af85c1c238a49d` and its
+  four JSON routes; `probe-dashboard.ps1` against
+  `https://glass-box-trading.vercel.app` with that manifest returns **48 of 48**
+  — the route that was red on 2026-09-04,
+  `/revisions/sha256-7b82959a344a7c7e/presentation/projection.json`, passes
+  against its own revision. A tampered manifest with that expectation removed
+  fails the route, exits 1, and prints the failed check by name. The owner's
+  publish tree and the promoted deployment were not touched.
+- **2026-09-05 — R41 blind delta gate at `c27179c`: NO-GO (A=0, B=3, C=2); all
+  five closed, fix-counter-probe 17 of 17.** The gate ran through the Codex
+  companion in the isolated worktree `gbt-r33`, prompt
+  `prompts/R41-post-competition-fix-gate.md` (rev 2), job
+  `task-mto0x6fs-tie7ks`; the report is archived under
+  `responses/R41-task-mto0x6fs-tie7ks/`. Two earlier launches produced nothing
+  and are recorded as harness failures, not as findings: the first could not
+  write in the worktree (`--write` binds the launch directory, so a gate must
+  be launched *from* the worktree it reviews), the second stopped to ask for a
+  Python interpreter its sandbox could not reach. The third was told to skip
+  the phase check and not to stop for questions. It confirmed the archive
+  comparisons (15 of 15 byte-identical, both journals), reproduced both verify
+  runs at 44 files / 584 tests, caught all six mutants the prompt demanded,
+  and ran its own independent set of seventeen.
+
+  - **B1 (the one that mattered) — the credential fence was swallowed.** The
+    held-identity lookup added by S-X-07 is an authenticated read against the
+    trading origin, and its `catch { continue; }` discarded a real 401/403:
+    the observation returned looking healthy while the account's credentials
+    were being refused, and the runner fenced only on a failed *book* read.
+    S-G12-06 requires an authenticated 401/403 to become a durable
+    `AUTH_FAILURE` halt that blocks orders. Fixed on both sides: the adapter
+    rethrows exactly the credential class (an ordinary 404, 500 or timeout
+    still degrades to a missing price), and the runner fences on a refused
+    observation as it does on a refused book. Four tests, including both
+    directions of the classification.
+  - **B2 — a refused close was invisible on the public page.** S-X-08's
+    journal duty was met, but `projection.ts` ignored the new entry type, so
+    the dashboard could not tell an intended hold from a refused close — which
+    is exactly the pair scenario #74 is about, and `CONCEPT.md` §22–25 and
+    `SUBMISSION-SPEC.md` require trade/no-trade *and why* on the page. This was
+    a known gap at the time of writing and the intention had been to declare
+    it; the gate is right that a declaration is not enough when the normative
+    text is that explicit. `CycleView` now carries `managementRefusals` and a
+    fourth result value `refused`; the cycles table has a refused-closes
+    column and the detail block lists each refusal with route, generation and
+    reason.
+  - **B3 — a noncanonical revision route could vouch for itself.**
+    `expectedRevisionForJsonRoute` accepted any `sha256-<hex>` length, so a
+    foreign `sha256-abcdef` directory declared its own revision and passed a
+    local probe 20 of 20. The publisher emits exactly sixteen lowercase hex
+    characters (`journalContentRevision`), so that is now the only accepted
+    spelling, in the route and in the current revision alike; anything else
+    yields `null`, which the probe fails loudly. The second half of the finding
+    is the lossy host-safe conversion: distinct source spellings can land on
+    one deployed directory, after which the immutable path no longer identifies
+    its content. `collidingDeployPaths` detects that before the deploy tree is
+    derived and the render throws instead of publishing.
+  - **C1** — S-J-03's closed entry-type list in the spec had not been extended
+    with `MANAGEMENT_REFUSAL`. Fixed.
+  - **C2 (and a lesson about the probe itself)** — four composition-root
+    forwardings of the held identities passed the entire 584-test suite when
+    replaced by an empty list. The session's own 17-mutant probe had reported
+    17 of 17 an hour earlier and was not wrong; it simply never mutated those
+    four lines, which is the axiom "Prüfling ≠ Maßstab" applied to a mutation
+    probe: the mutant list has the same blind spot as the code that inspired
+    it. Closed by naming the runner's forwarding (`cycleMarketPort`, exported
+    and directly tested) and by asserting the forwarded identities in the two
+    existing composition tests — the deadline one against a book deliberately
+    made non-empty, because the previous assertion compared an empty list to an
+    empty list and would have passed forever.
+
+  Fix-counter-verification: a second probe of seventeen mutants over the fixes
+  themselves (`r41-fix-mutation-probe.py` in the store) reports **17 of 17
+  caught by tests** on a green baseline, two of them only after replacing
+  mutants the typechecker had rejected — a non-compiling mutant measures
+  nothing and must never be counted as a catch. `npm run verify` exit 0 at 44
+  files / 594 tests. Not claimed: a bis-0 termination. This is one gate round
+  and its fix round; a further delta gate on the fix set is the next step, and
+  the four seams C2 found are a reminder that the store's earlier probes were
+  narrower than their numbers suggested.
+- **2026-09-05 — R42 fix counter-gate at `4eb900e`: NO-GO (A=0, B=4, C=1);
+  three closed, one declared and put to the owner.** The gate ran blind in
+  `gbt-r33`, prompt `prompts/R42-fix-counter-gate.md`, job
+  `task-mto2k4l6-257q8u`, report archived under
+  `responses/R42-task-mto2k4l6-257q8u/`. It confirmed what held: ordinary
+  401/403 escape and 404/429/500, timeouts, network errors, a malformed 200
+  and a refused redirect all still degrade to a missing price; sixteen
+  book/market failure combinations keep their `WORLD_PARTIAL` /
+  `WORLD_UNREACHABLE` classes with auth taking precedence and halting once;
+  only `CYCLE` is ever labelled `refused`; an INTENT beside a refusal stays
+  `proposal` and shows the refusal as well; injection through `reason` and
+  `exposureLifecycleId` is escaped. This is the second gate round on this fix
+  set, and its findings are what the axiom "fixes carry defects" predicts.
+
+  - **B1 (closed) — the status was lost when the response body was not.** In
+    `request`, a body read that rejects or stalls escaped before the
+    status-carrying error was built, so a 401 with an aborted body became a
+    statusless error that every caller degraded into ordinary world trouble.
+    Reproduced at the parent too: a pre-existing gap that the new
+    held-identity lookup made reachable. The status is now attached at the
+    point it is known, for non-2xx responses only — a 200 whose body breaks
+    keeps its own transport error and gains no fabricated status.
+  - **B3 (closed, and mine) — a witness entry stole the following refusal.**
+    `SUPPRESSED` and `FENCED_OUT` are primary types, so a witness landing
+    between a cycle and its own `MANAGEMENT_REFUSAL` took the refusal into its
+    window: the projection labelled the real cycle `no_trade` and hung the
+    refusal on an instance that never ran a management step. That is precisely
+    the misattribution scenario #74 exists to prevent, introduced by the R41-B2
+    closure. Refusals are now attributed to the nearest preceding non-witness
+    primary, and a witness owns none.
+  - **B4 (closed) — the new exception reached an unfenced deadline abort.**
+    The held-identity lookup is authenticated, so a 401/403 can now abort a
+    `deadline-cli` one-shot; the CLI's generic catch fail-pinged and exited 1
+    without journalling anything, leaving `halted: false`. An abort satisfies
+    the deadline handover (S-G11-04) but not the shared fence duty of
+    S-G12-06. `composeDeadline` now exposes `recordCredentialFence`, shaped
+    like the watchdog's and using the same `recordStartupBrokerFence`, and the
+    CLI calls it before releasing authority.
+  - **B2 (NOT fixed — declared, and the owner's next decision) — a journal
+    write failure lets the credential fence disappear.** With the journal
+    unwritable, `haltForAuthFailure` appends nothing and `halted` stays false;
+    once the journal is writable again the next cycle opens a position without
+    any human un-halt. The gate reproduced it end to end through the real
+    gateway. **This is pre-existing** — the competition ran on it — and it is
+    not caused by the S-X-07 work, which only routes one more failure into the
+    same hole. It is not patched here on purpose: the obvious quick fix, write
+    the halt projection directly when the append fails, does not hold, because
+    `reconcileHaltProjection` lets the journal win whenever the journal
+    contains any halt transition at all, so an earlier HALT/UNHALT pair would
+    silently clear the flag again. The shape that does hold is a durable
+    marker in the epoch store beside `resetPending` and `seedPending` — call
+    it `fencePending` — set when a fence could not be journaled and blocking
+    every authoritative mutation until the HALT lands. That is a change to the
+    authority core with its own spec case, tests and gate round, and it should
+    not be bolted onto the end of a long session. **Consequence until it is
+    built: a credential rejection that coincides with an unwritable journal
+    can be followed by an armed cycle.** It belongs before P12's first armed
+    cycle, and it is listed there.
+  - **C (declared residual) — two composition-root bindings stay unmeasured.**
+    The two `cycleMarketPort` call sites in `buildRuntime`
+    (`src/shell/agent-runtime.ts`) pass all 600 tests when mutated to forward
+    an empty list, and so does the one-line `recordCredentialFence` call in
+    `deadline-cli.ts`. The functions themselves are directly tested; what is
+    untested is that the composition root wires them, and `buildRuntime` has
+    never been unit-tested because it spawns the pinned analyst MCP child,
+    composes a real broker and acquires an epoch. Declared rather than
+    smoothed: these are one-line bindings to tested functions, and the honest
+    statement is that a reviewer's eye is their only check today.
+
+  Fix-counter-probe over the three closures: **8 of 8 caught by tests** on a
+  green baseline, the last only after sharpening an assertion that had passed
+  for the wrong reason. `npm run verify` exit 0 at 44 files / 600 tests. Not
+  claimed: a bis-0 termination — two rounds, two fix rounds, and one B
+  deliberately open.

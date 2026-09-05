@@ -42,3 +42,5 @@
 - `tests/publish-dashboard.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`
+- `tests/x7-close-outcomes-resolve.spec.ts`
+- `tests/x7-x8-window-and-refusals.spec.ts`

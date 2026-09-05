@@ -138,7 +138,7 @@ function candidateBlock(cycle: CycleView, verdict: Readonly<Record<string, unkno
 
 function cycleRow(cycle: CycleView): string {
   const codes = cycle.reasonCodes.length === 0 ? "—" : cycle.reasonCodes.join(", ");
-  return `<tr><td><a href="#cycle-${String(cycle.seq)}">${String(cycle.seq)}</a></td><td><time>${escapeHtml(cycle.at)}</time></td><td>${escapeHtml(cycle.tradingDay ?? "—")}</td><td>${escapeHtml(cycle.type)}</td><td class="result result--${cycle.result}">${escapeHtml(cycle.result.replaceAll("_", " "))}</td><td>${escapeHtml(codes)}</td><td class="num">${formatUsd(cycle.equityCents)}</td><td>${cycle.candidateVerdicts.length === 0 ? "0" : String(cycle.candidateVerdicts.length)}</td></tr>`;
+  return `<tr><td><a href="#cycle-${String(cycle.seq)}">${String(cycle.seq)}</a></td><td><time>${escapeHtml(cycle.at)}</time></td><td>${escapeHtml(cycle.tradingDay ?? "—")}</td><td>${escapeHtml(cycle.type)}</td><td class="result result--${cycle.result}">${escapeHtml(cycle.result.replaceAll("_", " "))}</td><td>${escapeHtml(codes)}</td><td class="num">${formatUsd(cycle.equityCents)}</td><td>${cycle.candidateVerdicts.length === 0 ? "0" : String(cycle.candidateVerdicts.length)}</td><td>${String(cycle.managementRefusals.length)}</td></tr>`;
 }
 
 function cycleDetail(cycle: CycleView, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
@@ -149,10 +149,14 @@ function cycleDetail(cycle: CycleView, lifecyclesBySeq: ReadonlyMap<number, Life
     return link === undefined ? `<li>INTENT seq ${String(seq)}</li>` : `<li><a href="#lifecycle-${escapeHtml(link.exposureLifecycleId)}">INTENT seq ${String(seq)} → ${escapeHtml(link.resolution)}</a></li>`;
   }).join("");
   const noTrade = cycle.result === "no_trade" ? `<p class="no-trade">No-trade result: ${cycle.candidateVerdicts.length === 0 ? (cycle.analystSkipped ? "the analyst produced nothing usable this cycle (skip journaled)" : "the analyst proposed no candidate") : "every candidate was vetoed by the deterministic gates"}.</p>` : "";
+  // S-X-08 / R41-B2: a close this cycle planned and did not submit is shown
+  // with its reason. Without it the page cannot tell a deliberate hold from a
+  // refused close, which is exactly the pair scenario #74 is about.
+  const refusals = cycle.managementRefusals.length === 0 ? "" : `<p class="refused">Management closes planned and refused this cycle: ${String(cycle.managementRefusals.length)}.</p><ul class="refusals">${cycle.managementRefusals.map(refusal => `<li id="refusal-${String(refusal.seq)}">seq ${String(refusal.seq)} · <code>${escapeHtml(refusal.exposureLifecycleId)}</code> · route <code>${escapeHtml(refusal.route)}</code>${refusal.generation === null ? " · no attempt yet" : ` · generation ${String(refusal.generation)}`} — ${escapeHtml(refusal.reason)}</li>`).join("")}</ul>`;
   return `<section class="cycle" id="cycle-${String(cycle.seq)}" aria-labelledby="cycle-${String(cycle.seq)}-title">
   <h3 id="cycle-${String(cycle.seq)}-title">${escapeHtml(cycle.type)} seq ${String(cycle.seq)} · <time>${escapeHtml(cycle.at)}</time>${cycle.cycleIndex === null ? "" : ` · cycle ${String(cycle.cycleIndex)}`}${cycle.tradingDay === null ? "" : ` · ${escapeHtml(cycle.tradingDay)}`}</h3>
   <p class="figure">Equity at snapshot: <code>${formatUsd(cycle.equityCents)}</code> · reason codes: <code>${escapeHtml(cycle.reasonCodes.length === 0 ? "none" : cycle.reasonCodes.join(", "))}</code></p>
-  ${batch}${noTrade}
+  ${batch}${noTrade}${refusals}
   ${candidates}
   ${intents.length === 0 ? "" : `<ul class="intents">${intents}</ul>`}
 </section>`;
@@ -262,14 +266,14 @@ ${goldenPathList(goldenPath)}
 }
 
 function cyclesTable(projection: PerformanceProjection): string {
-  return `<table><thead><tr><th>Seq</th><th>At (UTC)</th><th>Day</th><th>Type</th><th>Result</th><th>Reason codes</th><th>Equity</th><th>Candidates</th></tr></thead><tbody>${projection.cycles.map(cycleRow).join("")}</tbody></table>`;
+  return `<table><thead><tr><th>Seq</th><th>At (UTC)</th><th>Day</th><th>Type</th><th>Result</th><th>Reason codes</th><th>Equity</th><th>Candidates</th><th>Refused closes</th></tr></thead><tbody>${projection.cycles.map(cycleRow).join("")}</tbody></table>`;
 }
 
 function renderCyclesSection(projection: PerformanceProjection, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
   return `<section id="cycles" aria-labelledby="cycles-title">
 <h2 id="cycles-title">Every cycle: proposal or no-trade, gate vector, rationale</h2>
 <p class="lead">This section lists every decision cycle, whether it produced a trade or a deliberate no-trade, and the gate vector each candidate passed or failed.</p>
-<p>${String(projection.cycles.length)} primary entries at this cutoff. A no-trade result is first-class evidence: the analyst proposed nothing usable or every candidate was vetoed.</p>
+<p>${String(projection.cycles.length)} primary entries at this cutoff. A no-trade result is first-class evidence: the analyst proposed nothing usable or every candidate was vetoed. A <em>refused</em> result means the opposite of a quiet cycle — the agent planned to close a position and was turned away, with the reason named below.</p>
 ${cyclesTable(projection)}
 ${projection.cycles.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
 </section>`;

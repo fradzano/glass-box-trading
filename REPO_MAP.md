@@ -76,6 +76,7 @@
 - `src/shell/journal-store.ts` — The only module that touches the journal file. It is imported by the
 - `src/shell/manual-unhalt.ts` — The one human path that clears the halt flag (S-G12-04). It is not
 - `src/shell/market-calendar.ts` — Exchange calendar arithmetic for the shell (S-G6-03: session boundaries come
+- `src/shell/market-window.ts` — The one place a market observation window is defined (S-X-07, A29).
 - `src/shell/mcp-environment.ts` — The real ports behind the pinned MCP launcher (P7, S-CYC-11): evidence
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
 - `src/shell/operation-timeout.ts` — Bound an external lifecycle operation without trusting it to honor cancellation.
@@ -158,9 +159,12 @@
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
+- `tests/x7-close-outcomes-resolve.spec.ts` — Live finding six (2026-09-02): the entry-lifecycle terminality resolver
+- `tests/x7-x8-window-and-refusals.spec.ts` — S-X-07 the cycle's market observation covers the book, and S-X-08 a
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`
+- `tools/cycle-run.ps1`
 - `tools/derive_mcp_dependency_digest.py` — Derive the MCP dependency-site digest from a hash-locked clean wheel install.
 - `tools/generate_map.py` — Regenerate REPO_MAP.md and TEST_MAP.md from the working tree.
 - `tools/install-scheduled-task.ps1`

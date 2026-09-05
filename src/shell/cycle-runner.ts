@@ -20,6 +20,7 @@ import {
   classifyWorkingOrder,
   closeAttemptsAwaitingOutcome,
   cycleDraft,
+  managementRefusalDraft,
   emergencyCloseEligibility,
   entryAcknowledgementDraft,
   entryFillTransitionBreachesLimit,
@@ -59,7 +60,7 @@ import type {
   RunnerHaltReason,
   SubmitObservation,
 } from "../core/execution.js";
-import type { AccountBinding, JournalDraft, JournalEntry, OutcomeStatus, ReasonCode } from "../core/journal.js";
+import type { AccountBinding, CloseRouteLabel, JournalDraft, JournalEntry, OutcomeStatus, ReasonCode } from "../core/journal.js";
 import {
   assertFlattened,
   bookReconciliationDraft,
@@ -95,6 +96,7 @@ import type { BrokerReadPort, SubmitPayload } from "./fake-broker.js";
 import { readHaltState } from "./halt-state.js";
 import type { BrokerMutation, DispatchResult, MutationGateway } from "./mutation-gateway.js";
 import type { StatePaths } from "./state-dir.js";
+import { heldOptionContractIds } from "./market-window.js";
 
 export interface AnalystInput {
   readonly tradingDay: string;
@@ -149,7 +151,11 @@ export interface CycleDependencies {
   readonly paths: StatePaths;
   readonly binding: AccountBinding;
   readonly broker: BrokerReadPort;
-  readonly market: (deadlineAtMs?: number) => Promise<MarketObservation>;
+  /**
+   * S-X-07: the observation is built around the contracts this cycle holds,
+   * so the caller passes them and the book read therefore precedes it.
+   */
+  readonly market: (heldContractIds: readonly string[], deadlineAtMs?: number) => Promise<MarketObservation>;
   /** Returns the analyst's raw text; may throw or hang — it is invoked at most once per cycle (S-CYC-01). */
   readonly analyst: (input: AnalystInput) => Promise<string>;
   readonly analystTimeoutMs: number;
@@ -213,7 +219,7 @@ export interface ManagementCloseReport {
  */
 export interface ManagementRefusalReport {
   readonly exposureLifecycleId: string;
-  readonly route: string;
+  readonly route: CloseRouteLabel;
   /** The generation the refused attempt would have carried; `null` when the close-lifecycle plan itself was vetoed. */
   readonly generation: number | null;
   readonly reason: string;
@@ -301,6 +307,17 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   const lifecycleVetoes: LifecycleVeto[] = [];
   const managementCloses: ManagementCloseReport[] = [];
   const managementRefusals: ManagementRefusalReport[] = [];
+
+  /**
+   * S-X-08: the refusal goes into the report AND into the journal, at the
+   * moment it happens. The report alone died with the process on 2026-09-03;
+   * the journal is the record a judge and an operator actually have. A failed
+   * append is the ordinary A7 case — nothing is retried and nothing pretends.
+   */
+  async function recordRefusal(refusal: ManagementRefusalReport): Promise<void> {
+    managementRefusals.push(refusal);
+    await append(managementRefusalDraft(context(), { exposureLifecycleId: refusal.exposureLifecycleId, route: refusal.route, generation: refusal.generation, reason: refusal.reason }));
+  }
   let classification: BookClassification | null = null;
   let declaredHolds: readonly string[] = [];
   const appended = { durable: false };
@@ -478,12 +495,23 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   if (journalDownSincePhaseZero) entriesBlocked.push("JOURNAL_UNAVAILABLE");
 
   // ---- phase 1: one snapshot; a half-answer is an abstention (S-CYC-02) ----
+  // The book is read first and the observation is built around it (S-X-07,
+  // A29): a contract the account holds is quoted by its identity, so a
+  // structure whose expiry has come nearer than the entry window's floor, or
+  // whose strikes the underlying has drifted away from, stays priceable. The
+  // two reads are sequential for that reason alone; either failing is still
+  // the same abstention it always was.
   await heartbeatBoundary("phase 1");
-  const [bookFetch, marketFetch] = await Promise.all([fetchBook(), fetched(() => deps.market(deps.cycleDeadlineMs))]);
+  const bookFetch = await fetchBook();
+  const heldContractIds = bookFetch.ok ? heldOptionContractIds(bookFetch.value.positions, deps.decisionConfig.underlyingUniverse) : [];
+  const marketFetch = await fetched(() => deps.market(heldContractIds, deps.cycleDeadlineMs));
   if (!bookFetch.ok || !marketFetch.ok) {
     // S-G12-06: a broker 401/403 is a credential fence — a distinguishable AUTH_FAILURE that halts, never generic
-    // world unavailability. Market-data failures stay in the S-CYC-02 world classes; only the broker port fences.
+    // world unavailability. Since S-X-07 the observation also performs an authenticated read against the trading
+    // origin (the held-identity lookup), so a rejection there fences exactly like the book's (R41-B1). Everything
+    // else about a market failure stays in the S-CYC-02 world classes.
     if (!bookFetch.ok && isAuthFailure(bookFetch)) await haltForAuthFailure(bookFetch.error);
+    else if (!marketFetch.ok && isAuthFailure(marketFetch)) await haltForAuthFailure(marketFetch.error);
     const brokerAuthFailure = entriesBlocked.includes("AUTH_FAILURE");
     const anySucceeded = (bookFetch.ok || bookFetch.partial === true) || marketFetch.ok;
     const reasonCodes: readonly ReasonCode[] = brokerAuthFailure ? ["AUTH_FAILURE"] : [anySucceeded ? "WORLD_PARTIAL" : "WORLD_UNREACHABLE"];
@@ -876,8 +904,9 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
    * `book` — which is the caller's freshly read one, never the phase-1
    * snapshot the analyst step is older than (S-CYC-05 on the close side).
    * Every step that plans an attempt and then refuses it is recorded in
-   * `managementRefusals`, so the refusal is measurable evidence rather than a
-   * silent return: a ladder fed from the fresh book never produces one.
+   * `managementRefusals` AND journaled as a `MANAGEMENT_REFUSAL` entry
+   * (S-X-08), so the refusal is durable evidence rather than a silent return:
+   * a ladder fed from the fresh book never produces one.
    */
   async function ladderClose(book: BrokerBook, exposureLifecycleId: string, closingLegs: readonly OptionLeg[], quantity: Quantity, route: "expiry" | "deadline" | "residue", cap: CloseCap, journaledCloses: readonly CloseAttemptRecord[], reason: string, stepCents: number): Promise<{ readonly attemptId: string | null; readonly atCap: boolean }> {
     let closesNow = journaledCloses;
@@ -886,7 +915,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     let plan = planCloseLifecycle(lifecycleSnap);
     // COMPLETE is the ladder's normal end (nothing left to close) and stays silent; a VETO is a refused plan.
     if (plan.kind === "VETO") {
-      managementRefusals.push({ exposureLifecycleId, route, generation: null, reason: `PLAN_VETO: ${plan.reason}` });
+      await recordRefusal({ exposureLifecycleId, route, generation: null, reason: `PLAN_VETO: ${plan.reason}` });
       return { attemptId: null, atCap: false };
     }
     if (plan.kind === "COMPLETE") return { attemptId: null, atCap: false };
@@ -920,14 +949,14 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       ? marketableCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents)
       : escalateCloseLimit(closingLegs, snapshot.quotesByContract, plan.generation, stepCents, cap);
     if (!priced.ok) {
-      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `PRICE_UNAVAILABLE: ${priced.reason}` });
+      await recordRefusal({ exposureLifecycleId, route, generation: plan.generation, reason: `PRICE_UNAVAILABLE: ${priced.reason}` });
       return { attemptId: null, atCap: false };
     }
     const eligibility = emergencyCloseEligibility(book.positions, closingLegs.map(optionLeg => ({ contractId: optionLeg.contractId, side: optionLeg.side, quantity: optionLeg.ratio * plan.quantity })));
     if (!eligibility.eligible) {
       // The attempt was planned against something the fresh book no longer carries: it is refused, and the
       // refusal is recorded so that planning from a stale book cannot hide behind this gate (S-CYC-05, A11).
-      managementRefusals.push({ exposureLifecycleId, route, generation: plan.generation, reason: `NOT_ELIGIBLE: ${eligibility.reason}` });
+      await recordRefusal({ exposureLifecycleId, route, generation: plan.generation, reason: `NOT_ELIGIBLE: ${eligibility.reason}` });
       return { attemptId: null, atCap: false };
     }
     if (priced.atCap) {

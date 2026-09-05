@@ -27,6 +27,8 @@ import { readSubmitPayload } from "./broker-ports.js";
 import type { AccountView, BrokerReadPort } from "./broker-ports.js";
 import type { CalendarDay } from "./market-calendar.js";
 import type { BrokerMutation, BrokerMutationPort, BrokerMutationResult } from "./mutation-gateway.js";
+import { classifyBrokerFailure } from "../core/startup.js";
+import { httpStatusOf } from "./broker-errors.js";
 
 export interface AlpacaCredentials {
   readonly keyId: string;
@@ -51,6 +53,15 @@ export interface MarketWindow {
   readonly expiries: readonly string[];
   /** Strike window as a fraction of spot, e.g. 300 bps keeps strikes within 3% of spot. */
   readonly strikeWindowBps: number;
+  /**
+   * Contract identities that must be quoted whatever the expiry and strike
+   * bounds above select (S-X-07, A29): the contracts the account holds. They
+   * are resolved one by one against the contract endpoint and quoted with the
+   * walked chain, so a held structure stays priceable after its expiry has
+   * come nearer than `EXPIRY_MIN_SESSIONS` or the underlying has drifted out
+   * of the walked band. Build windows through `market-window.ts`, never here.
+   */
+  readonly heldContractIds: readonly string[];
 }
 
 export interface FullSnapshot {
@@ -155,8 +166,19 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     let text: string;
     try {
       response = await Promise.race([fetchPromise, timeout]);
-      // A fetch resolves when headers arrive; the same deadline must cover a stalled response body as well.
-      text = await Promise.race([response.text(), timeout]);
+      try {
+        // A fetch resolves when headers arrive; the same deadline must cover a stalled response body as well.
+        text = await Promise.race([response.text(), timeout]);
+      } catch (bodyError) {
+        // R42-B1: the status is already known here, and it is the part that
+        // decides whether this was a credential rejection (S-G12-06). A body
+        // that never arrives must not turn a 401 into a statusless error that
+        // every caller then degrades into ordinary world trouble.
+        if (response.status < 200 || response.status >= 300) {
+          throw new BrokerHttpError(response.status, `${String(response.status)} response body unreadable: ${bodyError instanceof Error ? bodyError.message : String(bodyError)}`);
+        }
+        throw bodyError;
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -353,6 +375,19 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     return out;
   }
 
+  /**
+   * One held contract by its identity (S-X-07). The chain walk only finds what
+   * the expiry and strike bounds select; a contract the account holds must be
+   * priceable whatever those bounds say, so it is resolved directly. Unlike
+   * the walk this does not require `tradable`: an untradable held contract is
+   * a fact the management step must see, not one the observation may hide.
+   */
+  async function contractById(contractId: string, deadlineAtMs?: number): Promise<OptionContract | null> {
+    const json = await get(options.tradingOrigin, `/v2/options/contracts/${encodeURIComponent(contractId)}`, deadlineAtMs);
+    const raw = isRecord(json) && isRecord(json["option_contract"]) ? json["option_contract"] : json;
+    return mapOptionContract(raw);
+  }
+
   async function market(window: MarketWindow, deadlineAtMs?: number): Promise<MarketObservation> {
     const spotQuotes = await latestQuotes("/v2/stocks/quotes/latest?feed=iex&symbols=", window.underlyings, deadlineAtMs);
     const contractsById: Record<string, OptionContract> = {};
@@ -371,11 +406,33 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
         for (const contract of await contractsFor(underlying, expiry, spot - halfWindow, spot + halfWindow, deadlineAtMs)) contractsById[contract.contractId] = contract;
       }
     }
+    // Held identities the walk did not already produce. An ordinary lookup
+    // failure (404, 500, a timeout) is not fatal: the management step then
+    // reports a missing price for that contract, which is journaled (S-X-08)
+    // instead of vanishing silently. A credential rejection is a different
+    // thing entirely and must never be degraded into that — this is an
+    // authenticated read against the trading origin, so a 401/403 escapes and
+    // becomes the durable AUTH_FAILURE fence of S-G12-06 (R41-B1: the first
+    // version of this loop caught everything and returned a healthy-looking
+    // observation while the account's credentials were being refused).
+    for (const contractId of window.heldContractIds) {
+      if (contractsById[contractId] !== undefined || window.underlyings.includes(contractId)) continue;
+      try {
+        const held = await contractById(contractId, deadlineAtMs);
+        if (held !== null) contractsById[contractId] = held;
+      } catch (error) {
+        if (classifyBrokerFailure(httpStatusOf(error)) === "AUTH_FAILURE") throw error;
+        continue;
+      }
+    }
     const optionSymbols = Object.keys(contractsById).filter(id => !window.underlyings.includes(id));
     const optionQuotes = await latestQuotes("/v1beta1/options/quotes/latest?feed=indicative&symbols=", optionSymbols, deadlineAtMs);
     for (const [symbol, quote] of Object.entries(optionQuotes)) quotesByContract[symbol] = quote;
     // Contracts without a quote are dropped: the gate would veto them anyway (S-G5-03), and the journal sample stays compact.
-    const quotedContracts = Object.fromEntries(Object.entries(contractsById).filter(([symbol]) => window.underlyings.includes(symbol) || optionQuotes[symbol] !== undefined));
+    // Contracts without a quote are dropped (see above), except a held identity:
+    // it stays in the observation so the management step reports a missing
+    // price for a contract it holds rather than one it has never heard of.
+    const quotedContracts = Object.fromEntries(Object.entries(contractsById).filter(([symbol]) => window.underlyings.includes(symbol) || window.heldContractIds.includes(symbol) || optionQuotes[symbol] !== undefined));
     return { quotesByContract, contractsById: quotedContracts, spotCentsByUnderlying };
   }
 

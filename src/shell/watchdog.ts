@@ -42,6 +42,7 @@ import type { BrokerReadPort } from "./fake-broker.js";
 import { createMutationGateway, NO_BROKER_PORT } from "./mutation-gateway.js";
 import type { BrokerMutationPort, MutationGateway } from "./mutation-gateway.js";
 import type { StatePaths } from "./state-dir.js";
+import { heldOptionContractIds } from "./market-window.js";
 
 export interface WatchdogDependencies {
   readonly paths: StatePaths;
@@ -55,7 +56,15 @@ export interface WatchdogDependencies {
   readonly binding: AccountBinding | null;
   /** Broker read side and mutation port; null runs the fence-and-halt path without book recovery (the CLI entry). */
   readonly broker: { readonly read: BrokerReadPort; readonly port: BrokerMutationPort } | null;
-  readonly market: (() => Promise<MarketObservation>) | null;
+  /**
+   * S-X-07: the recovery observation is built around the book of this very
+   * firing, so the book is read first and its held identities are passed in.
+   * The close-oriented window alone is a band, and the flattener is the last
+   * place that may lose a contract to a band.
+   */
+  readonly market: ((heldContractIds: readonly string[]) => Promise<MarketObservation>) | null;
+  /** Which position rows are share residue rather than option identities (S-X-07). */
+  readonly underlyingUniverse: readonly string[];
   readonly profile: "dev" | "competition";
   readonly calendar: { readonly isTradingDay: boolean; readonly opensAt: Quantity | number; readonly closesAt: Quantity | number };
   readonly tradingDay: string;
@@ -155,6 +164,7 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   if (deps.broker !== null && deps.market !== null && deps.binding !== null) {
     const binding = deps.binding;
     const brokerRead = deps.broker.read;
+    const marketPort = deps.market;
     // A refused snapshot (bad quotes, unreconstructable lifecycles, ...) or a
     // broker/market read that throws must not surface as a silent no-op: the
     // fence and halt above already stand, but nothing here closed anything,
@@ -162,12 +172,12 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     let book: BrokerBook | null = null;
     let assembled: SnapshotAssemblyResult;
     try {
-      const [account, positions, openOrders, market] = await Promise.all([
+      const [account, positions, openOrders] = await Promise.all([
         brokerRead.account(),
         brokerRead.positions(),
         brokerRead.openOrders(),
-        deps.market(),
       ]);
+      const market = await marketPort(heldOptionContractIds(positions, deps.underlyingUniverse));
       book = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
       const reopened = await gateway.openJournal();
       assembled = assembleDecisionSnapshot({

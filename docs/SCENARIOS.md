@@ -452,6 +452,46 @@ Before the dedicated environment is verified and spawned, all Python bytecode
 is removed, its absence is checked, and bytecode writes are disabled; exact
 tool inventory is checked separately.
 
+**72. A held structure expires sooner than a new one may be opened**
+Actors: cycle runner, market observation, close ladder, broker. Trigger: the
+structure was opened at the minimum remaining sessions and has been held since;
+on the session before its expiry the entry window — which starts at
+`EXPIRY_MIN_SESSIONS` — no longer contains that expiry, so the cycle's
+observation carries no quote for any of its legs and every close is refused for
+a missing price while the position stays open. What must hold: the observation a
+cycle prices its closes in covers every contract the account holds, whatever
+window that contract could once have been opened in. Discovery by an entry
+window is not the same thing as the universe management prices in. *(Observed
+2026-09-03 on the competition account: three structures expiring the next
+session, seven silent cycles, flattened only by the watchdog.)*
+
+**73. The underlying leaves the entry strike band while a position is held**
+Actors: cycle runner, market observation, close ladder. Trigger: entry
+discovery walks a narrow strike band around spot; the underlying then moves
+further than that band while the structure is held, so its strikes fall outside
+the walked chain, its legs are unquoted, and its closes are refused — the same
+silence as #72 with no calendar involved. What must hold: as #72; held contracts
+are quoted by identity, never rediscovered by a band that was chosen for
+entering.
+
+**74. The cycle is refused a close and the refusal exists only in memory**
+Actors: cycle runner, scheduled task, journal, operator. Trigger: the management
+step refuses (plan veto, missing price, ineligible), writes the refusal into the
+printed cycle report, and the scheduled task discards standard output; the
+journal then shows a cycle with open positions, no intent, and no reason, which
+is indistinguishable from an agent that correctly chose to hold. What must hold:
+a management refusal is journaled evidence like every other cycle outcome —
+"held on purpose" and "tried and was refused" are distinguishable from the
+durable record alone.
+
+**75. The scheduled run's printed report is the only copy and is thrown away**
+Actors: task installer, scheduled task, operator. Trigger: the cycle prints a
+full report to standard output; the task runs headless and redirects nothing, so
+a post-hoc investigation has the journal and nothing else, and the reasoning
+behind a quiet cycle is gone. What must hold: a scheduled cycle keeps its
+printed report where the operator can read it afterwards, alongside the journal
+and the watchdog log.
+
 ---
 
 ## Cross-cutting observation (not a scenario)

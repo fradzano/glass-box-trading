@@ -11,12 +11,14 @@
 
 export type JournalEntryType =
   | "CYCLE" | "BOOTSTRAP" | "INTENT" | "OUTCOME" | "RECONCILIATION" | "HUMAN_ACTION" | "GAP" | "SKIP"
-  | "SUPPRESSED" | "FENCED_OUT" | "HALT" | "UNHALT" | "KILL" | "DEADLINE_RECONCILIATION" | "TERMINAL";
+  | "SUPPRESSED" | "FENCED_OUT" | "HALT" | "UNHALT" | "KILL" | "DEADLINE_RECONCILIATION" | "TERMINAL"
+  | "MANAGEMENT_REFUSAL";
 
 export function journalEntryTypes(): readonly JournalEntryType[] {
   return [
     "CYCLE", "BOOTSTRAP", "INTENT", "OUTCOME", "RECONCILIATION", "HUMAN_ACTION", "GAP", "SKIP",
     "SUPPRESSED", "FENCED_OUT", "HALT", "UNHALT", "KILL", "DEADLINE_RECONCILIATION", "TERMINAL",
+    "MANAGEMENT_REFUSAL",
   ];
 }
 
@@ -302,6 +304,8 @@ function validateVerdictList(value: unknown): boolean {
   return Array.isArray(value) && value.every(item => isPlainRecord(item));
 }
 
+
+
 interface EntrySchema {
   readonly required: readonly string[];
   /** Keys that may be present; absent keys are not defaulted. */
@@ -416,6 +420,20 @@ function schemaFor(type: JournalEntryType, body: Readonly<Record<string, unknown
       return {
         required: ["reasonCodes", "items"],
         check: body => validateReasonCodes(body["reasonCodes"]) ?? (Array.isArray(body["items"]) && body["items"].every(item => isPlainRecord(item)) ? null : "RECONCILIATION_ITEMS_INVALID"),
+      };
+    // S-X-08: a close the management step planned and did not submit. Closed
+    // like every other shape — an exposure identity, a known close route, a
+    // non-negative generation or `null` when the plan itself was vetoed, and a
+    // non-empty reason.
+    case "MANAGEMENT_REFUSAL":
+      return {
+        required: ["exposureLifecycleId", "route", "generation", "reason"],
+        check: body => {
+          if (!isNonEmptyString(body["exposureLifecycleId"]) || !isNonEmptyString(body["reason"])) return "MANAGEMENT_REFUSAL_INVALID";
+          if (typeof body["route"] !== "string" || !(closeRouteLabels() as readonly string[]).includes(body["route"])) return "MANAGEMENT_REFUSAL_ROUTE_INVALID";
+          const generation = body["generation"];
+          return generation === null || isNonnegativeInteger(generation) ? null : "MANAGEMENT_REFUSAL_INVALID";
+        },
       };
     case "HUMAN_ACTION":
       return {

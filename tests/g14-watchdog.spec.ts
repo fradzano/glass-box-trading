@@ -30,6 +30,7 @@ import {
   lifecycleMarket,
 } from "./lifecycle-fixtures.js";
 import type { LifecycleHarness } from "./lifecycle-fixtures.js";
+import type { MarketObservation } from "../src/core/execution.js";
 
 const journalsToUnlock: string[] = [];
 afterEach(() => {
@@ -56,6 +57,7 @@ function watchdogDeps(harness: LifecycleHarness, overrides: Partial<WatchdogDepe
   return {
     paths: harness.paths,
     secrets: [],
+    underlyingUniverse: ["SPY"],
     clock: () => harness.clock.now,
     instanceId: "watchdog",
     lockTakeoverBoundMs: 60_000,
@@ -72,6 +74,41 @@ function watchdogDeps(harness: LifecycleHarness, overrides: Partial<WatchdogDepe
     ...overrides,
   };
 }
+
+describe("S-X-07 — the flattener of last resort quotes the book it is about to close", () => {
+  it("passes every held option identity into its observation, and no share residue", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    harness.fake.setPositions([
+      { contractId: SHORT_CALL, quantity: -1, avgEntryPriceCents: 300 },
+      { contractId: LONG_CALL, quantity: 1, avgEntryPriceCents: 100 },
+      { contractId: "SPY", quantity: -100, avgEntryPriceCents: 50_000 },
+    ]);
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+
+    const calls: string[][] = [];
+    const inner = lifecycleMarket(() => harness.clock.now);
+    const market = (heldContractIds: readonly string[] = []): Promise<MarketObservation> => {
+      calls.push([...heldContractIds]);
+      return inner();
+    };
+
+    const report = await runWatchdog(watchdogDeps(harness, { market }));
+    expect(report.assessment.kind).toBe("stale");
+    // The close-oriented window covers a near expiry but is still a band; a
+    // drifted strike would fall out of it, and this is the one path with no
+    // later cycle to catch that.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([LONG_CALL, SHORT_CALL].sort());
+  });
+
+  it("a watchdog that could not compose reads no book and builds no window: it fences and halts as before", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+    const report = await runWatchdog(watchdogDeps(harness, { broker: null, market: null, binding: null }));
+    expect(report.halted).toBe(true);
+  });
+});
 
 describe("S-G14-01 — market-hours-aware: an overnight or weekend gap is normal", () => {
   it("assessStaleness is quiet outside a session, on a fresh journal, and on no journal at all; stale only in-session beyond the bound", () => {
@@ -172,7 +209,7 @@ describe("S-G11-04 / S-G14-02 — after the controlled end the watchdog stands d
     const terminal = await runTerminal({
       gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 40, ping: harness.ping,
+      cycleIndex: 40, ping: harness.ping, underlyingUniverse: ["SPY"],
     });
     expect(terminal.appended).toBe(true);
     harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;

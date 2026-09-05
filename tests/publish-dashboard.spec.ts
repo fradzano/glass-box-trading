@@ -11,7 +11,7 @@ import { afterEach, describe, expect, inject, it } from "vitest";
 import { parseJournalText } from "../src/core/journal.js";
 import { TEST_ONLY_GOLDEN_EXPECTATIONS, goldenPresentationCutoffAt } from "../src/fixtures/p6-golden.js";
 import { readPageMeta } from "../src/shell/dashboard-build.js";
-import { completeJournalText, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
+import { collidingDeployPaths, completeJournalText, expectedRevisionForJsonRoute, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
 
 const REPO_ROOT = path.resolve();
 const GOLDEN_JOURNAL = path.join(REPO_ROOT, "fixtures", "golden-journal.jsonl");
@@ -113,7 +113,10 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     }
     expect(manifest.accountId).toBe(TEST_ONLY_GOLDEN_EXPECTATIONS.expectedAccountId);
     expect(deployIndex).toContain(manifest.accountId);
-    expect(manifest.jsonRoutes).toEqual(["/data/projection.json", `/${safe}/presentation/projection.json`]);
+    expect(manifest.jsonRoutes).toEqual([
+      { url: "/data/projection.json", expectedJournalRevision: manifest.journalRevision },
+      { url: `/${safe}/presentation/projection.json`, expectedJournalRevision: manifest.journalRevision },
+    ]);
     expect(JSON.parse(read(path.join(out, "deploy"), `${safe}/presentation/projection.json`)) as { journalRevision: string }).toMatchObject({ journalRevision: manifest.journalRevision });
   });
 
@@ -130,6 +133,91 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     expect(read(path.join(out, "deploy"), `${safe}/presentation/index.html`)).toBe(pinnedBefore);
     expect(read(path.join(out, "deploy"), "index.html")).not.toBe(indexBefore);
     expect(readPageMeta(read(path.join(out, "deploy"), "index.html"))["glass-box-rendered-at"]).toBe("2026-09-03T22:00:00.000Z");
+  });
+
+  it("expects a carried-forward JSON route to name its own revision, not the current one (DECISIONS 2026-09-04, B)", async () => {
+    const out = scratchDir();
+    const full = readFileSync(GOLDEN_JOURNAL, "utf8");
+    const lines = full.trimEnd().split("\n");
+    const shortJournal = path.join(scratchDir(), "journal-copy.jsonl");
+    writeFileSync(shortJournal, `${lines.slice(0, -1).join("\n")}\n`, "utf8");
+
+    const first = await renderSite(goldenOptions(shortJournal, out));
+    const grownJournal = path.join(scratchDir(), "journal-copy.jsonl");
+    writeFileSync(grownJournal, full, "utf8");
+    const second = await renderSite(goldenOptions(grownJournal, out, NOW_MS + 60_000));
+    expect(second.journalRevision).not.toBe(first.journalRevision);
+
+    const safeOf = (revision: string): string => `revisions/${revision.replace(":", "-")}`;
+    const byUrl = new Map(second.jsonRoutes.map((route: { url: string; expectedJournalRevision: string | null }) => [route.url, route.expectedJournalRevision]));
+
+    // The route this render wrote, and the live one, expect the new revision.
+    expect(byUrl.get("/data/projection.json")).toBe(second.journalRevision);
+    expect(byUrl.get(`/${safeOf(second.journalRevision)}/presentation/projection.json`)).toBe(second.journalRevision);
+
+    // The carried-forward route is immutable and still belongs to the first
+    // revision: expecting the current one is what produced the red line.
+    const carried = `/${safeOf(first.journalRevision)}/presentation/projection.json`;
+    expect(byUrl.has(carried)).toBe(true);
+    expect(byUrl.get(carried)).toBe(first.journalRevision);
+    expect(JSON.parse(read(path.join(out, "deploy"), carried.replace(/^\//u, ""))) as { journalRevision: string }).toMatchObject({ journalRevision: first.journalRevision });
+
+    // Every expectation the manifest states is met by the bytes on disk.
+    for (const [url, expected] of byUrl) {
+      const served = JSON.parse(read(path.join(out, "deploy"), url === "/" ? "index.html" : url.replace(/^\//u, ""))) as { journalRevision: string };
+      expect(served.journalRevision, url).toBe(expected);
+    }
+  });
+
+  it("derives a JSON route's expected revision from the route, and refuses to guess an unknown immutable spelling", () => {
+    const current = "sha256:78af85c1c238a49d";
+    expect(expectedRevisionForJsonRoute("/data/projection.json", current)).toBe(current);
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49d/latest/projection.json", current)).toBe(current);
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-7b82959a344a7c7e/presentation/projection.json", current)).toBe("sha256:7b82959a344a7c7e");
+    // No expectation is better than a wrong one: the probe fails these loudly.
+    expect(expectedRevisionForJsonRoute("/revisions/", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/md5-abc/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-NOTHEX/presentation/projection.json", current)).toBeNull();
+  });
+
+  it("R41-B3: only the canonical sixteen-hex spelling is accepted, so a foreign route cannot vouch for itself", () => {
+    const current = "sha256:78af85c1c238a49d";
+    // The publisher takes exactly 16 hex characters (src/shell/publisher.ts).
+    // A shorter or longer directory is not a route this renderer wrote, and
+    // accepting it let it declare its own revision and pass the probe.
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-abcdef/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49dd/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78AF85C1C238A49D/presentation/projection.json", current)).toBeNull();
+    // A current revision that is itself not canonical yields no expectation
+    // either, rather than being echoed back as if it were trustworthy.
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49d/latest/projection.json", "sha256-78af85c1c238a49d")).toBeNull();
+  });
+
+  it("R41-B3: two source spellings that collide on one deployed path are refused, not published", () => {
+    // hostSafeSegment maps a colon and a literal hyphen to the same character,
+    // so these two distinct revisions would land in one immutable directory
+    // and the path would stop identifying its content.
+    const collisions = collidingDeployPaths([
+      "index.html",
+      "revisions/sha256%3A0123456789abcdef/latest/index.html",
+      "revisions/sha256-0123456789abcdef/latest/index.html",
+    ]);
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]?.deployPath).toBe("revisions/sha256-0123456789abcdef/latest/index.html");
+    expect(collisions[0]?.sources).toHaveLength(2);
+    // The ordinary tree has none.
+    expect(collidingDeployPaths(["index.html", "data/projection.json", "revisions/sha256%3A0123456789abcdef/latest/index.html"])).toEqual([]);
+  });
+
+  it("R41-B3: a render whose site tree carries such a collision throws instead of deploying", async () => {
+    const out = scratchDir();
+    const manifest = await renderSite(goldenOptions(journalCopy(), out));
+    const safe = `revisions/${manifest.journalRevision.replace(":", "-")}`;
+    // Plant the colliding spelling beside the renderer's own encoded one.
+    const planted = path.join(out, "site", ...`${safe}/presentation`.split("/"));
+    mkdirSync(planted, { recursive: true });
+    writeFileSync(path.join(planted, "index.html"), "<!doctype html><title>foreign</title>", "utf8");
+    await expect(renderSite(goldenOptions(journalCopy(), out, NOW_MS + 60_000))).rejects.toThrow(/host-safe deploy paths collide/u);
   });
 
   it("carries the Vercel project link (.vercel/) in the deploy directory forward through a re-render", async () => {

@@ -135,6 +135,9 @@ describe("P8 — a valid configuration composes the book-recovery ports", () => 
     expect(entry.actions).toMatchObject([{ result: "SUBMITTED" }]);
     harness.clock.now = STALE_NOW;
     const mutationsBefore = harness.fake.mutations.length;
+    // Captured before the takeover closes the book: after it, the account is flat.
+    const heldAtTakeover = (await harness.fake.read.positions()).filter(position => position.contractId !== "SPY").map(position => position.contractId).sort();
+    expect(heldAtTakeover).not.toHaveLength(0);
 
     const { composition, adapter } = await compose(harness, { repoRoot: fixtureRepoRoot() });
     expect(composition.degraded).toBeNull();
@@ -168,6 +171,9 @@ describe("P8 — a valid configuration composes the book-recovery ports", () => 
     expect(adapter.windows[0]?.strikeWindowBps).toBe(1_000);
     expect(adapter.windows[0]?.expiries).toContain("2026-09-04");
     expect(adapter.windows[0]?.expiries).toContain("2026-08-31");
+    // S-X-07 / R41-C2: the closing window is still a band, so the composition
+    // must also carry the identities the book holds into it.
+    expect(adapter.windows[0]?.heldContractIds).toEqual(heldAtTakeover);
   });
 
   it("submits nothing when there is nothing to close, and still fences and halts", async () => {

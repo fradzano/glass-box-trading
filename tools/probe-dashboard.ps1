@@ -132,22 +132,37 @@ foreach ($route in $manifestData.routes) {
 }
 
 # ---- JSON routes: status, parse, revision ----
+# Each entry carries its own expected revision: the current one for a route
+# this render wrote, its own older one for a carried-forward immutable route.
+# Expecting the current revision everywhere is what made the 2026-09-04 probe
+# report 47 of 48 against a correct deployment (DECISIONS 2026-09-04).
 foreach ($jsonRoute in $manifestData.jsonRoutes) {
-    $url = $origin + $jsonRoute
+    $routeUrl = $jsonRoute.url
+    $expectedRevision = $jsonRoute.expectedJournalRevision
+    if ([string]::IsNullOrWhiteSpace($routeUrl)) {
+        Add-Check -Name 'json route entry' -Ok $false -Detail 'the manifest entry has no url; re-render with the current submission/publish/render-site.mjs'
+        continue
+    }
+    $url = $origin + $routeUrl
     $result = Get-Cached -Url $url
     $ok = $result.Status -eq 200
     $detail = "HTTP $($result.Status)"
     if ($ok) {
         try {
             $projection = $result.Body | ConvertFrom-Json
-            $ok = $projection.journalRevision -eq $manifestData.journalRevision
-            $detail = if ($ok) { "journalRevision $($projection.journalRevision)" } else { "journalRevision $($projection.journalRevision) expected $($manifestData.journalRevision)" }
+            if ([string]::IsNullOrWhiteSpace($expectedRevision)) {
+                $ok = $false
+                $detail = "no expected revision in the manifest for this route (serves journalRevision $($projection.journalRevision)); an immutable route in a spelling this project does not produce"
+            } else {
+                $ok = $projection.journalRevision -eq $expectedRevision
+                $detail = if ($ok) { "journalRevision $($projection.journalRevision)" } else { "journalRevision $($projection.journalRevision) expected $expectedRevision" }
+            }
         } catch {
             $ok = $false
             $detail = "not JSON: $($_.Exception.Message)"
         }
     }
-    Add-Check -Name "json $jsonRoute" -Ok $ok -Detail $detail
+    Add-Check -Name "json $routeUrl" -Ok $ok -Detail $detail
 }
 
 $failed = @($checks | Where-Object { -not $_.ok })
@@ -165,7 +180,10 @@ $receiptPath = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $Manifes
 Write-Host ''
 Write-Host "receipt: $receiptPath"
 if ($failed.Count -gt 0) {
-    Write-Host "PROBE FAILED: $($failed.Count) of $($checks.Count) checks. Do not promote this candidate."
+    # Naming the failures here is the point: the count alone sent the operator
+    # scrolling back through 48 lines on 2026-09-04 to find the single red one.
+    Write-Host "PROBE FAILED: $($failed.Count) of $($checks.Count) checks. Do not promote this candidate. Failed:"
+    foreach ($failure in $failed) { Write-Host "  [FAIL] $($failure.check) -- $($failure.detail)" }
     exit 1
 }
 Write-Host "PROBE PASSED: $($checks.Count) checks."

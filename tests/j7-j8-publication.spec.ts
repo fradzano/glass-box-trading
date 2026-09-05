@@ -336,7 +336,7 @@ describe("S-J-07 / SUB-11 — candidate rejection, successful promotion, rollbac
     const pinnedRoute = immutableRoute(pinned.revision ?? "", "presentation");
     const pinnedPage = readBuiltPage(path.join(harness.paths.root, "site"), pinnedRoute);
     expect(readPageMeta(pinnedPage ?? "")["glass-box-evidence-cutoff-kind"]).toBe("presentation");
-    const deadlineDeps = { gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now), clock: () => harness.clock.now, profile: "dev" as const, calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04", cycleIndex: 99, ping: null };
+    const deadlineDeps = { gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now), clock: () => harness.clock.now, profile: "dev" as const, calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04", cycleIndex: 99, ping: null, underlyingUniverse: ["SPY"] };
     harness.clock.now += 3_600_000;
     expect((await runDeadlineReconciliation(deadlineDeps, pinned.revision ?? "")).appended).toBe(true);
     const deadline = await runPublish(publishDeps(harness, git, deploy, { pins: [{ kind: "deadline", at: harness.entries().at(-1)?.at ?? "" }] }));

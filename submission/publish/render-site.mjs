@@ -61,6 +61,61 @@ export function hostSafeRelativePath(relativePath) {
   return segments.map((segment, index) => (index === 0 ? segment : hostSafeSegment(segment))).join("/");
 }
 
+/**
+ * The one revision spelling this project produces: `sha256:` and exactly the
+ * sixteen lowercase hex characters `journalContentRevision` takes from the
+ * digest (`src/shell/publisher.ts`). Everything else is foreign.
+ */
+const CANONICAL_REVISION = /^sha256:[0-9a-f]{16}$/u;
+/** Its host-safe spelling, the only immutable directory name a render creates. */
+const CANONICAL_REVISION_SEGMENT = /^sha256-[0-9a-f]{16}$/u;
+
+/**
+ * The journal revision a JSON route must name (DECISIONS 2026-09-04, B).
+ *
+ * The manifest used to expect every `.json` in the deploy tree to carry the
+ * revision of the render that produced the manifest. That is false for a
+ * carried-forward immutable route: it is immutable precisely because it still
+ * belongs to the older revision spelled in its own path, so the probe reported
+ * a red line for a deployment that was correct. The expectation therefore
+ * comes from the route itself.
+ *
+ * Returns `null` for anything under `revisions/` that is not exactly the
+ * canonical spelling. That is deliberate, and R41-B3 sharpened it: a
+ * six-character `sha256-abcdef` used to be accepted and then vouched for
+ * itself, so a foreign directory could pass the probe by declaring its own
+ * revision. The probe fails a `null` loudly, which is the right outcome for a
+ * route this renderer cannot have written.
+ */
+export function expectedRevisionForJsonRoute(url, currentRevision) {
+  const segments = url.split("/").filter(segment => segment.length > 0);
+  if (segments[0] !== "revisions") return currentRevision;
+  const segment = segments[1];
+  if (segment === undefined) return null;
+  if (!CANONICAL_REVISION_SEGMENT.test(segment)) return null;
+  if (!CANONICAL_REVISION.test(currentRevision)) return null;
+  if (segment === hostSafeSegment(currentRevision)) return currentRevision;
+  return `sha256:${segment.slice("sha256-".length)}`;
+}
+
+/**
+ * Host-safe conversion is many-to-one, so two different source spellings can
+ * land on one deployed directory and the destination no longer says which one
+ * it came from (R41-B3). A render that produced such a collision is refused
+ * rather than published: the whole point of an immutable route is that its
+ * path identifies its content.
+ */
+export function collidingDeployPaths(sitePaths) {
+  const bySafe = new Map();
+  for (const relative of sitePaths) {
+    const safe = hostSafeRelativePath(relative);
+    const sources = bySafe.get(safe) ?? [];
+    if (!sources.includes(relative)) sources.push(relative);
+    bySafe.set(safe, sources);
+  }
+  return [...bySafe.entries()].filter(([, sources]) => sources.length > 1).map(([safe, sources]) => ({ deployPath: safe, sources: [...sources].sort() }));
+}
+
 /** The renderer's pin href (`revisions/<enc>/<kind>/index.html`) as a root-absolute directory URL (`/revisions/<safe>/<kind>/`). */
 export function hostSafeHref(href) {
   const safe = hostSafeRelativePath(href);
@@ -230,6 +285,10 @@ export async function renderSite(options) {
   mkdirSync(outDir, { recursive: true });
   const nonce = `${String(nowMs)}-${String(process.pid)}`;
   const build = buildModule.buildSiteAtomically(siteDir, pages, nonce);
+  const collisions = collidingDeployPaths(listFiles(siteDir));
+  if (collisions.length > 0) {
+    throw new Error(`host-safe deploy paths collide, so an immutable route would no longer identify its content: ${collisions.map(item => `${item.deployPath} <- ${item.sources.join(", ")}`).join("; ")}`);
+  }
   const files = deriveDeployTree(siteDir, deployDir, nonce);
 
   const routeFor = (kind, projection) => {
@@ -257,7 +316,10 @@ export async function renderSite(options) {
     build: { written: build.written, carriedForward: build.carriedForward, preservedImmutable: build.preservedImmutable },
     files,
     routes,
-    jsonRoutes: files.filter(file => file.deploy.endsWith(".json")).map(file => file.url),
+    // Each JSON route with the revision it must name: the current one for a
+    // route this render wrote, its own older one for a carried-forward
+    // immutable route, `null` for a spelling this project cannot produce.
+    jsonRoutes: files.filter(file => file.deploy.endsWith(".json")).map(file => ({ url: file.url, expectedJournalRevision: expectedRevisionForJsonRoute(file.url, revision) })),
   };
   writeFileSync(path.join(outDir, "publish-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;

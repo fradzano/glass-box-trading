@@ -11,7 +11,7 @@
 // No I/O, no clock: the render time and the cutoff are inputs.
 import { foldLifecycles, utcIsoToEpochMs } from "./execution.js";
 import type { EntryLifecycleRecord } from "./execution.js";
-import { haltStateFrom, isPrimaryEntryType } from "./journal.js";
+import { haltStateFrom, isPrimaryEntryType, isWitnessEntryType } from "./journal.js";
 import type { HaltState, JournalEntry, JournalQuoteSample } from "./journal.js";
 import { declaredExpiryHolds } from "./lifecycle.js";
 import { projectQualification } from "./qualification.js";
@@ -100,12 +100,30 @@ export interface CycleView {
   readonly reasonCodes: readonly string[];
   readonly batchVerdicts: readonly Readonly<Record<string, unknown>>[];
   readonly candidateVerdicts: readonly Readonly<Record<string, unknown>>[];
-  /** `proposal` when at least one INTENT followed this primary, `no_trade` otherwise, `bootstrap`/`gap`/`skip`/`witness` for the substitutes. */
-  readonly result: "proposal" | "no_trade" | "bootstrap" | "gap" | "skip" | "witness";
+  /**
+   * `proposal` when at least one INTENT followed this primary; `refused` when
+   * none did but a management close was planned and turned away; `no_trade`
+   * otherwise; `bootstrap`/`gap`/`skip`/`witness` for the substitutes. The
+   * `refused` value exists because CONCEPT and SUBMISSION-SPEC require the
+   * public page to say trade or no-trade AND why, and a cycle that tried to
+   * close and could not is not the same fact as one that held on purpose
+   * (R41-B2, scenario #74).
+   */
+  readonly result: "proposal" | "no_trade" | "refused" | "bootstrap" | "gap" | "skip" | "witness";
   readonly intentSeqs: readonly number[];
   readonly closeIntentSeqs: readonly number[];
+  /** S-X-08: the management closes this cycle planned and did not submit, with the reason each was turned away. */
+  readonly managementRefusals: readonly ManagementRefusalView[];
   readonly equityCents: number | null;
   readonly analystSkipped: boolean;
+}
+
+export interface ManagementRefusalView {
+  readonly seq: number;
+  readonly exposureLifecycleId: string;
+  readonly route: string;
+  readonly generation: number | null;
+  readonly reason: string;
 }
 
 export interface Milestones {
@@ -444,6 +462,15 @@ function lifecycleLinks(records: readonly EntryLifecycleRecord[], closes: readon
   return links;
 }
 
+/** The sequence of the next primary that is not a witness, or `MAX_SAFE_INTEGER` when none follows. */
+function nextNonWitnessSeq(primaries: readonly JournalEntry[], index: number): number {
+  for (let ahead = index + 1; ahead < primaries.length; ahead += 1) {
+    const candidate = primaries[ahead];
+    if (candidate !== undefined && !isWitnessEntryType(candidate.type)) return candidate.seq;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
   const views: CycleView[] = [];
   const primaries = entries.filter(entry => isPrimaryEntryType(entry.type));
@@ -457,10 +484,31 @@ function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
     const snapshot = snapshotOf(primary);
     const equity = snapshot === null ? null : snapshot["equityCents"];
     const reasonCodes = stringList(primary["reasonCodes"]);
+    // R42-B3: a witness entry (SUPPRESSED, FENCED_OUT) is a primary, but it
+    // is written by an instance that never ran a management step, so it can
+    // never own a refusal. Without this, a witness landing between a cycle and
+    // its own refusal stole that refusal and left the cycle looking quiet —
+    // the exact misattribution scenario #74 exists to prevent. A refusal is
+    // therefore attributed to the nearest preceding non-witness primary, and
+    // a witness's own window is searched no further than the next primary.
+    const ownsRefusals = !isWitnessEntryType(primary.type);
+    const refusalWindowEnd = ownsRefusals ? nextNonWitnessSeq(primaries, index) : primary.seq;
+    const managementRefusals: ManagementRefusalView[] = [];
+    for (const entry of entries) {
+      if (entry.type !== "MANAGEMENT_REFUSAL") continue;
+      if (entry.seq <= primary.seq || entry.seq >= refusalWindowEnd) continue;
+      managementRefusals.push({
+        seq: entry.seq,
+        exposureLifecycleId: typeof entry["exposureLifecycleId"] === "string" ? entry["exposureLifecycleId"] : "",
+        route: typeof entry["route"] === "string" ? entry["route"] : "",
+        generation: isInteger(entry["generation"]) ? entry["generation"] : null,
+        reason: typeof entry["reason"] === "string" ? entry["reason"] : "",
+      });
+    }
     const result: CycleView["result"] = primary.type === "BOOTSTRAP" ? "bootstrap"
       : primary.type === "GAP" ? "gap"
         : primary.type === "SKIP" ? "skip"
-          : primary.type === "CYCLE" ? (intentSeqs.length > 0 ? "proposal" : "no_trade")
+          : primary.type === "CYCLE" ? (intentSeqs.length > 0 ? "proposal" : managementRefusals.length > 0 ? "refused" : "no_trade")
             : "witness";
     views.push({
       seq: primary.seq,
@@ -474,6 +522,7 @@ function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
       result,
       intentSeqs,
       closeIntentSeqs,
+      managementRefusals,
       equityCents: isInteger(equity) ? equity : null,
       analystSkipped: recordList(primary["batchVerdicts"]).some(verdict => verdict["code"] === "ANALYST_SKIP") || reasonCodes.includes("WORLD_UNREACHABLE"),
     });

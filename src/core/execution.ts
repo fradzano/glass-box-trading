@@ -678,6 +678,11 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     fillTotalLowerBoundTwice: bigint;
   }
   const states = new Map<string, Terminality>();
+  // Close attempts own their own lifecycle (S-G7 close fold); their OUTCOME and
+  // reconciliation lines are not evidence about an entry and must not register
+  // as an unknown, invalid entry. Found live 2026-09-02: every journaled close
+  // fill made the certificate driver refuse its fence drill as "unresolved".
+  const closeAttemptIds = new Set(entries.filter(entry => entry.type === "INTENT" && entry["action"] === "close" && typeof entry["clientOrderId"] === "string").map(entry => entry["clientOrderId"] as string));
   for (const entry of entries) {
     if (entry.type === "INTENT" && entry["action"] !== "close" && typeof entry["clientOrderId"] === "string") {
       const id = entry["clientOrderId"];
@@ -688,6 +693,7 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     }
     if (entry.type === "OUTCOME" && typeof entry["clientOrderId"] === "string") {
       const id = entry["clientOrderId"];
+      if (closeAttemptIds.has(id)) continue;
       const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
       const evidence = outcomeEvidenceFrom(entry);
       if (evidence === null) {
@@ -714,6 +720,7 @@ export function unresolvedEntryLifecycleIds(entries: readonly JournalEntry[]): r
     for (const item of entry["items"]) {
       if (!isRecord(item) || item["kind"] !== "entry_order" || typeof item["clientOrderId"] !== "string") continue;
       const id = item["clientOrderId"];
+      if (closeAttemptIds.has(id)) continue;
       const state = states.get(id) ?? { terminal: false, uncertain: true, acknowledged: false, invalid: true, brokerOrderId: null, quantity: null, filledQuantity: 0, avgFillPriceCents: null, avgFillPriceRaw: null, fillTotalLowerBoundTwice: 0n };
       const working = item["classification"] === "ACKNOWLEDGED_WORKING" || item["classification"] === "MATCHED_WORKING" ? workingEvidenceFrom(item) : null;
       const observedBrokerOrderId = working?.brokerOrderId ?? null;
@@ -1396,6 +1403,35 @@ export interface CycleDraftInput {
   readonly analystSkip: string | null;
   readonly reasonCodes: readonly ReasonCode[];
   readonly lifecycleVetoes?: readonly LifecycleVeto[];
+}
+
+/** One refused management close (S-X-08): which exposure, which route, which generation, and why. */
+export interface ManagementRefusal {
+  readonly exposureLifecycleId: string;
+  readonly route: CloseRouteLabel;
+  /** The generation the refused attempt would have carried; `null` when the close-lifecycle plan itself was vetoed. */
+  readonly generation: number | null;
+  readonly reason: string;
+}
+
+/**
+ * S-X-08: a close the management step planned and then did not submit. It is
+ * appended at the moment of the refusal, after the cycle's own primary entry
+ * has long been written, which is why it is an entry of its own rather than a
+ * field on CYCLE. The printed report used to be the only copy and the
+ * scheduled task discarded it, so seven refused cycles on 2026-09-03 read from
+ * the journal exactly like a healthy agent holding on purpose.
+ */
+export function managementRefusalDraft(context: DraftContext, refusal: ManagementRefusal): JournalDraft {
+  return {
+    at: context.atIso,
+    epoch: context.epoch,
+    type: "MANAGEMENT_REFUSAL",
+    exposureLifecycleId: refusal.exposureLifecycleId,
+    route: refusal.route,
+    generation: refusal.generation,
+    reason: refusal.reason,
+  };
 }
 
 export function cycleDraft(context: DraftContext, input: CycleDraftInput): JournalDraft {
