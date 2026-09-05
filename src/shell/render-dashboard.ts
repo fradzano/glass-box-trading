@@ -136,9 +136,16 @@ function candidateBlock(cycle: CycleView, verdict: Readonly<Record<string, unkno
 </article>`;
 }
 
-function cycleRow(cycle: CycleView): string {
+function cycleRow(cycle: CycleView, detailed: ReadonlySet<number>): string {
   const codes = cycle.reasonCodes.length === 0 ? "—" : cycle.reasonCodes.join(", ");
-  return `<tr><td><a href="#cycle-${String(cycle.seq)}">${String(cycle.seq)}</a></td><td><time>${escapeHtml(cycle.at)}</time></td><td>${escapeHtml(cycle.tradingDay ?? "—")}</td><td>${escapeHtml(cycle.type)}</td><td class="result result--${cycle.result}">${escapeHtml(cycle.result.replaceAll("_", " "))}</td><td>${escapeHtml(codes)}</td><td class="num">${formatUsd(cycle.equityCents)}</td><td>${cycle.candidateVerdicts.length === 0 ? "0" : String(cycle.candidateVerdicts.length)}</td><td>${String(cycle.managementRefusals.length)}</td></tr>`;
+  // R44-B17: only the last DETAILED_CYCLE_LIMIT cycles get a detail block, so
+  // linking every row produced an anchor to nothing for every earlier cycle --
+  // a dead link on a page whose whole claim is that the evidence is reachable.
+  // The row stays; the link appears only when its target does.
+  const seqCell = detailed.has(cycle.seq)
+    ? `<a href="#cycle-${String(cycle.seq)}">${String(cycle.seq)}</a>`
+    : `<span title="full detail for this cycle is in the journal, not on this page">${String(cycle.seq)}</span>`;
+  return `<tr><td>${seqCell}</td><td><time>${escapeHtml(cycle.at)}</time></td><td>${escapeHtml(cycle.tradingDay ?? "—")}</td><td>${escapeHtml(cycle.type)}</td><td class="result result--${cycle.result}">${escapeHtml(cycle.result.replaceAll("_", " "))}</td><td>${escapeHtml(codes)}</td><td class="num">${formatUsd(cycle.equityCents)}</td><td>${cycle.candidateVerdicts.length === 0 ? "0" : String(cycle.candidateVerdicts.length)}</td><td>${String(cycle.managementRefusals.length)}</td></tr>`;
 }
 
 function cycleDetail(cycle: CycleView, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
@@ -270,8 +277,8 @@ ${goldenPathList(goldenPath)}
 </section>`;
 }
 
-function cyclesTable(projection: PerformanceProjection): string {
-  return `<table><thead><tr><th>Seq</th><th>At (UTC)</th><th>Day</th><th>Type</th><th>Result</th><th>Reason codes</th><th>Equity</th><th>Candidates</th><th>Refused closes</th></tr></thead><tbody>${projection.cycles.map(cycleRow).join("")}</tbody></table>`;
+function cyclesTable(projection: PerformanceProjection, detailed: ReadonlySet<number>): string {
+  return `<table><thead><tr><th>Seq</th><th>At (UTC)</th><th>Day</th><th>Type</th><th>Result</th><th>Reason codes</th><th>Equity</th><th>Candidates</th><th>Refused closes</th></tr></thead><tbody>${projection.cycles.map(cycle => cycleRow(cycle, detailed)).join("")}</tbody></table>`;
 }
 
 /**
@@ -286,8 +293,14 @@ function cyclesTable(projection: PerformanceProjection): string {
  */
 const DETAILED_CYCLE_LIMIT = 200;
 
+/** The cycles that actually get an anchor on this page (R44-B17). */
+function detailedCycleSeqs(projection: PerformanceProjection): ReadonlySet<number> {
+  return new Set(projection.cycles.slice(-DETAILED_CYCLE_LIMIT).map(cycle => cycle.seq));
+}
+
 function renderCyclesSection(projection: PerformanceProjection, lifecyclesBySeq: ReadonlyMap<number, LifecycleLink>): string {
   const detailed = projection.cycles.slice(-DETAILED_CYCLE_LIMIT);
+  const detailedSeqs = detailedCycleSeqs(projection);
   const omitted = projection.cycles.length - detailed.length;
   const boundNote = omitted === 0
     ? ""
@@ -296,7 +309,7 @@ function renderCyclesSection(projection: PerformanceProjection, lifecyclesBySeq:
 <h2 id="cycles-title">Every cycle: proposal or no-trade, gate vector, rationale</h2>
 <p class="lead">This section lists every decision cycle, whether it produced a trade or a deliberate no-trade, and the gate vector each candidate passed or failed.</p>
 <p>${String(projection.cycles.length)} primary entries at this cutoff. A no-trade result is first-class evidence: the analyst proposed nothing usable or every candidate was vetoed. A <em>refused</em> result means the opposite of a quiet cycle — the agent planned to close a position and was turned away, with the reason named below.</p>
-${cyclesTable(projection)}
+${cyclesTable(projection, detailedSeqs)}
 ${boundNote}
 ${detailed.map(cycle => cycleDetail(cycle, lifecyclesBySeq)).join("")}
 </section>`;
@@ -411,8 +424,12 @@ export function renderDashboard(projection: PerformanceProjection, expectation: 
   // re-checks the exact text it is about to splice into the page.
   if (context.styles.includes("</")) throw new Error("renderDashboard: stylesheet refused: </ (style-block breakout: the inlined text could close </style> and inject markup)");
   const lifecyclesBySeq = new Map(projection.lifecycles.map(link => [link.intentSeq, link] as const));
-  const firstVeto = projection.cycles.find(cycle => cycle.candidateVerdicts.some(verdict => verdict["decision"] === "VETO"));
-  const firstProposal = projection.cycles.find(cycle => cycle.result === "proposal");
+  // R44-B17: the golden path may only point at cycles this page actually
+  // renders. It used to search the full history, so on a long run its first
+  // two steps linked to anchors that had been bounded away.
+  const anchored = projection.cycles.slice(-DETAILED_CYCLE_LIMIT);
+  const firstVeto = anchored.find(cycle => cycle.candidateVerdicts.some(verdict => verdict["decision"] === "VETO"));
+  const firstProposal = anchored.find(cycle => cycle.result === "proposal");
   const firstFilled = projection.lifecycles.find(link => link.resolution === "filled");
   const flatLabel = projection.flatState === "flat" ? "Flat: zero broker positions" : projection.flatState === "declared_expiry_hold" ? "Not flat: a declared expiry hold remains (zero additional liability)" : projection.flatState === "not_flat" ? "Not flat: open exposure" : "Exposure unknown (no snapshot at this cutoff)";
   const goldenPath = [

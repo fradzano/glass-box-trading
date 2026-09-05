@@ -2946,3 +2946,117 @@ small, no ADR split).
 
   `npm run verify` exit 0 at 46 files / 632 tests. Not claimed: a bis-0
   termination.
+- **2026-09-05 — R44 counter-gate on the R43 fix set: NO-GO (A=2, B=15, C=1);
+  all closed, none declared away.** The gate ran blind against `cf956e2` in a
+  clean clone pinned to that commit, job `task-mtojqk4l-jhcozr`. Its own summary
+  is the honest one: several R43 closures hold, and the changes opened new
+  paths. That is the "fixes carry defects" axiom arriving on schedule — the
+  second round on the same seams found two blockers, and neither was in the
+  code R43 had left alone.
+
+  **The fence's last exit was an argument about naming.** `dispatchSafetyHalt`
+  marked on `AUTH_FAILURE` only, on the reasoning that a foreign account
+  answering is not a credential rejection. The gate executed what that costs:
+  with the journal read-only the `ACCOUNT_BINDING_MISMATCH` halt never landed,
+  and once the journal recovered the same epoch submitted a risk-increasing
+  order with no human release (R44-A1). The taxonomy was correct and beside the
+  point — both reasons this entry point accepts are a refusal to trade until a
+  human looks, which is exactly what the mark records. It marks for both now,
+  and when neither the mark nor the append lands the failure names both rather
+  than only the append. Two further fence holes had the same shape at other
+  seams: the deadline one-shot built its credential recorder *after* the
+  calendar read, so a 401 on the first authenticated read of the invocation
+  ended it with no fence, no halt and no ping (B4); and the watchdog folded a
+  401 on its own close into `acknowledgement_lost`, leaving `WATCHDOG_TAKEOVER`
+  standing with no fence mark and the operator never handed the S-G12-06
+  procedure (B5). Both now escape to the same recorder the recovery read
+  already used.
+
+  **The durability probe asked the wrong question.** It ran `accessSync` and
+  opened files `"r+"` on purpose, to stay outside the S-G12-07 write boundary —
+  and so it measured permissions, not room. On a full volume both succeed and
+  the first real append throws `ENOSPC`; the gate produced exactly that and the
+  probe returned `ok` (B3). The byte-level probe now lives in `epoch-store.ts`,
+  one of the declared writers, and writes, fsyncs and removes a sidecar file;
+  `state-dir.ts` calls it and still writes nothing itself, so the boundary test
+  is untouched rather than weakened.
+
+  **Three signals lied in three different ways.** An unreadable `epoch.json`
+  and a corrupt journal both reported readiness *success* while every
+  acquisition and every writer would have refused (B6) — `standingImpediment`
+  now reads both, with a journaled halt outranking them so the operator is told
+  the cause and not a symptom, and an unset endpoint exits non-zero instead of
+  printing an all-clear nobody receives. A startup refusal sent **two** POSTs
+  under two names for one incident, because the validator and the CLI both had
+  a sender (B7); `StartupOutcome.failurePinged` makes it one. And the cycle
+  wrapper threw on a missing `STATE_DIR` before `Send-Liveness` was even
+  defined, so the scheduler fired and nothing was reported at all (B8) — the
+  reader, the sender and the liveness URL are resolved first now, and every
+  precondition goes through `Stop-WithLiveness`. Executed, not argued: a refusal
+  against a real local endpoint produced exactly one
+  `POST /liveness/fail :: wrapper refused: …`.
+
+  **The scheduler tools certified and printed the wrong things.** The verifier
+  read `Actions[0]` and `Triggers[0]` and ignored everything after them, so a
+  definition with a second `cmd.exe` action or a second weekend trigger passed
+  all 30 checks — a task runs every action and honours every trigger (B10). It
+  now asserts exactly one of each and the exact cycle cadence, and reports 35.
+  The installer printed `*/7` for an interval that does not divide 60, which no
+  cron states exactly (Windows fires 14:56, 15:03; the cron expects 14:56,
+  15:00) — such an interval is refused rather than approximated (B11). Its
+  `-WhatIf` preview died with "access denied" in the normal shell the runbook
+  prescribes, because `New-ScheduledTaskPrincipal` needs elevation and stood
+  ahead of the output the owner is told to copy (B12): the schedule block moved
+  in front of everything that needs elevation, and `-WhatIf` no longer builds
+  the principal at all. And the timezone it printed was the Windows id
+  `W. Europe Standard Time`, which healthchecks.io does not accept; the host's
+  own node now answers with the IANA name (B13).
+
+  **The owner package had an ordering problem and a circular one.** Owner step
+  2 demanded ping URLs and a certificate path that steps 3 and 4 produce, and
+  told the owner to abort on `<MISSING>` — every value read `<MISSING>` in a
+  fresh environment (B14). The activation gate was worse than untidy: drill 5a
+  enabled the **cycle** task during a session on Tuesday, which lets a
+  competition cycle trade a day before the anchor and silently starts the
+  measurement period on the wrong date (R44-A2); and drills (b) and (c) left
+  both tasks disabled and the machine off, while the restart and signed-out
+  proofs need them enabled — with the only enable command standing after all six
+  conditions were already met (B15). Both are answered by one observation: the
+  drills need the tasks *running*, not the agent *trading*. The trigger window
+  is wider than the session and `cycle-run.ps1` skips outside it while still
+  firing and reporting, so the tasks are enabled at 22:10 CEST — after the US
+  close — and every drill runs against real firings that cannot trade. The rule
+  that replaces the old ordering is absolute and written as such: no firing may
+  run a cycle before the anchor, and an unfinished drill at 15:05 CEST on
+  Wednesday disables both tasks and moves the anchor. Also from this group: the
+  documented release omitted `--expect-halt-seq`, and the gate showed a second
+  halt landing between preview and confirmation being released unseen (B9) —
+  the CLI now **requires** it whenever a halt is journaled, which was verified
+  by execution; and `npm` is `npm.cmd` throughout, because `npm.ps1` is blocked
+  by this host's execution policy (B16).
+
+  **A new test ratified sixty dead links.** The scale test asserted a table link
+  for every cycle while only the last 200 get a detail section, so it confirmed
+  260 links against 200 targets and called it green (B17). The row keeps its
+  number, the link appears only when its target does, the golden path picks its
+  examples from the rendered slice, and the test now asserts the converse: no
+  anchor on the page points at a section that is not on it.
+
+  **The date correction (finding 18).** This log still said `FLATTEN_DATE`
+  2026-12-08 while `config/policy.json` and the runbook say **2026-12-09**. The
+  executable configuration is right and this entry is the correction: three
+  calendar months from the first regular cycle on Wed 2026-09-09 is Wed
+  2026-12-09, journaling-only Thu 2026-12-10, `TERMINAL` after that close. A
+  glass-box decision log that contradicts the configuration it explains is a
+  defect in the log, not a rounding difference.
+
+  **Verification.** `npm run verify` exit 0 at **47 files / 642 tests**. New
+  tests: `tests/r44-signal-integrity.spec.ts` (durability probe, standing
+  impediment, one-signal-per-invocation), plus the fence, calendar-401,
+  watchdog-401 and dashboard-anchor cases in their existing files. Executed on
+  this host rather than asserted: the wrapper refusal ping against a real
+  endpoint, the un-halt CLI refusing a release without `--expect-halt-seq` and
+  naming the number to use, the installer preview printing IANA
+  `Europe/Berlin` and three exact crons from an **unelevated** shell, and the
+  installer refusing a 7-minute watchdog interval. Not claimed: a bis-0
+  termination, and nothing on this branch is live on the host.

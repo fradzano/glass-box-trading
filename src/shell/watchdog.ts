@@ -9,7 +9,7 @@
 // decision lives in the pure core; this shell fetches, appends, and submits
 // through the gateway under the epoch it won.
 import { integerUnit } from "../core/domain.js";
-import { httpStatusOf } from "./broker-errors.js";
+import { BrokerHttpError, httpStatusOf } from "./broker-errors.js";
 import type { OptionLeg, Quantity } from "../core/domain.js";
 import {
   assembleDecisionSnapshot,
@@ -235,6 +235,16 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
           const order = await brokerRead.orderByClientId(plan.attemptId);
           observation = order === null ? { kind: "acknowledgement_lost", detail: "acknowledged but not found on read-back" } : { kind: "acknowledged", order };
         } else if (!dispatched.ok && dispatched.source === "broker_port") {
+          // R44-B5: a 401 or 403 on the close is a credential rejection, not a
+          // lost acknowledgement. Swallowing it here left WATCHDOG_TAKEOVER
+          // standing with no fence mark, so the operator was never handed the
+          // S-G12-06 procedure -- and the very next close would be rejected
+          // the same way. It escapes to the composition's
+          // recordCredentialFence, exactly as the recovery read above does.
+          const status = "httpStatus" in dispatched ? dispatched.httpStatus : null;
+          if (status === 401 || status === 403) {
+            throw new BrokerHttpError(status, `watchdog close rejected: ${dispatched.reason}`);
+          }
           observation = { kind: "acknowledgement_lost", detail: dispatched.reason };
         }
         const derived = observation === null ? null : outcomeFromSubmit({ clientOrderId: plan.attemptId, limit: priced.limit, binding, epoch, atIso: context().atIso }, observation);

@@ -426,16 +426,27 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
           if (store.kind !== "present") {
             return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
           }
-          // S-G12-08 / R43-B3: a credential rejection is one wherever it is
-          // detected. The startup reads (account, calendar) and the
-          // account-binding fence arrive here, not through the cycle runner,
-          // and they used to halt without marking — so a 401 during startup
-          // left nothing behind once the journal recovered, and a later writer
-          // traded. The mark goes down BEFORE the halt entry is attempted,
-          // exactly as in the runner, and under the same mutex.
-          if (reason === "AUTH_FAILURE" && !store.fencePending) setFencePending(paths, true);
+          // S-G12-08 / R43-B3 / R44-A1: a safety halt is a refusal to trade
+          // until a human looks, and the mark is what survives when the
+          // journal does not. It used to be set for AUTH_FAILURE only, on the
+          // taxonomic argument that an account-binding mismatch is not a
+          // credential rejection. That argument is about naming, not about
+          // safety: with the journal read-only, a refused
+          // ACCOUNT_BINDING_MISMATCH halt left nothing behind, and once the
+          // journal recovered the same epoch could submit a risk-increasing
+          // order without any human release (R44-A1). Both reasons this
+          // entry point accepts now mark, so the reason no longer decides.
+          // The mark goes down BEFORE the halt entry is attempted, under the
+          // same mutex, exactly as in the runner.
+          const marked = store.fencePending ? { ok: true as const } : setFencePending(paths, true);
           const loaded = loadJournal();
-          if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
+          if ("corrupt" in loaded) {
+            return {
+              ok: false,
+              reason: marked.ok ? "JOURNAL_CORRUPT" : `JOURNAL_CORRUPT:FENCE_NOT_MARKED:${marked.reason}`,
+              lockHeld: true,
+            };
+          }
           const entries = loaded.file.parsed.entries;
           const current = haltStateFrom(entries);
           const transition = [...entries].reverse().find(entry => entry.type === "HALT" || entry.type === "UNHALT");
@@ -452,9 +463,16 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
             detail: redact(action.detail),
             sticky: false,
           });
-          return appended.ok
-            ? { ok: true, seq: appended.entry.seq, stalenessNeutral: false }
-            : { ok: false, reason: appended.reason, lockHeld: true };
+          if (appended.ok) return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
+          // Neither the halt nor the mark landed: this is the one declared
+          // residual of S-G12-08, and the caller must alarm rather than assume
+          // the deployment is fenced. Naming both failures keeps that visible
+          // instead of reporting only the append.
+          return {
+            ok: false,
+            reason: marked.ok ? appended.reason : `${appended.reason}:FENCE_NOT_MARKED:${marked.reason}`,
+            lockHeld: true,
+          };
         });
       } catch (error) {
         return { ok: false, reason: redact(messageOf(error)), lockHeld: false };

@@ -60,19 +60,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# R44-B8: every precondition below used to `throw` before Send-Liveness was
+# even defined, so a missing STATE_DIR, a missing node or an unbuilt dist
+# produced a non-zero exit and NO ping at all -- the one class of failure
+# where the scheduler fired and the operator heard nothing until the next
+# expected ping timed out. The reader, the sender and the liveness URL are
+# therefore resolved first, and refusals go through Stop-WithLiveness.
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
-if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "RepoRoot '$RepoRoot' does not exist." }
-$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
-
-if ([string]::IsNullOrWhiteSpace($NodePath)) {
-    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
-    if ($null -eq $nodeCommand) { throw 'node was not found on PATH; pass -NodePath explicitly.' }
-    $NodePath = $nodeCommand.Source
-}
-if (-not (Test-Path -LiteralPath $NodePath)) { throw "NodePath '$NodePath' does not exist." }
-
-$agentEntry = Join-Path $RepoRoot 'dist\shell\agent-cli.js'
-if (-not (Test-Path -LiteralPath $agentEntry)) { throw "'$agentEntry' is missing; run 'npm run build' in $RepoRoot before operating the scheduled tasks." }
 
 function Get-DotEnvValue {
     # Minimal single-key .env reader mirroring parseDotEnv's KEY=value shape
@@ -95,41 +89,6 @@ function Get-DotEnvValue {
         return $value
     }
     return $null
-}
-
-$stateDir = $env:STATE_DIR
-if ([string]::IsNullOrWhiteSpace($stateDir)) {
-    $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
-}
-if ([string]::IsNullOrWhiteSpace($stateDir)) { throw "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
-
-function Get-EasternTimeZoneInfo {
-    # Kept in sync by hand with the identical helper in watchdog-run.ps1.
-    try {
-        return [System.TimeZoneInfo]::FindSystemTimeZoneById('America/New_York')
-    } catch {
-        return [System.TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
-    }
-}
-
-function Test-InsideSession {
-    # S-G14-06. Precisely: this converts the current instant into New York
-    # local time through the platform's zone tables and compares it with FIXED
-    # 09:30-16:00 session bounds. It does NOT consult an exchange calendar --
-    # holidays and early closes are unknown to it, so it will let a cycle run on
-    # Thanksgiving and after a 13:00 early close. That is safe and documented: a
-    # firing on a non-trading day is a normal, cheap, journaled no-trade cycle
-    # (S-CYC-08/S-CYC-03), because the RUNTIME does read the exchange calendar.
-    # What this prevents is only the overnight and pre-open part of a
-    # deliberately wide trigger window.
-    param([int]$LeadInMinutes)
-    $eastern = Get-EasternTimeZoneInfo
-    $nowUtc = [System.DateTime]::UtcNow
-    $nowEastern = [System.TimeZoneInfo]::ConvertTimeFromUtc($nowUtc, $eastern)
-    if ($nowEastern.DayOfWeek -eq [System.DayOfWeek]::Saturday -or $nowEastern.DayOfWeek -eq [System.DayOfWeek]::Sunday) { return $false }
-    $open = $nowEastern.Date.AddHours(9).AddMinutes(30).AddMinutes(-$LeadInMinutes)
-    $close = $nowEastern.Date.AddHours(16)
-    return ($nowEastern -ge $open) -and ($nowEastern -le $close)
 }
 
 function Send-Liveness {
@@ -162,6 +121,62 @@ function Send-Liveness {
 $livenessUrl = $env:HEALTHCHECK_LIVENESS_URL
 if ([string]::IsNullOrWhiteSpace($livenessUrl)) {
     $livenessUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_LIVENESS_URL'
+}
+
+function Stop-WithLiveness {
+    # A refusal is still an invocation that happened. Report it as a
+    # liveness failure with the reason, then stop.
+    param([string]$Message)
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "wrapper refused: $Message"
+    throw "$Message (liveness $delivery)"
+}
+
+if (-not (Test-Path -LiteralPath $RepoRoot)) { Stop-WithLiveness "RepoRoot '$RepoRoot' does not exist." }
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+
+if ([string]::IsNullOrWhiteSpace($NodePath)) {
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    if ($null -eq $nodeCommand) { Stop-WithLiveness 'node was not found on PATH; pass -NodePath explicitly.' }
+    $NodePath = $nodeCommand.Source
+}
+if (-not (Test-Path -LiteralPath $NodePath)) { Stop-WithLiveness "NodePath '$NodePath' does not exist." }
+
+$agentEntry = Join-Path $RepoRoot 'dist\shell\agent-cli.js'
+if (-not (Test-Path -LiteralPath $agentEntry)) { Stop-WithLiveness "'$agentEntry' is missing; run 'npm run build' in $RepoRoot before operating the scheduled tasks." }
+
+$stateDir = $env:STATE_DIR
+if ([string]::IsNullOrWhiteSpace($stateDir)) {
+    $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+}
+if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithLiveness "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
+
+function Get-EasternTimeZoneInfo {
+    # Kept in sync by hand with the identical helper in watchdog-run.ps1.
+    try {
+        return [System.TimeZoneInfo]::FindSystemTimeZoneById('America/New_York')
+    } catch {
+        return [System.TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
+    }
+}
+
+function Test-InsideSession {
+    # S-G14-06. Precisely: this converts the current instant into New York
+    # local time through the platform's zone tables and compares it with FIXED
+    # 09:30-16:00 session bounds. It does NOT consult an exchange calendar --
+    # holidays and early closes are unknown to it, so it will let a cycle run on
+    # Thanksgiving and after a 13:00 early close. That is safe and documented: a
+    # firing on a non-trading day is a normal, cheap, journaled no-trade cycle
+    # (S-CYC-08/S-CYC-03), because the RUNTIME does read the exchange calendar.
+    # What this prevents is only the overnight and pre-open part of a
+    # deliberately wide trigger window.
+    param([int]$LeadInMinutes)
+    $eastern = Get-EasternTimeZoneInfo
+    $nowUtc = [System.DateTime]::UtcNow
+    $nowEastern = [System.TimeZoneInfo]::ConvertTimeFromUtc($nowUtc, $eastern)
+    if ($nowEastern.DayOfWeek -eq [System.DayOfWeek]::Saturday -or $nowEastern.DayOfWeek -eq [System.DayOfWeek]::Sunday) { return $false }
+    $open = $nowEastern.Date.AddHours(9).AddMinutes(30).AddMinutes(-$LeadInMinutes)
+    $close = $nowEastern.Date.AddHours(16)
+    return ($nowEastern -ge $open) -and ($nowEastern -le $close)
 }
 
 $logPath = Join-Path $stateDir 'cycle-run.log'

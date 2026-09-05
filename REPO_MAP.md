@@ -164,6 +164,7 @@
 - `tests/p9-presentation-assets.spec.ts` — P9 — presentation assets live in `assets/` and are inlined into the
 - `tests/p9-presentation-guard.spec.ts` — P9 / R33 (B1) — the presentation stylesheets in `assets/` sit outside the
 - `tests/publish-dashboard.spec.ts` — The digest-neutral publication path (submission/publish/render-site.mjs;
+- `tests/r44-signal-integrity.spec.ts` — R44: the findings of the counter-gate on the R43 fix set that are about
 - `tests/startup-fixtures.ts` — A coherent, fully valid §0 configuration record for the S-CYC-11 tests.
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy

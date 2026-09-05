@@ -862,7 +862,15 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   journaled as `AUTH_FAILURE` — a distinguishable state, not generic
   `WORLD_UNREACHABLE` — and blocks all orders. This applies to every
   authenticated startup read, including account identity and exchange
-  calendar, before later cycle reads use the same fence. The runbook fact is spec:
+  calendar, before later cycle reads use the same fence. “Every” is literal in
+  two places a gate found open (R44-B4, R44-B5): the **first** authenticated
+  read of an invocation owes the fence even when it happens before the
+  dependency record that normally carries the recorder — the deadline
+  one-shot's calendar read is that case — and a **401 or 403 on a submission**
+  is a credential rejection, not a lost acknowledgement, so the watchdog's own
+  closes escape to the fence instead of being folded into
+  `acknowledgement_lost`. Both used to end their run with nothing durable
+  behind them and no fence procedure handed to the operator. The runbook fact is spec:
   a key rotation does NOT cancel working orders; the documented fence
   procedure therefore ends with a working-order check/cancel in the broker
   dashboard, and the fence is drilled once on the dev account pre-arm
@@ -1295,7 +1303,15 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 - **S-G12-08** A fence that could not be recorded still fences (A30, #76,
   #77). When the runner detects a credential rejection it marks
   `fencePending` in the epoch store **before** it attempts the `HALT` append,
-  under the same mutex, and the mark is cleared by exactly one thing: a human
+  under the same mutex, and this holds for **both** reasons the safety-halt
+  entry point accepts — `AUTH_FAILURE` and `ACCOUNT_BINDING_MISMATCH`.
+  Restricting the mark to the first was a taxonomic argument (a foreign account
+  answering is not a credential rejection) about a safety property: with the
+  journal read-only, a refused `ACCOUNT_BINDING_MISMATCH` halt left nothing
+  behind, and once the journal recovered the same epoch submitted a
+  risk-increasing order with no human release (R44-A1). Both reasons are a
+  refusal to trade until a human looks, which is exactly what the mark
+  records, and the mark is cleared by exactly one thing: a human
   un-halt. While it stands, the gateway refuses every risk-increasing broker
   mutation exactly as a journaled halt does — no stricter, so a risk-reducing
   close stays possible and a fenced book can still be flattened — and every
@@ -1317,7 +1333,11 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 
   * **A cycle that cannot record checks before it acts.** At the start of every
     invocation, before any broker read or mutation, the journal, the epoch
-    store and the halt projection are probed for writability. A failure blocks
+    store and the halt projection are probed for writability — and the probe
+    asks whether **bytes land**, not only whether permissions allow: it writes
+    and fsyncs a sidecar probe file in the state directory and removes it
+    again. Permissions and room are different questions, and a full volume
+    answers the first yes and the second no (R44-B3). A failure blocks
     every entry for that cycle and raises the active fail-signal
     `STATE_NOT_DURABLE` (this is the case text S-G14-03 requires before a
     condition may alarm). It deliberately does **not** block management: a
@@ -1346,7 +1366,19 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   machine, the scheduler or the process is gone. Separately, every cycle
   reports **readiness**: a success signal only when no halt, no fence and no
   alarm condition stands, and a failure signal naming the impediment
-  otherwise. A standing halt therefore re-reports itself on every cycle for as
+  otherwise. A state **nobody can read** is such an impediment, not the absence
+  of one: an unreadable epoch store (every acquisition returns
+  `EPOCH_UNREADABLE`) and a journal whose lines no longer parse (every writer
+  refuses with `JOURNAL_CORRUPT`) both fail the readiness signal, and an unset
+  endpoint is a misconfiguration that exits non-zero rather than printing a
+  success nobody receives (R44-B6). One scheduled invocation reports readiness
+  **once**: a refusal that the startup validator has already signalled is not
+  signalled again under a second name by the CLI entry point (R44-B7). And a
+  wrapper that refuses before it can run the agent — no `STATE_DIR`, no node,
+  an unbuilt `dist` — still reports **liveness as a failure** with its reason,
+  because the scheduler fired and that is precisely what liveness claims; it
+  used to exit non-zero in silence and be found only when the next expected
+  ping timed out (R44-B8). A standing halt therefore re-reports itself on every cycle for as
   long as it stands; a later durable append is not permission to claim
   readiness, which is the defect this case exists to prevent — before it, a
   cycle that correctly halted on `AUTH_FAILURE` sent `success` because its

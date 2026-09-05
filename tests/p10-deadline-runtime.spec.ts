@@ -36,6 +36,7 @@ import { cleanupLifecycleDirs, lifecycleHarness, lifecycleMarket, P5_NOW } from 
 import type { LifecycleHarness } from "./lifecycle-fixtures.js";
 import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { readHaltState } from "../src/shell/halt-state.js";
+import { readEpochStore } from "../src/shell/epoch-store.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /** Past `LOCK_TAKEOVER_BOUND_MS` (400 s in the tracked policy) so the harness's own holder record no longer suppresses. */
@@ -434,6 +435,39 @@ describe("R42-B4 — a credential rejection during a deadline entry is fenced, n
       expect(readHaltState(harness.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE" });
       await composition.release();
     }
+  });
+
+  it("R44-B4: a 401 on the FIRST authenticated read of the invocation \u2014 the calendar \u2014 fences too", async () => {
+    // The fence recorder used to be built inside the dependency record, which
+    // is assembled after the calendar read. A 401 there therefore ended the
+    // composition with stage "calendar" and left no fence, no halt and no
+    // ping: exactly the startup credential rejection S-G12-06 exists for, on
+    // the one read that happens before anything else.
+    const harness = await lifecycleHarness();
+    harness.clock.now = AFTER_TAKEOVER_BOUND;
+    const composition = await composeDeadline({
+      repoRoot: fixtureRepoRoot(),
+      processEnv: deadlineEnv(harness.paths, {}),
+      clock: () => harness.clock.now,
+      instanceId: "deadline-calendar-401",
+      log: () => undefined,
+      brokerAdapter: () => ({
+        read: harness.fake.read,
+        port: harness.fake.port,
+        market: (): Promise<MarketObservation> => lifecycleMarket(() => harness.clock.now)(),
+        calendar: (): Promise<readonly CalendarDay[]> => Promise.reject(new BrokerHttpError(401, "401 unauthorized")),
+      }),
+    });
+
+    expect(composition.ok, "the one-shot still refuses").toBe(false);
+    if (composition.ok) return;
+    expect(composition.stage).toBe("calendar");
+    expect(composition.reason).toContain("AUTH_FAILURE");
+
+    // ...and the refusal left the deployment fenced rather than merely aborted.
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "the credential fence mark stands").toBe(true);
+    expect(readHaltState(harness.paths)).toMatchObject({ halted: true, reason: "AUTH_FAILURE" });
   });
 
   it("an ordinary failure is classified as degraded and writes no halt", async () => {

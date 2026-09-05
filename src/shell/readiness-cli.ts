@@ -39,7 +39,18 @@ const conditions = [
   ...(durability.ok ? [] : [`STATE_NOT_DURABLE:${durability.reason}`]),
 ];
 
-const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock: () => Date.now(), timeoutMs: 10_000 });
+// R44-B6: an unset endpoint used to exit 0 with a success line, which reads
+// exactly like a delivered all-clear. It is a misconfiguration and the only
+// honest exit code for it is a failing one -- nothing is watching this
+// deployment.
+const readinessUrl = env["HEALTHCHECK_PING_URL"] ?? null;
+if (readinessUrl === null || readinessUrl.trim() === "") {
+  process.stderr.write(`readiness: HEALTHCHECK_PING_URL is not configured; nothing was reported (${conditions.length === 0 ? "no impediment stands" : conditions.join(", ")})
+`);
+  process.exit(2);
+}
+
+const ping = createPingPort({ url: readinessUrl, recordFile: null, clock: () => Date.now(), timeoutMs: 10_000 });
 try {
   if (conditions.length > 0) {
     await ping.fail(conditions);

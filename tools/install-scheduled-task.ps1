@@ -208,7 +208,10 @@ function Get-CronExpression {
     param([datetime]$Start, [datetime]$End, [int]$IntervalMinutes)
     $minutes = @()
     for ($minute = 0; $minute -lt 60; $minute += $IntervalMinutes) { $minutes += $minute }
-    $minuteField = if ($IntervalMinutes -eq 1) { '*' } elseif (60 % $IntervalMinutes -eq 0) { ($minutes -join ',') } else { "*/$IntervalMinutes" }
+    # Callers are refused above unless the interval divides 60, so the
+    # enumeration below is exact rather than approximate (R44-B11).
+    if (60 % $IntervalMinutes -ne 0) { throw "Get-CronExpression cannot state a $IntervalMinutes-minute interval exactly." }
+    $minuteField = if ($IntervalMinutes -eq 1) { '*' } else { ($minutes -join ',') }
     return "$minuteField $($Start.Hour)-$($End.Hour) * * 1-5"
 }
 
@@ -267,6 +270,17 @@ if ($deadManBoundMs -le 0) { throw 'config/policy.json DEAD_MAN_BOUND_MS is miss
 $cycleIntervalMinutes = [math]::Round($cycleIntervalMs / 60000.0)
 if ($cycleIntervalMinutes -lt 1) { $cycleIntervalMinutes = 1 }
 
+# R44-B11: the printed cron enumerates minutes within the hour, so an interval
+# that does not divide 60 cannot be stated exactly -- a 7-minute repetition
+# drifts (Windows fires 14:56, 15:03; the cron expects 14:56, 15:00), and the
+# check would alert on a healthy deployment. `*/7` was printed as though it
+# matched. Refuse the interval rather than print a schedule that is wrong.
+foreach ($candidate in @(@{ Name = 'CYCLE_INTERVAL_MS'; Minutes = $cycleIntervalMinutes }, @{ Name = '-WatchdogIntervalMinutes'; Minutes = $WatchdogIntervalMinutes })) {
+    if (60 % $candidate.Minutes -ne 0) {
+        throw "$($candidate.Name) = $($candidate.Minutes) min does not divide 60, so no cron expression states its firings exactly and the external check would alert on a healthy run. Pick a divisor of 60 (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)."
+    }
+}
+
 if (($WatchdogIntervalMinutes * 60000) -ge $deadManBoundMs) {
     throw "WatchdogIntervalMinutes=$WatchdogIntervalMinutes min (= $($WatchdogIntervalMinutes * 60000) ms) is not below config/policy.json DEAD_MAN_BOUND_MS=$deadManBoundMs ms ($([math]::Round($deadManBoundMs / 60000.0)) min). Pick a smaller -WatchdogIntervalMinutes."
 }
@@ -310,7 +324,47 @@ if ($coverageExit -ne 0) {
     throw "The trigger window does not contain every exchange session through $CoverageThroughDate (exit $coverageExit). Raise -EdgeMarginMinutes or re-install closer to the deployment; nothing was registered."
 }
 
-$principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
+# ---------------------------------------------------------------------------
+# The external check schedules.
+#
+# R44-B12: this block used to sit AFTER New-ScheduledTaskPrincipal, which needs
+# an elevated shell for LogonType S4U. In the normal PowerShell the runbook
+# prescribes for the preview, `-WhatIf` therefore died with "access denied"
+# before printing a single cron -- the one output the owner is told to copy.
+# It is computed and printed here, before anything that needs elevation.
+# ---------------------------------------------------------------------------
+$cycleCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $cycleIntervalMinutes
+$watchdogCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $WatchdogIntervalMinutes
+# R44-B13: healthchecks.io takes IANA zone names ("Europe/Berlin"), not the
+# Windows ids [TimeZoneInfo]::Local.Id returns ("W. Europe Standard Time").
+# Windows PowerShell 5.1 has no converter, so the host's own Node -- already
+# required above and already invoked for the coverage check -- answers it.
+$localZone = ''
+try { $localZone = (& $NodePath -e "process.stdout.write(Intl.DateTimeFormat().resolvedOptions().timeZone)") } catch { $localZone = '' }
+if ([string]::IsNullOrWhiteSpace($localZone)) {
+    throw "Could not determine this host's IANA time zone through node ($NodePath). The external checks need an IANA name such as 'Europe/Berlin'; the Windows id '$([System.TimeZoneInfo]::Local.Id)' is not accepted by healthchecks.io."
+}
+
+Write-Host ''
+Write-Host 'Configure the three external checks with EXACTLY these schedules (timezone below, not UTC):'
+Write-Host "  timezone for all three:  $localZone"
+Write-Host "  liveness   cron: $cycleCron      grace 30 min   (every cycle firing, session or not)"
+Write-Host "  readiness  cron: $cycleCron      grace 50 min   (every cycle firing reports; DEAD_MAN_BOUND_MS)"
+Write-Host "  watchdog   cron: $watchdogCron   grace 15 min   (every watchdog firing)"
+Write-Host ''
+Write-Host 'Detection time = the check period until the next expected ping, plus its grace.'
+Write-Host "Alert delivery budget is separate: $([math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000.0)) min (ALERT_DELIVERY_BUDGET_MS)."
+Write-Host 'Weekends and nights are outside every expression above, so silence there is expected and never alerts.'
+Write-Host 'Holidays and early closes still ping: the wrappers fire and report on them.'
+Write-Host "Reminder: watchdog-cli.ts fences, halts, flattens the open book and pings; it degrades to fence+halt+ping (and logs why) when the configuration, credentials or account binding do not compose -- see tools\watchdog-run.ps1 header."
+Write-Host ''
+
+if ($WhatIfPreference) {
+    Write-Host "Preview only (-WhatIf): the principal for '$UserId' (LogonType $LogonType) is NOT constructed, because that needs an elevated shell. Registration itself must be run from an elevated PowerShell."
+    $principal = $null
+} else {
+    $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
+}
 $commonSettings = @{
     StartWhenAvailable        = $true
     DontStopOnIdleEnd         = $true
@@ -356,22 +410,7 @@ if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled 
     if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }
 }
 
-$cycleCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $cycleIntervalMinutes
-$watchdogCron = Get-CronExpression -Start $session.OpenLocal -End $session.CloseLocal -IntervalMinutes $WatchdogIntervalMinutes
-$localZone = [System.TimeZoneInfo]::Local.Id
-
 Write-Host ''
 Write-Host "Registration $(if ($WhatIfPreference) { '(preview only, -WhatIf) ' })complete for user '$UserId', LogonType '$LogonType', folder '$TaskFolder'."
 Write-Host "Tasks were registered $(if ($Activate) { 'ENABLED (-Activate was passed)' } else { 'and immediately DISABLED. Installing is not activating: enable them only after the activation gate in docs/P12-RUNBOOK.md.' })"
-Write-Host ''
-Write-Host 'Configure the three external checks with EXACTLY these schedules (timezone below, not UTC):'
-Write-Host "  timezone for all three:  $localZone"
-Write-Host "  liveness   cron: $cycleCron      grace 30 min   (every cycle firing, session or not)"
-Write-Host "  readiness  cron: $cycleCron      grace 50 min   (every cycle firing reports; DEAD_MAN_BOUND_MS)"
-Write-Host "  watchdog   cron: $watchdogCron   grace 15 min   (every watchdog firing)"
-Write-Host ''
-Write-Host 'Detection time = the check period until the next expected ping, plus its grace.'
-Write-Host "Alert delivery budget is separate: $([math]::Round([int64]$policy.ALERT_DELIVERY_BUDGET_MS / 60000.0)) min (ALERT_DELIVERY_BUDGET_MS)."
-Write-Host 'Weekends and nights are outside every expression above, so silence there is expected and never alerts.'
-Write-Host 'Holidays and early closes still ping: the wrappers fire and report on them.'
-Write-Host "Reminder: watchdog-cli.ts fences, halts, flattens the open book and pings; it degrades to fence+halt+ping (and logs why) when the configuration, credentials or account binding do not compose -- see tools\watchdog-run.ps1 header."
+Write-Host 'Verify what was registered with tools\verify-scheduled-tasks.ps1 before relying on any of it.'

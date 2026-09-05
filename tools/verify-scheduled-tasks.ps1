@@ -61,9 +61,14 @@ $deadManMinutes = [math]::Round([int64]$policy.DEAD_MAN_BOUND_MS / 60000.0)
 # the trigger's local start hour, the weekday set, and a strict inequality on
 # the watchdog cadence.
 $expected = @(
-    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; MaxIntervalMinutes = $cycleIntervalMinutes; StrictlyBelow = $false },
-    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; MaxIntervalMinutes = $deadManMinutes; StrictlyBelow = $true }
+    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; MaxIntervalMinutes = $cycleIntervalMinutes; StrictlyBelow = $false; ExactIntervalMinutes = $cycleIntervalMinutes },
+    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; MaxIntervalMinutes = $deadManMinutes; StrictlyBelow = $true; ExactIntervalMinutes = $null }
 )
+
+# R44-B10: the checks below used to read Actions[0] and Triggers[0] and ignore
+# everything after them, so a definition with a second cmd.exe action or a
+# second weekend trigger passed all 30. A task runs EVERY action and honours
+# EVERY trigger, so anything beyond the first is unverified execution.
 
 function Get-FileArgument {
     # The value of -File, honouring quotes. Anything else in the argument
@@ -97,7 +102,9 @@ foreach ($spec in $expected) {
     }
 
     # --- the action actually invokes the script we think it does -------------
-    $action = @($task.Actions)[0]
+    $actions = @($task.Actions)
+    Add-Check -Name "$($spec.Name) carries exactly one action" -Ok ($actions.Count -eq 1) -Detail "$($actions.Count) action(s); every one of them runs"
+    $action = $actions[0]
     $argument = "$($action.Arguments)"
     $executable = [System.IO.Path]::GetFileName("$($action.Execute)")
     Add-Check -Name "$($spec.Name) runs powershell.exe" -Ok ($executable -ieq 'powershell.exe') -Detail "Execute=$($action.Execute)"
@@ -115,7 +122,9 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) working directory is the checkout" -Ok $workingDirectoryOk -Detail "$($action.WorkingDirectory)"
 
     # --- it repeats, and not slower than the policy allows -------------------
-    $trigger = @($task.Triggers)[0]
+    $triggers = @($task.Triggers)
+    Add-Check -Name "$($spec.Name) carries exactly one trigger" -Ok ($triggers.Count -eq 1) -Detail "$($triggers.Count) trigger(s); every one of them fires"
+    $trigger = $triggers[0]
     $repetition = $trigger.Repetition
     if ($null -eq $repetition -or [string]::IsNullOrWhiteSpace($repetition.Interval)) {
         Add-Check -Name "$($spec.Name) repeats within its window" -Ok $false -Detail 'the trigger carries no repetition interval; it would fire once a day'
@@ -124,6 +133,12 @@ foreach ($spec in $expected) {
         $duration = if ([string]::IsNullOrWhiteSpace($repetition.Duration)) { $null } else { [System.Xml.XmlConvert]::ToTimeSpan($repetition.Duration) }
         $fastEnough = if ($spec.StrictlyBelow) { $interval.TotalMinutes -lt $spec.MaxIntervalMinutes } else { $interval.TotalMinutes -le $spec.MaxIntervalMinutes }
         Add-Check -Name "$($spec.Name) repetition is inside its bound" -Ok $fastEnough -Detail "every $([math]::Round($interval.TotalMinutes)) min (bound $($spec.MaxIntervalMinutes) min, $(if ($spec.StrictlyBelow) { 'strictly below' } else { 'at most' }))"
+        # R44-B10: the cycle cadence is not merely bounded, it is fixed for the
+        # measurement period -- a slower cycle is a different deployment, and
+        # the external readiness cron is derived from this exact number.
+        if ($null -ne $spec.ExactIntervalMinutes) {
+            Add-Check -Name "$($spec.Name) cadence is exactly the policy interval" -Ok ([math]::Round($interval.TotalMinutes) -eq $spec.ExactIntervalMinutes) -Detail "every $([math]::Round($interval.TotalMinutes)) min (policy CYCLE_INTERVAL_MS = $($spec.ExactIntervalMinutes) min)"
+        }
         if ($null -ne $duration) {
             Add-Check -Name "$($spec.Name) repetition window spans a session" -Ok ($duration.TotalMinutes -ge 390) -Detail "$([math]::Round($duration.TotalMinutes)) min (a regular session is 390 min)"
         } else {

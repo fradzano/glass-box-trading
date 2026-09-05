@@ -4,6 +4,7 @@
 // Writes are atomic: temp file, fsync, rename.
 import { createHash } from "node:crypto";
 import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import path from "node:path";
 import { createServer } from "node:net";
 import type { Server } from "node:net";
 import type { EpochStoreState } from "../core/authority.js";
@@ -114,6 +115,40 @@ export function setFencePending(paths: StatePaths, pending: boolean): { readonly
     writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: store.seedPending, resetPending: store.resetPending, fencePending: pending });
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  return { ok: true };
+}
+
+/**
+ * R44-B3: prove that bytes can actually be written and flushed into STATE_DIR.
+ * `accessSync` and `open(file, "r+")` answer "are the permissions right",
+ * which is a different question from "is there room": on a full volume both
+ * succeed and the first real append fails with ENOSPC. The gate executed
+ * exactly that -- metadata and open succeeded while `writeFileSync` threw
+ * ENOSPC, and the probe returned ok.
+ *
+ * It lives here rather than in state-dir.ts because this module is one of the
+ * declared writers (S-G12-07's boundary test); it writes a small sidecar next
+ * to the durable state, fsyncs it -- an unflushed write can succeed against a
+ * full disk and fail only at flush -- and removes it again. It never opens the
+ * journal, the epoch store or the halt projection.
+ */
+export function probeDurableWrite(root: string): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  const file = path.join(root, ".durability-probe");
+  let handle: number;
+  try {
+    handle = openSync(file, "w");
+  } catch (error) {
+    return { ok: false, reason: `state directory does not accept a new file: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  try {
+    writeSync(handle, "durability-probe");
+    fsyncSync(handle);
+  } catch (error) {
+    return { ok: false, reason: `state directory does not accept written bytes: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    try { closeSync(handle); } catch { /* the write result is the finding, not the close */ }
+    try { rmSync(file, { force: true }); } catch { /* a leftover probe file is harmless */ }
   }
   return { ok: true };
 }

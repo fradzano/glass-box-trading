@@ -18,6 +18,7 @@ import { readinessDelivery } from "../src/shell/agent-runtime.js";
 import { planPing } from "../src/core/lifecycle.js";
 import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { cleanupLifecycleDirs, freshLifecyclePaths, lifecycleHarness, lifecycleMarket, P5_BINDING, P5_NOW } from "./lifecycle-fixtures.js";
+import { creditVertical } from "./execution-fixtures.js";
 import type { MarketObservation } from "../src/core/execution.js";
 import type { StatePaths } from "../src/shell/state-dir.js";
 
@@ -237,15 +238,52 @@ describe("S-G12-08 — the fence mark is set before the entry is attempted and o
     expect(store.kind === "present" && store.fencePending).toBe(true);
   });
 
-  it("R43-B3: an account-binding halt is not a credential rejection and leaves no fence mark", async () => {
+  it("R44-A1: an account-binding halt marks too -- a refused halt must not evaporate when the journal recovers", async () => {
+    // Until R44 this reason deliberately left no mark, on the argument that a
+    // foreign account answering is not a credential rejection. The gate
+    // executed what that costs: with the journal read-only the HALT never
+    // landed, and once the journal recovered the same epoch submitted a
+    // risk-increasing order with no human release. The taxonomy was right and
+    // irrelevant -- both reasons this entry point accepts are refusals to
+    // trade until a human looks.
     const harness = await lifecycleHarness();
     const gateway = gatewayFor(harness.paths, "startup", P5_NOW + 120_000);
     const acquired = await gateway.acquireAuthority({ account: "virgin" });
     expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
 
-    await gateway.dispatchSafetyHalt({ reason: "ACCOUNT_BINDING_MISMATCH", detail: "a foreign account answered" });
+    makeJournalUnwritable(harness.paths);
+    let halted: Awaited<ReturnType<typeof gateway.dispatchSafetyHalt>>;
+    try {
+      halted = await gateway.dispatchSafetyHalt({ reason: "ACCOUNT_BINDING_MISMATCH", detail: "a foreign account answered" });
+    } finally {
+      makeJournalWritable(harness.paths);
+    }
+    expect(halted.ok, "the HALT could not be journaled, so the dispatch reports failure").toBe(false);
+
+    // The journal is writable again and carries no HALT at all...
     const store = readEpochStore(harness.paths);
-    expect(store.kind === "present" && store.fencePending, "only a credential rejection raises the credential fence").toBe(false);
+    expect(store.kind === "present" && store.fencePending, "...but the mark stands, so the deployment is still fenced").toBe(true);
+    expect(readHaltState(harness.paths).halted).toBe(false);
+
+    // ...and that is enough to stop the writer that is still holding this
+    // epoch -- the gate's own moment was a risk-increasing order in the SAME
+    // epoch after the journal came back.
+    const epoch = acquired.kind === "WON" ? acquired.epoch : 1;
+    const dispatched = await gateway.dispatch({
+      class: "authoritative",
+      epoch,
+      action: {
+        kind: "broker_mutation",
+        mutation: {
+          kind: "submit_order",
+          clientOrderId: "r44-a1-probe",
+          binding: P5_BINDING,
+          payload: { legs: creditVertical().legs, quantity: 1, limit: { kind: "credit", priceCents: 198 }, intent: "open" },
+        },
+      },
+    });
+    expect(dispatched.ok, "a fenced deployment writes nothing further without a human release").toBe(false);
+    expect(!dispatched.ok && dispatched.reason, "and it refuses for the fence, not for some unrelated reason").toMatch(/HALT|FENCE/);
   });
 
   it("R43-B1: a cycle whose state cannot be recorded blocks entries before touching the broker, but still reduces risk", async () => {

@@ -32,8 +32,9 @@ regular cycle.
 |---|---|---|
 | Account, secrets, notification channel | by **Mon 2026-09-07, 22:00** | owner steps 1–3 |
 | Certificate run four (dev account, supervised) | **Tue 2026-09-08**, from 15:30 CEST | owner step 4 |
-| Install + verify + activation gate | Tue 2026-09-08, after PASS | owner steps 5–6 |
-| **First regular cycle** | **Wed 2026-09-09**, from 15:30 CEST, supervised | owner step 7 — the anchor |
+| Install + verify | Tue 2026-09-08, after PASS | owner step 5 |
+| Activation gate (drills, restart, signed out) | Tue 2026-09-08 22:10 CEST → Wed 2026-09-09 15:05 CEST | owner step 6 — outside every session, so nothing trades |
+| **First regular cycle** | **Wed 2026-09-09**, the 15:15 CEST firing, supervised | owner step 7 — the anchor |
 | `FLATTEN_DATE` | **Wed 2026-12-09** | three calendar months |
 | Journaling-only day | Thu 2026-12-10 | |
 | `TERMINAL` and shutdown | after the Thu 2026-12-10 US close | |
@@ -96,14 +97,26 @@ New-Item -ItemType Directory -Force C:\Users\felix\glass-box-state\longrun-1 | O
 Get-ChildItem C:\Users\felix\glass-box-state\longrun-1   # expect: nothing
 ```
 
-Check the configuration without printing any secret:
+Check the configuration without printing any secret. This is the **step 2**
+check, so it asks only for what step 2 sets — the ping URLs come from step 3
+and `PRE_ARM_CERTIFICATE` from step 4, and demanding them here would abort a
+correct run (R44-B14):
 
 ```powershell
-node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');const e=loadEnvironment(process.cwd(),process.env);for(const k of ['ALPACA_PROFILE','ALPACA_COMP_ACCOUNT_ID','STATE_DIR','BOOTSTRAP_DIAGNOSTIC_SINK','PRE_ARM_CERTIFICATE','HEALTHCHECK_PING_URL','HEALTHCHECK_LIVENESS_URL','HEALTHCHECK_WATCHDOG_URL'])console.log(k.padEnd(28), /KEY|SECRET|TOKEN|URL/.test(k)?(e[k]?'<set>':'<MISSING>'):(e[k]??'<MISSING>'))"
+node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');const e=loadEnvironment(process.cwd(),process.env);for(const k of ['ALPACA_PROFILE','ALPACA_COMP_ACCOUNT_ID','ALPACA_COMP_KEY_ID','ALPACA_COMP_SECRET_KEY','STATE_DIR','BOOTSTRAP_DIAGNOSTIC_SINK'])console.log(k.padEnd(28), /KEY|SECRET|TOKEN|URL/.test(k)?(e[k]?'<set>':'<MISSING>'):(e[k]??'<MISSING>'))"
 ```
 
 **Abort if:** `ALPACA_PROFILE` is not `competition`, `STATE_DIR` still points at
-`competition-2`, or anything reads `<MISSING>`.
+`competition-2`, or any of these six reads `<MISSING>`.
+
+The same command with the later keys is the **step 5** gate, run after step 3
+and step 4 have produced them, immediately before installing:
+
+```powershell
+node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');const e=loadEnvironment(process.cwd(),process.env);for(const k of ['PRE_ARM_CERTIFICATE','HEALTHCHECK_PING_URL','HEALTHCHECK_LIVENESS_URL','HEALTHCHECK_WATCHDOG_URL'])console.log(k.padEnd(28), /KEY|SECRET|TOKEN|URL/.test(k)?(e[k]?'<set>':'<MISSING>'):(e[k]??'<MISSING>'))"
+```
+
+**Abort if:** any of those four reads `<MISSING>` at that point.
 
 ### 3. The three notification checks — by Mon 2026-09-07, 22:00
 
@@ -122,10 +135,18 @@ cd C:\Users\felix\source\repos\glass-box-trading
 .\tools\install-scheduled-task.ps1 -WhatIf -CoverageThroughDate 2026-12-09
 ```
 
-It prints, near the end, a cron expression, a timezone and a grace for each of
-the three checks. Configure them with **exactly** those values, set each check's
-schedule type to "cron", and point all three at the channel you will actually
-see at night. Then put the ping URLs into `.env`:
+It prints, before the registration preview, a cron expression, an **IANA**
+timezone (`Europe/Berlin`, read from this host through node — healthchecks.io
+does not accept the Windows name `W. Europe Standard Time`) and a grace for each
+of the three checks. This preview runs in a **normal** shell: since R44-B12 it
+prints the schedules before it touches anything that needs elevation.
+
+Configure the checks with **exactly** those values, set each check's schedule
+type to "cron", and point all three at the channel you will actually see at
+night. **Also switch on the account's recurring "down" reminder** (hourly or
+daily) — a check sends one notification when it goes down and one when it
+recovers, so without the reminder a single push missed at 22:00 is a silent
+night. Then put the ping URLs into `.env`:
 
 ```
 HEALTHCHECK_PING_URL=<readiness check ping URL>
@@ -145,6 +166,10 @@ Now exercise the path and **confirm receipt on your own device**:
 
 **Abort if:** any signal says `UNDELIVERED` or `NOT CONFIGURED`, or an alert
 does not arrive. HTTP 200 is delivery, not receipt.
+
+Then confirm the reminder itself: leave one check down for the reminder's
+period and check that a **second** message arrives. If it does not, the account
+setting is not on, or not on that channel.
 
 The silence drills are separate and cannot be scripted. Do them in step 6.
 
@@ -174,7 +199,7 @@ try {
     $env:STATE_DIR                 = 'C:\Users\felix\glass-box-state\dev'
     $env:BOOTSTRAP_DIAGNOSTIC_SINK = 'C:\Users\felix\glass-box-state\dev-bootstrap.log'
     $env:PRE_ARM_CERTIFICATE       = ''
-    npm run certificate -- --owner-go
+    npm.cmd run certificate -- --owner-go   # npm.cmd, not npm: npm.ps1 is blocked by this host's execution policy (R44-B16)
 } finally {
     foreach ($name in $saved.Keys) {
         if ($null -eq $saved[$name]) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
@@ -198,7 +223,7 @@ so no dev variable can survive in it.
 
 ```powershell
 cd C:\Users\felix\source\repos\glass-box-trading
-npm run build
+npm.cmd run build   # npm.cmd, not npm: npm.ps1 is blocked by this host's execution policy (R44-B16)
 .\tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-09
 ```
 
@@ -211,60 +236,127 @@ Then, still elevated:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1
-# expect: SCHEDULER CHECK PASSED (30 checks)
+# expect: SCHEDULER CHECK PASSED (35 checks)
 ```
 
 **Abort if:** any check fails. Do not enable anything yet.
 
-### 6. The activation gate — Tue 2026-09-08
+### 6. The activation gate — Tue 2026-09-08 evening into Wed 2026-09-09 morning
 
-*Elevated PowerShell for the enable/disable steps.*
+*Elevated PowerShell for every enable/disable below.*
 
-All six of these must hold before the run is allowed to be unattended. The first
-three are proven in this repository; the last three can only be proven on this
-machine, and none of them has been.
+Two findings reshaped this step (R44-A2, R44-B15). The first draft enabled the
+cycle task during a **session** on Tuesday to run its drills — which lets a
+competition cycle trade a day before the anchor and silently starts the
+measurement period on the wrong date. The second draft was circular: drill (b)
+left both tasks disabled, drill (c) powered the machine off without recovering
+from it, and the restart and signed-out proofs need both tasks *enabled* — while
+the only enable command stood after all six conditions were already met.
 
-1. `npm run verify` exit 0. **proven by test**
+Both are answered by the same observation: **the drills need the tasks running,
+but they do not need the agent trading.** The trigger window is deliberately
+wider than the exchange session, and `cycle-run.ps1` skips outside the session
+while still firing, logging and reporting both signals. So the tasks are enabled
+inside the trigger window and **outside** every session, and the drills read
+exactly the signals they are about.
+
+**The safety rule that replaces the old ordering, and it is absolute:** no
+firing may run a cycle before the anchor. Concretely — the tasks may be enabled
+only after **22:10 CEST** on Tuesday, and if any drill is still open at
+**15:05 CEST** on Wednesday, both tasks are disabled again and the anchor moves
+to the next trading day (which changes `FLATTEN_DATE`, the policy digest and the
+certificate — see *The dates*).
+
+Conditions 1–4 are met before the drills begin:
+
+1. `npm.cmd run verify` exit 0 (`npm.cmd`, not `npm`: `npm.ps1` is blocked by
+   this host's execution policy). **proven by test**
 2. `.\tools\verify-scheduled-tasks.ps1` passes. **proven on the host in step 5**
 3. Certificate run four PASS. **step 4**
-4. **Alert receipt**, all three checks, confirmed on your device. **step 3**
-5. **Three silence drills**, each a different path, each confirmed:
-   ```powershell
-   # a. the watchdog alone — the case that was invisible until it got its own check
-   Enable-ScheduledTask  -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
-   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
-   # wait out the watchdog check's period + grace during a session.
-   # expect: watchdog check DOWN, liveness and readiness still UP.
+4. **Alert receipt**, all three checks, confirmed on your own device, including
+   one recurring "down" reminder. **step 3**
 
-   # b. both tasks
-   Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
-   # expect: liveness and readiness DOWN as well.
-
-   # c. the machine itself — shut it down during a session for one period + grace.
-   # expect: all three DOWN. This is the only drill that proves the alert does not
-   # depend on the machine it is reporting about.
-   ```
-6. **Restart and signed-out operation**, neither of which any script can assert:
-   ```powershell
-   # restart: with both tasks enabled, reboot during a session and confirm from
-   #   the liveness check and STATE_DIR\cycle-run.log that firings resumed.
-   # signed out: with both tasks enabled, sign out (do not shut down) and confirm
-   #   the next firing still produced a cycle-run.log line. S4U is configured for
-   #   exactly this, and configuration is not evidence.
-   ```
-
-Only when all six hold:
+**Tue 22:10 — enable, outside the session.** The US close was 22:00 CEST, so
+every firing from here to 23:45 skips the cycle and reports both signals.
 
 ```powershell
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
-# expect: SCHEDULER CHECK PASSED, and both states Ready
+# expect: SCHEDULER CHECK PASSED, both states Ready
+Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
+# expect, within 15 min: a "skip: outside the exchange session" line, liveness sent, readiness reported.
+# If any line instead shows a cycle running, STOP and disable both tasks: the
+# session bound is wrong and the anchor must not be today.
 ```
 
-### 7. The supervised first regular cycle — Wed 2026-09-09, from 15:30 CEST
+Wait until all three checks read green in the healthchecks dashboard before
+starting drill (a). A drill against a check that was already down proves
+nothing.
 
-*Normal PowerShell.* Watch one full cycle and confirm, in order:
+5. **Three silence drills**, each a different path, each confirmed. The waits
+   are the check period plus its grace: watchdog 20 min, liveness 45 min,
+   readiness 65 min.
+
+   ```powershell
+   # (a) Tue ~22:40 — the watchdog alone. It is the failure the other two
+   #     checks cannot see, so this is the drill that earned the third endpoint.
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
+   # wait 20 min. expect: watchdog DOWN, liveness and readiness still UP.
+   Enable-ScheduledTask  -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
+   # wait for the watchdog check to go green again before continuing.
+
+   # (b) Tue ~23:15 — both tasks. The last firing of the day is 23:45, and the
+   #     checks keep waiting for the ping they expected, so the alerts land
+   #     around 00:00 (liveness) and 00:20 (readiness). Set an alarm; a drill
+   #     whose alert you sleep through has proven nothing either way.
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
+   Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
+   # expect: all three DOWN. Leave them disabled overnight; nothing is expected
+   # to ping until Wed 14:00 anyway.
+
+   # (c) Wed 14:00 — the machine itself, in the pre-session part of the trigger
+   #     window. Re-enable both tasks, confirm one green firing at 14:00 or
+   #     14:15, then shut the machine down for 25 minutes.
+   # expect: all three DOWN while it is off. This is the only drill that proves
+   # the alert does not depend on the machine it reports about, and it is also
+   # condition 6's restart proof: boot it again and the firings must resume by
+   # themselves.
+   ```
+
+6. **Restart and signed-out operation**, neither of which any script can assert.
+   Both are produced by the recovery from drill (c), still before the session:
+
+   ```powershell
+   # restart: after booting from drill (c), with both tasks enabled,
+   Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
+   # expect: a firing after the boot, without anyone starting anything, and all
+   # three checks green again. If it needed a login to resume, S4U is not doing
+   # what it is configured to do -- stop here.
+
+   # signed out: at ~14:50, sign out (do NOT shut down). The 15:00 firing is
+   # still outside the session, so it skips, logs and reports without trading.
+   # Sign back in afterwards and read the same log:
+   Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
+   # expect: a 15:00 line written while nobody was signed in. S4U is configured
+   # for exactly this, and configuration is not evidence.
+   ```
+
+**The gate itself, Wed by 15:05 CEST:** all six conditions hold, both tasks are
+enabled, and `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` passes. If any
+of that is not true, disable both tasks now — the anchor moves, and step 4's
+certificate has to be repeated after `FLATTEN_DATE` changes.
+
+```powershell
+.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
+# expect: SCHEDULER CHECK PASSED (35 checks), and both states Ready
+```
+
+### 7. The supervised first regular cycle — Wed 2026-09-09, from 15:15 CEST
+
+*Normal PowerShell.* The session lead-in starts 20 minutes before the US
+open, so the **15:15** firing is the first one that runs a cycle — not
+15:30. That firing is the anchor. Watch it and confirm, in order:
 
 ```powershell
 Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 20
@@ -300,18 +392,32 @@ check the probe comes back clean.
   when the credentials were refused, so it does not know what is resting at the
   broker. Check and cancel in the broker dashboard first.
 * `STATE_NOT_DURABLE:<detail>` — the journal, epoch store or halt file cannot be
-  written. Usually a full disk. Entries are blocked until it is fixed;
-  risk-reducing closes still run.
+  written. Usually a full disk, which the probe now actually detects: it writes
+  and flushes a byte rather than only checking permissions (R44-B3). Entries
+  are blocked until it is fixed; risk-reducing closes still run.
+* `AUTHORITY_STATE_UNREADABLE` or `JOURNAL_CORRUPT:line <n>` — the durable
+  state no longer parses. No writer can act on it, so nothing is trading. Do
+  not repair by hand: quarantine the state directory, keep it, and report.
 
 The release, when you have done the procedure — *normal PowerShell*:
 
 ```powershell
 cd C:\Users\felix\source\repos\glass-box-trading
 node dist\shell\unhalt-cli.js --operator felix --reason "what you checked and why you are releasing"
-# prints the standing state and the fence procedure, and changes NOTHING without --confirm
-node dist\shell\unhalt-cli.js --operator felix --reason "..." --confirm
-# expect: "RELEASED: UNHALT seq <n>" and "fence mark now false"
+# prints the standing state and the fence procedure, and changes NOTHING without --confirm.
+# Read the "HALT seq <n>" it prints; that number goes into the next command.
+node dist\shell\unhalt-cli.js --operator felix --reason "..." --expect-halt-seq <n> --confirm
+# expect: "RELEASED: UNHALT seq <m>" and "fence mark now false"
 ```
+
+**`--expect-halt-seq` is not optional in practice** (R44-B9). It is the
+compare-and-set that makes the release apply to the halt you actually read.
+Without it, a second halt landing between the preview and the confirmation —
+which is exactly what a deployment under a credential fence keeps producing —
+is released unseen: the gate executed a preview of `HALT seq 1 AUTH_FAILURE`,
+a `HALT seq 2 ACCOUNT_BINDING_MISMATCH` arriving next, and the release then
+clearing both. With the sequence number the second halt refuses the release and
+you go back and look at it.
 
 **On a liveness alert:** the machine, the scheduler or the process. `cycle-run.log`
 and the journal say which. Recovery is normally just letting the schedule

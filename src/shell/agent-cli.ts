@@ -22,12 +22,18 @@ if (!built.ok) {
   // only the wrapper's generic non-zero exit, which is liveness and not the
   // same claim. S-G14-03 permits a failure-only ping before any journal
   // exists, and this is exactly the S-CYC-11 case it names.
-  try {
-    const env = loadEnvironment(process.cwd(), process.env);
-    const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock, timeoutMs: 10_000 });
-    await ping.fail([`STARTUP_REFUSED:${built.stage}`, built.reason]);
-  } catch {
-    // Best effort: the exit code and the printed reason carry it regardless.
+  // R44-B7: exactly one readiness signal per invocation. The startup
+  // validator sends its own CONFIG_INVALID failure before returning, and this
+  // used to add a second POST under a different name for the same refusal —
+  // two alerts, one incident, and a check that flaps twice.
+  if (!(built.startup?.failurePinged ?? false)) {
+    try {
+      const env = loadEnvironment(process.cwd(), process.env);
+      const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock, timeoutMs: 10_000 });
+      await ping.fail([`STARTUP_REFUSED:${built.stage}`, built.reason]);
+    } catch {
+      // Best effort: the exit code and the printed reason carry it regardless.
+    }
   }
   process.exit(agentCliExitCode({ kind: "build_refused", stage: built.stage }));
 }

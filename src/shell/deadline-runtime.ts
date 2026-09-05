@@ -327,6 +327,12 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
   }
   const epoch = acquired.epoch;
   const release = async (): Promise<void> => { await releaseHolder(paths, options.instanceId); };
+  // R44-B4: built here rather than inside the dependency record below, because
+  // the FIRST authenticated read of this invocation is the calendar, and it
+  // happens before that record exists. A 401 there used to end the composition
+  // with `stage: "calendar"` and leave no fence, no halt and no ping -- which
+  // is precisely the startup credential rejection S-G12-06 exists for.
+  const recordCredentialFence = credentialFence(options, paths, secrets, config.scheduling.lockTakeoverBoundMs, ping);
 
   // ---- everything below runs under our own epoch: the first broker read is here, never earlier ----
   const now = options.clock();
@@ -335,8 +341,13 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
   try {
     days = await adapter.calendar(isoDate(now, CALENDAR_LOOKBACK_DAYS), isoDate(now, CALENDAR_LOOKAHEAD_DAYS));
   } catch (error) {
+    const classified = await recordCredentialFence(error);
     await release();
-    return { ok: false, stage: "calendar", reason: `broker calendar could not be observed: ${messageOf(error)}` };
+    return {
+      ok: false,
+      stage: "calendar",
+      reason: `broker calendar could not be observed (${classified}): ${messageOf(error)}`,
+    };
   }
 
   let entries: readonly JournalEntry[];
@@ -357,7 +368,7 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
     epoch,
     entries,
     release,
-    recordCredentialFence: credentialFence(options, paths, secrets, config.scheduling.lockTakeoverBoundMs, ping),
+    recordCredentialFence,
     deps: {
       gateway,
       epoch,

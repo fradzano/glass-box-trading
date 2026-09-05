@@ -252,14 +252,21 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
       styles: readFileSync(path.join(REPO_ROOT, "assets", "dashboard.css"), "utf8"),
     });
 
-    // Every cycle keeps a table row linking to it...
-    for (const entry of many) expect(html, `seq ${String(entry.seq)} must keep its row`).toContain(`href="#cycle-${String(entry.seq)}"`);
+    // Every cycle keeps a table row...
+    for (const entry of many) expect(html, `seq ${String(entry.seq)} must keep its row`).toMatch(new RegExp(`<td>(<a href="#cycle-${String(entry.seq)}">|<span[^>]*>)${String(entry.seq)}<`, "u"));
     // ...while only the most recent get a detail section.
     const detailSections = [...html.matchAll(/<section class="cycle" id="cycle-(\d+)"/gu)].map(match => Number(match[1]));
     expect(detailSections.length).toBeLessThan(many.length);
     expect(detailSections).toHaveLength(200);
     expect(detailSections).toContain(last.seq);
     expect(detailSections).not.toContain(bootstrap.seq);
+    // R44-B17: and no anchor on the page points at a section that is not on
+    // it. The first version of this test asserted a link for every cycle,
+    // which ratified 60 dead links instead of catching them.
+    const anchored = new Set(detailSections);
+    for (const match of html.matchAll(/href="#cycle-(\d+)"/gu)) {
+      expect(anchored, `#cycle-${String(match[1])} is linked but not rendered`).toContain(Number(match[1]));
+    }
     // ...and the page says what it left out and where the full record is.
     expect(html).toContain("The table above is complete");
     expect(html).toContain("remains in the journal");

@@ -462,8 +462,17 @@ describe("S-G12-07 writer fencing at the single final gateway", () => {
     // journal, epoch, and halt flag (S-J-07: receipts never create a journal revision); its only journal append is
     // the S-J-08 refusal, dispatched through the gateway.
     expect(atomicWriters.sort()).toEqual(["epoch-store.ts", "halt-state.ts", "publisher.ts"]);
+    // R44-B6: halt-state.ts reads the journal to answer "is a standing
+    // impediment in force" -- a corrupt journal is one, and reporting
+    // readiness over it reports the opposite of the truth. The invariant this
+    // assertion protects is that APPENDS pass the gateway, so the two
+    // mutating exports stay single-importer below while the read does not.
     const importers = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes("./journal-store.js"));
-    expect(importers).toEqual(["mutation-gateway.ts"]);
+    expect(importers.sort()).toEqual(["halt-state.ts", "mutation-gateway.ts"]);
+    for (const mutatingExport of ["appendJournalLine", "quarantineTornTail"]) {
+      const mutators = files.filter(name => readFileSync(path.join(shellDirectory, name), "utf8").includes(mutatingExport));
+      expect(mutators, `${mutatingExport} is the gateway's alone`).toEqual(["journal-store.ts", "mutation-gateway.ts"]);
+    }
     const brokerUsers = files.filter(name => /brokerPort|\.mutate\(/u.test(readFileSync(path.join(shellDirectory, name), "utf8")));
     // watchdog.ts (P5) constructs its own gateway like gateway-cli; it never calls the port directly.
     // agent-runtime.ts (P7) is the composition root: it constructs the gateway with the account-bound real Alpaca

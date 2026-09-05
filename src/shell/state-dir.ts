@@ -5,6 +5,7 @@
 // named from `root` but is deliberately not a durable file.
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { probeDurableWrite } from "./epoch-store.js";
 
 export interface StatePaths {
   readonly root: string;
@@ -56,7 +57,10 @@ export function probeStateDurability(paths: StatePaths): { readonly ok: true } |
   } catch (error) {
     return { ok: false, reason: `state directory is not writable: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return { ok: true };
+  // R44-B3: permissions are not room. The byte-level probe lives in
+  // epoch-store.ts, one of the declared writers, so this module keeps writing
+  // nothing while the check stops being blind to a full volume.
+  return probeDurableWrite(paths.root);
 }
 
 export function resolveStateDir(raw: string): StateDirResolution {

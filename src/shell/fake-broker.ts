@@ -33,7 +33,9 @@ export type SubmitBehaviour =
   /** The order is created at the broker, but the port throws before the acknowledgement arrives. */
   | { readonly kind: "lose_ack" }
   /** The port throws and the order never existed. */
-  | { readonly kind: "lose_ack_never_sent" };
+  | { readonly kind: "lose_ack_never_sent" }
+  /** The broker rejects the submission on credentials (S-G12-06): a fence, not a lost acknowledgement. */
+  | { readonly kind: "auth_rejected"; readonly status: 401 | 403 };
 
 export type CancelBehaviour = "cancel" | "fill_before_cancel" | "partial_before_cancel" | "lose_cancel_ack";
 
@@ -160,6 +162,7 @@ export function createFakeBroker(options: FakeBrokerOptions): FakeBroker {
     const behaviour = onSubmit(payload, mutation.clientOrderId);
     if (behaviour.kind === "reject") return { ok: false, reason: `REJECTED:${behaviour.reason}` };
     if (behaviour.kind === "lose_ack_never_sent") throw new Error("TIMEOUT before send");
+    if (behaviour.kind === "auth_rejected") throw new BrokerHttpError(behaviour.status, `fake broker: submit answered ${String(behaviour.status)}`);
     const order: MutableOrder = {
       brokerOrderId: `fake-${String(nextBrokerId++)}`,
       clientOrderId: mutation.clientOrderId,

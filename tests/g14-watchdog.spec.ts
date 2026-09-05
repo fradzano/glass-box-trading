@@ -190,6 +190,29 @@ describe("S-G14-02 / WIN-8 — in-session staleness fences first, then recovers 
     expect(wokenWriter).toMatchObject({ ok: false, reason: "STALE_EPOCH" });
   });
 
+  it("R44-B5: a 401 on a watchdog close escapes as a credential rejection instead of degrading to a lost acknowledgement", async () => {
+    // The close path used to fold every broker_port failure into
+    // `acknowledgement_lost`. A 401 there left WATCHDOG_TAKEOVER standing with
+    // no fence mark, so the operator was never handed the S-G12-06 procedure --
+    // and every following close would be refused the same way. It must escape
+    // to the composition's recordCredentialFence, exactly as the recovery read
+    // already does.
+    const harness = await lifecycleHarness();
+    const first = await harness.cycle();
+    expect(first.actions).toMatchObject([{ result: "SUBMITTED" }]);
+    harness.fake.setPositions([
+      { contractId: SHORT_CALL, quantity: -1, avgEntryPriceCents: 300 },
+      { contractId: LONG_CALL, quantity: 1, avgEntryPriceCents: 100 },
+    ]);
+    harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;
+    harness.fake.setSubmitBehaviour(() => ({ kind: "auth_rejected", status: 401 }));
+
+    await expect(runWatchdog(watchdogDeps(harness))).rejects.toMatchObject({ name: "BrokerHttpError", status: 401 });
+
+    // The takeover itself still landed before the close was attempted.
+    expect(harness.entries().some(item => item.type === "HALT" && item["reason"] === "WATCHDOG_TAKEOVER")).toBe(true);
+  });
+
   it("S-G14-02 witness appends never reset the staleness clock", async () => {
     const harness = await lifecycleHarness();
     await harness.cycle();

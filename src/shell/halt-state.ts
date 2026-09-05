@@ -8,6 +8,7 @@ import type { HaltState } from "../core/journal.js";
 import { writeJsonAtomically } from "./epoch-store.js";
 import type { StatePaths } from "./state-dir.js";
 import { readEpochStore } from "./epoch-store.js";
+import { readJournalFile } from "./journal-store.js";
 
 const UNREADABLE: HaltState = { halted: true, reason: "HALT_FLAG_UNREADABLE", sticky: false };
 
@@ -49,6 +50,31 @@ export function standingImpediment(paths: StatePaths): { readonly reason: string
   const store = readEpochStore(paths);
   const fencePending = store.kind === "present" && store.fencePending;
   const persisted = readHaltState(paths);
-  if (!persisted.halted && !fencePending) return null;
-  return { reason: persisted.halted ? (persisted.reason ?? "UNKNOWN") : "AUTH_FAILURE", fencePending };
+  // Most specific first, so the operator is told the thing they must act on
+  // rather than a symptom of it. A journaled halt outranks everything: it
+  // names why the deployment stopped.
+  if (persisted.halted) return { reason: persisted.reason ?? "UNKNOWN", fencePending };
+  if (fencePending) return { reason: "AUTH_FAILURE", fencePending: true };
+  // R44-B6: an unreadable authority state used to read as "no fence", so a
+  // corrupt epoch.json reported readiness SUCCESS while every acquisition
+  // returned EPOCH_UNREADABLE. An ABSENT store is a different thing entirely
+  // -- a virgin deployment -- and stays clear.
+  if (store.kind === "unreadable") return { reason: "AUTHORITY_STATE_UNREADABLE", fencePending: false };
+  // R44-B6: likewise a journal whose lines no longer parse. Every writer
+  // refuses it with JOURNAL_CORRUPT, so reporting readiness over it would
+  // report the opposite of the truth. This module only ever READS the journal;
+  // appending stays inside the gateway (asserted in tests/g12-fencing).
+  const corruption = journalCorruption(paths);
+  return corruption === null ? null : { reason: `JOURNAL_CORRUPT:${corruption}`, fencePending: false };
+}
+
+/** The first unparseable line of the journal, or null when it reads cleanly (or cannot be read at all). */
+function journalCorruption(paths: StatePaths): string | null {
+  try {
+    const first = readJournalFile(paths).parsed.corrupt[0];
+    return first === undefined ? null : `line ${String(first.line)}`;
+  } catch {
+    // An unreadable journal file is the durability probe's finding, not this one.
+    return null;
+  }
 }

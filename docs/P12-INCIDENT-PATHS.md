@@ -103,6 +103,12 @@ process. Three bounds apply in order:
 3. `MultipleInstances = IgnoreNew`: while one run hangs, later firings are
    dropped rather than piling up.
 
+A **refusal by the wrapper itself** — no `STATE_DIR`, no node on PATH, an
+unbuilt `dist` — is a third shape, and until R44 it was the worst one: it threw
+before the sender existed, so the scheduler fired and nothing was reported at
+all. It now posts a liveness failure carrying the reason, verified against a
+real endpoint (one `POST /liveness/fail :: wrapper refused: …`).
+
 A hang therefore shows up as **silence**, and silence is the timed path:
 liveness down at worst 45 minutes after the last good ping. If the hang recurs
 on every firing, the check stays down and never recovers on its own.
@@ -131,7 +137,12 @@ the conditions named in the body:
 - `CREDENTIAL_FENCE_UNRELEASED` — added alongside the halt when the fence mark
   is set.
 - `STATE_NOT_DURABLE:<reason>` — the journal, epoch store or halt projection
-  cannot be written.
+  cannot be written. Since R44 the probe writes and flushes a byte rather than
+  only checking permissions, so a **full disk** reaches this line too.
+- `AUTHORITY_STATE_UNREADABLE` — `epoch.json` no longer parses, so every
+  acquisition would refuse.
+- `JOURNAL_CORRUPT:line <n>` — a journal line no longer parses, so every
+  writer would refuse. Both of these used to report readiness **success**.
 
 **When:** at the next firing, so at most 15 minutes, plus delivery. Because
 readiness reports on every firing rather than only on the ones that run a cycle,
@@ -143,9 +154,12 @@ successful append used to clear the picture, and the deadline one-shots used to
 post a *success* over a standing halt in all four combinations of {journaled
 halt, marker-only fence} x {reconciliation, terminal}. All three runtimes now
 read the same `standingImpediment`, so the check stays red until a human runs
-`node dist\shell\unhalt-cli.js` with `--operator`, `--reason` and `--confirm`.
-Nothing else clears it, by design: the fence exists precisely because an
-automatic release would defeat it.
+`node dist\shell\unhalt-cli.js` with `--operator`, `--reason`, `--confirm`
+and — whenever a halt is journaled — `--expect-halt-seq <n>`, which the CLI
+now requires rather than merely offers, so the release applies to the halt I
+actually read and refuses if another one landed in between. Nothing else
+clears it, by design: the fence exists precisely because an automatic release
+would defeat it.
 
 **What closes automatically with invalid broker credentials: nothing, and
 deliberately less than nothing.** A 401 or 403 from the broker is not a

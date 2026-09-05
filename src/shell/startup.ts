@@ -45,6 +45,13 @@ export interface StartupOutcome {
   readonly paths: StatePaths | null;
   /** Diagnostics imported from the sink into the journal on a successful arm (S-CYC-11 repair path). */
   readonly importedDiagnostics: number;
+  /**
+   * R44-B7 / A31: whether this outcome already sent the invocation's readiness
+   * failure. One scheduled invocation reports readiness once; the CLI entry
+   * point sends its own `STARTUP_REFUSED` signal only when this is false, so a
+   * refusal cannot arrive twice under two different names.
+   */
+  readonly failurePinged: boolean;
 }
 
 function sinkNameOf(raw: Readonly<Record<string, unknown>>): string | null {
@@ -74,7 +81,7 @@ export async function runStartup(ports: StartupPorts): Promise<StartupOutcome> {
     const sink = sinkName === null ? null : ports.openSink(sinkName);
     tryWrite(sink, { at: epochMsToUtcIso(ports.clock()), code: "CONFIG_INVALID_STATE_DIR", detail: resolved.detail });
     await ports.failPing("CONFIG_INVALID_STATE_DIR");
-    return { armed: false, exitCode: 1, refusal: "CONFIG_INVALID_STATE_DIR", violations, config: null, paths: null, importedDiagnostics: 0 };
+    return { armed: false, exitCode: 1, refusal: "CONFIG_INVALID_STATE_DIR", violations, config: null, paths: null, importedDiagnostics: 0, failurePinged: true };
   }
 
   // The installed sink must be writable at startup (S-CYC-11); an unwritable sink is a config violation like any other.
@@ -100,7 +107,7 @@ export async function runStartup(ports: StartupPorts): Promise<StartupOutcome> {
       tryWrite(sink, { at: epochMsToUtcIso(ports.clock()), code: "CONFIG_INVALID_UNJOURNALABLE", detail: summary });
     }
     await ports.failPing("CONFIG_INVALID");
-    return { armed: false, exitCode: 1, refusal: "CONFIG_INVALID", violations: allViolations, config: null, paths: resolved.value, importedDiagnostics: 0 };
+    return { armed: false, exitCode: 1, refusal: "CONFIG_INVALID", violations: allViolations, config: null, paths: resolved.value, importedDiagnostics: 0, failurePinged: true };
   }
 
   // Armed: import any diagnostics an earlier failed run left in the sink. While no journalable store exists yet
@@ -113,5 +120,5 @@ export async function runStartup(ports: StartupPorts): Promise<StartupOutcome> {
       else tryWrite(sink, record);
     }
   }
-  return { armed: true, exitCode: 0, refusal: null, violations: [], config: validation.value, paths: resolved.value, importedDiagnostics: imported };
+  return { armed: true, exitCode: 0, refusal: null, violations: [], config: validation.value, paths: resolved.value, importedDiagnostics: imported, failurePinged: false };
 }

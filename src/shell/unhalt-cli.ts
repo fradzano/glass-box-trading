@@ -107,6 +107,26 @@ if (!args.confirm) {
   process.exit(2);
 }
 
+// R44-B9: --expect-halt-seq was optional, and the runbook's own release command
+// omitted it. A second halt landing between the preview above and this
+// confirmation -- which a fenced deployment keeps producing -- was then
+// released unseen, because the un-halt applies to whatever stands rather than
+// to what the operator read. Where a halt entry exists, its sequence number is
+// what the operator just read, so requiring it costs nothing and closes the
+// window. A fence with no journaled halt has no sequence number to name, and
+// only that case may omit it.
+if (lastTransition !== undefined && lastTransition.type === "HALT" && args.expectedHaltSeq === null) {
+  process.stderr.write([
+    "",
+    `REFUSED: a journaled halt stands (HALT seq ${String(lastTransition.seq)}). Re-run with`,
+    `  --expect-halt-seq ${String(lastTransition.seq)}`,
+    "so the release applies to the halt you just read and refuses if another one",
+    "landed in between.",
+    "",
+  ].join("\n"));
+  process.exit(2);
+}
+
 const result = await manualUnhalt({
   paths: paths.value,
   operator: args.operator,
