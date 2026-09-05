@@ -3277,3 +3277,15 @@ small, no ADR split).
   restart remain unproven, as they must be from here.
 
   `npm run verify` exit 0 at **48 files / 651 tests**.
+- **2026-09-05 — R46 fix-set mutation probe: 10 of 10, after the probe caught a
+  test that measured nothing.** Ten mutants across the fixes of R44, R45 and
+  R46, each with a baseline typecheck so a non-compiling mutant is reported as
+  NOT-COMPILED rather than counted as a survivor. First run: nine caught, one
+  survivor — and the survivor was the interesting one. Breaking the R46-A3 fix
+  (readiness reading the journal instead of the halt projection) changed
+  nothing, because the test meant to measure it left the **durable mark** set:
+  the halt reached `standingImpediment` through the mark, not through the
+  journal, so the assertion held for the wrong reason. Clearing the mark
+  isolates the journal, and the mutant then dies. A test that passes for the
+  wrong reason is worse than no test, and nothing but a probe finds those.
+  `npm run verify` exit 0 at 48 files / 651 tests.

@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
-import { readEpochStore } from "../src/shell/epoch-store.js";
+import { readEpochStore, setFencePending } from "../src/shell/epoch-store.js";
 import { readHaltState, standingImpediment, writeHaltState } from "../src/shell/halt-state.js";
 import { cleanupLifecycleDirs, lifecycleHarness, P5_BINDING, P5_NOW } from "./lifecycle-fixtures.js";
 import type { StatePaths } from "../src/shell/state-dir.js";
@@ -109,8 +109,12 @@ describe("R46-A3 — the journal is the authority, the projection is a cache of 
       action: { kind: "journal_append", entry: { at: "2026-08-31T13:42:00.000Z", epoch, type: "HALT", reason: "KILL", detail: "equity below the kill threshold", sticky: true } },
     })).ok).toBe(true);
 
-    // Simulate the failed projection write: the file says nothing stands.
+    // Simulate the failed projection write: the file says nothing stands. The
+    // durable mark is cleared too, so ONLY the journal can carry the halt --
+    // without this the test passes on the mark and measures nothing about the
+    // journal, which is how the mutation probe caught it.
     writeHaltState(harness.paths, { halted: false, reason: null, sticky: false });
+    expect(setFencePending(harness.paths, false)).toEqual({ ok: true });
     expect(readHaltState(harness.paths).halted, "the cache is now wrong, which is the whole premise").toBe(false);
 
     const impediment = standingImpediment(harness.paths);
