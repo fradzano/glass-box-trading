@@ -10,19 +10,35 @@
 // deployment's own flatten date means `windowOpen` is false for every instant
 // the deployment exists, and everything the window does hangs off `windowOpen`.
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { projectQualification, qualificationBrief, qualificationEntryVeto, qualificationReasonCodes } from "../src/core/qualification.js";
 import type { QualificationConfig } from "../src/core/qualification.js";
 
-/** The P12 shape: the run flattens 2026-12-08, the checkpoint is the day after. */
+const REPO_ROOT = path.resolve();
+
+/**
+ * The REAL policy, loaded from config/policy.json rather than copied.
+ *
+ * R43-B9: the first version of this file copied the constants and sampled only
+ * through the flatten date, so it missed that the window opened at
+ * 2026-12-09T20:00:00Z — during the journaling-only day, before the deployment
+ * had ended. The real runner at 20:15 issued an active qualification brief with
+ * a one-lot bound and fail-pinged COMPETITIVENESS_AT_RISK. A test that copies
+ * the values it is meant to check cannot see a change to them, which is the
+ * whole point of loading them here.
+ */
+const POLICY = JSON.parse(readFileSync(path.join(REPO_ROOT, "config", "policy.json"), "utf8")) as Record<string, string | number>;
 const P12_CONFIG: QualificationConfig = {
-  checkpointMs: Date.parse("2026-12-09T20:00:00Z"),
-  windowEndMs: Date.parse("2026-12-10T20:00:00Z"),
-  maxLossCents: 50_000,
+  checkpointMs: Date.parse(String(POLICY["QUALIFYING_ACTIVITY_CHECKPOINT"])),
+  windowEndMs: Date.parse(String(POLICY["QUALIFICATION_WINDOW_END"])),
+  maxLossCents: Number(POLICY["QUALIFICATION_MAX_LOSS_CENTS"]),
 };
+const FLATTEN_DATE = String(POLICY["FLATTEN_DATE"]);
 
 const FIRST_CYCLE = Date.parse("2026-09-08T13:30:00Z");
 const MID_RUN = Date.parse("2026-10-27T14:00:00Z");
-const FLATTEN_DAY = Date.parse("2026-12-08T20:00:00Z");
+const FLATTEN_DAY = Date.parse(`${FLATTEN_DATE}T20:00:00Z`);
 
 const PLAN = { candidateId: "c1", quantity: 5, reservedMaxLossCents: 400_000 };
 
@@ -47,6 +63,31 @@ describe("P12 — the qualification window never opens during the run", () => {
     expect(qualificationEntryVeto(oversized, projection, P12_CONFIG, 0)).toBeNull();
   });
 
+  it("R43-B9: the window is shut at every minute of the deployment, including the journaling-only day and the shutdown", () => {
+    // The scan the first version of this test should have been: every minute
+    // from the first cycle to well past TERMINAL, against the real policy.
+    const from = Date.parse("2026-09-08T13:30:00Z");
+    const until = Date.parse(`${FLATTEN_DATE}T21:00:00Z`) + 3 * 86_400_000;
+    let opened = 0;
+    let firstOpenAt: string | null = null;
+    for (let at = from; at <= until; at += 60_000) {
+      const projection = projectQualification([], at, P12_CONFIG, "competition");
+      if (projection.windowOpen) {
+        opened += 1;
+        firstOpenAt ??= new Date(at).toISOString();
+      }
+    }
+    expect(opened, `the window opened ${String(opened)} times, first at ${String(firstOpenAt)}`).toBe(0);
+  });
+
+  it("R43-B9: the checkpoint lies beyond the deployment by a clear margin, not by a day", () => {
+    // A checkpoint one day after the flatten date left the window opening
+    // during the shutdown. The margin has to outlast every plausible slip.
+    const flattenMs = Date.parse(`${FLATTEN_DATE}T21:00:00Z`);
+    expect(P12_CONFIG.checkpointMs).toBeGreaterThan(flattenMs + 30 * 86_400_000);
+    expect(P12_CONFIG.windowEndMs).toBeGreaterThan(P12_CONFIG.checkpointMs);
+  });
+
   it("and it never becomes an alarm: the two states that alarm are unreachable before the flatten date", () => {
     // COMPETITIVENESS_AT_RISK and WINNING_ACCEPTANCE_FAILED are the only two
     // states that raise a reason code and a fail-ping. Both need the clock past
@@ -55,7 +96,7 @@ describe("P12 — the qualification window never opens during the run", () => {
       expect(qualificationReasonCodes(projectQualification([], at, P12_CONFIG, "competition"))).toEqual([]);
     }
     // Sanity: the machinery still works, it is simply never reached in range.
-    const afterEnd = projectQualification([], Date.parse("2026-12-11T20:00:00Z"), P12_CONFIG, "competition");
+    const afterEnd = projectQualification([], P12_CONFIG.windowEndMs + 60_000, P12_CONFIG, "competition");
     expect(afterEnd.state).toBe("WINNING_ACCEPTANCE_FAILED");
   });
 

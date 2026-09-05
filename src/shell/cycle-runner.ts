@@ -93,7 +93,7 @@ import { classifyBrokerFailure } from "../core/startup.js";
 import { httpStatusOf } from "./broker-errors.js";
 import { readEpochStore } from "./epoch-store.js";
 import type { BrokerReadPort, SubmitPayload } from "./fake-broker.js";
-import { readHaltState } from "./halt-state.js";
+import { readHaltState, standingImpediment } from "./halt-state.js";
 import type { BrokerMutation, DispatchResult, MutationGateway } from "./mutation-gateway.js";
 import type { StatePaths } from "./state-dir.js";
 import { probeStateDurability } from "./state-dir.js";
@@ -342,12 +342,7 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
     await heartbeatBoundary("phase 5");
     // S-G14-05: readiness, not liveness. The halt state is re-read here rather
     // than reused from phase 1, because this cycle may have halted since.
-    const standingHalt = ((): { readonly reason: string; readonly fencePending: boolean } | null => {
-      const fencePending = gateway.fencePending();
-      const persisted = readHaltState(deps.paths);
-      if (!persisted.halted && !fencePending) return null;
-      return { reason: persisted.halted ? (persisted.reason ?? "UNKNOWN") : "AUTH_FAILURE", fencePending };
-    })();
+    const standingHalt = standingImpediment(deps.paths);
     const plan = planPing({ durableAppendLanded: appended.durable && journalFailure() === null, alarmConditions, standingHalt });
     // A cycle under an aggregate deadline only computes the ping plan here.
     // Its composition root delivers after the work Promise wins the outer

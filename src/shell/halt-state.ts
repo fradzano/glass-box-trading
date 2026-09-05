@@ -7,6 +7,7 @@ import { notHalted } from "../core/journal.js";
 import type { HaltState } from "../core/journal.js";
 import { writeJsonAtomically } from "./epoch-store.js";
 import type { StatePaths } from "./state-dir.js";
+import { readEpochStore } from "./epoch-store.js";
 
 const UNREADABLE: HaltState = { halted: true, reason: "HALT_FLAG_UNREADABLE", sticky: false };
 
@@ -35,4 +36,19 @@ export function readHaltState(paths: StatePaths): HaltState {
 
 export function writeHaltState(paths: StatePaths, state: HaltState): void {
   writeJsonAtomically(paths.halt, state);
+}
+
+/**
+ * S-G14-05 / A31: the standing impediment every process must report, whichever
+ * process it is. A gate found the deadline one-shots sending a readiness
+ * SUCCESS while a halt and an unreleased fence stood (R43-B5), which is exactly
+ * the "another process heals a standing halt" case the axiom forbids. Reading
+ * it in one place keeps the three runtimes from drifting apart again.
+ */
+export function standingImpediment(paths: StatePaths): { readonly reason: string; readonly fencePending: boolean } | null {
+  const store = readEpochStore(paths);
+  const fencePending = store.kind === "present" && store.fencePending;
+  const persisted = readHaltState(paths);
+  if (!persisted.halted && !fencePending) return null;
+  return { reason: persisted.halted ? (persisted.reason ?? "UNKNOWN") : "AUTH_FAILURE", fencePending };
 }

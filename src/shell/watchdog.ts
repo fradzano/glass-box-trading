@@ -43,6 +43,7 @@ import { createMutationGateway, NO_BROKER_PORT } from "./mutation-gateway.js";
 import type { BrokerMutationPort, MutationGateway } from "./mutation-gateway.js";
 import type { StatePaths } from "./state-dir.js";
 import { heldOptionContractIds } from "./market-window.js";
+import { standingImpediment } from "./halt-state.js";
 
 export interface WatchdogDependencies {
   readonly paths: StatePaths;
@@ -259,6 +260,8 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     }
   }
 
-  const ping = await deliver(planPing({ durableAppendLanded: appended.durable, alarmConditions }));
+  // R43-C2: the takeover condition alone left the operator without the reason
+  // the deployment is stopped. Health was correctly red; the diagnosis was not.
+  const ping = await deliver(planPing({ durableAppendLanded: appended.durable, alarmConditions, standingHalt: standingImpediment(deps.paths) }));
   return { assessment, acquired: acquired.kind, epoch, halted, classification, closes, alarmConditions, ping };
 }

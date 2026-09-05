@@ -200,10 +200,15 @@ describe("S-G12-04 un-halt is manual and journaled", () => {
     expect(parseJournalText(readFileSync(paths.value.journal, "utf8")).entries.at(-1)).toMatchObject({ type: "HALT", reason: "AUTH_FAILURE", sticky: false });
   });
 
-  it("S-G12-04 no shell module besides the manual tool and the gateway's refusal mentions UNHALT", () => {
+  it("S-G12-04 no shell module besides the manual tool, its CLI and the gateway's refusal mentions UNHALT", () => {
     const shellDirectory = path.resolve("src/shell");
     const mentioning = readdirSync(shellDirectory).filter(name => name.endsWith(".ts") && readFileSync(path.join(shellDirectory, name), "utf8").includes("UNHALT")).sort();
-    expect(mentioning).toEqual(["manual-unhalt.ts", "mutation-gateway.ts"]);
+    // unhalt-cli.ts (2026-09-05, R43-B10) is the operator entry point the
+    // runbook had been promising and the repository did not have: it parses
+    // arguments, prints the standing state and the fence procedure, and calls
+    // manual-unhalt.ts. It decides nothing — the release rule stays in one
+    // place, which is what this assertion protects.
+    expect(mentioning).toEqual(["manual-unhalt.ts", "mutation-gateway.ts", "unhalt-cli.ts"]);
     const fixtures = path.resolve("src/fixtures");
     expect(readdirSync(fixtures).filter(name => readFileSync(path.join(fixtures, name), "utf8").includes("UNHALT"))).toEqual([]);
   });

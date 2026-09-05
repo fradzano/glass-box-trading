@@ -93,6 +93,7 @@
 - `src/shell/startup-broker-fence.ts` — Durable refusal after configuration validation but before the real broker
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
+- `src/shell/unhalt-cli.ts` — The human release, as a command: `node dist/shell/unhalt-cli.js`.
 - `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests and for the scheduled
 - `src/shell/watchdog-runtime.ts` — The composition root for one scheduled watchdog invocation (P8). It builds
 - `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that

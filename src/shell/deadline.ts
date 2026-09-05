@@ -23,8 +23,9 @@ import type { PingPlan, TerminalRemainder } from "../core/lifecycle.js";
 import type { CycleDependencies, PingPort } from "./cycle-runner.js";
 import type { MutationGateway } from "./mutation-gateway.js";
 import { heldOptionContractIds } from "./market-window.js";
+import { standingImpediment } from "./halt-state.js";
 
-export type DeadlineDependencies = Pick<CycleDependencies, "gateway" | "epoch" | "broker" | "market" | "clock" | "profile" | "calendar" | "tradingDay" | "cycleIndex"> & {
+export type DeadlineDependencies = Pick<CycleDependencies, "gateway" | "epoch" | "broker" | "market" | "clock" | "profile" | "calendar" | "tradingDay" | "cycleIndex" | "paths"> & {
   readonly ping: PingPort | null;
   /** S-X-07: which position rows are share residue rather than option identities. */
   readonly underlyingUniverse: readonly string[];
@@ -93,7 +94,15 @@ async function appendAndPing(deps: DeadlineDependencies, draft: JournalDraft, al
   // A refused append is an alarm condition of its own, so `planPing` can never
   // answer "none" here: the entry the owner was promised does not exist.
   const failure: DeadlineFailure | null = result.ok ? null : { kind: "ENTRY_NOT_JOURNALED", detail: result.reason };
-  const plan = planPing({ durableAppendLanded: result.ok, alarmConditions: failure === null ? alarmConditions : [...alarmConditions, notJournaledCondition(failure)] });
+  // R43-B5: a deadline entry landing is not permission to call the deployment
+  // ready. All four combinations of {journaled halt, marker-only fence} x
+  // {reconciliation, terminal} used to send a readiness SUCCESS over a standing
+  // halt, which is precisely what another process may not do (A31, #78).
+  const plan = planPing({
+    durableAppendLanded: result.ok,
+    alarmConditions: failure === null ? alarmConditions : [...alarmConditions, notJournaledCondition(failure)],
+    standingHalt: standingImpediment(deps.paths),
+  });
   return { appended: result.ok, ping: await deliverPing(deps, plan), failure };
 }
 

@@ -97,7 +97,7 @@ describe("S-G11-03/04 — the dedicated Friday entries", () => {
     const report = await runDeadlineReconciliation({
       gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 40, ping: harness.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 40, ping: harness.ping, underlyingUniverse: ["SPY"], paths: harness.paths,
     }, "journal-rev-abc123");
     expect(report).toMatchObject({ appended: true, holdVisible: false, ping: "success" });
     const entry = harness.entries().find(item => item.type === "DEADLINE_RECONCILIATION");
@@ -110,7 +110,7 @@ describe("S-G11-03/04 — the dedicated Friday entries", () => {
     const clean = await runTerminal({
       gateway: flat.gateway, epoch: 1, broker: flat.fake.read, market: lifecycleMarket(() => flat.clock.now),
       clock: () => flat.clock.now, profile: "dev", calendar: lifecycleCalendar(flat.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 41, ping: flat.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 41, ping: flat.ping, underlyingUniverse: ["SPY"], paths: flat.paths,
     });
     expect(clean).toMatchObject({ appended: true, remainder: null, ping: "success" });
     expect(flat.entries().some(entry => entry.type === "TERMINAL")).toBe(true);
@@ -120,7 +120,7 @@ describe("S-G11-03/04 — the dedicated Friday entries", () => {
     const failed = await runTerminal({
       gateway: stuck.gateway, epoch: 1, broker: stuck.fake.read, market: lifecycleMarket(() => stuck.clock.now),
       clock: () => stuck.clock.now, profile: "dev", calendar: lifecycleCalendar(stuck.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 42, ping: stuck.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 42, ping: stuck.ping, underlyingUniverse: ["SPY"], paths: stuck.paths,
     });
     expect(failed.remainder).not.toBeNull();
     expect(failed.ping).toBe("fail");
@@ -144,7 +144,7 @@ describe("S-G11-03/04 — a Friday entry that cannot be written hands over in wr
     const report = await runTerminal({
       gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: brokenMarket,
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 43, ping: harness.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 43, ping: harness.ping, underlyingUniverse: ["SPY"], paths: harness.paths,
     });
     expect(report.appended).toBe(false);
     expect(report.failure).toMatchObject({ kind: "SNAPSHOT_NOT_ASSEMBLED" });
@@ -162,7 +162,7 @@ describe("S-G11-03/04 — a Friday entry that cannot be written hands over in wr
       // A stale epoch: the snapshot assembles, the gateway refuses the append. Nothing about that may be quiet.
       gateway: harness.gateway, epoch: 99, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 44, ping: harness.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 44, ping: harness.ping, underlyingUniverse: ["SPY"], paths: harness.paths,
     }, "journal-rev-unwritable");
     expect(report.appended).toBe(false);
     expect(report.failure).toMatchObject({ kind: "ENTRY_NOT_JOURNALED" });
@@ -177,7 +177,7 @@ describe("S-G11-03/04 — a Friday entry that cannot be written hands over in wr
     const report = await runTerminal({
       gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 45, ping: harness.ping, underlyingUniverse: ["SPY"],
+      cycleIndex: 45, ping: harness.ping, underlyingUniverse: ["SPY"], paths: harness.paths,
     });
     expect(report).toMatchObject({ appended: true, ping: "success", failure: null });
     expect(harness.ping.record.failures).toEqual([]);

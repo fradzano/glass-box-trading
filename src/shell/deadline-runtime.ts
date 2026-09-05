@@ -362,6 +362,7 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
       gateway,
       epoch,
       broker: adapter.read,
+      paths,
       market: marketObservation(adapter, config, days, options.clock),
       underlyingUniverse: config.decision.underlyingUniverse,
       clock: options.clock,

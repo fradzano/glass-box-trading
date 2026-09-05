@@ -6,6 +6,8 @@
 // requires the S-ARM-01 certificate (S-CYC-11); this entry never bypasses it.
 import { buildRuntime } from "./agent-runtime.js";
 import { agentBuildRefusalChannel, agentCliExitCode } from "./cli-exit-codes.js";
+import { createPingPort } from "./ping-healthchecks.js";
+import { loadEnvironment } from "./runtime-config.js";
 
 const log = (line: string): void => { process.stdout.write(`${new Date().toISOString()} ${line}\n`); };
 const clock = (): number => Date.now();
@@ -13,6 +15,20 @@ const built = await buildRuntime({ repoRoot: process.cwd(), processEnv: process.
 if (!built.ok) {
   const channel = agentBuildRefusalChannel(built.stage);
   (channel.stream === "stdout" ? process.stdout : process.stderr).write(`${channel.prefix} at ${built.stage}: ${built.reason}\n`);
+  // R43-B6: a refusal before the runtime exists still has to reach the
+  // operator as a NAMED readiness condition. It used to send nothing at all —
+  // an analyst manifest that had gone missing durably journaled its
+  // CONFIG_INVALID halt and the readiness endpoint saw zero requests, leaving
+  // only the wrapper's generic non-zero exit, which is liveness and not the
+  // same claim. S-G14-03 permits a failure-only ping before any journal
+  // exists, and this is exactly the S-CYC-11 case it names.
+  try {
+    const env = loadEnvironment(process.cwd(), process.env);
+    const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock, timeoutMs: 10_000 });
+    await ping.fail([`STARTUP_REFUSED:${built.stage}`, built.reason]);
+  } catch {
+    // Best effort: the exit code and the printed reason carry it regardless.
+  }
   process.exit(agentCliExitCode({ kind: "build_refused", stage: built.stage }));
 }
 const runtime = built.runtime;
@@ -25,6 +41,12 @@ try {
   process.exit(agentCliExitCode({ kind: "cycle_finished", journalFailed: report.journalFailure !== null }));
 } catch (error) {
   process.stderr.write(`cycle aborted: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  // Same duty on the abort path: the cycle never reached its own ping plan.
+  try {
+    await runtime.ping.fail(["CYCLE_ABORTED", error instanceof Error ? error.message : String(error)]);
+  } catch {
+    // Best effort.
+  }
   await runtime.shutdown();
   process.exit(agentCliExitCode({ kind: "cycle_aborted" }));
 }

@@ -55,7 +55,7 @@ async function recordGoldenJournal(): Promise<string> {
   expect(third.managementCloses).toMatchObject([{ route: "deadline" }]);
   expect(third.alarmConditions).toEqual([]);
   // 4. Friday: the deadline reconciliation naming the submitted revision, then the terminal entry.
-  const deadlineDeps = { gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: moved(3), clock: () => harness.clock.now, profile: "competition" as const, calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04", cycleIndex: 99, ping: null, underlyingUniverse: ["SPY"] };
+  const deadlineDeps = { gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: moved(3), clock: () => harness.clock.now, profile: "competition" as const, calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04", cycleIndex: 99, ping: null, underlyingUniverse: ["SPY"], paths: harness.paths };
   harness.clock.now += GOLDEN_CYCLE_INTERVAL_MS;
   expect((await runDeadlineReconciliation(deadlineDeps, "sha256:presentation-revision")).appended).toBe(true);
   harness.clock.now += GOLDEN_CYCLE_INTERVAL_MS;
