@@ -2090,6 +2090,38 @@ small, no ADR split).
   passed three times alone and in the repeated full verify — a
   timing-sensitive test for the backlog, same class as the MCP stall tests
   ported to a timers port this morning.
+- **2026-09-02 — Live finding six: every journaled close fill made the
+  certificate driver refuse its fence drill; the entry-lifecycle resolver
+  now ignores close attempts.** Certificate run three (19:43 CEST, on the
+  branch head with the one-lot fix but — a PM sequencing slip — a `dist/`
+  still built from freeze two) entered and filled a SPY 765/764 put credit
+  vertical, closed it inside the flatten interval, and then aborted:
+  "refusing fence drill: unresolved entry lifecycle(s):
+  close:exposure:entry:2026-09-02:10:…:g0" — run two's close, whose OUTCOME
+  the 19:30 scheduled dev cycle had journaled in the meantime. Root cause in
+  `unresolvedEntryLifecycleIds` (`src/core/execution.ts`): the resolver seeds
+  states from entry INTENTs only, then treats every OUTCOME or reconciliation
+  item for an id it has not seen as an unknown, invalid entry — and a close
+  attempt's OUTCOME is exactly such an id. Run two passed only because its
+  close fill was journaled after its certificate. The same resolver runs
+  inside `buildCertificate` over the window journal, so a run whose close
+  fill lands inside its window would have failed the certificate. The cycle
+  runner does not use it: competition trading was never affected. Fix: close
+  attempt ids (INTENT `action: "close"`) are collected first and their
+  OUTCOME and reconciliation lines are skipped — they belong to the S-G7
+  close fold; an OUTCOME whose id no INTENT owns stays invalid (foreign
+  evidence is never adopted). Red-first on the golden journal, which carries
+  the exact shape: the pre-fix build returns the close id, the fix returns
+  `[]`; two adjacent cases pinned. The abort left the dev journal under a
+  `MANUAL` halt with the account flat ($99,997.80, two round trips today);
+  the driver's recovery loop kept cycling because the same resolver kept
+  reporting the two closes, and ran to its 20-attempt bound. Operational
+  consequences the same evening: the competition account was re-armed on
+  the freeze-two build (sources restored to `f464a66` on the working tree,
+  `dist/` untouched, the 19:15 `CONFIG_INVALID` halt — caused by the PM's
+  cherry-pick of the one-lot fix before the scheduled tasks were disabled —
+  cleared by manual un-halt, seq 5), while the one-lot fix and this fix
+  await a gate and certificate run four.
 - **2026-09-02 — First competition fill on the freeze-two build; no swap
   tonight.** After the competition account was re-armed on the freeze-two
   build (20:03 CEST, epoch 6, a GAP cycle re-deriving state after 62
