@@ -100,12 +100,30 @@ export interface CycleView {
   readonly reasonCodes: readonly string[];
   readonly batchVerdicts: readonly Readonly<Record<string, unknown>>[];
   readonly candidateVerdicts: readonly Readonly<Record<string, unknown>>[];
-  /** `proposal` when at least one INTENT followed this primary, `no_trade` otherwise, `bootstrap`/`gap`/`skip`/`witness` for the substitutes. */
-  readonly result: "proposal" | "no_trade" | "bootstrap" | "gap" | "skip" | "witness";
+  /**
+   * `proposal` when at least one INTENT followed this primary; `refused` when
+   * none did but a management close was planned and turned away; `no_trade`
+   * otherwise; `bootstrap`/`gap`/`skip`/`witness` for the substitutes. The
+   * `refused` value exists because CONCEPT and SUBMISSION-SPEC require the
+   * public page to say trade or no-trade AND why, and a cycle that tried to
+   * close and could not is not the same fact as one that held on purpose
+   * (R41-B2, scenario #74).
+   */
+  readonly result: "proposal" | "no_trade" | "refused" | "bootstrap" | "gap" | "skip" | "witness";
   readonly intentSeqs: readonly number[];
   readonly closeIntentSeqs: readonly number[];
+  /** S-X-08: the management closes this cycle planned and did not submit, with the reason each was turned away. */
+  readonly managementRefusals: readonly ManagementRefusalView[];
   readonly equityCents: number | null;
   readonly analystSkipped: boolean;
+}
+
+export interface ManagementRefusalView {
+  readonly seq: number;
+  readonly exposureLifecycleId: string;
+  readonly route: string;
+  readonly generation: number | null;
+  readonly reason: string;
 }
 
 export interface Milestones {
@@ -457,10 +475,21 @@ function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
     const snapshot = snapshotOf(primary);
     const equity = snapshot === null ? null : snapshot["equityCents"];
     const reasonCodes = stringList(primary["reasonCodes"]);
+    const managementRefusals: ManagementRefusalView[] = [];
+    for (const entry of between) {
+      if (entry.type !== "MANAGEMENT_REFUSAL") continue;
+      managementRefusals.push({
+        seq: entry.seq,
+        exposureLifecycleId: typeof entry["exposureLifecycleId"] === "string" ? entry["exposureLifecycleId"] : "",
+        route: typeof entry["route"] === "string" ? entry["route"] : "",
+        generation: isInteger(entry["generation"]) ? entry["generation"] : null,
+        reason: typeof entry["reason"] === "string" ? entry["reason"] : "",
+      });
+    }
     const result: CycleView["result"] = primary.type === "BOOTSTRAP" ? "bootstrap"
       : primary.type === "GAP" ? "gap"
         : primary.type === "SKIP" ? "skip"
-          : primary.type === "CYCLE" ? (intentSeqs.length > 0 ? "proposal" : "no_trade")
+          : primary.type === "CYCLE" ? (intentSeqs.length > 0 ? "proposal" : managementRefusals.length > 0 ? "refused" : "no_trade")
             : "witness";
     views.push({
       seq: primary.seq,
@@ -474,6 +503,7 @@ function cycleViews(entries: readonly JournalEntry[]): readonly CycleView[] {
       result,
       intentSeqs,
       closeIntentSeqs,
+      managementRefusals,
       equityCents: isInteger(equity) ? equity : null,
       analystSkipped: recordList(primary["batchVerdicts"]).some(verdict => verdict["code"] === "ANALYST_SKIP") || reasonCodes.includes("WORLD_UNREACHABLE"),
     });

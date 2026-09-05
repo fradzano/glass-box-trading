@@ -27,6 +27,8 @@ import { readSubmitPayload } from "./broker-ports.js";
 import type { AccountView, BrokerReadPort } from "./broker-ports.js";
 import type { CalendarDay } from "./market-calendar.js";
 import type { BrokerMutation, BrokerMutationPort, BrokerMutationResult } from "./mutation-gateway.js";
+import { classifyBrokerFailure } from "../core/startup.js";
+import { httpStatusOf } from "./broker-errors.js";
 
 export interface AlpacaCredentials {
   readonly keyId: string;
@@ -393,15 +395,22 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
         for (const contract of await contractsFor(underlying, expiry, spot - halfWindow, spot + halfWindow, deadlineAtMs)) contractsById[contract.contractId] = contract;
       }
     }
-    // Held identities the walk did not already produce. A lookup that fails is
-    // not fatal: the management step then reports a missing price for that
-    // contract, which is journaled (S-X-08) instead of vanishing silently.
+    // Held identities the walk did not already produce. An ordinary lookup
+    // failure (404, 500, a timeout) is not fatal: the management step then
+    // reports a missing price for that contract, which is journaled (S-X-08)
+    // instead of vanishing silently. A credential rejection is a different
+    // thing entirely and must never be degraded into that — this is an
+    // authenticated read against the trading origin, so a 401/403 escapes and
+    // becomes the durable AUTH_FAILURE fence of S-G12-06 (R41-B1: the first
+    // version of this loop caught everything and returned a healthy-looking
+    // observation while the account's credentials were being refused).
     for (const contractId of window.heldContractIds) {
       if (contractsById[contractId] !== undefined || window.underlyings.includes(contractId)) continue;
       try {
         const held = await contractById(contractId, deadlineAtMs);
         if (held !== null) contractsById[contractId] = held;
-      } catch {
+      } catch (error) {
+        if (classifyBrokerFailure(httpStatusOf(error)) === "AUTH_FAILURE") throw error;
         continue;
       }
     }

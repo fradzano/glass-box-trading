@@ -144,6 +144,13 @@ describe("P10 — the composed deadline dependencies write the S-G11-03 reconcil
     const harness = await lifecycleHarness();
     harness.clock.now = AFTER_TAKEOVER_BOUND;
     const before = harness.entries().length;
+    // A non-empty book on purpose: an entry that reports on nothing cannot
+    // show whether the observation carried the identities it holds (R41-C2).
+    harness.fake.setPositions([
+      { contractId: "SPY260904C00500000", quantity: -1, avgEntryPriceCents: 300 },
+      { contractId: "SPY260904C00505000", quantity: 1, avgEntryPriceCents: 100 },
+      { contractId: "SPY", quantity: 100, avgEntryPriceCents: 50_000 },
+    ]);
 
     const { composition, adapter, logs } = await compose(harness, { repoRoot: fixtureRepoRoot() });
     expect(composition.ok).toBe(true);
@@ -165,6 +172,11 @@ describe("P10 — the composed deadline dependencies write the S-G11-03 reconcil
     expect(adapter.windows).toHaveLength(1);
     expect(adapter.windows[0]?.underlyings).toEqual(["SPY", "QQQ"]);
     expect(adapter.windows[0]?.strikeWindowBps).toBe(1_000);
+    // S-X-07 / R41-C2: the book this entry reports on is also the book whose
+    // identities the observation must carry.
+    const heldNow = (await harness.fake.read.positions()).filter(position => position.contractId !== "SPY").map(position => position.contractId).sort();
+    expect(heldNow, "the assertion below is vacuous against a flat book").toEqual(["SPY260904C00500000", "SPY260904C00505000"]);
+    expect(adapter.windows[0]?.heldContractIds).toEqual(heldNow);
 
     const entries = harness.entries();
     expect(entries).toHaveLength(before + 1);

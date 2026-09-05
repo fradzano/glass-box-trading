@@ -7,10 +7,24 @@
 import { describe, expect, it } from "vitest";
 import { closingWindow, cycleWindow, entryWindow, ENTRY_EXPIRY_COUNT, ENTRY_STRIKE_WINDOW_BPS, heldOptionContractIds } from "../src/shell/market-window.js";
 import type { WindowConfig } from "../src/shell/market-window.js";
+import type { MarketWindow } from "../src/shell/alpaca-broker.js";
 import type { CalendarDay } from "../src/shell/market-calendar.js";
 import { journalEntryTypes, primaryEntryTypes, validateJournalEntry } from "../src/core/journal.js";
 import type { MarketObservation } from "../src/core/execution.js";
 import { createAlpacaBroker } from "../src/shell/alpaca-broker.js";
+import { cycleMarketPort } from "../src/shell/agent-runtime.js";
+import { projectPerformance } from "../src/core/projection.js";
+import { renderDashboard } from "../src/shell/render-dashboard.js";
+import { expectationFor } from "../src/shell/publisher.js";
+import { TEST_ONLY_ACCOUNT_ID } from "./journal-fixtures.js";
+import { assessFreshness } from "../src/core/projection.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const REPO_ROOT_FOR_ASSETS = path.resolve();
+const PROJECTION_EXPECTATIONS = { initialCapitalCents: 10_000_000, expectedAccountId: TEST_ONLY_ACCOUNT_ID, flattenDate: "2026-09-03", profile: "dev" as const, qualification: null };
+import { BrokerHttpError, httpStatusOf } from "../src/shell/broker-errors.js";
+import { classifyBrokerFailure } from "../src/core/startup.js";
 import { defaultLifecycleDeps, lifecycleHarness, lifecycleMarket } from "./lifecycle-fixtures.js";
 import { SHORT_CALL, LONG_CALL } from "./execution-fixtures.js";
 import { managementRefusalDraft } from "../src/core/execution.js";
@@ -239,5 +253,156 @@ describe("S-X-07 wiring — the adapter quotes a held identity the chain walk ne
 
     await broker.market({ underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: ["SPY"] });
     expect(seen.some(url => url.includes("/v2/options/contracts/SPY?") || url.endsWith("/v2/options/contracts/SPY"))).toBe(false);
+  });
+});
+
+describe("S-G12-06 / R41-B1 — a credential rejection on the held-identity lookup is a fence, not a missing price", () => {
+  const SPOT = { bp: 500.0, ap: 500.1, bs: 100, as: 100, t: "2026-08-31T13:30:59.871234567Z" };
+  const HELD = "SPY260904P00300000";
+
+  function brokerWithHeldLookupStatus(status: number) {
+    const fetchImpl = (url: string): Promise<Response> => {
+      const json = (body: unknown, code = 200): Promise<Response> => Promise.resolve(new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json" } }));
+      if (url.includes("/v2/stocks/quotes/latest")) return json({ quotes: { SPY: SPOT } });
+      if (url.includes("/v2/options/contracts/")) return json({ message: "forbidden" }, status);
+      if (url.includes("/v2/options/contracts?")) return json({ option_contracts: [], next_page_token: null });
+      if (url.includes("/v1beta1/options/quotes/latest")) return json({ quotes: {} });
+      throw new Error(`unexpected request ${url}`);
+    };
+    return createAlpacaBroker({
+      credentials: { keyId: "k", secretKey: "s" },
+      tradingOrigin: "https://paper-api.alpaca.markets",
+      dataOrigin: "https://data.alpaca.markets",
+      clock: () => Date.parse("2026-09-03T14:00:00.000Z"),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  }
+
+  const window = { underlyings: ["SPY"], expiries: ["2026-09-09"], strikeWindowBps: 300, heldContractIds: [HELD] };
+
+  it("401 and 403 escape the observation carrying their status, instead of degrading to a healthy-looking read", async () => {
+    for (const status of [401, 403]) {
+      const failure = await brokerWithHeldLookupStatus(status).market(window).then(() => null, (error: unknown) => error);
+      expect(failure, `HTTP ${String(status)} must not be swallowed`).not.toBeNull();
+      expect(httpStatusOf(failure)).toBe(status);
+      expect(classifyBrokerFailure(httpStatusOf(failure))).toBe("AUTH_FAILURE");
+    }
+  });
+
+  it("an ordinary lookup failure still degrades: the observation succeeds without that contract", async () => {
+    for (const status of [404, 500]) {
+      const observation = await brokerWithHeldLookupStatus(status).market(window);
+      expect(Object.keys(observation.contractsById)).not.toContain(HELD);
+      expect(Object.keys(observation.contractsById)).toContain("SPY");
+    }
+  });
+
+  it("the cycle halts and journals AUTH_FAILURE when the observation is refused, not WORLD_UNREACHABLE", async () => {
+    const harness = await lifecycleHarness();
+    const rejected = (): Promise<MarketObservation> => Promise.reject(new BrokerHttpError(403, "GET /v2/options/contracts/SPY260904P00300000 failed"));
+    const report = await harness.cycle({ market: rejected });
+
+    expect(report.reasonCodes).toEqual(["AUTH_FAILURE"]);
+    expect(report.entriesBlocked).toContain("AUTH_FAILURE");
+    const halt = harness.entries().filter(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE");
+    expect(halt, "S-G12-06: the rejection is a durable fence, not a degraded world").toHaveLength(1);
+  });
+
+  it("a market failure that is not a credential rejection stays a world class", async () => {
+    const harness = await lifecycleHarness();
+    const down = (): Promise<MarketObservation> => Promise.reject(new BrokerHttpError(503, "GET /v1beta1/options/quotes/latest failed"));
+    const report = await harness.cycle({ market: down });
+
+    expect(report.reasonCodes).not.toContain("AUTH_FAILURE");
+    expect(report.reasonCodes[0]).toMatch(/WORLD_(PARTIAL|UNREACHABLE)/u);
+    expect(harness.entries().some(entry => entry.type === "HALT" && entry["reason"] === "AUTH_FAILURE")).toBe(false);
+  });
+});
+
+describe("S-X-07 / R41-C2 — the runner's composition root forwards the identities it is given", () => {
+  it("rebuilds the window per call around the caller's held identities, and passes the deadline through", async () => {
+    const windows: { window: MarketWindow; deadlineAtMs: number | undefined }[] = [];
+    const port = cycleMarketPort(
+      (window: MarketWindow, deadlineAtMs?: number) => {
+        windows.push({ window, deadlineAtMs });
+        return Promise.resolve({ quotesByContract: {}, contractsById: {}, spotCentsByUnderlying: {} });
+      },
+      DAYS,
+      TRADING_DAY,
+      CONFIG,
+    );
+
+    await port(["SPY260904C00768000"], 1_700_000_000_000);
+    await port([]);
+    await port();
+
+    expect(windows.map(item => item.window.heldContractIds)).toEqual([["SPY260904C00768000"], [], []]);
+    expect(windows[0]?.deadlineAtMs).toBe(1_700_000_000_000);
+    expect(windows[1]?.deadlineAtMs).toBeUndefined();
+    // The band itself is the entry window every time: discovery does not widen
+    // because the book happens to hold something.
+    for (const item of windows) {
+      expect(item.window.strikeWindowBps).toBe(ENTRY_STRIKE_WINDOW_BPS);
+      expect(item.window.expiries).toEqual(entryWindow(DAYS, TRADING_DAY, CONFIG).expiries);
+    }
+  });
+});
+
+describe("R41-B2 — a refused close is visible on the public page, not only in the journal", () => {
+  it("the projection labels the cycle refused and carries every reason; the journal alone is not the public record", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const blind = async (): Promise<MarketObservation> => {
+      const full = await lifecycleMarket(() => harness.clock.now)();
+      const drop = <T,>(record: Readonly<Record<string, T>>): Record<string, T> =>
+        Object.fromEntries(Object.entries(record).filter(([id]) => id !== SHORT_CALL && id !== LONG_CALL));
+      return { ...full, quotesByContract: drop(full.quotesByContract), contractsById: drop(full.contractsById) };
+    };
+    const report = await harness.cycle({ market: blind, tradingDay: "2026-09-03", lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }) });
+    expect(report.managementRefusals).not.toHaveLength(0);
+
+    const entries = harness.entries();
+    const last = entries[entries.length - 1];
+    const projection = projectPerformance(entries, "sha256:0123456789abcdef", { at: last?.at ?? "", kind: "latest" }, PROJECTION_EXPECTATIONS);
+
+    const refusedCycle = projection.cycles.find(cycle => cycle.managementRefusals.length > 0);
+    expect(refusedCycle, "the projection must carry the refusal, not silently advance lastSeq past it").toBeDefined();
+    // CONCEPT and SUBMISSION-SPEC require trade/no-trade AND why: a cycle that
+    // tried to close and was turned away is not a quiet cycle.
+    expect(refusedCycle?.result).toBe("refused");
+    expect(refusedCycle?.managementRefusals[0]?.reason).toContain("PRICE_UNAVAILABLE");
+    expect(refusedCycle?.managementRefusals[0]?.exposureLifecycleId).toBe(report.managementRefusals[0]?.exposureLifecycleId);
+    expect(refusedCycle?.managementRefusals[0]?.route).toBe("deadline");
+  });
+
+  it("the rendered page names the refusal, its route and its reason", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const blind = async (): Promise<MarketObservation> => {
+      const full = await lifecycleMarket(() => harness.clock.now)();
+      const drop = <T,>(record: Readonly<Record<string, T>>): Record<string, T> =>
+        Object.fromEntries(Object.entries(record).filter(([id]) => id !== SHORT_CALL && id !== LONG_CALL));
+      return { ...full, quotesByContract: drop(full.quotesByContract), contractsById: drop(full.contractsById) };
+    };
+    await harness.cycle({ market: blind, tradingDay: "2026-09-03", lifecycle: defaultLifecycleDeps({ nextTradingDay: "2026-09-04" }) });
+
+    const entries = harness.entries();
+    const last = entries[entries.length - 1];
+    const projection = projectPerformance(entries, "sha256:0123456789abcdef", { at: last?.at ?? "", kind: "latest" }, PROJECTION_EXPECTATIONS);
+    const html = renderDashboard(projection, expectationFor(projection), {
+      renderedAt: last?.at ?? "",
+      freshness: assessFreshness(projection.lastUpdatedAt, Date.parse(last?.at ?? "") + 1_000, 900_000, 3_000_000),
+      degradation: { degraded: false, explanation: "" },
+      source: { repositoryUrl: "https://example.invalid/repo", journalRevisionUrl: null, corePath: "src/core/decision.ts", evidenceTestPath: "tests/g1-defined-risk.spec.ts", evidenceDebtRow: "RES-P1-01a" },
+      pinned: [],
+      routeLabel: "test",
+      styles: readFileSync(path.join(REPO_ROOT_FOR_ASSETS, "assets", "dashboard.css"), "utf8"),
+    });
+
+    expect(html).toContain("Management closes planned and refused this cycle");
+    expect(html).toContain("PRICE_UNAVAILABLE");
+    expect(html).toContain("route <code>deadline</code>");
+    // The summary row carries the count, so the table alone distinguishes the two.
+    expect(html).toMatch(/result result--refused/u);
   });
 });

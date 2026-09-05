@@ -507,8 +507,11 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
   const marketFetch = await fetched(() => deps.market(heldContractIds, deps.cycleDeadlineMs));
   if (!bookFetch.ok || !marketFetch.ok) {
     // S-G12-06: a broker 401/403 is a credential fence — a distinguishable AUTH_FAILURE that halts, never generic
-    // world unavailability. Market-data failures stay in the S-CYC-02 world classes; only the broker port fences.
+    // world unavailability. Since S-X-07 the observation also performs an authenticated read against the trading
+    // origin (the held-identity lookup), so a rejection there fences exactly like the book's (R41-B1). Everything
+    // else about a market failure stays in the S-CYC-02 world classes.
     if (!bookFetch.ok && isAuthFailure(bookFetch)) await haltForAuthFailure(bookFetch.error);
+    else if (!marketFetch.ok && isAuthFailure(marketFetch)) await haltForAuthFailure(marketFetch.error);
     const brokerAuthFailure = entriesBlocked.includes("AUTH_FAILURE");
     const anySucceeded = (bookFetch.ok || bookFetch.partial === true) || marketFetch.ok;
     const reasonCodes: readonly ReasonCode[] = brokerAuthFailure ? ["AUTH_FAILURE"] : [anySucceeded ? "WORLD_PARTIAL" : "WORLD_UNREACHABLE"];

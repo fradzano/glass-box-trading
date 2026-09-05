@@ -11,7 +11,7 @@ import { afterEach, describe, expect, inject, it } from "vitest";
 import { parseJournalText } from "../src/core/journal.js";
 import { TEST_ONLY_GOLDEN_EXPECTATIONS, goldenPresentationCutoffAt } from "../src/fixtures/p6-golden.js";
 import { readPageMeta } from "../src/shell/dashboard-build.js";
-import { completeJournalText, expectedRevisionForJsonRoute, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
+import { collidingDeployPaths, completeJournalText, expectedRevisionForJsonRoute, hostSafeHref, hostSafeRelativePath, hostSafeSegment, liveStateDirMarker, renderSite, rewritePinHrefs, routeUrlPath } from "../submission/publish/render-site.mjs";
 
 const REPO_ROOT = path.resolve();
 const GOLDEN_JOURNAL = path.join(REPO_ROOT, "fixtures", "golden-journal.jsonl");
@@ -178,6 +178,46 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     expect(expectedRevisionForJsonRoute("/revisions/", current)).toBeNull();
     expect(expectedRevisionForJsonRoute("/revisions/md5-abc/presentation/projection.json", current)).toBeNull();
     expect(expectedRevisionForJsonRoute("/revisions/sha256-NOTHEX/presentation/projection.json", current)).toBeNull();
+  });
+
+  it("R41-B3: only the canonical sixteen-hex spelling is accepted, so a foreign route cannot vouch for itself", () => {
+    const current = "sha256:78af85c1c238a49d";
+    // The publisher takes exactly 16 hex characters (src/shell/publisher.ts).
+    // A shorter or longer directory is not a route this renderer wrote, and
+    // accepting it let it declare its own revision and pass the probe.
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-abcdef/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49dd/presentation/projection.json", current)).toBeNull();
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78AF85C1C238A49D/presentation/projection.json", current)).toBeNull();
+    // A current revision that is itself not canonical yields no expectation
+    // either, rather than being echoed back as if it were trustworthy.
+    expect(expectedRevisionForJsonRoute("/revisions/sha256-78af85c1c238a49d/latest/projection.json", "sha256-78af85c1c238a49d")).toBeNull();
+  });
+
+  it("R41-B3: two source spellings that collide on one deployed path are refused, not published", () => {
+    // hostSafeSegment maps a colon and a literal hyphen to the same character,
+    // so these two distinct revisions would land in one immutable directory
+    // and the path would stop identifying its content.
+    const collisions = collidingDeployPaths([
+      "index.html",
+      "revisions/sha256%3A0123456789abcdef/latest/index.html",
+      "revisions/sha256-0123456789abcdef/latest/index.html",
+    ]);
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]?.deployPath).toBe("revisions/sha256-0123456789abcdef/latest/index.html");
+    expect(collisions[0]?.sources).toHaveLength(2);
+    // The ordinary tree has none.
+    expect(collidingDeployPaths(["index.html", "data/projection.json", "revisions/sha256%3A0123456789abcdef/latest/index.html"])).toEqual([]);
+  });
+
+  it("R41-B3: a render whose site tree carries such a collision throws instead of deploying", async () => {
+    const out = scratchDir();
+    const manifest = await renderSite(goldenOptions(journalCopy(), out));
+    const safe = `revisions/${manifest.journalRevision.replace(":", "-")}`;
+    // Plant the colliding spelling beside the renderer's own encoded one.
+    const planted = path.join(out, "site", ...`${safe}/presentation`.split("/"));
+    mkdirSync(planted, { recursive: true });
+    writeFileSync(path.join(planted, "index.html"), "<!doctype html><title>foreign</title>", "utf8");
+    await expect(renderSite(goldenOptions(journalCopy(), out, NOW_MS + 60_000))).rejects.toThrow(/host-safe deploy paths collide/u);
   });
 
   it("carries the Vercel project link (.vercel/) in the deploy directory forward through a re-render", async () => {

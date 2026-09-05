@@ -28,6 +28,7 @@ import { computePolicyDigest, computeRuntimeDigest, sha256File } from "./digests
 import type { BrokerReadPort } from "./fake-broker.js";
 import { newYorkDate, nextTradingDay, remainingSessions, sessionFor } from "./market-calendar.js";
 import { cycleWindow, entryWindow } from "./market-window.js";
+import type { WindowConfig } from "./market-window.js";
 import type { CalendarDay } from "./market-calendar.js";
 import { analystOsAllowlist, analystOsEnv, createEnvironmentPorts, environmentExists } from "./mcp-environment.js";
 import type { VerifiedChildHandle } from "./mcp-environment.js";
@@ -88,6 +89,21 @@ export interface AgentRuntime {
 export type RuntimeBuild =
   | { readonly ok: true; readonly runtime: AgentRuntime }
   | { readonly ok: false; readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest" | "arming"; readonly reason: string; readonly startup: StartupOutcome | null };
+
+/**
+ * The cycle's market port (S-X-07): the observation is rebuilt per call around
+ * the identities the caller's book holds. Named and exported so the forwarding
+ * itself is measurable — R41-C2 found this seam and three like it passing the
+ * whole suite with the identities replaced by an empty list.
+ */
+export function cycleMarketPort(
+  market: (window: MarketWindow, deadlineAtMs?: number) => Promise<MarketObservation>,
+  days: readonly CalendarDay[],
+  tradingDay: string,
+  config: WindowConfig,
+): (heldContractIds?: readonly string[], deadlineAtMs?: number) => Promise<MarketObservation> {
+  return (heldContractIds = [], deadlineAtMs) => market(cycleWindow(days, tradingDay, config, heldContractIds), deadlineAtMs);
+}
 
 function isoDate(ms: number, offsetDays: number): string {
   return new Date(ms + offsetDays * 86_400_000).toISOString().slice(0, 10);
@@ -422,7 +438,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     runtime: {
       instanceId: options.instanceId, config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
       mcpInventory: launch.inventory, runtimeDigest: runtime.digest, policyDigest: policy.digest, secrets, ping,
-      market: (heldContractIds = []) => broker.market(cycleWindow(days, tradingDay, config.decision, heldContractIds)),
+      market: cycleMarketPort(broker.market, days, tradingDay, config.decision),
       cycle: async (cycleIndex, overrides = {}) => {
         let deadlineAtMs = 0;
         const report = await runWithinCycleWalltime(config.scheduling.cycleWalltimeBudgetMs, clock, cycleDeadlineMs => {
@@ -433,7 +449,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
           paths,
           binding,
           broker: overrides.broker ?? broker.read,
-          market: (heldContractIds, deadlineAtMs) => broker.market(cycleWindow(days, tradingDay, config.decision, heldContractIds), deadlineAtMs),
+          market: cycleMarketPort(broker.market, days, tradingDay, config.decision),
           analyst: overrides.analyst ?? analyst,
           analystTimeoutMs: config.analystTimeoutMs,
           clock,

@@ -61,6 +61,7 @@ export function hostSafeHref(href: string): string;
 export function rewritePinHrefs(html: string): string;
 export function routeUrlPath(deployRelativePath: string): string;
 export function expectedRevisionForJsonRoute(url: string, currentRevision: string): string | null;
+export function collidingDeployPaths(sitePaths: readonly string[]): { readonly deployPath: string; readonly sources: readonly string[] }[];
 export function deriveDeployTree(siteDir: string, deployDir: string, nonce: string): DeployedFile[];
 export function liveStateDirMarker(journalPath: string): string | null;
 export function completeJournalText(raw: string): string;

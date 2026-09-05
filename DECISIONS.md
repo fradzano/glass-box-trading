@@ -2592,3 +2592,74 @@ small, no ADR split).
   against its own revision. A tampered manifest with that expectation removed
   fails the route, exits 1, and prints the failed check by name. The owner's
   publish tree and the promoted deployment were not touched.
+- **2026-09-05 — R41 blind delta gate at `c27179c`: NO-GO (A=0, B=3, C=2); all
+  five closed, fix-counter-probe 17 of 17.** The gate ran through the Codex
+  companion in the isolated worktree `gbt-r33`, prompt
+  `prompts/R41-post-competition-fix-gate.md` (rev 2), job
+  `task-mto0x6fs-tie7ks`; the report is archived under
+  `responses/R41-task-mto0x6fs-tie7ks/`. Two earlier launches produced nothing
+  and are recorded as harness failures, not as findings: the first could not
+  write in the worktree (`--write` binds the launch directory, so a gate must
+  be launched *from* the worktree it reviews), the second stopped to ask for a
+  Python interpreter its sandbox could not reach. The third was told to skip
+  the phase check and not to stop for questions. It confirmed the archive
+  comparisons (15 of 15 byte-identical, both journals), reproduced both verify
+  runs at 44 files / 584 tests, caught all six mutants the prompt demanded,
+  and ran its own independent set of seventeen.
+
+  - **B1 (the one that mattered) — the credential fence was swallowed.** The
+    held-identity lookup added by S-X-07 is an authenticated read against the
+    trading origin, and its `catch { continue; }` discarded a real 401/403:
+    the observation returned looking healthy while the account's credentials
+    were being refused, and the runner fenced only on a failed *book* read.
+    S-G12-06 requires an authenticated 401/403 to become a durable
+    `AUTH_FAILURE` halt that blocks orders. Fixed on both sides: the adapter
+    rethrows exactly the credential class (an ordinary 404, 500 or timeout
+    still degrades to a missing price), and the runner fences on a refused
+    observation as it does on a refused book. Four tests, including both
+    directions of the classification.
+  - **B2 — a refused close was invisible on the public page.** S-X-08's
+    journal duty was met, but `projection.ts` ignored the new entry type, so
+    the dashboard could not tell an intended hold from a refused close — which
+    is exactly the pair scenario #74 is about, and `CONCEPT.md` §22–25 and
+    `SUBMISSION-SPEC.md` require trade/no-trade *and why* on the page. This was
+    a known gap at the time of writing and the intention had been to declare
+    it; the gate is right that a declaration is not enough when the normative
+    text is that explicit. `CycleView` now carries `managementRefusals` and a
+    fourth result value `refused`; the cycles table has a refused-closes
+    column and the detail block lists each refusal with route, generation and
+    reason.
+  - **B3 — a noncanonical revision route could vouch for itself.**
+    `expectedRevisionForJsonRoute` accepted any `sha256-<hex>` length, so a
+    foreign `sha256-abcdef` directory declared its own revision and passed a
+    local probe 20 of 20. The publisher emits exactly sixteen lowercase hex
+    characters (`journalContentRevision`), so that is now the only accepted
+    spelling, in the route and in the current revision alike; anything else
+    yields `null`, which the probe fails loudly. The second half of the finding
+    is the lossy host-safe conversion: distinct source spellings can land on
+    one deployed directory, after which the immutable path no longer identifies
+    its content. `collidingDeployPaths` detects that before the deploy tree is
+    derived and the render throws instead of publishing.
+  - **C1** — S-J-03's closed entry-type list in the spec had not been extended
+    with `MANAGEMENT_REFUSAL`. Fixed.
+  - **C2 (and a lesson about the probe itself)** — four composition-root
+    forwardings of the held identities passed the entire 584-test suite when
+    replaced by an empty list. The session's own 17-mutant probe had reported
+    17 of 17 an hour earlier and was not wrong; it simply never mutated those
+    four lines, which is the axiom "Prüfling ≠ Maßstab" applied to a mutation
+    probe: the mutant list has the same blind spot as the code that inspired
+    it. Closed by naming the runner's forwarding (`cycleMarketPort`, exported
+    and directly tested) and by asserting the forwarded identities in the two
+    existing composition tests — the deadline one against a book deliberately
+    made non-empty, because the previous assertion compared an empty list to an
+    empty list and would have passed forever.
+
+  Fix-counter-verification: a second probe of seventeen mutants over the fixes
+  themselves (`r41-fix-mutation-probe.py` in the store) reports **17 of 17
+  caught by tests** on a green baseline, two of them only after replacing
+  mutants the typechecker had rejected — a non-compiling mutant measures
+  nothing and must never be counted as a catch. `npm run verify` exit 0 at 44
+  files / 594 tests. Not claimed: a bis-0 termination. This is one gate round
+  and its fix round; a further delta gate on the fix set is the next step, and
+  the four seams C2 found are a reminder that the store's earlier probes were
+  narrower than their numbers suggested.
