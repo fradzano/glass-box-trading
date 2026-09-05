@@ -384,43 +384,70 @@ $commonSettings = @{
     MultipleInstances          = 'IgnoreNew'
 }
 
-# ---------------------------------------------------------------------------
-# GlassBoxTrading-AgentCycle
-# ---------------------------------------------------------------------------
-Remove-ExistingTask -Name $CycleTaskName
+# R47-B2: the two tasks used to be removed and registered one after the other
+# with nothing holding the pair together, so a failure on the SECOND
+# registration -- an access denial, a transient scheduler error -- left the
+# first task registered and the second one gone. Half a deployment is the worst
+# of the three possible outcomes: the cycle fires with no watchdog behind it,
+# and the next check reports a missing task rather than a missing safety net.
+# Either both exist or neither does, and a clean "nothing is registered" is
+# recoverable by running this script again, which is what the message says.
+try {
+    # ---------------------------------------------------------------------------
+    # GlassBoxTrading-AgentCycle
+    # ---------------------------------------------------------------------------
+    Remove-ExistingTask -Name $CycleTaskName
 
-# Through the wrapper, not straight to node: the wrapper keeps the printed
-# cycle report in STATE_DIR\cycle-run.log (scenario #75).
-$cycleArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$cycleRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`""
-$cycleAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs -WorkingDirectory $RepoRoot
-$cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $sessionDuration
-$cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
-$cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
-$cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    # Through the wrapper, not straight to node: the wrapper keeps the printed
+    # cycle report in STATE_DIR\cycle-run.log (scenario #75).
+    $cycleArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$cycleRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`""
+    $cycleAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs -WorkingDirectory $RepoRoot
+    $cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $sessionDuration
+    $cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
+    $cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
+    $cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 
-if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
-    Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
-    if (-not $Activate) { Disable-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder | Out-Null }
+    if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
+        Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
+        if (-not $Activate) { Disable-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder | Out-Null }
+    }
+
+    # ---------------------------------------------------------------------------
+    # GlassBoxTrading-Watchdog
+    # ---------------------------------------------------------------------------
+    Remove-ExistingTask -Name $WatchdogTaskName
+
+    $watchdogArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watchdogRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`" -WatchdogIntervalMinutes $WatchdogIntervalMinutes"
+    $watchdogAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $watchdogArgs -WorkingDirectory $RepoRoot
+    $watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $sessionDuration
+    $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
+    $watchdogTrigger.Repetition = $watchdogOnceTrigger.Repetition
+    # Six minutes: the recovery run is bounded by CYCLE_WALLTIME_BUDGET_MS (5 min) plus composition; the kernel mutex serializes any overlap.
+    $watchdogSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 6)
+
+    if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled task: watchdog-run.ps1 every $WatchdogIntervalMinutes min (< dead-man bound), Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
+        Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $watchdogSettings -Description 'Glass Box Trading: dead-man watchdog (S-G14). Fences, halts and flattens the open book on staleness; degrades to fence-and-halt-only when the configuration does not compose -- see tools/watchdog-run.ps1. Installed by tools/install-scheduled-task.ps1.' | Out-Null
+        if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }
+    }
+
+} catch {
+    $failure = $_.Exception.Message
+    Write-Host ''
+    Write-Host "REGISTRATION FAILED: $failure"
+    Write-Host 'Rolling back so the deployment is not left half-installed ...'
+    foreach ($leftoverName in @($CycleTaskName, $WatchdogTaskName)) {
+        try {
+            $leftover = Get-ScheduledTask -TaskName $leftoverName -TaskPath $TaskFolder -ErrorAction SilentlyContinue
+            if ($null -ne $leftover) {
+                Unregister-ScheduledTask -TaskName $leftoverName -TaskPath $TaskFolder -Confirm:$false
+                Write-Host "  removed $leftoverName"
+            }
+        } catch {
+            Write-Host "  COULD NOT REMOVE $leftoverName -- remove it by hand before running this again: $($_.Exception.Message)"
+        }
+    }
+    throw "Nothing is registered. Fix the cause above and run this script again; a partial installation was rolled back rather than left in place."
 }
-
-# ---------------------------------------------------------------------------
-# GlassBoxTrading-Watchdog
-# ---------------------------------------------------------------------------
-Remove-ExistingTask -Name $WatchdogTaskName
-
-$watchdogArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watchdogRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`" -WatchdogIntervalMinutes $WatchdogIntervalMinutes"
-$watchdogAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $watchdogArgs -WorkingDirectory $RepoRoot
-$watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $sessionDuration
-$watchdogTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
-$watchdogTrigger.Repetition = $watchdogOnceTrigger.Repetition
-# Six minutes: the recovery run is bounded by CYCLE_WALLTIME_BUDGET_MS (5 min) plus composition; the kernel mutex serializes any overlap.
-$watchdogSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 6)
-
-if ($PSCmdlet.ShouldProcess("$TaskFolder$WatchdogTaskName", "Register scheduled task: watchdog-run.ps1 every $WatchdogIntervalMinutes min (< dead-man bound), Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
-    Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $watchdogSettings -Description 'Glass Box Trading: dead-man watchdog (S-G14). Fences, halts and flattens the open book on staleness; degrades to fence-and-halt-only when the configuration does not compose -- see tools/watchdog-run.ps1. Installed by tools/install-scheduled-task.ps1.' | Out-Null
-    if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }
-}
-
 Write-Host ''
 Write-Host "Registration $(if ($WhatIfPreference) { '(preview only, -WhatIf) ' })complete for user '$UserId', LogonType '$LogonType', folder '$TaskFolder'."
 Write-Host "Tasks were registered $(if ($Activate) { 'ENABLED (-Activate was passed)' } else { 'and immediately DISABLED. Installing is not activating: enable them only after the activation gate in docs/P12-RUNBOOK.md.' })"

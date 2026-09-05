@@ -176,7 +176,15 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     if (journal.halted) return journal;
     const store = readEpochStore(paths);
     if (store.kind === "present" && store.fencePending) {
-      return { halted: true, reason: "AUTH_FAILURE", sticky: false };
+      // R47-A2: the mark used to be reported as `AUTH_FAILURE, sticky: false`
+      // whatever it recorded. Once R46 let a KILL set it, that mapping quietly
+      // downgraded the strongest stop in the system: after a sticky KILL whose
+      // append failed, a softer halt could land on top and an ordinary manual
+      // release then cleared both. The reason travels with the mark, and
+      // stickiness follows the same rule the pure `haltDraft` uses, so a
+      // marker-only KILL is exactly as irreversible as a journaled one.
+      const reason = store.fenceReason ?? "AUTH_FAILURE";
+      return { halted: true, reason, sticky: reason === "KILL" || reason === "PROVENANCE_BROKEN" };
     }
     return journal;
   }
@@ -254,8 +262,31 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
     );
     if (!authorization.authorized) return { ok: false, reason: authorization.reason, lockHeld: true };
 
+    // R47-A1: the fifth place this rule was missing, and the first where the
+    // journal was not merely unwritable but unREADABLE. A Windows handle with
+    // FileShare.None on the journal alone makes `loadJournal` throw EBUSY
+    // below, and every line after it -- including the halt marking -- never
+    // runs; once the handle is released the same writer accepts a
+    // risk-increasing order with no human release. So a HALT marks HERE,
+    // before the journal is touched at all. The mark is a claim about the
+    // epoch store and it may not be made conditional on a second file being
+    // available. Nothing else moves: authorization is already decided above,
+    // and a request that is refused there never reaches this line.
+    const haltReason = request.action.kind === "journal_append"
+      ? (request.action.entry as { readonly reason?: unknown }).reason
+      : undefined;
+    const haltMark = entryType === "HALT"
+      ? markFenceBeforeHalt(typeof haltReason === "string" ? haltReason : "HALT")
+      : { ok: true as const };
+
     const loaded = loadJournal();
-    if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
+    if ("corrupt" in loaded) {
+      return {
+        ok: false,
+        reason: haltMark.ok ? "JOURNAL_CORRUPT" : `JOURNAL_CORRUPT:FENCE_NOT_MARKED:${haltMark.reason}`,
+        lockHeld: true,
+      };
+    }
     const entries = loaded.file.parsed.entries;
 
     if (request.class === "witness") {
@@ -328,20 +359,12 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
       }
     }
-    // R46-A2: a stop that cannot be recorded must still stop. Until now the
-    // marking rule covered only the two reasons `dispatchSafetyHalt` accepts,
-    // and every OTHER halt -- KILL, PROVENANCE_BROKEN, WORLD_UNREACHABLE, the
-    // deadline's own -- reached the journal through this ordinary append. A
-    // blind gate drove the KILL case: equity below the threshold, journal
-    // read-only, so `haltDurable` was false and nothing durable existed; after
-    // recovery and a new epoch the next cycle opened a position with no human
-    // release. The mark goes down BEFORE the append for every halt, under the
-    // same mutex, so the reason no longer decides whether a stop survives.
-    // A halt that lands keeps the mark too: it is cleared only by the manual
-    // release, which is the same human step the halt itself requires.
-    const haltMark = entryType === "HALT"
-      ? markFenceBeforeHalt(typeof (draft as { readonly reason?: unknown }).reason === "string" ? (draft as { readonly reason: string }).reason : "HALT")
-      : { ok: true as const };
+    // R46-A2 set the mark for every halt rather than for two reasons; R47-A1
+    // moved it above the journal read, because an unreadable journal skipped
+    // it entirely. `haltMark` therefore already holds that result here, and
+    // the append only reports it: a failure that ALSO lost the mark is the
+    // declared residual of S-G12-08 and has to be distinguishable from one
+    // where the deployment is fenced.
     const appended = appendUnderLock(entries, draft);
     if (!appended.ok) {
       return {

@@ -50,7 +50,15 @@ function Add-Check {
 }
 
 $policy = Get-Content -LiteralPath (Join-Path $RepoRoot 'config\policy.json') -Raw | ConvertFrom-Json
-$cycleIntervalMinutes = [math]::Round([int64]$policy.CYCLE_INTERVAL_MS / 60000.0)
+# R47-B5: this rounded exactly where the installer now refuses, so a policy of
+# 870001 ms became "15 minutes" here and a PT15M task passed the exact-cadence
+# check the installer would never have produced. Two tools disagreeing about
+# what the policy says is worse than either being wrong alone.
+$cycleIntervalMs = [int64]$policy.CYCLE_INTERVAL_MS
+if ($cycleIntervalMs % 60000 -ne 0) {
+    throw "config/policy.json CYCLE_INTERVAL_MS = $cycleIntervalMs ms is not a whole number of minutes, so no scheduled repetition can implement it exactly and nothing can be verified against it. Fix the policy and re-install."
+}
+$cycleIntervalMinutes = [int]($cycleIntervalMs / 60000)
 $deadManMinutes = [math]::Round([int64]$policy.DEAD_MAN_BOUND_MS / 60000.0)
 
 # R43-B7: the first version compared substrings, so a definition could carry
@@ -70,13 +78,19 @@ $expected = @(
 # second weekend trigger passed all 30. A task runs EVERY action and honours
 # EVERY trigger, so anything beyond the first is unverified execution.
 
-function Get-FileArgument {
-    # The value of -File, honouring quotes. Anything else in the argument
-    # string is irrelevant to what actually executes.
-    param([string]$Arguments)
-    if ($Arguments -match '-File\s+"([^"]+)"') { return $Matches[1] }
-    if ($Arguments -match '-File\s+(\S+)') { return $Matches[1] }
+function Get-QuotedArgument {
+    # The value of a named parameter, honouring quotes. Used for -File and, since
+    # R47-B4, for the wrapper's own -RepoRoot and -NodePath: the right script
+    # pointed at someone else's checkout is not this deployment.
+    param([string]$Arguments, [string]$Name)
+    if ($Arguments -match ("-" + [regex]::Escape($Name) + '\s+"([^"]+)"')) { return $Matches[1] }
+    if ($Arguments -match ("-" + [regex]::Escape($Name) + '\s+(\S+)')) { return $Matches[1] }
     return $null
+}
+
+function Get-FileArgument {
+    param([string]$Arguments)
+    return Get-QuotedArgument -Arguments $Arguments -Name 'File'
 }
 
 # The session in this machine's local time, so the trigger's start can be
@@ -96,7 +110,10 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) is registered" -Ok $true -Detail "state $($task.State)"
 
     if ($ExpectEnabled) {
-        Add-Check -Name "$($spec.Name) is enabled" -Ok ($task.State -ne 'Disabled') -Detail "state $($task.State)"
+        # R47-B6: "not Disabled" accepted `Unknown`, which is what a task in an
+        # unreadable or partially registered state reports. The gate asks
+        # whether this will fire, and only Ready and Running answer yes.
+        Add-Check -Name "$($spec.Name) is enabled" -Ok ($task.State -eq 'Ready' -or $task.State -eq 'Running') -Detail "state $($task.State) (expected Ready or Running)"
     } else {
         Write-Host "[INFO] $($spec.Name) state is $($task.State); -ExpectEnabled was not passed, so this is not asserted"
     }
@@ -114,8 +131,22 @@ foreach ($spec in $expected) {
     #   -Command "Write-Output x" -File "<the expected wrapper>"
     # ran something else entirely and passed every check. -File must be the
     # thing that executes, which means no competing entry point may appear.
-    $hasCommandForm = $argument -match '(?i)(^|\s)-(c|Command|e|EncodedCommand)(\s|:)'
-    Add-Check -Name "$($spec.Name) uses -File and nothing else runs" -Ok (-not $hasCommandForm) -Detail "arguments: $argument"
+    # R47-B9: powershell.exe resolves PARAMETER PREFIXES, so `-Co`, `-Com` and
+    # `-Comma` are all `-Command` and the exact-spelling list R46 added missed
+    # every one of them: a task reading `-Co "..." -File "<the wrapper>"` was
+    # certified while PowerShell ran the command and passed `-File` to it as an
+    # argument. The rule is therefore about prefixes, not spellings. `-e` is a
+    # prefix of both EncodedCommand and ExecutionPolicy, and powershell.exe
+    # resolves it to EncodedCommand, so it is rejected; `-ex` and longer are
+    # unambiguous ExecutionPolicy and stay allowed.
+    $commandLike = @()
+    foreach ($token in [regex]::Matches($argument, '(?<=^|\s)-([A-Za-z]+)')) {
+        $name = $token.Groups[1].Value.ToLowerInvariant()
+        $isCommand = 'command'.StartsWith($name)
+        $isEncoded = 'encodedcommand'.StartsWith($name) -and -not ('executionpolicy'.StartsWith($name) -and $name.Length -ge 2)
+        if ($isCommand -or $isEncoded) { $commandLike += "-$($token.Groups[1].Value)" }
+    }
+    Add-Check -Name "$($spec.Name) uses -File and nothing else runs" -Ok ($commandLike.Count -eq 0) -Detail "$(if ($commandLike.Count -eq 0) { 'no -Command/-EncodedCommand prefix present' } else { "command-like parameter(s): $($commandLike -join ', ')" }); arguments: $argument"
 
     $fileArgument = Get-FileArgument -Arguments $argument
     $expectedFile = Join-Path $RepoRoot $spec.Script
@@ -125,6 +156,18 @@ foreach ($spec in $expected) {
 
     $scriptPath = Join-Path $RepoRoot $spec.Script
     Add-Check -Name "$($spec.Name) target script exists" -Ok (Test-Path -LiteralPath $scriptPath) -Detail $scriptPath
+
+    # R47-B4: the right script invoked with someone else's -RepoRoot or
+    # -NodePath is not this deployment. Both wrappers accept those parameters,
+    # and the installer passes them, so they are checked rather than forbidden.
+    $passedRepoRoot = Get-QuotedArgument -Arguments $argument -Name 'RepoRoot'
+    $repoRootOk = [string]::IsNullOrWhiteSpace($passedRepoRoot) -or
+        ((Test-Path -LiteralPath $passedRepoRoot) -and ([System.IO.Path]::GetFullPath($passedRepoRoot).TrimEnd('\') -ieq [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')))
+    Add-Check -Name "$($spec.Name) -RepoRoot is this checkout" -Ok $repoRootOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedRepoRoot)) { '(not passed; the wrapper defaults to its own parent)' } else { $passedRepoRoot })"
+
+    $passedNodePath = Get-QuotedArgument -Arguments $argument -Name 'NodePath'
+    $nodePathOk = [string]::IsNullOrWhiteSpace($passedNodePath) -or (Test-Path -LiteralPath $passedNodePath)
+    Add-Check -Name "$($spec.Name) -NodePath exists" -Ok $nodePathOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedNodePath)) { '(not passed; the wrapper resolves node from PATH)' } else { $passedNodePath })"
 
     $workingDirectoryOk = "$($action.WorkingDirectory)".TrimEnd('\') -eq $RepoRoot.TrimEnd('\')
     Add-Check -Name "$($spec.Name) working directory is the checkout" -Ok $workingDirectoryOk -Detail "$($action.WorkingDirectory)"
@@ -182,6 +225,14 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) window opens no later than the session" -Ok $startsBeforeOpen -Detail "starts $($start.ToString('HH:mm')) local; session opens $($sessionOpenLocal.ToString('HH:mm'))"
     Add-Check -Name "$($spec.Name) window closes no earlier than the session" -Ok $endsAfterClose -Detail "ends $($windowEnd.ToString('HH:mm')) local; session closes $($sessionCloseLocal.ToString('HH:mm'))"
 
+    # R47-B1: the two checks above compare only the TIME OF DAY, so a trigger
+    # whose StartBoundary is 2099-01-01 14:00 passed both -- correct hours, and
+    # the first firing seventy-three years away. The date has to be checked as
+    # well: a trigger that starts in the future is a task that will not run,
+    # and a task that will not run passes every other check in this file.
+    $startsSoon = $start.Date -le [datetime]::Today.AddDays(7) -and $start.Date -ge [datetime]::Today.AddDays(-3650)
+    Add-Check -Name "$($spec.Name) start boundary is not in the future" -Ok $startsSoon -Detail "StartBoundary $($start.ToString('yyyy-MM-dd HH:mm')) local (must be on or before $([datetime]::Today.AddDays(7).ToString('yyyy-MM-dd')))"
+
     # --- it can run unattended ----------------------------------------------
     $logonType = "$($task.Principal.LogonType)"
     $unattended = $logonType -eq 'S4U' -or $logonType -eq 'Password'
@@ -209,6 +260,13 @@ foreach ($spec in $expected) {
     $info = Get-ScheduledTaskInfo -TaskName $spec.Name -TaskPath $TaskFolder -ErrorAction SilentlyContinue
     if ($null -ne $info) {
         Write-Host "[INFO] $($spec.Name) last ran $($info.LastRunTime) with result $($info.LastTaskResult); next $($info.NextRunTime)"
+        # R47-B1, the other half: the scheduler's own answer to "when next".
+        # Only asserted when the task is supposed to be enabled -- a disabled
+        # task legitimately reports none.
+        if ($ExpectEnabled -and $null -ne $info.NextRunTime) {
+            $nextSoon = [datetime]$info.NextRunTime -le [datetime]::Now.AddDays(4)
+            Add-Check -Name "$($spec.Name) next run is within four days" -Ok $nextSoon -Detail "next $($info.NextRunTime) (a weekday task should never be further away than a long weekend)"
+        }
     }
 }
 

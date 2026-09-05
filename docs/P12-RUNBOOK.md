@@ -95,6 +95,29 @@ Those are the values for a T that falls **on** the schedule (`:00`, `:15`,
 `:30`, `:45` for the two cycle checks). A ping observed at 14:03 is still
 followed by an expected one at 14:15, so it buys nothing.
 
+**The expression has an end, and past it the arithmetic changes completely.**
+The two cycle checks expect pings only between **14:00 and 23:45** on weekdays.
+After the 23:45 firing the *next expected* ping is 14:00 the following weekday,
+so a T of 23:45 puts liveness's detection at 14:30 and readiness's at 14:50 the
+next day — not forty-five and sixty-five minutes later. Any drill that must
+finish tonight therefore needs **T at or before 23:30**, and any drill measured
+from a Friday evening waits until Monday. The watchdog's five-minute schedule
+ends at the same 23:45.
+
+**Each check family has its own T.** The two cycle checks are pinged by
+`cycle-run.ps1` at the quarter hour; the watchdog is pinged by
+`watchdog-run.ps1` every five minutes. They are different logs and different
+last-ping instants, up to five minutes apart, so a drill that touches all three
+reads both logs and notes both:
+
+```powershell
+.\tools\show-run-log.ps1 -Tail 2                 # T for gbt-liveness and gbt-readiness
+.\tools\show-run-log.ps1 -Log watchdog -Tail 2   # T for gbt-watchdog
+```
+
+`-Since` takes **local** time, like every instruction here; the output shows
+local and UTC side by side.
+
 **Then delivery, which is a separate budget and never folded into the numbers
 above:** `ALERT_DELIVERY_BUDGET_MS` is 10 minutes. A drill is finished when the
 push is **on your phone**, not when the dashboard turns red, so plan
@@ -129,6 +152,24 @@ the anchor — the first regular approved cycle — everything else follows:
 | `-CoverageThroughDate` | the journaling-only day |
 | `TERMINAL` | after the US close of the journaling-only day |
 
+**Three kinds of day an anchor may not be, because the gate's fixed times
+assume an ordinary session:**
+
+* **A day in the week between the two clock changes** (Mon 2026-10-26 to Fri
+  2026-10-30). The session runs 14:30–21:00 local there, so the first firing
+  that runs a cycle is **14:15** — half an hour *before* the 14:45 gate that is
+  supposed to authorise it. An anchor in that week would break the absolute
+  rule by construction.
+* **A day after a US early close** (Fri 2026-11-27, Thu 2026-12-24, and their
+  equivalents). The close is 19:00 local, not 22:00, so "enable at 22:10"
+  wastes three hours; and as a *certificate* day an early close cuts the
+  supervised window short.
+* **A day whose three-month run crosses the American spring change without the
+  European one** (14 to 28 March 2027, for anchors from mid-December on). The
+  session opens at 13:30 local in those two weeks, and the trigger window
+  starts at 14:00 — the installer's coverage check will refuse to register, and
+  the answer is a wider `-EdgeMarginMinutes`, not a later anchor.
+
 Applied to the planned anchor of **Wed 2026-09-09**: certificate Tue 2026-09-08,
 `FLATTEN_DATE` Wed 2026-12-09, journaling-only Thu 2026-12-10, coverage through
 2026-12-10. Applied to a Friday anchor of 2026-09-11 it would be:
@@ -161,8 +202,11 @@ So the rule has two halves and both are always stated:
   can only do that if they are named.
 * **Outside the session:** there is no risk-reducing action available. Do not
   attempt one. Write down what you saw and what is open, set an alarm for
-  **15:20 local on the next trading day** (five minutes into the session), and
-  decide then, with the book in front of you. What protects the position until
+  **15:35 local on the next trading day** — five minutes *after* the open,
+  which is at 15:30; in the week between the two clock changes the session
+  opens at 14:30, so the alarm is 14:35 — and decide then, with the book in
+  front of you. An alarm at 15:20 would ring ten minutes before anything could
+  be done, which is the mistake this whole paragraph exists to prevent. What protects the position until
   then is the defined-risk structure itself: the maximum loss was fixed when
   the position was opened and cannot grow overnight or over a weekend. That is
   the whole reason this strategy is defined-risk, and it is doing its job in
@@ -361,8 +405,23 @@ The silence drills are separate and cannot be scripted. Do them in step 6.
 account against the final configuration; nothing in `config/` may change
 afterwards.
 
-The block sets dev values for this run only and restores your session afterwards
-**even if it fails**:
+**The process environment wins over `.env`** — `loadEnvironment` reads the file
+and then lets the process environment override it, which is what makes the
+block below work at all. If that were the other way round, this run would use
+the competition profile and write into `longrun-1`, on the one step whose whole
+purpose is the dev account. Confirm it before trusting the block:
+
+```powershell
+cd C:\Users\felix\source\repos\glass-box-trading
+$env:ALPACA_PROFILE = 'dev'
+node -e "const {loadEnvironment}=require('./dist/shell/runtime-config.js');console.log('ALPACA_PROFILE resolves to', loadEnvironment(process.cwd(),process.env)['ALPACA_PROFILE'])"
+# expect: "ALPACA_PROFILE resolves to dev". If it says competition, STOP -- the
+#   block below would run the certificate against the wrong account.
+Remove-Item env:ALPACA_PROFILE
+```
+
+The block sets dev values for this run only and restores your session
+afterwards on the normal and the failing path:
 
 ```powershell
 cd C:\Users\felix\source\repos\glass-box-trading
@@ -396,8 +455,10 @@ try {
 
 **Expect:** `verdict: PASS` and a printed certificate path under
 `evidence/pre-arm/`. The run takes roughly 20-40 minutes; if it has printed
-nothing for 15 minutes, Ctrl-C it — the `finally` block still restores your
-shell — and treat it as a failed verdict.
+nothing for 15 minutes, Ctrl-C it and treat it as a failed verdict. The
+`finally` block usually restores the shell after a Ctrl-C, but that depends on
+how the break reaches the child process and is not something to rely on — which
+is why closing the window afterwards, below, is the actual safeguard.
 
 Then confirm the dev account is flat, which the certificate does not print:
 
@@ -447,16 +508,24 @@ Then, still elevated:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1
-# expect: SCHEDULER CHECK PASSED (43 checks)
+# expect: SCHEDULER CHECK PASSED, and a check count at the end of the line.
+# Write that number down: it must be the same every later time you run this
+# without -ExpectEnabled. A number that changes means the verifier changed,
+# and a verifier that changed has not verified the same thing twice.
 ```
 
 **Abort if:** any check fails. Do not enable anything yet.
 
 ### 6. The activation gate — Tue 2026-09-08 22:10 to Wed 2026-09-09 14:45 local
 
-*Elevated PowerShell for every command below — "Run as administrator" — and
-`cd C:\Users\felix\source\repos\glass-box-trading` in each new window, because
-the checks are invoked by relative path and this step spans two evenings.*
+*Elevated PowerShell for the enable/disable commands and for
+`verify-scheduled-tasks.ps1`, "Run as administrator", with
+`cd C:\Users\felix\source\repos\glass-box-trading` in each new window — the
+scripts are invoked by relative path and this step spans two evenings. The one
+exception is condition 1's `npm.cmd run verify`, which is a normal shell and is
+marked as such.* (The verifier itself only reads task definitions and works
+unelevated too; it is run elevated here simply because the window is already
+open.)
 Read **[Reading the clock](#reading-the-clock)** first; every wait below is
 computed from an observed ping, not from the wall clock.
 
@@ -473,9 +542,9 @@ open at **14:45** on Wednesday moves the anchor — the procedure is at the end
 of this step.
 
 **All three drills are on Tuesday.** An earlier draft put the machine-off drill
-on Wednesday morning, where the pre-session window is 75 minutes and
-`gbt-readiness` alone needs 65 of them plus delivery: it could not finish before
-the gate it was a condition of. Tuesday's window has the room, because the
+on Wednesday morning, where the pre-session window is 75 minutes to the anchor and only 45 to the gate,
+while `gbt-readiness` alone needs 65 plus delivery: it could not finish before
+the gate it was a condition of, nor even before the anchor. Tuesday's window has the room, because the
 checks keep waiting for the ping they expected long after the last firing of
 the day. Wednesday is then only the restart proof, with real reserve.
 
@@ -495,14 +564,16 @@ you run now; the others you did earlier and confirm.
 4. **Alert receipt**, all three checks, confirmed on your own device, **and one
    recurring reminder received**. **step 3**
 
-**Tue 22:10 — enable, outside the session.**
+**Tue 22:10 — enable, outside the session.** Finish this block **before
+22:15**: that firing is the one the drills measure from, and a late enable
+pushes the whole evening a quarter of an hour back.
 
 ```powershell
 # Un-pause all three checks in the dashboard first (step 3 paused them), then:
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
-# expect: SCHEDULER CHECK PASSED (43 checks), both states Ready
+# expect: SCHEDULER CHECK PASSED, both states Ready
 ```
 
 Now wait for a firing you can see, and write down its local time — this is the
@@ -520,26 +591,39 @@ All three checks must read green in the dashboard before the first drill.
 `gbt-watchdog` turns green within 5 minutes of enabling, the other two at the
 next quarter hour.
 
-5. **Three silence drills.** Each is: do the thing, observe, compute from T,
-   compare. Detection first, then the push within the 10-minute delivery
-   budget; **both have to arrive**.
+5. **Three drills.** Each is: do the thing, observe, compute from T, compare.
+   Detection first, then the push within the 10-minute delivery budget;
+   **both have to arrive** before the next drill starts. The schedule below is
+   the earliest each can begin, not a clock to keep to — a drill that runs late
+   is fine, a drill that starts before the previous one is green is worthless.
 
-   **(a) ~22:30 — the watchdog alone.** The failure the other two checks cannot
+   **The hard boundary of the evening:** drill (c) needs a **T at or before
+   23:30**. After the 23:45 firing the checks stop expecting pings until 14:00
+   the next weekday, so a later T cannot produce a detection tonight. If (a)
+   and (b) have run so late that (c) cannot start by 23:30, **stop**: disable
+   both tasks and move the anchor. Do not run a half drill.
+
+   **(a) 22:30 — the watchdog alone.** The failure the other two checks cannot
    see, which is why the third endpoint exists.
 
    ```powershell
-   .\tools\show-run-log.ps1 -Log watchdog -Tail 2   # note T
+   .\tools\show-run-log.ps1 -Log watchdog -Tail 2   # note T (a watchdog firing)
    Disable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
-   # expect at T+20: gbt-watchdog DOWN; gbt-liveness and gbt-readiness still UP.
-   # expect by T+30: the push on your phone.
+   # expect at T+20 (22:50): gbt-watchdog DOWN; gbt-liveness and gbt-readiness still UP.
+   # expect by T+30 (23:00): the push on your phone.
    # If either of the other two also falls, STOP: they are wired to the wrong
    #   endpoint, and step 3 has to be redone.
+   # If the DOWN appears and the push does not, STOP as well: an alert nobody
+   #   receives is the failure this whole gate is about. Re-check the channel
+   #   in step 3 before going on.
    Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog' -TaskPath '\GlassBoxTrading\'
-   # wait until gbt-watchdog is green again (<= 5 min) before drill (b).
+   # wait until gbt-watchdog is green again -- at most 5 min, so about 23:05.
    ```
 
-   **(b) ~23:00 — signed out, tasks running.** The S4U proof, here rather than
-   in the crowded hour before the anchor because no firing here can trade.
+   **(b) 23:05, once (a) is green — signed out, tasks running.** The S4U proof,
+   here rather than in the crowded hour before the anchor because no firing here
+   can trade. It needs one quarter-hour firing, so start it by 23:10 at the
+   latest: signing out takes a minute and the 23:15 firing is the one it uses.
 
    ```powershell
    # Sign out. Do NOT lock the screen and do NOT shut down: a locked session is
@@ -554,32 +638,40 @@ next quarter hour.
    #   disable both tasks and do not activate.
    ```
 
-   **(c) ~23:30 — the machine itself.** This is the drill that proves the alert
-   does not depend on the machine it reports about, and it subsumes the
-   "both tasks disabled" drill an earlier draft ran separately: with the host
-   switched off, no ping can be produced by any means.
+   **(c) 23:30, and no later — the machine itself.** This proves the alert does
+   not depend on the machine it reports about, and it subsumes the "both tasks
+   disabled" drill an earlier draft ran separately: with the host switched off,
+   no ping can be produced by any means.
 
    ```powershell
-   .\tools\show-run-log.ps1 -Tail 2   # note T -- the last firing you can see
+   .\tools\show-run-log.ps1 -Tail 2                 # T(cycle)    -- for liveness and readiness
+   .\tools\show-run-log.ps1 -Log watchdog -Tail 2   # T(watchdog) -- up to 5 min later
    Stop-Computer -Force
    # A real shutdown. Not sleep, not hibernate: a sleeping machine wakes and
    # pings, which proves the opposite of what this drill is for.
    ```
 
-   From T, on your phone, with the machine off:
+   Two T values, because the two logs are pinged by different wrappers on
+   different schedules and can be five minutes apart:
 
    | Check | Down at | Push by |
    |---|---|---|
-   | `gbt-watchdog` | T + 20 | T + 30 |
-   | `gbt-liveness` | T + 45 | T + 55 |
-   | `gbt-readiness` | T + 65 | T + 75 |
+   | `gbt-watchdog` | T(watchdog) + 20 | + 10 |
+   | `gbt-liveness` | T(cycle) + 45 | + 10 |
+   | `gbt-readiness` | T(cycle) + 65 | + 10 |
 
-   With T at 23:30 that is 23:50, 00:15 and 00:35, with the last push by 00:45.
-   Set an alarm: a drill whose alerts you sleep through has proven nothing
-   either way. **When all three have arrived, pause all three checks from your
-   phone** and go to bed — the machine stays off, nothing will ping until
-   Wednesday, and an unpaused check with the recurring reminder on will wake you
-   hourly until 14:00.
+   With T(cycle) = 23:30 and T(watchdog) = 23:35 that is 23:55, 00:15 and
+   00:35, with the last push by 00:45. **Set an alarm for 00:45**: a drill
+   whose alerts you sleep through has proven nothing either way, and this is the
+   latest the evening runs. If a push is missing while its DOWN is there, that
+   is a finding and not a delay — stop and fix the channel.
+
+   **When all three have arrived, pause all three checks from your phone** and
+   go to bed. The machine stays off, nothing will ping until Wednesday, and an
+   unpaused check with the recurring reminder on will wake you hourly until
+   14:00. They are paused in the DOWN state, so expect them to come back DOWN
+   on Wednesday and to turn green only after a real firing — which is what
+   makes the 14:00 log line, and not the dashboard colour, the restart proof.
 
 6. **Restart — Wed 2026-09-09, before the session.** The machine has been off
    since Tuesday night, so this is a cold boot, which is the proof that matters.
@@ -597,20 +689,26 @@ next quarter hour.
    ```
 
    Then let one more firing pass and confirm all three checks are green again —
-   `gbt-watchdog` within 5 minutes, the other two by 14:20.
+   `gbt-watchdog` within 5 minutes, the other two by 14:20. They were paused
+   while DOWN, so green here means a real firing reached them; if any is still
+   red at 14:30, stop and move the anchor rather than spending the reserve on
+   it.
 
 **The gate itself, Wed by 14:45 local.** All six conditions hold, both tasks are
 enabled, and:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
-# expect: SCHEDULER CHECK PASSED (43 checks), and both states Ready
+# expect: SCHEDULER CHECK PASSED, and both states Ready
 ```
 
-That leaves **30 minutes** before the 15:15 anchor firing — deliberately, so a
-slow boot, a Windows update or a log line a minute late costs the reserve and
-not the run. If anything is still open at 14:45, including "I am not sure",
-stop and move the anchor.
+The gate is binary, so the reserve that actually absorbs a slow boot or a
+Windows update is the **25 minutes between 14:20 and 14:45**, not the
+half hour after it: nothing that happens before the gate can borrow time from
+after it. The 14:45–15:15 gap exists for a different reason — it is the margin
+that keeps a gate finishing at 14:44 from colliding with the anchor. If
+anything is still open at 14:45, including "I am not sure", stop and move the
+anchor.
 
 #### If the gate is not met: moving the anchor
 
@@ -631,10 +729,16 @@ Get-ScheduledTask -TaskPath '\GlassBoxTrading\' | Select-Object TaskName, State
 
 Then, in this order and no other:
 
-1. **Pick the new anchor**: the next US trading day on which you can supervise
-   both the evening before and the morning of. The certificate day is then the
-   trading day immediately before it — so a Monday anchor means a Friday
-   certificate, not a Sunday one.
+1. **Pick the new anchor**: a US trading day on which you can supervise the
+   morning, whose *preceding trading day* you can also supervise in the
+   evening, and which is none of the three forbidden kinds listed in
+   [Reading the clock](#reading-the-clock). The gate's evening is the evening
+   of the **certificate day**, which is the preceding *trading* day and not
+   simply "the night before": a Monday anchor puts the drills on Friday
+   evening and the cold-start proof on Monday morning, with the weekend in
+   between. That is allowed — the machine simply stays off over the weekend,
+   which is what drill (c) leaves it as anyway — but it is a 63-hour gate and
+   the checks stay paused throughout.
 2. **Derive the rest** from the table: `FLATTEN_DATE` three calendar months
    after the anchor and rolled forward to a trading day; journaling-only the
    trading day after that; coverage through the journaling-only day.
@@ -647,7 +751,13 @@ Then, in this order and no other:
 6. Re-run **owner step 5** with `-CoverageThroughDate <journaling-only day>`.
 7. Re-run **owner step 6** in full. The drills were invalidated by the
    re-installation; none of them carries over.
-8. Update the calendar with block 9 of
+8. **Re-check the three external checks.** `install-scheduled-task.ps1` derives
+   the cron expressions from the trigger it registers, so re-running step 5
+   with a different coverage date can print different ones. Compare what it
+   prints now with what the three checks are configured with, and update any
+   that differ — a check on the wrong schedule alarms at the wrong time, and
+   that is the same class of mistake as swapping two of the ping URLs.
+9. Update the calendar with block 9 of
    [`P12-CALENDAR-PROMPTS.md`](P12-CALENDAR-PROMPTS.md), which asks for the new
    anchor and derives the rest rather than shifting.
 
@@ -664,7 +774,11 @@ the anchor. Watch it and confirm, in order:
 ```powershell
 cd C:\Users\felix\source\repos\glass-box-trading
 .\tools\show-run-log.ps1 -Since "15:15"
-Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
+# The journal does not exist yet if the cycle refused; that is a result, not an
+# error, so this prints a line rather than a red exception either way.
+if (Test-Path C:\Users\felix\glass-box-state\longrun-1\journal.jsonl) {
+    Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
+} else { 'journal.jsonl does not exist -- nothing has been journaled' }
 ```
 
 1. The log shows the invocation and the printed report, which ends with a
@@ -674,8 +788,7 @@ Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 3
    account actually looks like is different from what you might expect** — see
    below; it is not a journaled halt.
 3. `gbt-liveness`, `gbt-readiness` and `gbt-watchdog` are all green.
-4. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes — 43 checks,
-   from a **normal** shell, which is enough to read task definitions.
+4. `.\tools\verify-scheduled-tasks.ps1 -ExpectEnabled` still passes — from a **normal** shell, which is enough to read task definitions.
 
 If 1, 3 or 4 fails, disable both tasks from an elevated shell and move the
 anchor (end of step 6).
@@ -841,8 +954,9 @@ is why a flat book means it can wait and an open book usually means it cannot.
   US session is still open. Inside it, close whole structures in the broker
   dashboard and note every one in `STATE.md`. After the close there is nothing
   to do tonight and nothing that could be done — options do not trade after
-  16:00 New York — so write down what is open and act at 15:20 local on the
-  next trading day. The position's maximum loss was fixed when it was opened;
+  16:00 New York — so write down what is open and act at **15:35** local on the
+  next trading day, five minutes after the open (14:35 in the clock-change
+  week). The position's maximum loss was fixed when it was opened;
   that is what carries it overnight.
 
 The release, when you have done the procedure — *normal PowerShell*:

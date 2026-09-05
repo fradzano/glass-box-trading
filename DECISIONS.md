@@ -3384,3 +3384,99 @@ small, no ADR split).
      waited out first and resolved afterwards.
 
   `npm run verify` exit 0 at 48 files / 651 tests. Nothing is activated.
+- **2026-09-06 — R47 died again, but wrote as it went: 2 A, 8 B confirmed, 2 of
+  its own findings refuted by its own counter-checks; plus a second cold read
+  that found the rebuilt clock still off by one drill.** The gate ran blind
+  against `ae85249` and was killed at 48 minutes. This time the prompt told it
+  to write findings into a file as it confirmed them, and that is the only
+  reason the round exists: `.r47-findings.md` holds everything, including two
+  entries it retracted after refuting them (a claimed fill sequence at the
+  anchor, which G6 forbids before 15:30, and a `-WhatIf` failure that turned
+  out to be an artefact of its own sandbox). A round that refutes itself is
+  worth more than one that only accumulates.
+
+  **A1 is the fifth place the stop-marking rule was missing, and the first
+  where the journal was unREADABLE rather than unwritable.** The mark was set
+  after `loadJournal()`, so a Windows handle with `FileShare.None` on the
+  journal alone made the read throw `EBUSY` and every line after it — the
+  marking included — never ran; once the handle was released the same writer
+  accepted a risk-increasing order with no human release. The mark is a claim
+  about the **epoch store** and may not be conditional on a second file being
+  available, so it now happens before the journal is touched at all.
+
+  **A2 is a defect R46's own fix created.** Letting a `KILL` set the mark was
+  right; mapping a marker-only state to `AUTH_FAILURE, sticky: false` was
+  already there, and together they downgraded the strongest stop in the system:
+  after a sticky KILL whose append failed, a softer halt could land on top and
+  an ordinary manual release cleared both. Stickiness now follows the mark's
+  own reason, by the same rule the pure `haltDraft` uses.
+
+  **Eight B findings, all confirmed and closed.** The scheduler verifier
+  certified a task whose trigger starts in 2099 (correct hours, first firing
+  seventy-three years away), foreign `-RepoRoot`/`-NodePath` values pointing at
+  another checkout, `State=Unknown` under `-ExpectEnabled`, and — the sharpest
+  — `-Co "…" -File "<the wrapper>"`, because PowerShell resolves parameter
+  **prefixes** and R46's exact-spelling list caught none of them. It also
+  rounded `CYCLE_INTERVAL_MS=870001` to fifteen minutes where the installer now
+  refuses it, so the two tools disagreed about what the policy says. The
+  installer removed both tasks before registering either, so a failure on the
+  second left the cycle running with no watchdog behind it; registration is one
+  transaction now, and a failure rolls back to nothing rather than to half.
+  Both wrappers lost their signal on a node binary that exists but is not a
+  runnable image: the failure is non-terminating under the `Continue`
+  preference the stderr trap requires, so try/catch never fired — the image is
+  probed with `node --version` before it matters instead, and the refusal ping
+  was verified against a real endpoint.
+
+  **B10 was already closed and both instruments found it independently.** R47
+  mutated `haltStateFrom` in `halt-state.ts` and all 651 tests still passed —
+  against `ae85249`, which predates the isolation commit `adca01a` that my own
+  mutation probe had forced for exactly the same reason. Two different
+  instruments finding the same unmeasured test is the strongest evidence so far
+  that the probe is calibrated.
+
+  **The second cold read — the rebuilt clock, checked by a stranger with a
+  calendar.** Most of it holds: the detection formula, the three derivations,
+  all five numbers of drill (c), the UTC conversions, the 15:15 lead-in
+  arithmetic, every weekday/date pair in both documents, and the derivation
+  rules including the Sunday-to-Monday roll. What did not:
+
+  * **Drill (a) needed 35 minutes and was given 30.** Detection at T+20, push
+    by T+30, then “wait until it is green again” — which is 23:05, while drill
+    (b) was scheduled for 23:00. The document's own rule forbids exactly that,
+    so this was the same class of error one layer down. Re-spaced, with each
+    drill's earliest start stated rather than a uniform grid.
+  * **The cron window ends at 23:45 and nothing said so.** Past that the next
+    expected ping is 14:00 the next weekday, so a T of 23:45 moves detection to
+    the following afternoon and drill (c) cannot complete at all. Stated now,
+    with a hard “23:30 or stop”.
+  * **One T for two ping sources.** Drill (c) read the cycle log and applied
+    that T to the watchdog too, which is pinged on a different schedule up to
+    five minutes later. Two T values now.
+  * **“15:20 local, five minutes into the session” is ten minutes before the
+    open.** The alarm that the after-hours branch depends on rang while nothing
+    could be done — in the paragraph that exists to prevent precisely that.
+    15:35, and 14:35 in the clock-change week.
+  * **The anchor could be moved into days where the gate cannot work:** the
+    clock-change week (where the first trading firing is 14:15, half an hour
+    *before* the 14:45 gate), a day after a US early close (19:00, not 22:00),
+    and a run crossing the American spring change while Europe has not changed
+    (session at 13:30, trigger window from 14:00). Three forbidden kinds, named.
+  * **The anchor procedure never returned to the healthchecks.** A different
+    coverage date can produce different cron expressions, and the three checks
+    would have kept the old ones — the same class as swapping two ping URLs,
+    which the document itself calls the mistake nothing later catches.
+  * **The 30-minute “reserve” was real time and dead time**, because the gate
+    is binary and nothing before it can borrow from after it. The reserve is
+    the 25 minutes from 14:20 to 14:45, and it says so.
+  * Smaller: the certificate block started at 15:15, before the open; it
+    demanded that tasks be disabled on a day when they are not yet registered;
+    `Get-Content journal.jsonl` was unguarded on the one path where the file
+    does not exist; the process-environment-over-`.env` precedence that owner
+    step 4 silently depends on is now stated **and verified by a command**; the
+    `finally`-restores-on-Ctrl-C claim is softened to what it is; and the
+    hard-coded check count, wrong three times in a row (35, 43, 49, and it
+    differs again under `-ExpectEnabled`), is gone — the verifier prints the
+    number and the operator's job is that it passed and did not change.
+
+  `npm run verify` exit 0 at 48 files / 651 tests.

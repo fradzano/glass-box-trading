@@ -137,6 +137,35 @@ function Send-WatchdogHeartbeat {
     }
 }
 
+function Test-NodeRuns {
+    <#
+      R47-B8, mirroring tools/cycle-run.ps1. A NodePath that exists but is not a runnable image fails at the
+      call site with ApplicationFailedException / NativeCommandFailed, and that
+      failure aborts the script without reaching any sender: the endpoint saw
+      nothing, and the operator waited out a full silence period for what is
+      really an immediate, nameable refusal. It cannot be caught reliably at
+      the call site either -- raising $ErrorActionPreference to 'Stop' there is
+      the trap that killed the watchdog for a day, because it turns the child's
+      first stderr line into a terminating error.
+      So the image is probed BEFORE it matters, with a command that writes only
+      to stdout when it works. `node --version` is that command.
+    #>
+    param([string]$Path)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Stop'
+    try {
+        $null = & $Path --version
+        return @{ ok = $true; detail = '' }
+    } catch {
+        # One line: the raw record spans several and this text goes into a log line and a ping body.
+        $flat = ($_.Exception.Message -replace "\s+", " ").Trim()
+        if ($flat.Length -gt 200) { $flat = $flat.Substring(0, 200) }
+        return @{ ok = $false; detail = $flat }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 $watchdogUrl = $env:HEALTHCHECK_WATCHDOG_URL
 if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
     $watchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
@@ -211,6 +240,13 @@ $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "
 # logged "output:" or "exit:", every task result was 1. The native call
 # therefore runs under 'Continue'; the CLI's exit code, not its stderr, is
 # the verdict, and its stderr lines are logged as output below.
+$nodeRuns = Test-NodeRuns -Path $NodePath
+if (-not $nodeRuns.ok) {
+    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)"
+    Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail); heartbeat $delivery"
+    exit 1
+}
+
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {

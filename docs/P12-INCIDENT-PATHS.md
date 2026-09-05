@@ -177,8 +177,9 @@ until I release it by hand. If that happens with an open book, the risk cap set
 at entry is again the only thing still working. Closing early means the broker
 dashboard **and an open US session**: outside 15:30–22:00 local there is no
 order to place, so the honest answer at 23:00 is to write down what is open and
-act at 15:20 on the next trading day — see the Friday case at the end of this
-document, which is the same situation on a worse day.
+act at 15:35 on the next trading day, five minutes after the open — see the
+Friday case at the end of this document, which is the same situation on a worse
+day.
 
 One honest limit: with the journal, the epoch store *and* the halt projection
 all unwritable at the instant of rejection, and full recovery afterwards, no
@@ -251,8 +252,9 @@ So, concretely:
   alert said. `node dist\shell\readiness-cli.js` names the impediment; the
   broker dashboard shows the book, and reading it is always possible even when
   trading is not.
-* **Set an alarm for 15:20 local on the next trading day**, five minutes into
-  the session, and decide then with the book in front of you.
+* **Set an alarm for 15:35 local on the next trading day** — five minutes
+  *after* the open, which is 15:30 local, or 14:35 in the week between the two
+  clock changes — and decide then with the book in front of you.
 * **What carries the position until then is the structure itself.** Every
   position this agent opens has a maximum loss fixed at entry and it cannot
   grow over a weekend. That is the whole reason the strategy is defined-risk,

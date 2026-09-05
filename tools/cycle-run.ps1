@@ -118,6 +118,35 @@ function Send-Liveness {
     }
 }
 
+function Test-NodeRuns {
+    <#
+      R47-B8. A NodePath that exists but is not a runnable image fails at the
+      call site with ApplicationFailedException / NativeCommandFailed, and that
+      failure aborts the script without reaching any sender: the endpoint saw
+      nothing, and the operator waited out a full silence period for what is
+      really an immediate, nameable refusal. It cannot be caught reliably at
+      the call site either -- raising $ErrorActionPreference to 'Stop' there is
+      the trap that killed the watchdog for a day, because it turns the child's
+      first stderr line into a terminating error.
+      So the image is probed BEFORE it matters, with a command that writes only
+      to stdout when it works. `node --version` is that command.
+    #>
+    param([string]$Path)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Stop'
+    try {
+        $null = & $Path --version
+        return @{ ok = $true; detail = '' }
+    } catch {
+        # One line: the raw record spans several and this text goes into a log line and a ping body.
+        $flat = ($_.Exception.Message -replace "\s+", " ").Trim()
+        if ($flat.Length -gt 200) { $flat = $flat.Substring(0, 200) }
+        return @{ ok = $false; detail = $flat }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 $livenessUrl = $env:HEALTHCHECK_LIVENESS_URL
 if ([string]::IsNullOrWhiteSpace($livenessUrl)) {
     $livenessUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_LIVENESS_URL'
@@ -224,6 +253,13 @@ if ($SkipOutsideSession -and -not (Test-InsideSession -LeadInMinutes $SessionLea
     $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 0 -Note "skip: outside the exchange session"
     Write-RunLog "skip: outside the exchange session (weekend, or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in, computed from the zone tables -- holidays and early closes are NOT known here); liveness $delivery; $readiness"
     exit 0
+}
+
+$nodeRuns = Test-NodeRuns -Path $NodePath
+if (-not $nodeRuns.ok) {
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)"
+    Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail); liveness $delivery"
+    exit 1
 }
 
 Write-RunLog "run: pid=$PID stateDir=$stateDir entry=$agentEntry"
