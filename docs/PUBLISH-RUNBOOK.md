@@ -19,7 +19,7 @@ checkout's runtime digest.
 | Owner publish directory | `C:\Users\felix\gbt-publish` |
 | Journal copy | `C:\Users\felix\gbt-publish\journal-copy.jsonl` (a copy; the renderer refuses the live `STATE_DIR`) |
 | Output | `C:\Users\felix\gbt-publish\out\{site,deploy,publish-manifest.json,probe-*.json}` |
-| Render source | the worktree `C:\Users\felix\source\worktrees\gbt-publish` (its `dist/`), never the operating checkout |
+| Render source | the worktree `C:\Users\felix\source\worktrees\gbt-publish` (its `dist/`), never the operating checkout. Since 2026-09-05 it carries **`main`** rather than the merged `p7/publish-dashboard`, and it is also where `main` is merged; the separate `gbt-main` worktree was removed. Rebuild it (`npm ci --ignore-scripts && npm run build`) after every merge, or it renders from an older `dist/`. |
 | Account id shown | `PA376WIK2ATL` (passed as `-AccountId`; the projection's expectation, not read from the journal) |
 
 The worktree is the render source on purpose: the operating checkout must
