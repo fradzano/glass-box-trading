@@ -47,12 +47,34 @@ Notifications: popup 1 day before, popup 30 minutes before.
 Create an event in my personal Google Calendar only. No guests.
 If an event with the same title already exists, update it instead of creating a duplicate.
 
-Title: P12 Installation und Aktivierungs-Gate
+Title: P12 Installation der Tasks
 Date: Tuesday 8 September 2026
-Time: 17:00–19:30, timezone Europe/Berlin
-Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm run build, dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-09 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 30 Checks bestanden).
-Danach das Aktivierungs-Gate mit sechs Bedingungen aus docs\P12-RUNBOOK.md, Owner step 6, darunter drei getrennte Stille-Proben (nur Watchdog aus; beide Tasks aus; Rechner aus) sowie Neustart und abgemeldeter Betrieb. Erst wenn alle sechs halten, die Tasks per Enable-ScheduledTask aktivieren.
+Time: 17:00–18:00, timezone Europe/Berlin
+Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm.cmd run build (npm.cmd, nicht npm — npm.ps1 ist von der Execution Policy gesperrt), dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-09 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 35 Checks bestanden).
+Noch nichts aktivieren: das Gate ist der nächste Termin.
 Notifications: popup 30 minutes before.
+```
+
+### 3b — The activation gate (two windows, outside every session)
+
+```
+Create two events in my personal Google Calendar only. No guests.
+If an event with the same title already exists, update it instead of creating a duplicate.
+
+Event one:
+Title: P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)
+Date: Tuesday 8 September 2026
+Time: 22:10–23:59, timezone Europe/Berlin
+Description: Erst NACH dem US-Schluss um 22:00. Beide Tasks in einer ERHÖHTEN PowerShell aktivieren — jede Auslösung ab jetzt überspringt den Zyklus und meldet trotzdem beide Signale, es kann also nichts handeln. Absolute Regel: vor dem Ankerdatum darf keine Auslösung einen Zyklus fahren. Dann Probe (a) ab ca. 22:40, nur der Watchdog aus, 20 Minuten warten; Probe (b) ab ca. 23:15, beide Tasks aus, die Alarme kommen gegen 00:00 und 00:20 — Wecker stellen, eine verschlafene Probe beweist nichts. Ablauf im Wortlaut: docs\P12-RUNBOOK.md, Owner step 6.
+Notifications: popup 30 minutes before.
+
+Event two:
+Title: P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart, abgemeldet)
+Date: Wednesday 9 September 2026
+Time: 14:00–15:05, timezone Europe/Berlin
+Description: Vor der Sitzung, also wieder ohne Handelsrisiko. Beide Tasks aktivieren, eine grüne Auslösung abwarten, dann den Rechner 25 Minuten ausschalten (Probe c: alle drei Checks unten — der einzige Beweis, dass der Alarm nicht von der Maschine abhängt, über die er berichtet). Nach dem Hochfahren müssen die Auslösungen von selbst weiterlaufen (Neustart-Beweis); um ca. 14:50 abmelden und prüfen, dass die 15:00-Auslösung eine Logzeile geschrieben hat (S4U-Beweis).
+WICHTIG: Hängt um 15:05 noch eine Bedingung offen, beide Tasks deaktivieren — dann verschiebt sich das Ankerdatum, und damit FLATTEN_DATE, Policy-Digest und Zertifikat.
+Notifications: popup 1 day before, popup 15 minutes before.
 ```
 
 ### 4 — The first regular cycle
@@ -63,8 +85,8 @@ If an event with the same title already exists, update it instead of creating a 
 
 Title: P12 Erster regulärer Zyklus (betreut) — Ankerdatum
 Date: Wednesday 9 September 2026
-Time: 15:20–16:30, timezone Europe/Berlin
-Description: Einen vollständigen Zyklus beobachten. Prüfen: cycle-run.log im neuen STATE_DIR zeigt den Aufruf und den gedruckten Report; das Journal enthält einen BOOTSTRAP-Eintrag und der Provenance-Beweis ist bestanden; alle drei Healthchecks sind grün; tools\verify-scheduled-tasks.ps1 -ExpectEnabled läuft weiterhin durch.
+Time: 15:10–16:30, timezone Europe/Berlin
+Description: Der erste Zyklus läuft um 15:15, nicht 15:30: der Lead-in beginnt 20 Minuten vor der US-Eröffnung. Einen vollständigen Zyklus beobachten. Prüfen: cycle-run.log im neuen STATE_DIR zeigt den Aufruf und den gedruckten Report; das Journal enthält einen BOOTSTRAP-Eintrag und der Provenance-Beweis ist bestanden; alle drei Healthchecks sind grün; tools\verify-scheduled-tasks.ps1 -ExpectEnabled läuft weiterhin durch.
 WICHTIG: Dieser Zyklus ist das Ankerdatum. Findet er nicht heute statt, verschiebt sich das Flatten-Datum, die Konfiguration muss geändert werden und das Zertifikat wird ungültig — dann erst neu zertifizieren, dann starten.
 Notifications: popup 1 day before, popup 15 minutes before.
 ```
@@ -160,7 +182,7 @@ Notifications: popup 1 day before.
 ```
 In my personal Google Calendar only, no guests: my P12 start moved from Wednesday 9 September 2026 to <NEW DATE>.
 Shift these events by the same number of days, updating the existing events rather than creating new ones:
-"P12 Vorbereitung fällig — Konto, .env, Alarmkanäle", "P12 Zertifikatslauf vier (Dev-Konto, betreut)", "P12 Installation und Aktivierungs-Gate", "P12 Erster regulärer Zyklus (betreut) — Ankerdatum", "P12 Abschluss vorbereiten", "P12 FLATTEN_DATE — Buch wird geschlossen", "P12 TERMINAL und Abschaltung", "P12 Auswertung schreiben".
+"P12 Vorbereitung fällig — Konto, .env, Alarmkanäle", "P12 Zertifikatslauf vier (Dev-Konto, betreut)", "P12 Installation der Tasks", "P12 Aktivierungs-Gate, Teil 1 (Stille-Proben)", "P12 Aktivierungs-Gate, Teil 2 (Rechner aus, Neustart, abgemeldet)", "P12 Erster regulärer Zyklus (betreut) — Ankerdatum", "P12 Abschluss vorbereiten", "P12 FLATTEN_DATE — Buch wird geschlossen", "P12 TERMINAL und Abschaltung", "P12 Auswertung schreiben".
 Move the start of the recurring "P12 Wochenreview und Dashboard-Publikation" to the first Friday after the new start date, and its end to the last Friday before the new FLATTEN_DATE.
 Leave the two clock-change checks on 23 October and 30 October 2026 where they are: they depend on the calendar, not on my start date.
 Then tell me the new date of each event so I can confirm it.
