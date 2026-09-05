@@ -34,6 +34,8 @@ export type EpochStoreState =
      * would otherwise overrule a fence that could not be journaled.
      */
     readonly fencePending: boolean;
+    /** Why the durable stop was recorded, when it is known. Free text from the halt reason (S-G12-08). */
+    readonly fenceReason?: string | null;
   };
 
 export type AccountVirginity = "virgin" | "non_virgin" | "unknown";

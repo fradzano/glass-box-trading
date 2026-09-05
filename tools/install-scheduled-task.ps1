@@ -267,8 +267,19 @@ $cycleIntervalMs = [int64]$policy.CYCLE_INTERVAL_MS
 $deadManBoundMs = [int64]$policy.DEAD_MAN_BOUND_MS
 if ($cycleIntervalMs -le 0) { throw 'config/policy.json CYCLE_INTERVAL_MS is missing or not positive.' }
 if ($deadManBoundMs -le 0) { throw 'config/policy.json DEAD_MAN_BOUND_MS is missing or not positive.' }
-$cycleIntervalMinutes = [math]::Round($cycleIntervalMs / 60000.0)
-if ($cycleIntervalMinutes -lt 1) { $cycleIntervalMinutes = 1 }
+# R46-B4: rounding here made the registered trigger disagree with the policy
+# it claims to implement -- CYCLE_INTERVAL_MS = 870001 was registered as a
+# 15-minute repetition and printed as "15 min", and the verifier then compared
+# against the same rounded expectation, so nothing noticed. A Windows
+# repetition is expressed in whole minutes, so a policy interval that is not
+# one cannot be implemented exactly and is refused rather than approximated.
+if ($cycleIntervalMs % 60000 -ne 0) {
+    throw "config/policy.json CYCLE_INTERVAL_MS = $cycleIntervalMs ms is not a whole number of minutes, and a scheduled repetition is expressed in whole minutes. Nothing was registered. Set it to a multiple of 60000."
+}
+$cycleIntervalMinutes = [int]($cycleIntervalMs / 60000)
+if ($cycleIntervalMinutes -lt 1) {
+    throw "config/policy.json CYCLE_INTERVAL_MS = $cycleIntervalMs ms is below one minute; the scheduler cannot repeat faster than that. Nothing was registered."
+}
 
 # R44-B11: the printed cron enumerates minutes within the hour, so an interval
 # that does not divide 60 cannot be stated exactly -- a 7-minute repetition

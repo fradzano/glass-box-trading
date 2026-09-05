@@ -88,7 +88,20 @@ export interface AgentRuntime {
 
 export type RuntimeBuild =
   | { readonly ok: true; readonly runtime: AgentRuntime }
-  | { readonly ok: false; readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest" | "arming"; readonly reason: string; readonly startup: StartupOutcome | null };
+  | {
+      readonly ok: false;
+      readonly stage: "startup" | "credentials" | "suppressed" | "account_binding" | "calendar" | "authority" | "analyst" | "digest" | "arming";
+      readonly reason: string;
+      readonly startup: StartupOutcome | null;
+      /**
+       * R46-B9 / A31: whether this refusal already reported readiness. The
+       * startup validator has its own flag; the credential fence raised inside
+       * the runtime has this one. Without it, an account read that succeeds
+       * and a calendar read that returns 401 produced two failure POSTs for
+       * one invocation -- `AUTH_FAILURE` and then `STARTUP_REFUSED:calendar`.
+       */
+      readonly failurePinged?: boolean;
+    };
 
 /**
  * The cycle's market port (S-X-07): the observation is rebuilt per call around
@@ -268,16 +281,19 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   if (acquired.kind !== "WON" && acquired.kind !== "GAP_HALT") return { ok: false, stage: "authority", reason: `authority not acquired: ${JSON.stringify(acquired)}`, startup };
   const epoch = acquired.epoch;
 
+  const fencePinged = { sent: false };
   const releaseAndRefuse = async (stage: "account_binding" | "calendar", reason: string): Promise<RuntimeBuild> => {
     await releaseHolder(paths, options.instanceId);
-    return { ok: false, stage, reason, startup };
+    return { ok: false, stage, reason, startup, failurePinged: fencePinged.sent };
   };
   const persistBrokerFence = async (reason: "AUTH_FAILURE" | "ACCOUNT_BINDING_MISMATCH", detail: string): Promise<void> => {
     await gateway.dispatchSafetyHalt({ reason, detail });
     try {
       await startupBrokerPing.fail([reason]);
+      fencePinged.sent = true;
     } catch {
-      // The durable halt is the authority; alert delivery is best effort.
+      // The durable halt is the authority; alert delivery is best effort. A
+      // failed delivery is not a delivery, so the CLI is still free to report.
     }
   };
 

@@ -21,7 +21,7 @@ import {
   utcIsoToEpochMs,
 } from "../core/execution.js";
 import type { BrokerBook, CloseAttemptRecord, MarketObservation, SnapshotAssemblyResult, SubmitObservation } from "../core/execution.js";
-import { journalStaleness, redactSecrets } from "../core/journal.js";
+import { haltStateFrom, journalStaleness, redactSecrets } from "../core/journal.js";
 import type { AccountBinding, JournalDraft } from "../core/journal.js";
 import {
   assessStaleness,
@@ -153,7 +153,15 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
   // takeover, or when this run's HALT append landed. An append that did not
   // land also raises its own alarm condition, so the fail-ping says which of
   // the two things the fence produced is missing.
-  let halted = opened.halt.halted;
+  // R46-A2 follow-through: `opened.halt` is the EFFECTIVE state -- the journal
+  // OR the durable mark -- which is the right thing to gate mutations on and
+  // the wrong thing to decide "do I still owe an entry" with. Once every halt
+  // marks before it appends, a takeover whose append failed leaves a mark, and
+  // reading the effective state here would make the next firing believe the
+  // halt already stands and never journal it. The journal is the record of
+  // consequence; the mark is the fallback, never a substitute for the entry.
+  const journaledHalt = haltStateFrom(opened.entries);
+  let halted = journaledHalt.halted;
   if (!halted) {
     halted = await append(haltDraft(context(), "WATCHDOG_TAKEOVER", `journal stale for ${String(assessment.ageMs)} ms during a session; writer fenced at epoch ${String(epoch)}; phase-0 recovery follows`));
     if (!halted) alarmConditions.push("HALT_NOT_JOURNALED");

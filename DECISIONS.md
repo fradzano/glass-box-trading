@@ -3205,3 +3205,75 @@ small, no ADR split).
   internally consistent, three calendar months from 2026-09-09 is 2026-12-09,
   and owner step 5 was executable as written, start to finish. `npm run verify`
   exit 0 at 47 files / 647 tests.
+- **2026-09-05 — R46 counter-gate: NO-GO (A=3, B=9, C=0); all twelve closed.**
+  The gate ran blind against `fa2ebad` in a byte-identical HEAD snapshot, job
+  `task-mtommbrm-ewf8le`, and executed every failure moment against the real
+  code with fake brokers, HTTP stubs and simulated task definitions rather
+  than reading for them. It also wrote its findings down as it confirmed them,
+  which is why this round survived where R45 did not.
+
+  **The rule was narrower than the problem, and that was the generator.**
+  “A safety halt marks the credential fence before it appends” had been closed
+  at four entry points across three rounds. R46 showed the framing itself was
+  the defect: the rule spoke of *credential* rejections, and every other halt
+  — `KILL` above all — reaches the journal through the ordinary authoritative
+  append, which marked nothing. The gate drove it: equity below the kill
+  threshold, journal read-only, epoch store writable; `haltDurable` false,
+  nothing durable anywhere, and after recovery and a new epoch the next cycle
+  opened a position with no human release (A2). The append path now marks for
+  **every** halt, and the mark carries a `fenceReason`, so a kill-switch is
+  reported as `KILL` instead of handing the operator the credential-fence
+  procedure. One consequence had to be fixed with it: the effective halt state
+  (journal OR mark) is the right thing to gate mutations on and the wrong
+  thing to decide “do I still owe an entry” with — reading it in the watchdog
+  would have let a marked-but-unjournaled takeover skip its own entry forever.
+  The journal decides that question now.
+
+  **The journal is the authority; the projection is a cache of it (A3).** A
+  real `HALT KILL` landed, its projection write failed, and the readiness CLI
+  sent **success** and exited 0 — and repeated success pings suppress the
+  external silence alarm as well, so the single signal that should have
+  carried the stop was the one saying everything was fine.
+  `standingImpediment` reads the journal first now.
+
+  **And one ordinary miss (A1):** every broker read in the cycle runner
+  classifies its own failure except the emergency-close probe, which treated a
+  403 as “no such order” and moved on. One rejected probe, and the same cycle
+  submitted a new position and reported success, with no halt and no fence.
+
+  **The nine B findings, by kind.** *The scheduler verifier certified three
+  more wrong things:* an action reading `-Command "…" -File "<the expected
+  wrapper>"` passed all 35 checks, because PowerShell honours `-Command` and
+  treats `-File` as one of its arguments — so the wrapper never ran; a
+  MonthlyDOW trigger with the right weekday set and cadence passed although it
+  fires in one week of the month; and `ExecutionTimeLimit=PT1M` passed,
+  although the scheduler then kills recovery inside its own five-minute
+  budget and a killed wrapper posts nothing at all. It asserts the argument
+  form, the trigger's CIM class and the time limit now, and reports **43**
+  checks. *The installer still rounded:* `CYCLE_INTERVAL_MS = 870001` was
+  registered as a 15-minute repetition and printed as “15 min”, and the
+  verifier compared against the same rounded expectation — an interval that is
+  not a whole number of minutes is refused rather than approximated. *Two
+  wrappers stayed silent where they owed a signal:* the watchdog wrapper had
+  never been given the treatment `cycle-run.ps1` got in R44-B8, so a missing
+  node, an unbuilt `dist` or an absent `STATE_DIR` cost the full 20-minute
+  period on the one component nothing else observes; and in `cycle-run.ps1` a
+  throwing `.env` read still escaped the sender that already existed. Both go
+  through their `Stop-With…` helper now, and both were verified by execution
+  against a real endpoint. *Two signals were still wrong at the edges:* the
+  readiness CLI exited 2 with **zero requests** on an unusable `STATE_DIR`,
+  and a calendar 401 after a successful account read produced **two** failure
+  POSTs for one invocation, because the R44-B7 flag covered only the startup
+  validator and not the credential fence raised inside the runtime. *And the
+  machine-off drill* was flagged for the same arithmetic the cold read found
+  independently an hour earlier; it was already fixed.
+
+  **What the gate reports as holding:** the existing auth and account-binding
+  fence paths, the marker inheritance, the journal-before-release ordering,
+  and `PT14M31S` now correctly refused. 48 parallel durability probes left no
+  errors and no residue, and no mutex re-entrancy was found. The installer
+  preview confirms the 20/45/65-minute budget arithmetic with the ten-minute
+  delivery budget stated separately. Real alert delivery and a real machine
+  restart remain unproven, as they must be from here.
+
+  `npm run verify` exit 0 at **48 files / 651 tests**.

@@ -26,7 +26,7 @@ if (!built.ok) {
   // validator sends its own CONFIG_INVALID failure before returning, and this
   // used to add a second POST under a different name for the same refusal —
   // two alerts, one incident, and a check that flaps twice.
-  if (!(built.startup?.failurePinged ?? false)) {
+  if (!(built.failurePinged ?? built.startup?.failurePinged ?? false)) {
     try {
       const env = loadEnvironment(process.cwd(), process.env);
       const ping = createPingPort({ url: env["HEALTHCHECK_PING_URL"] ?? null, recordFile: null, clock, timeoutMs: 10_000 });

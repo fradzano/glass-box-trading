@@ -26,9 +26,23 @@ import { loadEnvironment } from "./runtime-config.js";
 import { createPingPort } from "./ping-healthchecks.js";
 
 const env = loadEnvironment(process.cwd(), process.env);
+
+// R46-B7: an unusable STATE_DIR used to exit 2 with nothing sent, so the one
+// firing that could have named the problem produced no request at all and the
+// check fell silent for up to 65 minutes instead. The endpoint is known at this
+// point -- it comes from the same environment -- so the refusal is reported.
+const endpoint = env["HEALTHCHECK_PING_URL"] ?? null;
 const paths = resolveStateDir(env["STATE_DIR"] ?? "");
 if (!paths.ok) {
   process.stderr.write(`readiness: STATE_DIR is unusable: ${paths.detail}\n`);
+  if (endpoint !== null && endpoint.trim() !== "") {
+    const refusalPing = createPingPort({ url: endpoint, recordFile: null, clock: () => Date.now(), timeoutMs: 10_000 });
+    try {
+      await refusalPing.fail([`CONFIG_INVALID_STATE_DIR:${paths.detail}`]);
+    } catch {
+      // Delivery is best effort; the non-zero exit and the printed reason stand.
+    }
+  }
   process.exit(2);
 }
 
@@ -43,7 +57,7 @@ const conditions = [
 // exactly like a delivered all-clear. It is a misconfiguration and the only
 // honest exit code for it is a failing one -- nothing is watching this
 // deployment.
-const readinessUrl = env["HEALTHCHECK_PING_URL"] ?? null;
+const readinessUrl = endpoint;
 if (readinessUrl === null || readinessUrl.trim() === "") {
   process.stderr.write(`readiness: HEALTHCHECK_PING_URL is not configured; nothing was reported (${conditions.length === 0 ? "no impediment stands" : conditions.join(", ")})
 `);

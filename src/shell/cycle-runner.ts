@@ -465,7 +465,21 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       const nextGeneration = journaledGenerations.length === 0 ? 0 : Math.max(...journaledGenerations) + 1;
       const attemptId = closeAttemptId(lifecycleId, integerUnit(nextGeneration, "Quantity"));
       const lookup = await fetched(() => deps.broker.orderByClientId(attemptId, deps.cycleDeadlineMs));
-      if (!lookup.ok || lookup.value === null) continue;
+      if (!lookup.ok) {
+        // R46-A1: every other broker read in this runner classifies its own
+        // failure, and this one did not -- it treated a 401/403 as "no such
+        // order" and moved on. A gate executed it: one rejected probe here,
+        // and the same cycle went on to submit a new position and report
+        // success, with no halt and no fence. A credential rejection is the
+        // same rejection wherever it is observed (S-G12-06), and it also
+        // means this probe answered nothing: the emergency close it was
+        // looking for may exist and stay unreconciled, which is exactly what
+        // `UNRESOLVED` records.
+        if (isAuthFailure(lookup)) await haltForAuthFailure(lookup.error);
+        entriesBlocked.push(`UNRESOLVED:${attemptId}`);
+        continue;
+      }
+      if (lookup.value === null) continue;
       const order = lookup.value;
       const item = {
         kind: "emergency_close",

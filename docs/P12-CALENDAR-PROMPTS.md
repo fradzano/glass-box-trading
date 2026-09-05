@@ -50,7 +50,7 @@ If an event with the same title already exists, update it instead of creating a 
 Title: P12 Installation der Tasks
 Date: Tuesday 8 September 2026
 Time: 17:00–18:00, timezone Europe/Berlin
-Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm.cmd run build (npm.cmd, nicht npm — npm.ps1 ist von der Execution Policy gesperrt), dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-10 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 35 Checks bestanden).
+Description: Erst nach PASS. In einer ERHÖHTEN PowerShell: npm.cmd run build (npm.cmd, nicht npm — npm.ps1 ist von der Execution Policy gesperrt), dann tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-10 (registriert die Tasks und deaktiviert sie sofort — Installieren ist nicht Aktivieren), dann tools\verify-scheduled-tasks.ps1 (erwartet: 43 Checks bestanden).
 Noch nichts aktivieren: das Gate ist der nächste Termin.
 Notifications: popup 30 minutes before.
 ```

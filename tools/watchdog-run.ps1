@@ -112,22 +112,68 @@ function Get-DotEnvValue {
     return $null
 }
 
-if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "RepoRoot '$RepoRoot' does not exist." }
+# R46-B5: the same defect R44-B8 closed in cycle-run.ps1, at the other wrapper.
+# Every precondition below used to `throw` before the heartbeat sender existed,
+# so a missing node, an unbuilt dist or an absent STATE_DIR produced silence --
+# and silence here costs the full 20-minute check period plus grace, on the one
+# component whose failure nothing else can see. The sender and its endpoint are
+# resolved first, and refusals go through Stop-WithHeartbeat.
+
+function Send-WatchdogHeartbeat {
+    param([string]$BaseUrl, [int]$ExitCode, [string]$Note)
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) { return 'unset' }
+    $url = if ($ExitCode -eq 0) { $BaseUrl } else { ($BaseUrl.TrimEnd('/') + '/fail') }
+    try {
+        $previous = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $url -Method Post -Body $Note -TimeoutSec 10 -UseBasicParsing | Out-Null
+        } finally {
+            $ProgressPreference = $previous
+        }
+        return 'sent'
+    } catch {
+        return "undelivered: $($_.Exception.Message)"
+    }
+}
+
+$watchdogUrl = $env:HEALTHCHECK_WATCHDOG_URL
+if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
+    $watchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
+}
+
+function Stop-WithHeartbeat {
+    # A refusal is still an invocation that happened. Report it as a heartbeat
+    # failure with its reason, then stop.
+    param([string]$Message)
+    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "watchdog wrapper refused: $Message"
+    throw "$Message (heartbeat $delivery)"
+}
+
+if (-not (Test-Path -LiteralPath $RepoRoot)) { Stop-WithHeartbeat "RepoRoot '$RepoRoot' does not exist." }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
-if (-not (Test-Path -LiteralPath $NodePath)) { throw "NodePath '$NodePath' does not exist." }
+if (-not (Test-Path -LiteralPath $NodePath)) { Stop-WithHeartbeat "NodePath '$NodePath' does not exist." }
 
 $watchdogEntry = Join-Path $RepoRoot 'dist\shell\watchdog-cli.js'
-if (-not (Test-Path -LiteralPath $watchdogEntry)) { throw "'$watchdogEntry' is missing; run 'npm run build' in $RepoRoot before operating the scheduled tasks." }
+if (-not (Test-Path -LiteralPath $watchdogEntry)) { Stop-WithHeartbeat "'$watchdogEntry' is missing; run 'npm run build' in $RepoRoot before operating the scheduled tasks." }
 
 $policyPath = Join-Path $RepoRoot 'config\policy.json'
-$policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-$deadManBoundMs = [int64]$policy.DEAD_MAN_BOUND_MS
+try {
+    $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+    $deadManBoundMs = [int64]$policy.DEAD_MAN_BOUND_MS
+} catch {
+    Stop-WithHeartbeat "config\policy.json could not be read from ${RepoRoot}: $($_.Exception.Message)"
+}
 
 $stateDir = $env:STATE_DIR
 if ([string]::IsNullOrWhiteSpace($stateDir)) {
-    $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+    try {
+        $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+    } catch {
+        Stop-WithHeartbeat "STATE_DIR could not be read from $RepoRoot\.env: $($_.Exception.Message)"
+    }
 }
-if ([string]::IsNullOrWhiteSpace($stateDir)) { throw "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
+if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithHeartbeat "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
 $nowUtc = [System.DateTime]::UtcNow
 $nowIsWeekday = $nowUtc.DayOfWeek -ne [System.DayOfWeek]::Saturday -and $nowUtc.DayOfWeek -ne [System.DayOfWeek]::Sunday
@@ -183,28 +229,6 @@ $output | ForEach-Object { Write-RunLog "output: $_" }
 # safety net whose failure is least visible, because it only ever acts when
 # something else has already gone wrong. Its absence is now detectable on its
 # own schedule; a non-zero exit is reported as a failure.
-function Send-WatchdogHeartbeat {
-    param([string]$BaseUrl, [int]$ExitCode, [string]$Note)
-    if ([string]::IsNullOrWhiteSpace($BaseUrl)) { return 'unset' }
-    $url = if ($ExitCode -eq 0) { $BaseUrl } else { ($BaseUrl.TrimEnd('/') + '/fail') }
-    try {
-        $previous = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
-        try {
-            Invoke-WebRequest -Uri $url -Method Post -Body $Note -TimeoutSec 10 -UseBasicParsing | Out-Null
-        } finally {
-            $ProgressPreference = $previous
-        }
-        return 'sent'
-    } catch {
-        return "undelivered: $($_.Exception.Message)"
-    }
-}
-
-$watchdogUrl = $env:HEALTHCHECK_WATCHDOG_URL
-if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
-    $watchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
-}
 $heartbeat = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode $exitCode -Note "watchdog exit $exitCode"
 Write-RunLog "exit: $exitCode; heartbeat $heartbeat"
 exit $exitCode

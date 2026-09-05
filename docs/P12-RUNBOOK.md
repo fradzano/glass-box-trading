@@ -311,7 +311,7 @@ Then, still elevated:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1
-# expect: SCHEDULER CHECK PASSED (35 checks)
+# expect: SCHEDULER CHECK PASSED (43 checks)
 ```
 
 **Abort if:** any check fails. Do not enable anything yet.
@@ -370,7 +370,7 @@ every firing from here to 23:45 skips the cycle and reports both signals.
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-AgentCycle' -TaskPath '\GlassBoxTrading\'
 Enable-ScheduledTask -TaskName 'GlassBoxTrading-Watchdog'   -TaskPath '\GlassBoxTrading\'
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
-# expect: SCHEDULER CHECK PASSED (35 checks), both states Ready
+# expect: SCHEDULER CHECK PASSED (43 checks), both states Ready
 Get-Content C:\Users\felix\glass-box-state\longrun-1\cycle-run.log -Tail 5
 # expect, within 15 min: a "skip: outside the exchange session" line, liveness sent, readiness reported.
 # If any line instead shows a cycle running, STOP and disable both tasks: the
@@ -471,7 +471,7 @@ both tasks are enabled, and:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1 -ExpectEnabled
-# expect: SCHEDULER CHECK PASSED (35 checks), and both states Ready
+# expect: SCHEDULER CHECK PASSED (43 checks), and both states Ready
 ```
 
 **There are about ten minutes of slack between the 15:00 firing and this gate.**

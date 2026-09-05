@@ -209,14 +209,14 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
    * Both callers now go through here, and the mark goes down first, so a
    * process that dies between the two steps leaves the strict state behind.
    */
-  function markFenceBeforeHalt(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  function markFenceBeforeHalt(reason: string): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
     const store = readEpochStore(paths);
     if (store.kind === "present" && store.fencePending) return { ok: true };
-    return setFencePending(paths, true);
+    return setFencePending(paths, true, reason);
   }
 
   function haltForBindingMismatch(entries: readonly JournalEntry[], epoch: number, detail: string): void {
-    markFenceBeforeHalt();
+    markFenceBeforeHalt("ACCOUNT_BINDING_MISMATCH");
     const current = reconcileHaltProjection(entries);
     if (current.halted && current.reason === "ACCOUNT_BINDING_MISMATCH") return;
     appendUnderLock(entries, { at: utcIso(clock()), epoch, type: "HALT", reason: "ACCOUNT_BINDING_MISMATCH", detail: redact(detail), sticky: false });
@@ -328,8 +328,28 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH", lockHeld: true };
       }
     }
+    // R46-A2: a stop that cannot be recorded must still stop. Until now the
+    // marking rule covered only the two reasons `dispatchSafetyHalt` accepts,
+    // and every OTHER halt -- KILL, PROVENANCE_BROKEN, WORLD_UNREACHABLE, the
+    // deadline's own -- reached the journal through this ordinary append. A
+    // blind gate drove the KILL case: equity below the threshold, journal
+    // read-only, so `haltDurable` was false and nothing durable existed; after
+    // recovery and a new epoch the next cycle opened a position with no human
+    // release. The mark goes down BEFORE the append for every halt, under the
+    // same mutex, so the reason no longer decides whether a stop survives.
+    // A halt that lands keeps the mark too: it is cleared only by the manual
+    // release, which is the same human step the halt itself requires.
+    const haltMark = entryType === "HALT"
+      ? markFenceBeforeHalt(typeof (draft as { readonly reason?: unknown }).reason === "string" ? (draft as { readonly reason: string }).reason : "HALT")
+      : { ok: true as const };
     const appended = appendUnderLock(entries, draft);
-    if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
+    if (!appended.ok) {
+      return {
+        ok: false,
+        reason: haltMark.ok ? appended.reason : `${appended.reason}:FENCE_NOT_MARKED:${haltMark.reason}`,
+        lockHeld: true,
+      };
+    }
     if (store.seedPending) writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: false, resetPending: false });
     return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
   }
@@ -463,7 +483,7 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
           }
           // Both reasons this entry point accepts mark, so the reason no
           // longer decides (R44-A1); the shared helper above says why.
-          const marked = markFenceBeforeHalt();
+          const marked = markFenceBeforeHalt(reason);
           const loaded = loadJournal();
           if ("corrupt" in loaded) {
             return {

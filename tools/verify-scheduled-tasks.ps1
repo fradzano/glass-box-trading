@@ -61,8 +61,8 @@ $deadManMinutes = [math]::Round([int64]$policy.DEAD_MAN_BOUND_MS / 60000.0)
 # the trigger's local start hour, the weekday set, and a strict inequality on
 # the watchdog cadence.
 $expected = @(
-    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; MaxIntervalMinutes = $cycleIntervalMinutes; StrictlyBelow = $false; ExactIntervalMinutes = $cycleIntervalMinutes },
-    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; MaxIntervalMinutes = $deadManMinutes; StrictlyBelow = $true; ExactIntervalMinutes = $null }
+    [pscustomobject]@{ Name = 'GlassBoxTrading-AgentCycle'; Script = 'tools\cycle-run.ps1'; MaxIntervalMinutes = $cycleIntervalMinutes; StrictlyBelow = $false; ExactIntervalMinutes = $cycleIntervalMinutes; MinExecutionTimeLimitMinutes = 10 },
+    [pscustomobject]@{ Name = 'GlassBoxTrading-Watchdog'; Script = 'tools\watchdog-run.ps1'; MaxIntervalMinutes = $deadManMinutes; StrictlyBelow = $true; ExactIntervalMinutes = $null; MinExecutionTimeLimitMinutes = 6 }
 )
 
 # R44-B10: the checks below used to read Actions[0] and Triggers[0] and ignore
@@ -109,6 +109,14 @@ foreach ($spec in $expected) {
     $executable = [System.IO.Path]::GetFileName("$($action.Execute)")
     Add-Check -Name "$($spec.Name) runs powershell.exe" -Ok ($executable -ieq 'powershell.exe') -Detail "Execute=$($action.Execute)"
 
+    # R46-B1: PowerShell honours -Command and treats a following -File as one of
+    # ITS arguments, so an action reading
+    #   -Command "Write-Output x" -File "<the expected wrapper>"
+    # ran something else entirely and passed every check. -File must be the
+    # thing that executes, which means no competing entry point may appear.
+    $hasCommandForm = $argument -match '(?i)(^|\s)-(c|Command|e|EncodedCommand)(\s|:)'
+    Add-Check -Name "$($spec.Name) uses -File and nothing else runs" -Ok (-not $hasCommandForm) -Detail "arguments: $argument"
+
     $fileArgument = Get-FileArgument -Arguments $argument
     $expectedFile = Join-Path $RepoRoot $spec.Script
     $resolvedFile = if ([string]::IsNullOrWhiteSpace($fileArgument)) { $null } else { [System.IO.Path]::GetFullPath($fileArgument) }
@@ -152,6 +160,15 @@ foreach ($spec in $expected) {
         }
     }
 
+    # R46-B2: a MonthlyDOW trigger carries DaysOfWeek and a repetition just like
+    # a weekly one, and fires in one week of the month. The weekday set and the
+    # cadence therefore say nothing on their own -- the trigger's own type has
+    # to be asserted.
+    $triggerClass = "$($trigger.CimClass.CimClassName)"
+    Add-Check -Name "$($spec.Name) trigger is weekly, not monthly or one-off" -Ok ($triggerClass -eq 'MSFT_TaskWeeklyTrigger') -Detail "CIM class $triggerClass (expected MSFT_TaskWeeklyTrigger)"
+    $weeksInterval = $trigger.WeeksInterval
+    Add-Check -Name "$($spec.Name) repeats every week" -Ok ($null -ne $weeksInterval -and [int]$weeksInterval -eq 1) -Detail "WeeksInterval=$(if ($null -eq $weeksInterval) { '(absent)' } else { $weeksInterval })"
+
     # Exactly Monday to Friday, not "some days" (62 = Mon|Tue|Wed|Thu|Fri).
     $daysOfWeek = "$($trigger.DaysOfWeek)"
     Add-Check -Name "$($spec.Name) fires exactly Monday to Friday" -Ok ([int]$trigger.DaysOfWeek -eq $MONDAY_TO_FRIDAY) -Detail "DaysOfWeek=$daysOfWeek (expected $MONDAY_TO_FRIDAY)"
@@ -175,6 +192,19 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) runs on battery" -Ok ($settings.DisallowStartIfOnBatteries -eq $false) -Detail "DisallowStartIfOnBatteries=$($settings.DisallowStartIfOnBatteries)"
     Add-Check -Name "$($spec.Name) does not stop on battery" -Ok ($settings.StopIfGoingOnBatteries -eq $false) -Detail "StopIfGoingOnBatteries=$($settings.StopIfGoingOnBatteries)"
     Add-Check -Name "$($spec.Name) does not stack instances" -Ok ($settings.MultipleInstances -eq 'IgnoreNew') -Detail "MultipleInstances=$($settings.MultipleInstances)"
+
+    # R46-B3: the scheduler kills a run at ExecutionTimeLimit. A limit shorter
+    # than the work's own budget silently truncates recovery -- the cycle's
+    # wall-clock budget is 5 min plus composition, the watchdog's recovery the
+    # same -- and a killed wrapper posts nothing at all, so it reads as silence
+    # rather than as a failure. PT1M passed every check before this.
+    $limitRaw = "$($settings.ExecutionTimeLimit)"
+    $limitMinutes = $null
+    if (-not [string]::IsNullOrWhiteSpace($limitRaw)) {
+        try { $limitMinutes = ([System.Xml.XmlConvert]::ToTimeSpan($limitRaw)).TotalMinutes } catch { $limitMinutes = $null }
+    }
+    $limitOk = $null -ne $limitMinutes -and $limitMinutes -ge $spec.MinExecutionTimeLimitMinutes
+    Add-Check -Name "$($spec.Name) may run long enough to finish" -Ok $limitOk -Detail "ExecutionTimeLimit=$(if ([string]::IsNullOrWhiteSpace($limitRaw)) { '(absent)' } else { $limitRaw }) (need at least $($spec.MinExecutionTimeLimitMinutes) min)"
 
     $info = Get-ScheduledTaskInfo -TaskName $spec.Name -TaskPath $TaskFolder -ErrorAction SilentlyContinue
     if ($null -ne $info) {

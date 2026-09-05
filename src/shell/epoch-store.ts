@@ -74,12 +74,14 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
   const seedPending = record["seedPending"];
   const resetPending = record["resetPending"];
   const fencePending = record["fencePending"];
+  const fenceReason = record["fenceReason"];
   if (!Number.isSafeInteger(epoch) || (epoch as number) < 1 || typeof holderId !== "string" || typeof acquiredAt !== "string"
     || (seedPending !== undefined && typeof seedPending !== "boolean") || (resetPending !== undefined && typeof resetPending !== "boolean")
-    || (fencePending !== undefined && typeof fencePending !== "boolean")) {
+    || (fencePending !== undefined && typeof fencePending !== "boolean")
+    || (fenceReason !== undefined && fenceReason !== null && typeof fenceReason !== "string")) {
     return { kind: "unreadable", detail: "epoch store record is malformed" };
   }
-  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true, fencePending: fencePending === true };
+  return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true, fencePending: fencePending === true, fenceReason: typeof fenceReason === "string" ? fenceReason : null };
 }
 
 /**
@@ -92,12 +94,15 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
  * caller's memory. Clearing it is possible only by passing `false` explicitly,
  * which one function does: `setFencePending`.
  */
-export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean; readonly fencePending?: boolean }): void {
-  const inherited = record.fencePending === undefined ? readEpochStore(paths) : null;
-  const fencePending = record.fencePending === undefined
-    ? (inherited !== null && inherited.kind === "present" && inherited.fencePending)
-    : record.fencePending;
-  writeJsonAtomically(paths.epoch, { ...record, fencePending });
+export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean; readonly fencePending?: boolean; readonly fenceReason?: string | null }): void {
+  const inherited = record.fencePending === undefined || record.fenceReason === undefined ? readEpochStore(paths) : null;
+  const standing = inherited !== null && inherited.kind === "present" ? inherited : null;
+  const fencePending = record.fencePending === undefined ? (standing?.fencePending ?? false) : record.fencePending;
+  // The reason travels with the mark: inherited when omitted, and dropped when
+  // the mark itself is cleared, so a released deployment carries no stale
+  // explanation of why it once stopped.
+  const fenceReason = !fencePending ? null : (record.fenceReason === undefined ? (standing?.fenceReason ?? null) : record.fenceReason);
+  writeJsonAtomically(paths.epoch, { ...record, fencePending, fenceReason });
 }
 
 /**
@@ -108,11 +113,11 @@ export function writeEpochStore(paths: StatePaths, record: { readonly epoch: num
  * without a readable epoch store has no authority anyway, which is the other
  * half of the guarantee.
  */
-export function setFencePending(paths: StatePaths, pending: boolean): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+export function setFencePending(paths: StatePaths, pending: boolean, reason?: string): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
   const store = readEpochStore(paths);
   if (store.kind !== "present") return { ok: false, reason: `EPOCH_STORE_${store.kind.toUpperCase()}` };
   try {
-    writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: store.seedPending, resetPending: store.resetPending, fencePending: pending });
+    writeEpochStore(paths, { epoch: store.epoch, holderId: store.holderId, acquiredAt: store.acquiredAt, seedPending: store.seedPending, resetPending: store.resetPending, fencePending: pending, ...(reason === undefined ? {} : { fenceReason: reason }) });
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }

@@ -3,7 +3,7 @@
 // the shell into the snapshot the core receives. The core never reads it.
 // An unreadable or malformed flag counts as halted (fail closed).
 import { readFileSync } from "node:fs";
-import { notHalted } from "../core/journal.js";
+import { haltStateFrom, notHalted } from "../core/journal.js";
 import type { HaltState } from "../core/journal.js";
 import { writeJsonAtomically } from "./epoch-store.js";
 import type { StatePaths } from "./state-dir.js";
@@ -50,11 +50,21 @@ export function standingImpediment(paths: StatePaths): { readonly reason: string
   const store = readEpochStore(paths);
   const fencePending = store.kind === "present" && store.fencePending;
   const persisted = readHaltState(paths);
+  // R46-A3: the journal is the authority and the projection is a cache of it.
+  // Reading only the cache reported readiness SUCCESS over a real, journaled
+  // `HALT KILL` whose projection write had failed -- and repeated success
+  // pings suppress the external silence alarm too, so the one signal that
+  // would have carried the stop was the one that said all-clear. The journal
+  // is consulted first; the projection then only adds what the journal cannot
+  // contradict.
+  const journal = journalHaltState(paths);
+  if (journal !== null && journal.halted) return { reason: journal.reason ?? "UNKNOWN", fencePending };
   // Most specific first, so the operator is told the thing they must act on
-  // rather than a symptom of it. A journaled halt outranks everything: it
-  // names why the deployment stopped.
+  // rather than a symptom of it.
   if (persisted.halted) return { reason: persisted.reason ?? "UNKNOWN", fencePending };
-  if (fencePending) return { reason: "AUTH_FAILURE", fencePending: true };
+  // fencePending can only be true for a present store, so the reason it
+  // carries is readable here without another narrowing.
+  if (fencePending) return { reason: store.fenceReason ?? "AUTH_FAILURE", fencePending: true };
   // R44-B6: an unreadable authority state used to read as "no fence", so a
   // corrupt epoch.json reported readiness SUCCESS while every acquisition
   // returned EPOCH_UNREADABLE. An ABSENT store is a different thing entirely
@@ -66,6 +76,21 @@ export function standingImpediment(paths: StatePaths): { readonly reason: string
   // appending stays inside the gateway (asserted in tests/g12-fencing).
   const corruption = journalCorruption(paths);
   return corruption === null ? null : { reason: `JOURNAL_CORRUPT:${corruption}`, fencePending: false };
+}
+
+/**
+ * The halt state the JOURNAL asserts, or null when the journal cannot be read
+ * at all (which `journalCorruption` reports separately). This module only ever
+ * reads the journal; appending stays inside the gateway.
+ */
+function journalHaltState(paths: StatePaths): HaltState | null {
+  try {
+    const file = readJournalFile(paths);
+    if (file.parsed.corrupt.length > 0) return null;
+    return haltStateFrom(file.parsed.entries);
+  } catch {
+    return null;
+  }
 }
 
 /** The first unparseable line of the journal, or null when it reads cleanly (or cannot be read at all). */

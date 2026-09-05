@@ -146,7 +146,15 @@ if (-not (Test-Path -LiteralPath $agentEntry)) { Stop-WithLiveness "'$agentEntry
 
 $stateDir = $env:STATE_DIR
 if ([string]::IsNullOrWhiteSpace($stateDir)) {
-    $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+    # R46-B6: the liveness sender exists by now, but the reader can still throw
+    # -- a locked or unreadable .env under $ErrorActionPreference = 'Stop' ended
+    # the wrapper with no ping at all, and the failure was then indistinguishable
+    # from a machine that never fired for up to 45 minutes.
+    try {
+        $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+    } catch {
+        Stop-WithLiveness "STATE_DIR could not be read from $RepoRoot\.env: $($_.Exception.Message)"
+    }
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithLiveness "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 

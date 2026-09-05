@@ -1311,13 +1311,18 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   behind, and once the journal recovered the same epoch submitted a
   risk-increasing order with no human release (R44-A1). Both reasons are a
   refusal to trade until a human looks, which is exactly what the mark
-  records. **And the rule has exactly one implementation.** Three consecutive
-  gate rounds found it missing at a different entry point — the startup reads
-  (R43-B3), the safety-halt reason list (R44-A1), and the account-bound port's
-  own halt from inside a dispatch (R45-A1, driven to a risk-increasing order
-  after recovery and a restart). Three findings on one rule is a duty spread
-  over three call sites, not three defects, so every path that raises a safety
-  halt marks through the same helper, and the mark is cleared by exactly one thing: a human
+  records. **And it is not about credentials at all: EVERY halt marks before it
+  appends.** Four consecutive gate rounds found the rule missing somewhere —
+  the startup reads (R43-B3), the safety-halt reason list (R44-A1), the
+  account-bound port's own halt inside a dispatch (R45-A1), and finally every
+  remaining halt, which reaches the journal through the ordinary authoritative
+  append: `KILL`, `PROVENANCE_BROKEN`, `BROKER_PRICE_BREACH` and the rest
+  (R46-A2, driven to a new position after an unjournalable KILL). The narrowing
+  to credential rejections was the generator; a stop that cannot be recorded
+  must still stop, whatever stopped it. The mark therefore carries a
+  **reason** (`fenceReason`), so the operator is told what stopped the
+  deployment rather than being handed the credential-fence procedure for a
+  kill-switch. Every path marks through the same helper, and the mark is cleared by exactly one thing: a human
   un-halt. While it stands, the gateway refuses every risk-increasing broker
   mutation exactly as a journaled halt does — no stricter, so a risk-reducing
   close stays possible and a fenced book can still be flattened — and every
@@ -1372,8 +1377,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   machine, the scheduler or the process is gone. Separately, every cycle
   reports **readiness**: a success signal only when no halt, no fence and no
   alarm condition stands, and a failure signal naming the impediment
-  otherwise. A state **nobody can read** is such an impediment, not the absence
-  of one: an unreadable epoch store (every acquisition returns
+  otherwise. **The journal is the authority for that answer and the halt
+  projection is a cache of it**: a real `HALT` whose projection write failed
+  used to read as all-clear, and repeated success pings then suppressed the
+  external silence alarm too, so the one signal that should have carried the
+  stop was the one saying everything was fine (R46-A3). A state **nobody can
+  read** is such an impediment, not the absence of one: an unreadable epoch store (every acquisition returns
   `EPOCH_UNREADABLE`) and a journal whose lines no longer parse (every writer
   refuses with `JOURNAL_CORRUPT`) both fail the readiness signal, and an unset
   endpoint is a misconfiguration that exits non-zero rather than printing a
@@ -1381,10 +1390,14 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   **once**: a refusal that the startup validator has already signalled is not
   signalled again under a second name by the CLI entry point (R44-B7). And a
   wrapper that refuses before it can run the agent — no `STATE_DIR`, no node,
-  an unbuilt `dist` — still reports **liveness as a failure** with its reason,
-  because the scheduler fired and that is precisely what liveness claims; it
-  used to exit non-zero in silence and be found only when the next expected
-  ping timed out (R44-B8). A standing halt therefore re-reports itself on every cycle for as
+  an unbuilt `dist`, an unreadable `.env` or policy file — still reports
+  **liveness as a failure** with its reason, because the scheduler fired and
+  that is precisely what liveness claims; it used to exit non-zero in silence
+  and be found only when the next expected ping timed out (R44-B8, R46-B5/B6).
+  That duty is the **wrapper's**, both of them: the watchdog's own heartbeat
+  owes it too, and there it costs the most, because nothing else observes the
+  watchdog. The same rule reaches the readiness CLI: an unusable `STATE_DIR`
+  reports the refusal rather than exiting silently (R46-B7). A standing halt therefore re-reports itself on every cycle for as
   long as it stands; a later durable append is not permission to claim
   readiness, which is the defect this case exists to prevent — before it, a
   cycle that correctly halted on `AUTH_FAILURE` sent `success` because its

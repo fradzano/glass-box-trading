@@ -43,6 +43,7 @@
 - `tests/p9-presentation-guard.spec.ts`
 - `tests/publish-dashboard.spec.ts`
 - `tests/r44-signal-integrity.spec.ts`
+- `tests/r46-stop-integrity.spec.ts`
 - `tests/x1-x4-execution-pricing.spec.ts`
 - `tests/x5-x6-close-ladder.spec.ts`
 - `tests/x7-close-outcomes-resolve.spec.ts`
