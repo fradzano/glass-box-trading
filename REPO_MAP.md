@@ -21,6 +21,7 @@
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
+- `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
@@ -149,6 +150,7 @@
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
 - `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
+- `tests/p12-qualification-decoupling.spec.ts` — P12: a long paper run keeps the competition profile's protections — the
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
 - `tests/p8-cli-exit-codes.spec.ts` — P8 — the three CLI exit-code tables (S-G12-01). The convention the spec

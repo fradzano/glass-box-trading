@@ -191,7 +191,12 @@ function qualificationLine(projection: PerformanceProjection): string {
     case "NOT_APPLICABLE":
       return "Qualification gate: not applicable (dev profile or no competition calendar configured).";
     case "NOT_DUE":
-      return `Qualification gate: not yet due (checkpoint at epoch ms ${String(q.checkpointMs)}).`;
+      // A deployment whose qualifying checkpoint lies beyond its own flatten
+      // date never opens the window at all: the state is NOT_DUE for the whole
+      // run, no analyst brief is issued and no entry veto applies. Printing the
+      // instant rather than raw epoch milliseconds is what makes that legible
+      // to someone who did not configure it.
+      return `Qualification gate: not yet due — the qualifying checkpoint is ${escapeHtml(q.checkpointMs === null ? "not configured" : new Date(q.checkpointMs).toISOString())}. A checkpoint beyond this deployment's own flatten date means no qualification window opens during the run: no one-lot bound, no cap, no entry veto, and no competitive pressure of any kind.`;
     case "QUALIFIED":
       return `Qualification gate: QUALIFIED — ${String(q.fills.length)} ordinary competition fill(s) joined to INTENT and OUTCOME (first: INTENT seq ${String(q.fills[0]?.intentSeq ?? "?")}, OUTCOME seq ${String(q.fills[0]?.outcomeSeq ?? "?")}).`;
     case "COMPETITIVENESS_AT_RISK":
