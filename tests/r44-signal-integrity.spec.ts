@@ -15,6 +15,7 @@ import { probeDurableWrite, writeEpochStore } from "../src/shell/epoch-store.js"
 import { standingImpediment, writeHaltState } from "../src/shell/halt-state.js";
 import { probeStateDurability, resolveStateDir } from "../src/shell/state-dir.js";
 import { runStartup } from "../src/shell/startup.js";
+import { manualReleasePrecondition } from "../src/core/lifecycle.js";
 import type { StatePaths } from "../src/shell/state-dir.js";
 
 function scratchState(label: string): StatePaths {
@@ -51,6 +52,26 @@ describe("R44-B3 — the durability probe asks whether bytes land, not only whet
       expect(!probed.ok && probed.reason).toContain("state directory");
     } finally {
       rmSync(root, { force: true });
+    }
+  });
+
+  it("probeStateDurability fails on a directory that permissions call writable but that accepts no new file", () => {
+    // The mutation probe found this gap: neutering the byte-level call left
+    // every assertion green, because the other checks are permission checks
+    // that a full or otherwise write-refusing volume passes. ENOSPC is not
+    // reproducible portably; a directory occupying the probe file's own name
+    // has the same shape — `accessSync(root, W_OK)` succeeds and the open of
+    // that path does not.
+    const paths = scratchState("blocked");
+    try {
+      writeFileSync(paths.journal, "", "utf8");
+      expect(probeStateDurability(paths), "the baseline is clean").toEqual({ ok: true });
+      mkdirSync(path.join(paths.root, ".durability-probe"), { recursive: true });
+      const probed = probeStateDurability(paths);
+      expect(probed.ok, "permissions say yes and the write says no").toBe(false);
+      expect(!probed.ok && probed.reason).toMatch(/state directory/u);
+    } finally {
+      rmSync(paths.root, { recursive: true, force: true });
     }
   });
 
@@ -157,5 +178,22 @@ describe("R44-B7 — one scheduled invocation reports readiness once", () => {
     } finally {
       rmSync(paths.root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("R44-B9 — a manual release names the halt it releases", () => {
+  it("refuses a confirmed release that does not name a standing journaled halt, and says which number to use", () => {
+    // The gate's moment: a preview of HALT seq 1, a HALT seq 2 landing next,
+    // and a CAS-less release clearing both. The operator has just read the
+    // number in the preview, so naming it costs nothing.
+    expect(manualReleasePrecondition({ standingHaltSeq: 1, expectedHaltSeq: null })).toEqual({ ok: false, requiredHaltSeq: 1 });
+    expect(manualReleasePrecondition({ standingHaltSeq: 2, expectedHaltSeq: 2 })).toEqual({ ok: true });
+    // Naming a different one is not this check's job — the gateway's own CAS
+    // refuses it — but it must get that far.
+    expect(manualReleasePrecondition({ standingHaltSeq: 2, expectedHaltSeq: 1 })).toEqual({ ok: true });
+  });
+
+  it("allows the one case that has no sequence number to name: a fence with no journaled halt", () => {
+    expect(manualReleasePrecondition({ standingHaltSeq: null, expectedHaltSeq: null })).toEqual({ ok: true });
   });
 });

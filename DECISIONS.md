@@ -3060,3 +3060,23 @@ small, no ADR split).
   `Europe/Berlin` and three exact crons from an **unelevated** shell, and the
   installer refusing a 7-minute watchdog interval. Not claimed: a bis-0
   termination, and nothing on this branch is live on the host.
+- **2026-09-05 — R44 fix-set mutation probe: 9 of 10 mutants caught; the one
+  survivor is declared.** The probe broke each R44 fix on purpose and asked
+  whether the suite noticed, with a baseline typecheck so a mutant that does
+  not compile is reported as NOT-COMPILED rather than counted as a survivor.
+  Its first run caught six of ten and was worth more than the fixes it tested:
+  neutering the byte-level durability call left every assertion green, because
+  the surrounding checks are permission checks that a write-refusing volume
+  passes — so `probeStateDurability` now has a test whose directory occupies
+  the probe file's own name, the same shape as ENOSPC and reproducible on this
+  platform. Two mutants did not compile, which measures nothing, and the cause
+  was the same in both: the `--expect-halt-seq` guard was inline in a CLI entry
+  point with top-level await, i.e. a **decision living in the shell**, so
+  nothing could import it. It is `manualReleasePrecondition` in
+  `src/core/lifecycle.ts` now — pure, and the thing the test measures. Second
+  run: 9 of 10. The survivor is `fsyncSync` inside `probeDurableWrite`.
+  Declared, not fixed: on a healthy disk the write succeeds with or without the
+  flush, and the case where the difference shows — a write that is accepted and
+  lost at flush — is not producible from a test on this platform. The call
+  stays, because it is what makes the probe answer the question it claims to.
+  `npm run verify` exit 0 at 47 files / 645 tests.

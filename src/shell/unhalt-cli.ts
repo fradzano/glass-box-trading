@@ -13,6 +13,7 @@
 // what orders are resting at the broker.
 import { readFileSync } from "node:fs";
 import { manualUnhalt } from "./manual-unhalt.js";
+import { manualReleasePrecondition } from "../core/lifecycle.js";
 import { readEpochStore } from "./epoch-store.js";
 import { readHaltState } from "./halt-state.js";
 import { resolveStateDir } from "./state-dir.js";
@@ -115,11 +116,15 @@ if (!args.confirm) {
 // what the operator just read, so requiring it costs nothing and closes the
 // window. A fence with no journaled halt has no sequence number to name, and
 // only that case may omit it.
-if (lastTransition !== undefined && lastTransition.type === "HALT" && args.expectedHaltSeq === null) {
+const precondition = manualReleasePrecondition({
+  standingHaltSeq: lastTransition !== undefined && lastTransition.type === "HALT" ? lastTransition.seq : null,
+  expectedHaltSeq: args.expectedHaltSeq,
+});
+if (!precondition.ok) {
   process.stderr.write([
     "",
-    `REFUSED: a journaled halt stands (HALT seq ${String(lastTransition.seq)}). Re-run with`,
-    `  --expect-halt-seq ${String(lastTransition.seq)}`,
+    `REFUSED: a journaled halt stands (HALT seq ${String(precondition.requiredHaltSeq)}). Re-run with`,
+    `  --expect-halt-seq ${String(precondition.requiredHaltSeq)}`,
     "so the release applies to the halt you just read and refuses if another one",
     "landed in between.",
     "",

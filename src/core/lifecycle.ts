@@ -867,3 +867,22 @@ export function terminalDraft(context: DraftContext, snapshot: JournalSnapshot, 
 export function ladderRouteLabel(route: "expiry" | "deadline" | "residue" | "watchdog" | "kill" | "ordinary"): CloseRouteLabel {
   return route;
 }
+
+/**
+ * S-G12-04 / R44-B9: may this manual release proceed without naming the halt
+ * it releases? Only when there is no journaled halt to name — a fence with no
+ * HALT entry has no sequence number. Whenever one stands, the operator has
+ * just read it in the preview, so requiring it costs nothing and closes the
+ * window in which a second halt lands between preview and confirmation and is
+ * released unseen. The gate executed exactly that: a preview of
+ * `HALT seq 1 AUTH_FAILURE`, a `HALT seq 2 ACCOUNT_BINDING_MISMATCH` arriving
+ * next, and a CAS-less release clearing both.
+ */
+export function manualReleasePrecondition(input: {
+  readonly standingHaltSeq: number | null;
+  readonly expectedHaltSeq: number | null;
+}): { readonly ok: true } | { readonly ok: false; readonly requiredHaltSeq: number } {
+  if (input.standingHaltSeq === null) return { ok: true };
+  if (input.expectedHaltSeq === null) return { ok: false, requiredHaltSeq: input.standingHaltSeq };
+  return { ok: true };
+}
