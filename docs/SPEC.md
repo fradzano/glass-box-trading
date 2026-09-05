@@ -1265,7 +1265,12 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   and the watchdog and the deadline runtime keep their close-oriented window
   (from zero remaining sessions, full configured strike distance) but build it
   through the same shared, pure window builder, so there is exactly one place
-  where a window is defined. (#72 #73, A17, A29)
+  where a window is defined. That window covers a near expiry but is still a
+  band around spot, so both of them pass their own held identities into it as
+  well: the flattener of last resort is the last place that may lose a
+  contract to a band. A watchdog that could not compose reads no book, builds
+  no window and passes none — it fences and halts exactly as before.
+  (#72 #73, A17, A29)
 - **S-X-08** A management refusal is journaled, not merely printed. Whenever
   the management step plans a close and then does not submit it — a plan veto,
   an unavailable price, a failed eligibility check — it appends a

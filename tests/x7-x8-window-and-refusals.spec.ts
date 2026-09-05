@@ -60,6 +60,19 @@ describe("S-X-07 the cycle's market observation covers the book", () => {
     const drifted = "SPY261016P00600000";
     expect(cycleWindow(DAYS, TRADING_DAY, CONFIG, [drifted]).heldContractIds).toContain(drifted);
   });
+
+  it("the closing window carries held identities too: the flattener is the last place that may lose a contract to a band", () => {
+    // The watchdog and the deadline runtime price the closes nobody else will.
+    // Their window starts at zero sessions, which covers a near expiry, but it
+    // is still a band around spot and a drifted strike falls out of it.
+    const drifted = "SPY261016P00600000";
+    const window = closingWindow(DAYS, TRADING_DAY, CONFIG, [drifted]);
+    expect(window.heldContractIds).toEqual([drifted]);
+    expect(window.expiries).toContain("2026-09-04");
+    // Called without a book (the fence-only watchdog composition), it degrades
+    // to exactly the window it built before this change.
+    expect(closingWindow(DAYS, TRADING_DAY, CONFIG).heldContractIds).toEqual([]);
+  });
 });
 
 describe("S-X-08 a management refusal is journaled, not merely printed", () => {

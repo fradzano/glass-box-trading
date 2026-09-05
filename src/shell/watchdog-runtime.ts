@@ -146,6 +146,9 @@ function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort): Watchdo
   return {
     paths: options.paths,
     secrets: [],
+    // Fence-only: no book is read and no window is built, so the universe is
+    // empty rather than guessed from a configuration that did not validate.
+    underlyingUniverse: [],
     clock: options.clock,
     instanceId: options.instanceId,
     lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS,
@@ -214,11 +217,11 @@ function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort
  * uses the full configured strike distance. It is called from inside
  * `runWatchdog`, after the fence — never during composition.
  */
-function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStartup, clock: () => number): () => Promise<MarketObservation> {
-  return async (): Promise<MarketObservation> => {
+function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStartup, clock: () => number): (heldContractIds: readonly string[]) => Promise<MarketObservation> {
+  return async (heldContractIds: readonly string[]): Promise<MarketObservation> => {
     const now = clock();
     const days = await adapter.calendar(isoDate(now, CALENDAR_LOOKBACK_DAYS), isoDate(now, CALENDAR_LOOKAHEAD_DAYS));
-    return adapter.market(closingWindow(days, newYorkDate(now), config.decision));
+    return adapter.market(closingWindow(days, newYorkDate(now), config.decision, heldContractIds));
   };
 }
 
@@ -315,6 +318,7 @@ function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort
     deps: {
       paths: options.paths,
       secrets,
+      underlyingUniverse: config.decision.underlyingUniverse,
       clock: options.clock,
       instanceId: options.instanceId,
       lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs,

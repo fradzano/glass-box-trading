@@ -56,6 +56,7 @@ function watchdogDeps(harness: LifecycleHarness, overrides: Partial<WatchdogDepe
   return {
     paths: harness.paths,
     secrets: [],
+    underlyingUniverse: ["SPY"],
     clock: () => harness.clock.now,
     instanceId: "watchdog",
     lockTakeoverBoundMs: 60_000,
