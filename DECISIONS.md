@@ -2844,3 +2844,105 @@ small, no ADR split).
 
   Not claimed: that this is verified beyond the tests and the gate round on it.
   `npm run verify` exit 0 at 46 files / 619 tests.
+- **2026-09-05 — R43 readiness gate at `ab70440`: NO-GO (A=0, B=12, C=6), plus
+  an owner-reported A-class blocker; all closed except three declared limits.**
+  The gate ran blind in the worktree `gbt-r43`, prompt
+  `prompts/R43-p12-readiness-gate.md`, job `task-mtohipn2-msyhfy`, report
+  archived under `responses/R43-task-mtohipn2-msyhfy/`. Separately the owner and
+  an independent checker executed the un-halt ordering defect and filed it as
+  class A with a reproduction (`.tmp/codex-review-80ea1ea/probe.mjs`). Twelve
+  findings on one change set is the honest measure of how much of this was
+  assumed rather than executed.
+
+  **The fence had four ways out, and they shared one cause.** The mark was
+  written in one place and read in one place, but *preserved* nowhere: three
+  call sites rewrote the epoch store for their own reasons and any of them
+  omitting the field freed a fenced deployment. Rather than patch the sites,
+  `writeEpochStore` now inherits an omitted `fencePending` from the store on
+  disk, so no caller can forget it and none will need to remember. The other
+  three: `dispatchManualUnhalt` cleared the mark *before* the halt CAS check and
+  the UNHALT append, so a refused or undurable release still freed the
+  deployment (A1/B4 — the UNHALT is now appended first and the mark cleared only
+  after it lands); `dispatchSafetyHalt` halted without marking, so a 401 on the
+  startup account or calendar read left nothing behind (B3 — it marks on
+  `AUTH_FAILURE`, and still does not on `ACCOUNT_BINDING_MISMATCH`, which is not
+  a credential rejection); and with *both* stores unwritable an
+  already-acquired writer kept its authority and traded after recovery (B1).
+  B1's answer is not a fourth place to write but a **pre-flight durability
+  probe**: before any broker read, a cycle checks that the journal, the epoch
+  store and the halt projection are writable, and blocks entries with an active
+  `STATE_NOT_DURABLE` signal when they are not. Its first draft blocked the
+  whole cycle and broke S-CYC-06's emergency close — a journal we cannot write
+  is never a reason to stop reducing risk — so it blocks entries only. The
+  spec's boundary table claimed more than the code could deliver and now states
+  the residual plainly: with no writable surface at the instant of rejection and
+  full later recovery, no mark survives, and the alarm is the handover.
+
+  **Readiness was healable by three other processes.** The deadline one-shots
+  sent a success over a standing halt in all four combinations of {journaled
+  halt, marker-only fence} × {reconciliation, terminal} (B5); a startup refusal
+  sent nothing at all, so a missing analyst manifest journaled its halt and the
+  endpoint saw zero requests (B6); the watchdog's fail body named only the
+  takeover and omitted the halt reason (C2). The standing impediment is now read
+  in one place, `standingImpediment`, by all three runtimes, and `agent-cli`
+  fail-pings `STARTUP_REFUSED:<stage>` and `CYCLE_ABORTED`.
+
+  **The qualification window reopened before the deployment ended.** With the
+  checkpoint one day after the flatten date, the window opened at
+  2026-12-09T20:00Z — on the journaling-only day — and the real runner issued an
+  active one-lot brief and fail-pinged `COMPETITIVENESS_AT_RISK` (B9). The
+  checkpoint moved to 2027-06-01, months clear of any slip. The test that missed
+  it copied the constants and stopped sampling at the flatten date; it now loads
+  `config/policy.json` and scans every minute to three days past shutdown. A
+  test that copies the values it is meant to check cannot see them change.
+
+  **The operator package promised things it did not have.** `manual-unhalt.js`
+  has no entry point: running it exits 0 and changes nothing, so a fenced
+  deployment stayed fenced while the operator believed they had released it
+  (B10). `src/shell/unhalt-cli.ts` is the missing command — it prints the
+  standing state and the fence procedure, requires `--operator`, `--reason` and
+  `--confirm`, and was exercised end to end (a refusal keeps the fence, a
+  release clears it). The activation gate accepted a supervised cycle and a
+  checker that itself declares reboot and signed-out operation unproven (B11);
+  it now lists all six conditions, three separate silence drills among them, and
+  marks which are proven by test and which only on the host.
+
+  **The scheduler checks certified the wrong things.** The task verifier
+  compared substrings, so cmd.exe, a 01:00 trigger, a weekends-only schedule and
+  a watchdog interval exactly at the dead-man bound all passed 26 checks (B7);
+  every expectation is now exact and it reports 30. The documented alert
+  schedule produced alarms in ordinary operation, because readiness was reported
+  only on firings that ran a cycle — a set whose local times move an hour in the
+  DST-mismatch week — while the cron also expected a liveness ping at 23:45 that
+  the trigger never produced (B8). Readiness now reports on **every** firing
+  through `readiness-cli.ts`, the trigger window is snapped to whole quarter
+  hours so its firings map to an exact cron, and the installer prints the
+  expression, timezone and grace for each check rather than the runbook guessing.
+  Coverage ignored the scheduler's local weekday, so `Pacific/Kiritimati` passed
+  66 weekdays whose sessions land on the local Saturday (B12).
+
+  **Two things the owner asked for beyond the gate.** The watchdog now has its
+  own heartbeat endpoint: both other checks stayed green while it alone was dead,
+  because liveness comes from the cycle wrapper and readiness from the state
+  files — the safety net whose failure was least visible. And the installer
+  registers **disabled** unless `-Activate` is passed, so installing is no
+  longer the same act as going live.
+
+  **Executed on the dev-profile scratch state, not claimed:** a watchdog
+  takeover — a journal stale by 60 minutes against a 50-minute bound produced
+  `assessment: stale`, `acquired: WON` at epoch 4, a journaled
+  `HALT WATCHDOG_TAKEOVER`, and a fail ping; the readiness CLI then reported
+  `HALT_STANDING:WATCHDOG_TAKEOVER`, so the check stays red until a human
+  clears it. Also executed: all six alert signals against a real HTTP endpoint,
+  and Codex's own reproduction probe, unchanged, now returning
+  `fencePending: true` and `halted: true` on both of its paths.
+
+  **Declared, not closed.** Three host-level proofs cannot be produced from
+  here and are owner steps in the runbook: a clean reboot, S4U execution with
+  the session signed out, and a powered-off machine. The task verifier says so
+  itself rather than implying otherwise. Also still declared: the fence mark's
+  write-before-append ordering is unobservable in-process, since both orderings
+  set it before returning; it is enforced by structure and by the S-G12-08 text.
+
+  `npm run verify` exit 0 at 46 files / 632 tests. Not claimed: a bis-0
+  termination.
