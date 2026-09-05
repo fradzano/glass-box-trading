@@ -43,23 +43,29 @@ export function createPingPort(options: PingOptions): PingPort {
       clearTimeout(timer);
     }
   };
+  // A blank string is an unset endpoint, not an endpoint whose address is "".
+  // `.env` supplies "" for a key that is present and empty, and a caller that
+  // deliberately silences the port -- a test naming the variable so it cannot
+  // inherit the operator's real one -- writes "" rather than deleting it.
+  // Treating that as a URL produced a fetch to the empty string.
+  const endpoint = options.url === null || options.url.trim().length === 0 ? null : options.url;
   return {
     async success(deadlineAtMs?: number): Promise<void> {
-      if (options.url === null) {
+      if (endpoint === null) {
         if (deadlineAtMs !== undefined && options.clock() >= deadlineAtMs) throw new Error("PING_DEADLINE_EXCEEDED");
         record("success");
         return;
       }
-      await send(options.url, { method: "GET" }, deadlineAtMs);
+      await send(endpoint, { method: "GET" }, deadlineAtMs);
       record("success");
     },
     async fail(conditions: readonly string[], deadlineAtMs?: number): Promise<void> {
-      if (options.url === null) {
+      if (endpoint === null) {
         if (deadlineAtMs !== undefined && options.clock() >= deadlineAtMs) throw new Error("PING_DEADLINE_EXCEEDED");
         record(`fail ${conditions.join(",")}`);
         return;
       }
-      await send(`${options.url}/fail`, { method: "POST", body: conditions.join("\n"), headers: { "Content-Type": "text/plain" } }, deadlineAtMs);
+      await send(`${endpoint}/fail`, { method: "POST", body: conditions.join("\n"), headers: { "Content-Type": "text/plain" } }, deadlineAtMs);
       record(`fail ${conditions.join(",")}`);
     },
   };

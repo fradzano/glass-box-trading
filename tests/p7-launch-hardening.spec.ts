@@ -137,6 +137,13 @@ describe("P7 launch hardening — independent account identity", () => {
           STATE_DIR: stateRoot,
           BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
           ANALYST_MODEL: "claude-sonnet-5",
+          // Named so they cannot be inherited from the developer's real .env:
+          // `buildRuntime` resolves the file first and these on top, and an
+          // unnamed key survives. A test that pings the operator's live check
+          // fires a real alarm (tests/setup-no-live-endpoints.ts).
+          HEALTHCHECK_PING_URL: "",
+          HEALTHCHECK_LIVENESS_URL: "",
+          HEALTHCHECK_WATCHDOG_URL: "",
         },
         clock: () => now + 1_000,
         objective: "certificate",
@@ -166,6 +173,11 @@ describe("P7 launch hardening — independent account identity", () => {
         ALPACA_DEV_ACCOUNT_ID: EXPECTED,
         STATE_DIR: stateRoot,
         BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
+        // Named so the refusal below cannot ping the operator: see the other
+        // sites and tests/setup-no-live-endpoints.ts.
+        HEALTHCHECK_PING_URL: "",
+        HEALTHCHECK_LIVENESS_URL: "",
+        HEALTHCHECK_WATCHDOG_URL: "",
       },
       clock: () => now,
       objective: "certificate",
@@ -210,6 +222,13 @@ describe("P7 launch hardening — independent account identity", () => {
           STATE_DIR: stateRoot,
           BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
           ANALYST_MODEL: "claude-sonnet-5",
+          // Named so they cannot be inherited from the developer's real .env:
+          // `buildRuntime` resolves the file first and these on top, and an
+          // unnamed key survives. A test that pings the operator's live check
+          // fires a real alarm (tests/setup-no-live-endpoints.ts).
+          HEALTHCHECK_PING_URL: "",
+          HEALTHCHECK_LIVENESS_URL: "",
+          HEALTHCHECK_WATCHDOG_URL: "",
         },
         clock: () => now,
         objective: "certificate",
@@ -305,6 +324,14 @@ describe("P7 launch hardening — independent account identity", () => {
           STATE_DIR: stateRoot,
           BOOTSTRAP_DIAGNOSTIC_SINK: path.join(stateRoot, "startup-diagnostics.jsonl"),
           ANALYST_MODEL: "claude-sonnet-5",
+          // Named so they cannot be inherited from the developer's real .env:
+          // `buildRuntime` resolves the file first and these on top, and an
+          // unnamed key survives. A test that pings the operator's live check
+          // fires a real alarm (tests/setup-no-live-endpoints.ts).
+          HEALTHCHECK_LIVENESS_URL: "",
+          HEALTHCHECK_WATCHDOG_URL: "",
+          // This one is deliberate: a local stub listener, so the test can
+          // assert what the fence actually sends.
           HEALTHCHECK_PING_URL: listener.url,
         },
         clock: () => now,

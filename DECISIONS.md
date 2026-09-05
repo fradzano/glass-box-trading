@@ -3670,3 +3670,39 @@ small, no ADR split).
   absent from `.env` and are required by `validateStartupConfig` — they come
   from `config/policy.json`, which is merged into the same raw configuration.
   Verified before reporting rather than after.
+- **2026-09-06 — the test suite was pinging the operator's live readiness
+  check. Found from a ping counter that was off by two.** After the rotation the
+  three new checks read `pings=2, 2, 4`: liveness and watchdog had exactly the
+  two the alert-path test sends, readiness had two more. The ping log named
+  them — `ua=node`, both `fail`, one before and one after the operator's own
+  run — and a before/after count around
+  `npx vitest run tests/p7-launch-hardening.spec.ts` moved readiness from 4 to
+  5. Reproduced, not inferred.
+
+  **The seam looks harmless.** `buildRuntime({ repoRoot: process.cwd(),
+  processEnv: { …a few synthetic values } })` resolves its environment as the
+  real `.env` **first** and the given values on top, so every key a test does
+  not name survives from the developer's file — `HEALTHCHECK_PING_URL` among
+  them. The startup refusal the test asserts then sends a genuine failure ping
+  to the live endpoint. The tests were careful about the Alpaca credentials and
+  said so in a comment; the alerting URL was simply not on the list.
+
+  **Why this mattered more than the noise suggests.** `npm run verify` is
+  condition 1 of the activation gate and the thing to run after any change
+  during a three-month unattended run. A suite that alarms the operator every
+  time it **passes** teaches them to ignore the one signal that says the
+  deployment cannot trade. An alerting system that cries wolf is not a degraded
+  alerting system; it is an absent one, and it would have been absent by the
+  operator's own trained judgement rather than by any technical failure.
+
+  **Closed as a class, not as five call sites.** `tests/setup-no-live-endpoints.ts`
+  runs in every test file and makes any request to `hc-ping.com` or
+  `healthchecks.io` throw with an explanation — so the next test that inherits
+  the file fails loudly instead of paging anyone. The five sites then name the
+  three variables explicitly (one keeps a local stub listener, which is the
+  point of that test), and `createPingPort` treats a blank endpoint as unset
+  rather than as an endpoint whose address is the empty string.
+
+  Verified after the fix: three consecutive full `npm run verify` runs sent
+  **zero** pings; the counters stayed at 2 / 5 / 2. `npm run verify` exit 0 at
+  48 files / 658 tests.
