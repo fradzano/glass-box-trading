@@ -283,6 +283,11 @@ Get-Content C:\Users\felix\glass-box-state\longrun-1\journal.jsonl -Tail 2
 
 ## During the run
 
+Who detects each kind of failure, which signal appears or goes missing,
+after how long, and what the system will and will not close by itself:
+[`P12-INCIDENT-PATHS.md`](P12-INCIDENT-PATHS.md). Read it once before
+activation, not during the first alert.
+
 **Weekly:** publish the dashboard through the digest-neutral path in
 [`PUBLISH-RUNBOOK.md`](PUBLISH-RUNBOOK.md), from the `gbt-publish` worktree, and
 check the probe comes back clean.

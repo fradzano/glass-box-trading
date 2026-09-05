@@ -23,6 +23,7 @@
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
 - `docs/P12-CALENDAR-PROMPTS.md` — P12 — calendar prompts for Gemini
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
+- `docs/P12-INCIDENT-PATHS.md` — P12 — how an incident actually reaches me
 - `docs/P12-RUNBOOK.md` — P12 runbook — the three-month paper run
 - `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
