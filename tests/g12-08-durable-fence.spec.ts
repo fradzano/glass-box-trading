@@ -14,6 +14,7 @@ import { manualUnhalt } from "../src/shell/manual-unhalt.js";
 import { readEpochStore, setFencePending } from "../src/shell/epoch-store.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { planEpochAcquisition } from "../src/core/authority.js";
+import { readinessDelivery } from "../src/shell/agent-runtime.js";
 import { planPing } from "../src/core/lifecycle.js";
 import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { cleanupLifecycleDirs, freshLifecyclePaths, lifecycleHarness, lifecycleMarket, P5_BINDING, P5_NOW } from "./lifecycle-fixtures.js";
@@ -107,6 +108,24 @@ describe("S-G12-08 — the fence mark is set before the entry is attempted and o
     expect((await gatewayFor(harness.paths).openJournal()).halt.halted).toBe(false);
   });
 
+  it("a release that cannot clear the mark is refused, never half-applied", async () => {
+    // The operator must not walk away believing they lifted a fence that will
+    // still be standing at the next cycle.
+    const harness = await lifecycleHarness();
+    expect(setFencePending(harness.paths, true).ok).toBe(true);
+    chmodSync(harness.paths.epoch, 0o444);
+    try {
+      const refused = await manualUnhalt({ paths: harness.paths, operator: "felix", reason: "attempted release", clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 });
+      expect(refused.ok).toBe(false);
+      expect((refused as { readonly reason: string }).reason).toContain("FENCE_NOT_CLEARED");
+    } finally {
+      chmodSync(harness.paths.epoch, 0o666);
+    }
+    // Still fenced afterwards, which is the whole point of refusing.
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending).toBe(true);
+  });
+
   it("a risk-reducing close stays possible while fenced: no stricter than a journaled halt", async () => {
     // A fenced book must still be flattenable once the credentials work again;
     // the fence blocks risk-INCREASING orders, which is exactly what a
@@ -179,6 +198,16 @@ describe("S-G14-05 — liveness and readiness are two claims", () => {
     expect(fenced.pingConditions).toContain("HALT_STANDING:AUTH_FAILURE");
     expect(fenced.pingConditions).toContain("CREDENTIAL_FENCE_UNRELEASED");
     expect(harness.ping.record.failures.at(-1)?.conditions).toEqual(fenced.pingConditions);
+  });
+
+  it("the delivery carries the readiness conditions, not the cycle's own alarms", () => {
+    // The binding this replaces shipped exactly that defect once.
+    expect(readinessDelivery({ ping: "success", pingConditions: [] })).toEqual({ kind: "success" });
+    expect(readinessDelivery({ ping: "fail", pingConditions: ["HALT_STANDING:AUTH_FAILURE", "CREDENTIAL_FENCE_UNRELEASED"] }))
+      .toEqual({ kind: "fail", conditions: ["HALT_STANDING:AUTH_FAILURE", "CREDENTIAL_FENCE_UNRELEASED"] });
+    expect(readinessDelivery({ ping: "fail", pingConditions: [] })).toEqual({ kind: "fail", conditions: [] });
+    expect(readinessDelivery({ ping: "none", pingConditions: [] })).toBeNull();
+    expect(readinessDelivery({ ping: null, pingConditions: [] })).toBeNull();
   });
 
   it("and it goes green again only after the human release", async () => {

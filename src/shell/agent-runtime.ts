@@ -96,6 +96,20 @@ export type RuntimeBuild =
  * itself is measurable — R41-C2 found this seam and three like it passing the
  * whole suite with the identities replaced by an empty list.
  */
+/**
+ * What the deferred delivery must send for a finished cycle (S-G14-05). Named
+ * and exported because the binding that used to do this inline shipped a real
+ * defect: it delivered `alarmConditions`, so a fenced cycle POSTed an empty
+ * alert body and the operator would have been woken by a signal that said
+ * nothing. A one-line binding to a tested function is the smallest shape that
+ * cannot repeat it.
+ */
+export function readinessDelivery(report: { readonly ping: "success" | "fail" | "none" | null; readonly pingConditions: readonly string[] }): { readonly kind: "success" } | { readonly kind: "fail"; readonly conditions: readonly string[] } | null {
+  if (report.ping === "success") return { kind: "success" };
+  if (report.ping === "fail") return { kind: "fail", conditions: report.pingConditions };
+  return null;
+}
+
 export function cycleMarketPort(
   market: (window: MarketWindow, deadlineAtMs?: number) => Promise<MarketObservation>,
   days: readonly CalendarDay[],
@@ -469,8 +483,9 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
         // continuation cannot emit a late success. The concrete adapter caps
         // delivery to the remaining absolute deadline as well.
         try {
-          if (report.ping === "success") await ping.success(deadlineAtMs);
-          if (report.ping === "fail") await ping.fail(report.pingConditions, deadlineAtMs);
+          const delivery = readinessDelivery(report);
+          if (delivery?.kind === "success") await ping.success(deadlineAtMs);
+          if (delivery?.kind === "fail") await ping.fail(delivery.conditions, deadlineAtMs);
         } catch {
           // Delivery is best effort; a missed success is visible to the dead-man check.
         }

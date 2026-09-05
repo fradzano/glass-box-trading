@@ -220,6 +220,51 @@ describe("render-site.mjs — renders from dist/, keeps the site tree verbatim, 
     await expect(renderSite(goldenOptions(journalCopy(), out, NOW_MS + 60_000))).rejects.toThrow(/host-safe deploy paths collide/u);
   });
 
+  it("bounds the per-cycle detail blocks without ever dropping a cycle from the table", async () => {
+    // Measured 2026-09-05: at 2,000 cycles the page reached 5.2 MiB because
+    // every cycle got a detail block. Bounding those is fine; bounding the
+    // TABLE would delete public evidence, which CONCEPT and SUBMISSION-SPEC do
+    // not allow. This pins the difference.
+    const { renderDashboard } = await import("../src/shell/render-dashboard.js");
+    const { projectPerformance, assessFreshness } = await import("../src/core/projection.js");
+    const { expectationFor } = await import("../src/shell/publisher.js");
+    const entries = parseJournalText(readFileSync(GOLDEN_JOURNAL, "utf8")).entries;
+    const bootstrap = entries[0];
+    const cycle = entries.find(entry => entry.type === "CYCLE");
+    if (bootstrap === undefined || cycle === undefined) throw new Error("golden journal shape changed");
+
+    let at = Date.parse(bootstrap.at);
+    const many = [bootstrap, ...Array.from({ length: 260 }, (_unused, index) => {
+      at += 900_000;
+      return { ...cycle, seq: index + 2, at: new Date(at).toISOString(), cycleIndex: index + 2 };
+    })];
+
+    const last = many[many.length - 1];
+    if (last === undefined) throw new Error("synthetic journal is empty");
+    const projection = projectPerformance(many, "sha256:0123456789abcdef", { at: last.at, kind: "latest" }, TEST_ONLY_GOLDEN_EXPECTATIONS);
+    const html = renderDashboard(projection, expectationFor(projection), {
+      renderedAt: last.at,
+      freshness: assessFreshness(projection.lastUpdatedAt, at + 1000, 900_000, 3_000_000),
+      degradation: { degraded: false, explanation: "" },
+      source: { repositoryUrl: "https://example.invalid", journalRevisionUrl: null, corePath: "src/core/decision.ts", evidenceTestPath: "tests/g1-defined-risk.spec.ts", evidenceDebtRow: "RES-P1-01a" },
+      pinned: [],
+      routeLabel: "bounded detail",
+      styles: readFileSync(path.join(REPO_ROOT, "assets", "dashboard.css"), "utf8"),
+    });
+
+    // Every cycle keeps a table row linking to it...
+    for (const entry of many) expect(html, `seq ${String(entry.seq)} must keep its row`).toContain(`href="#cycle-${String(entry.seq)}"`);
+    // ...while only the most recent get a detail section.
+    const detailSections = [...html.matchAll(/<section class="cycle" id="cycle-(\d+)"/gu)].map(match => Number(match[1]));
+    expect(detailSections.length).toBeLessThan(many.length);
+    expect(detailSections).toHaveLength(200);
+    expect(detailSections).toContain(last.seq);
+    expect(detailSections).not.toContain(bootstrap.seq);
+    // ...and the page says what it left out and where the full record is.
+    expect(html).toContain("The table above is complete");
+    expect(html).toContain("remains in the journal");
+  });
+
   it("carries the Vercel project link (.vercel/) in the deploy directory forward through a re-render", async () => {
     const out = scratchDir();
     const journal = journalCopy();
