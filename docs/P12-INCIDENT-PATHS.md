@@ -163,11 +163,14 @@ why `STATE_NOT_DURABLE` is a readiness condition and not a log line.
 
 ## Case 4 — only the watchdog task fails
 
-**Who notices:** the watchdog's own check, and only it. This was an R43 finding
-and it was verified the unhappy way: with the watchdog task disabled, **both**
-other checks stayed green, because liveness comes from the cycle wrapper and
-readiness from the state files. Neither can see the watchdog. The safety net was
-the component whose failure was least visible.
+**Who notices:** the watchdog's own check, and only it. Before R43 there was no
+such check, and nothing else could have noticed: liveness is written by the
+cycle wrapper and readiness by `readiness-cli.js` from the state files, so
+**both stay green with the watchdog task disabled, unregistered or crashing**.
+That is a property of where the two signals come from, not an observation of one
+outage — the safety net was the component whose failure was structurally
+invisible. What *was* executed is the third endpoint itself: its success and its
+failure signal both went over real HTTP in `tools\check-alert-path.ps1`.
 
 **What appears:** the third check stops being pinged. `watchdog-run.ps1` posts a
 heartbeat on every firing — success on exit 0, `/fail` otherwise — so a watchdog
