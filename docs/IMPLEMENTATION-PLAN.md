@@ -57,17 +57,20 @@ startup remains unable to arm.
 | P4 | Fail-closed startup and analyst boundary | 2 cases: S-CYC-11 and S-G12-06 | Pinned MCP child and optional read-only dev smoke; no broker mutation | Tier 1 completion |
 | P5 | Recovery, watchdog, expiry, and deadline lifecycle | 21 test cases plus declared limit S-G14-04: S-CYC-03/08/09/10, G9–G11, S-G14-01..03, S-X-05/06 | Fakes and local processes only | Before unattended or deadline pressure |
 | P6 | Public evidence pipeline and qualification-state projection | 5 cases: S-CYC-07/12 and S-J-07..09; SUB-02/11 delivery acceptance | Local candidate artifacts and fake promotion endpoints; no GitHub/Vercel mutation | Before public launch |
-| P7 | Broker-backed dev live-test certificate | S-ARM-01; this completes all 90 runtime test obligations | Explicit owner go; dev paper account only; finish flat | Market-hours pre-arm gate |
+| P7 | Broker-backed dev live-test certificate | S-ARM-01; this completed all 90 runtime test obligations the competition arc defined | Explicit owner go; dev paper account only; finish flat | Market-hours pre-arm gate |
 | P8 | Kickoff release and competition bootstrap | SUB-01/02/08/09/12 plus event-form delta | Owner creates account and authorizes publish/arm | Aug 28 from 17:00 CEST |
 | P9 | Competition operation and public golden path | Runtime acceptance in operation; S-CYC-12 checkpoints | Competition mutations only through the armed runtime | Aug 28–Sep 3 |
 | P10 | Presentation cutoff, submission, and terminal evidence | All mandatory SUB rows | Upload, stable alias promotion, submission, terminal reconciliation | Sep 3–4 |
+| P11 | Post-competition hardening: the A- and B-class backlog of the competition week | 2 cases: S-X-07 and S-X-08 | Disabled schedulers; dev account only; the competition journal is a read-only archive | After the `TERMINAL` entry |
+| P12 | Three-month paper run as its own deployment | Runtime acceptance in operation; no new SPEC cases yet | A chosen paper account through freshly installed tasks; the competition journal is never reopened | Owner decision pending (see P12 below) |
 
 The case allocation is machine-owned by
 [`config/implementation-phases.json`](../config/implementation-phases.json)
 and checked by `python tools/check_implementation_phases.py`; the table above is
-its human projection. The check requires all 90 runtime test cases to appear
-exactly once across P1–P7. `S-G14-04` remains the sole declared limit and is not
-counted as a test.
+its human projection. The check requires every runtime test case to appear
+exactly once across the phases it names — 92 cases across P1–P7 and P11 as of
+2026-09-05, when the post-competition fixes added S-X-07 and S-X-08.
+`S-G14-04` remains the sole declared limit and is not counted as a test.
 The SPEC tier partition remains authoritative for arming deadlines; phase order
 may implement a later-tier pure gate early but can never move a required gate
 past its tier deadline.
@@ -253,6 +256,110 @@ Acceptance:
 - Every mandatory SUB row is accepted or carries a specific organiser-approved
   exception. Terminal evidence states any remaining exposure rather than
   claiming flatness.
+
+## P11 — post-competition hardening
+
+The competition ended with the `TERMINAL` entry of 2026-09-04 and both
+scheduled tasks disabled. P11 lands the backlog the competition week produced
+and could not land while the digest was frozen. It is complete.
+
+Delivered 2026-09-05 (DECISIONS 2026-09-05, branch `p7/dev-live-certificate`):
+
+- The entry-lifecycle resolver ignores close attempts, so a journaled close
+  fill no longer blocks a certificate run (`f5c6ab4`, gated as R40).
+- S-X-07: one shared market-window builder; a cycle quotes every contract its
+  book holds by identity, so neither an expiry that has come nearer than
+  `EXPIRY_MIN_SESSIONS` nor a strike the underlying has drifted away from can
+  make a held structure unpriceable.
+- S-X-08: a refused management close is journaled as its own
+  `MANAGEMENT_REFUSAL` entry instead of living only in a printed report.
+- The scheduled cycle task keeps that printed report in
+  `STATE_DIR/cycle-run.log` (`tools/cycle-run.ps1`).
+- The publish manifest states an expected journal revision per JSON route and
+  the probe names its failed checks.
+
+Acceptance: `npm run verify` exit 0 at 44 files / 576 tests; a gate round on
+the change set; a fourth dev certificate run during market hours before
+anything operates unattended again.
+
+## P12 — three-month paper run (owner decision pending)
+
+The owner's ruling of 2026-09-04 established that a long paper run is a new
+deployment rather than a tail of the competition one, and called it "P9". That
+label is already taken by competition operation above, so the plan numbers the
+long run **P12** and records the collision rather than quietly reusing a
+number; the label is the owner's to settle.
+
+The run answers one question — *do the gates hold, and what does the outcome
+distribution look like, over a quarter rather than a week* — and it cannot
+answer a second one: paper fills at the limit and near-zero fees measure the
+gross path only. That limitation belongs in the projection and in every claim
+made from it.
+
+### The window decision, which comes first
+
+`config/policy.json` binds a deployment to `COMPETITION_START` and
+`FLATTEN_DATE`, and every one of `COMPETITION_START`,
+`QUALIFYING_ACTIVITY_CHECKPOINT`, `QUALIFICATION_WINDOW_END`,
+`QUALIFICATION_MAX_LOSS_CENTS` and `FLATTEN_DATE` is mandatory and validated
+fail-closed (`src/core/startup.ts`), ordered
+`COMPETITION_START < QUALIFYING_ACTIVITY_CHECKPOINT < QUALIFICATION_WINDOW_END`.
+Any change to them changes the policy digest, so the run needs a new
+certificate either way.
+
+**G11 does not need a rolling regime.** Read as specified, `FLATTEN_DATE` is
+the *deployment's* own end — the day it stops opening and starts closing
+(S-G11-01), followed by a journaling-only day (S-G11-02) and `TERMINAL`
+(S-G11-04). Per-position expiry pressure is G9's job (S-G9-01, A17) and runs
+independently every session. A three-month run therefore wants a single
+`FLATTEN_DATE` at its planned end, not a date that rolls; a rolling date would
+flatten the book every week for no reason the spec asks for.
+
+What does need deciding is the **qualification window**, which is a
+competition artifact with no meaning for a long run:
+
+| Option | What it does | Cost |
+|---|---|---|
+| **A. Dev profile** (recommended) | `projectQualification` returns `NOT_APPLICABLE` for any non-competition profile, so the window simply never speaks; the fields stay in the config unused, satisfying validation | The competition-only gates go with it: the arming certificate gate (`src/shell/arming-gate.ts`) and the S-CYC-09 provenance proof do not run, which is a real reduction in pre-flight safety for an unattended quarter |
+| **B. Competition profile, window inside the run** | Keeps the arming gate and the provenance proof; the window opens, the first fill sets `QUALIFIED`, and it stays there | Until that first fill the projection is `NOT_DUE`, then `COMPETITIVENESS_AT_RISK` — reason codes on the dashboard that mean nothing here |
+| **C. Competition profile, window in the past** | Same gates as B | With no qualifying fill in the journal the projection is `WINNING_ACCEPTANCE_FAILED` from the first cycle: a standing false alarm for three months. Rejected |
+
+Recommendation: **B**, with the window set to the run's first week, so the
+arming gate and the provenance proof both apply and the qualification state
+resolves to `QUALIFIED` early and stays there; then a separate, small change
+that teaches the projection a "not a competition deployment" state so the
+labels stop lying. A is the cheaper path and is the right answer only if the
+run stays on the dev account with the owner watching it weekly.
+
+### Prerequisites, all before the first armed cycle
+
+1. P11 landed (done) — the closing-window defect alone would bite every week
+   of a quarter.
+2. Certificate run four green on the dev account during market hours, with the
+   dev scheduled tasks disabled for its duration (R40 C-2). Monday 2026-09-07
+   is Labor Day, so the earliest is Tuesday 2026-09-08 from 15:30 CEST.
+3. The account decided: the dev account, or a fresh paper account. The
+   competition journal stays an archive with `TERMINAL` as its last entry and
+   is never reopened.
+4. Tasks reinstalled against the chosen profile (`tools/install-scheduled-task.ps1`),
+   the watchdog armed, and both read back `Ready`.
+5. Publish as a weekly routine through the digest-neutral path
+   (`tools/*.ps1`, `docs/PUBLISH-RUNBOOK.md`).
+6. A cost model in the projection: per-contract regulatory and exchange fees,
+   and a slippage haircut against paper fills at the limit. Without it the run
+   measures the gross path again — the failure that ended TradeScan-AI and
+   Vigil was the cost side, not the logic.
+
+### Open questions this plan does not answer
+
+- **Journal and render scale.** The projection folds the whole journal on
+  every render. The competition journal is 105 entries; a quarter at
+  fifteen-minute cycles is on the order of 1,700 `CYCLE` entries at roughly
+  50 KB each. Nothing has ever exercised that, and the dashboard render is on
+  the publish path. Measure before the run, not after.
+- **Retention.** Whether a quarter of quote samples belongs in the journal at
+  all, or whether the sample should be bounded to the contracts a cycle
+  actually reasoned about.
 
 ## Handoff protocol
 
