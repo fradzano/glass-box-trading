@@ -1313,10 +1313,32 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   | Neither | No mark and no entry — **and no authority**: `acquireAuthority` writes the epoch store, a failed durable write is `REFUSED`, and a writer without the epoch may not mutate (S-G12-01/02). Nothing can act, so nothing needs to be recorded |
   | The process dies between the mark and the append | The mark stands, because it is written first. Fail-closed by ordering, not by hope |
 
-  Outside the boundary, and declared: a state directory that is destroyed or
-  replaced after the mark was written carries no fence, exactly as it carries
-  no journal. The manual un-halt refuses when it cannot clear the mark, so a
-  release is never half-applied.
+  Two consequences of that last row, both required and both executed:
+
+  * **A cycle that cannot record checks before it acts.** At the start of every
+    invocation, before any broker read or mutation, the journal, the epoch
+    store and the halt projection are probed for writability. A failure blocks
+    every entry for that cycle and raises the active fail-signal
+    `STATE_NOT_DURABLE` (this is the case text S-G14-03 requires before a
+    condition may alarm). It deliberately does **not** block management: a
+    journal we cannot write is never a reason to stop reducing risk, and
+    S-CYC-06's emergency close must stay reachable on exactly this state.
+  * **The release is durable before the mark is lifted.** The `UNHALT` entry is
+    appended first and the mark is cleared only after it has landed. Clearing
+    it earlier meant a release refused by the halt CAS check, or one whose
+    append threw on a read-only journal, still removed the only fence standing
+    — the operator saw a failure and the deployment was quietly free (R43-A1 /
+    R43-B4). If the entry lands and the clear then fails, the deployment stays
+    fenced and says so; a second release clears it.
+
+  Outside the boundary, and declared rather than argued away: if **no** durable
+  surface accepts a write at the instant of the rejection and every surface
+  later recovers, no mark survives, because there was nowhere to put one. What
+  survives instead is the alarm — that cycle raises `STATE_NOT_DURABLE` and
+  `CREDENTIAL_FENCE_NOT_RECORDED`, both of which fail the readiness signal
+  (S-G14-05) — and the fact that no entry could be opened while the state was
+  in that condition. A state directory that is destroyed or replaced after the
+  mark was written carries no fence, exactly as it carries no journal.
 - **S-G14-05** Liveness and trading readiness are two signals (A31, #78, #79).
   Every scheduled invocation reports **liveness** — that the scheduler fired,
   the wrapper ran and the process reached its end — independently of what the

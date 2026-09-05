@@ -96,6 +96,7 @@ import type { BrokerReadPort, SubmitPayload } from "./fake-broker.js";
 import { readHaltState } from "./halt-state.js";
 import type { BrokerMutation, DispatchResult, MutationGateway } from "./mutation-gateway.js";
 import type { StatePaths } from "./state-dir.js";
+import { probeStateDurability } from "./state-dir.js";
 import { heldOptionContractIds } from "./market-window.js";
 
 export interface AnalystInput {
@@ -394,6 +395,21 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       return { ok: false, error: [account, positions, openOrders].map(result => (result.ok ? "ok" : result.error)).join("; "), httpStatus: authStatus, partial: failed.length < 3 };
     }
     return { ok: true, value: { accountId: account.value.accountId, cashCents: account.value.cashCents, equityCents: account.value.equityCents, positions: positions.value, openOrders: openOrders.value, observedAtMs: deps.clock() } };
+  }
+
+  // ---- phase -1: can this cycle record what it decides? (S-G12-08, R43-B1) ----
+  // Before any broker read or mutation. A cycle whose journal or epoch store is
+  // read-only cannot lay down a credential fence, and a deployment that cannot
+  // fence must not be able to open a position: the failure that follows an
+  // unrecordable fence is that the next writer trades as if nothing happened.
+  // It blocks ENTRIES only, and deliberately not management: S-CYC-06 exists so
+  // that a journal we cannot write is never a reason to stop reducing risk, and
+  // the emergency close must stay reachable on exactly this state. What it
+  // removes is the ability to open something we could not fence afterwards.
+  const durability = probeStateDurability(deps.paths);
+  if (!durability.ok) {
+    alarmConditions.push(`STATE_NOT_DURABLE:${durability.reason}`);
+    entriesBlocked.push("STATE_NOT_DURABLE");
   }
 
   // ---- phase 0: reconcile our own lifecycles against broker truth before any new order (S-CYC-04) ----

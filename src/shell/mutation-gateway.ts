@@ -426,6 +426,14 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
           if (store.kind !== "present") {
             return { ok: false, reason: store.kind === "absent" ? "EPOCH_ABSENT" : "EPOCH_UNREADABLE", lockHeld: true };
           }
+          // S-G12-08 / R43-B3: a credential rejection is one wherever it is
+          // detected. The startup reads (account, calendar) and the
+          // account-binding fence arrive here, not through the cycle runner,
+          // and they used to halt without marking — so a 401 during startup
+          // left nothing behind once the journal recovered, and a later writer
+          // traded. The mark goes down BEFORE the halt entry is attempted,
+          // exactly as in the runner, and under the same mutex.
+          if (reason === "AUTH_FAILURE" && !store.fencePending) setFencePending(paths, true);
           const loaded = loadJournal();
           if ("corrupt" in loaded) return { ok: false, reason: "JOURNAL_CORRUPT", lockHeld: true };
           const entries = loaded.file.parsed.entries;
@@ -495,14 +503,6 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
         const current = effectiveHaltState(entries);
         if (!current.halted) return { ok: false, reason: "NOT_HALTED", lockHeld: true };
         if (current.sticky) return { ok: false, reason: "HALT_IS_STICKY", lockHeld: true };
-        // S-G12-08: the human release is the only thing that clears the fence
-        // mark, and a release that cannot clear it is refused rather than
-        // half-applied — the operator must not believe they lifted a fence
-        // that will still be standing at the next cycle.
-        if (store.fencePending) {
-          const cleared = setFencePending(paths, false);
-          if (!cleared.ok) return { ok: false, reason: `FENCE_NOT_CLEARED:${cleared.reason}`, lockHeld: true };
-        }
         if (action.expectedHaltSeq !== undefined || action.expectedHaltReason !== undefined) {
           const transition = [...entries].reverse().find(entry => entry.type === "HALT" || entry.type === "UNHALT");
           if (transition === undefined || transition.type !== "HALT"
@@ -511,8 +511,24 @@ export function createMutationGateway(options: GatewayOptions): MutationGateway 
             return { ok: false, reason: "HALT_CHANGED_SINCE_RECONCILIATION", lockHeld: true };
           }
         }
+        // S-G12-08, ordering: the release is only a release once it is DURABLE.
+        // The fence mark is therefore cleared strictly AFTER the UNHALT entry
+        // has landed, and only then. Clearing it earlier — which is what this
+        // did until 2026-09-05, R43-A1 — meant a release refused by the CAS
+        // check, or one whose append threw on an unwritable journal, still
+        // removed the only fence that was standing: the operator saw a failure
+        // and the deployment was quietly free to trade again.
         const appended = appendUnderLock(entries, { at: utcIso(clock()), epoch: store.epoch, type: "UNHALT", operator: action.operator, reason: action.reason, actor: "human" });
         if (!appended.ok) return { ok: false, reason: appended.reason, lockHeld: true };
+        if (store.fencePending) {
+          const cleared = setFencePending(paths, false);
+          // The UNHALT is journaled but the mark could not be lifted, so the
+          // deployment stays fenced and the operator is told exactly that.
+          // Fail-closed: a second release attempt clears it once the store is
+          // writable again. The same state survives a process death between
+          // these two writes, for the same reason and with the same recovery.
+          if (!cleared.ok) return { ok: false, reason: `FENCE_NOT_CLEARED:${cleared.reason}`, lockHeld: true };
+        }
         return { ok: true, seq: appended.entry.seq, stalenessNeutral: false };
       });
     },

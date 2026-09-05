@@ -11,7 +11,7 @@ import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
 import { manualUnhalt } from "../src/shell/manual-unhalt.js";
-import { readEpochStore, setFencePending } from "../src/shell/epoch-store.js";
+import { readEpochStore, setFencePending, writeEpochStore } from "../src/shell/epoch-store.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { planEpochAcquisition } from "../src/core/authority.js";
 import { readinessDelivery } from "../src/shell/agent-runtime.js";
@@ -124,6 +124,149 @@ describe("S-G12-08 — the fence mark is set before the entry is attempted and o
     // Still fenced afterwards, which is the whole point of refusing.
     const store = readEpochStore(harness.paths);
     expect(store.kind === "present" && store.fencePending).toBe(true);
+  });
+
+  it("R43-A1: a release refused by the CAS check does not take the fence with it", async () => {
+    // Until 2026-09-05 the mark was cleared BEFORE the halt CAS check and
+    // before the UNHALT append, so a refused release still freed the
+    // deployment: the operator saw a failure and the next cycle could trade.
+    const harness = await lifecycleHarness();
+    expect(setFencePending(harness.paths, true).ok).toBe(true);
+
+    const refused = await manualUnhalt({
+      paths: harness.paths, operator: "felix", reason: "release against a stale expectation",
+      clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000,
+      expectedHaltSeq: 99, expectedHaltReason: "AUTH_FAILURE",
+    });
+    expect(refused).toMatchObject({ ok: false, reason: "HALT_CHANGED_SINCE_RECONCILIATION" });
+
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "a refused release may not clear the fence").toBe(true);
+    expect((await gatewayFor(harness.paths).openJournal()).halt.halted).toBe(true);
+    expect(harness.entries().some(entry => entry.type === "UNHALT")).toBe(false);
+  });
+
+  it("R43-A1: a release whose UNHALT append cannot land does not take the fence with it", async () => {
+    const harness = await lifecycleHarness();
+    expect(setFencePending(harness.paths, true).ok).toBe(true);
+    makeJournalUnwritable(harness.paths);
+    try {
+      const outcome = await manualUnhalt({ paths: harness.paths, operator: "felix", reason: "release onto a read-only journal", clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 })
+        .then(result => ({ kind: "returned" as const, result }), (error: unknown) => ({ kind: "threw" as const, error }));
+      // Either shape is acceptable; what may NOT happen is a cleared fence.
+      if (outcome.kind === "returned") expect(outcome.result.ok).toBe(false);
+    } finally {
+      makeJournalWritable(harness.paths);
+    }
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "an undurable release may not clear the fence").toBe(true);
+    expect((await gatewayFor(harness.paths).openJournal()).halt.halted).toBe(true);
+  });
+
+  it("R43-A1: the successful release clears it, and only after the UNHALT is durable", async () => {
+    const harness = await lifecycleHarness();
+    expect(setFencePending(harness.paths, true).ok).toBe(true);
+    const released = await manualUnhalt({ paths: harness.paths, operator: "felix", reason: "fence procedure run", clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 });
+    expect(released.ok).toBe(true);
+
+    const entries = harness.entries();
+    const unhalt = entries.find(entry => entry.type === "UNHALT");
+    expect(unhalt, "the release is journaled before the mark is lifted").toBeDefined();
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending).toBe(false);
+  });
+
+  it("R43-A1: a mark that outlives a journaled release keeps the deployment fenced, and a second release recovers", () => {
+    // The window the ordering deliberately accepts: the UNHALT is durable but
+    // the clear did not happen (a process death between the two writes, or a
+    // store that briefly refused). Fail-closed -- still fenced -- and the
+    // operator simply releases again.
+    return (async () => {
+      const harness = await lifecycleHarness();
+      expect(setFencePending(harness.paths, true).ok).toBe(true);
+      const first = await manualUnhalt({ paths: harness.paths, operator: "felix", reason: "durable release", clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 });
+      expect(first.ok).toBe(true);
+      expect(harness.entries().some(entry => entry.type === "UNHALT")).toBe(true);
+
+      // Re-mark: a later fence whose HALT could not be journaled, standing
+      // against a journal whose last transition is that UNHALT.
+      expect(setFencePending(harness.paths, true).ok).toBe(true);
+      expect((await gatewayFor(harness.paths).openJournal()).halt.halted, "a journaled release does not override a standing mark").toBe(true);
+
+      const second = await manualUnhalt({ paths: harness.paths, operator: "felix", reason: "second release after the interruption", clock: () => P5_NOW, secrets: [], instanceId: "manual-felix", lockTakeoverBoundMs: 60_000 });
+      expect(second.ok).toBe(true);
+      const store = readEpochStore(harness.paths);
+      expect(store.kind === "present" && store.fencePending).toBe(false);
+    })();
+  });
+
+  it("R43-B2: completing a bootstrap does not erase the mark", async () => {
+    // The store is rewritten at acquisition, at bootstrap promotion and at reset
+    // completion. One of them forgetting the field silently freed a fenced
+    // deployment, and the bootstrap path did exactly that. Preservation now
+    // lives in writeEpochStore itself, so no caller can forget it.
+    const harness = await lifecycleHarness();
+    expect(setFencePending(harness.paths, true).ok).toBe(true);
+    const before = readEpochStore(harness.paths);
+    if (before.kind !== "present") throw new Error("fixture store missing");
+
+    // A write that says nothing about the fence must inherit it.
+    writeEpochStore(harness.paths, { epoch: before.epoch, holderId: "someone-else", acquiredAt: before.acquiredAt, seedPending: true, resetPending: false });
+    const after = readEpochStore(harness.paths);
+    expect(after.kind === "present" && after.fencePending, "an omitted fencePending inherits, never defaults to false").toBe(true);
+    expect(after.kind === "present" && after.seedPending).toBe(true);
+
+    // Only an explicit false clears it.
+    writeEpochStore(harness.paths, { epoch: before.epoch, holderId: "someone-else", acquiredAt: before.acquiredAt, seedPending: false, resetPending: false, fencePending: false });
+    const cleared = readEpochStore(harness.paths);
+    expect(cleared.kind === "present" && cleared.fencePending).toBe(false);
+  });
+
+  it("R43-B3: a credential fence raised at startup marks too, not only one raised inside a cycle", async () => {
+    // The startup account and calendar reads fence through dispatchSafetyHalt,
+    // not through the runner, and used to halt without marking -- so a 401
+    // during startup left nothing behind once the journal recovered.
+    const harness = await lifecycleHarness();
+    const gateway = gatewayFor(harness.paths, "startup", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "virgin" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+
+    const halted = await gateway.dispatchSafetyHalt({ reason: "AUTH_FAILURE", detail: "account read rejected at startup (HTTP 401)" });
+    expect(halted.ok).toBe(true);
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending).toBe(true);
+  });
+
+  it("R43-B3: an account-binding halt is not a credential rejection and leaves no fence mark", async () => {
+    const harness = await lifecycleHarness();
+    const gateway = gatewayFor(harness.paths, "startup", P5_NOW + 120_000);
+    const acquired = await gateway.acquireAuthority({ account: "virgin" });
+    expect(acquired.kind === "WON" || acquired.kind === "GAP_HALT").toBe(true);
+
+    await gateway.dispatchSafetyHalt({ reason: "ACCOUNT_BINDING_MISMATCH", detail: "a foreign account answered" });
+    const store = readEpochStore(harness.paths);
+    expect(store.kind === "present" && store.fencePending, "only a credential rejection raises the credential fence").toBe(false);
+  });
+
+  it("R43-B1: a cycle whose state cannot be recorded blocks entries before touching the broker, but still reduces risk", async () => {
+    const harness = await lifecycleHarness();
+    await harness.cycle();
+    const positionsBefore = await harness.fake.read.positions();
+    expect(positionsBefore).not.toHaveLength(0);
+    const mutationsBefore = harness.fake.mutations.length;
+
+    makeJournalUnwritable(harness.paths);
+    try {
+      const report = await harness.cycle();
+      expect(report.entriesBlocked).toContain("STATE_NOT_DURABLE");
+      expect(report.alarmConditions.some(condition => condition.startsWith("STATE_NOT_DURABLE"))).toBe(true);
+      expect(report.ping).toBe("fail");
+      // No new risk was taken on a state that could not have fenced it...
+      const submits = harness.fake.mutations.slice(mutationsBefore).filter(mutation => mutation.kind === "submit_order" && (mutation.payload as { intent?: string }).intent !== "close");
+      expect(submits).toHaveLength(0);
+    } finally {
+      makeJournalWritable(harness.paths);
+    }
   });
 
   it("a risk-reducing close stays possible while fenced: no stricter than a journaled halt", async () => {

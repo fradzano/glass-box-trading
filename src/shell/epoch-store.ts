@@ -81,8 +81,22 @@ export function readEpochStore(paths: StatePaths): EpochStoreState {
   return { kind: "present", epoch: epoch as number, holderId, acquiredAt, seedPending: seedPending === true, resetPending: resetPending === true, fencePending: fencePending === true };
 }
 
+/**
+ * S-G12-08 / R43-B2: an omitted `fencePending` is **inherited from the store on
+ * disk**, never defaulted to false. Three call sites wrote the store for their
+ * own reasons — acquisition, bootstrap promotion, reset completion — and any
+ * one of them forgetting the field silently freed a fenced deployment; the
+ * bootstrap path did exactly that, and a real cycle then opened a position with
+ * no human release. Preservation belongs here, once, rather than in every
+ * caller's memory. Clearing it is possible only by passing `false` explicitly,
+ * which one function does: `setFencePending`.
+ */
 export function writeEpochStore(paths: StatePaths, record: { readonly epoch: number; readonly holderId: string; readonly acquiredAt: string; readonly seedPending: boolean; readonly resetPending: boolean; readonly fencePending?: boolean }): void {
-  writeJsonAtomically(paths.epoch, { ...record, fencePending: record.fencePending === true });
+  const inherited = record.fencePending === undefined ? readEpochStore(paths) : null;
+  const fencePending = record.fencePending === undefined
+    ? (inherited !== null && inherited.kind === "present" && inherited.fencePending)
+    : record.fencePending;
+  writeJsonAtomically(paths.epoch, { ...record, fencePending });
 }
 
 /**

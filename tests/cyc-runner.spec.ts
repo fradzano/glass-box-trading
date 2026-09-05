@@ -772,17 +772,23 @@ describe("S-G14-03 a success ping never precedes a durable append", () => {
   // journal that has gone silent — would never fire.
   const marketDark = (): Promise<MarketObservation> => Promise.reject(new Error("market data unreachable"));
 
-  it("a cycle whose journal cannot be appended plans no ping and delivers none", async () => {
+  it("a cycle whose journal cannot be appended alarms STATE_NOT_DURABLE and never pings success", async () => {
+    // Until 2026-09-05 this state was silent and the dead-man's 45-60 minute
+    // window was the only notice. S-G12-08 now makes an unwritable state
+    // directory an active fail-signal in its own right: it is the same state
+    // in which a credential fence could not be recorded, so it is exactly the
+    // one an operator must hear about immediately rather than eventually.
     const run = await harness();
     const ping = recordingPing(() => run.clock.now);
     lockJournal(run.paths);
 
     const report = await run.cycle({ ping });
     expect(report.journalFailure).not.toBeNull();
-    expect(report.alarmConditions).toEqual([]);
-    expect(report.ping).toBe("none");
+    expect(report.alarmConditions.some(condition => condition.startsWith("STATE_NOT_DURABLE"))).toBe(true);
+    expect(report.entriesBlocked).toContain("STATE_NOT_DURABLE");
+    expect(report.ping).toBe("fail");
     expect(ping.record.successes).toEqual([]);
-    expect(ping.record.failures).toEqual([]);
+    expect(ping.record.failures).toHaveLength(1);
     unlockJournal(run.paths);
     expect(types(run.paths)).toEqual(["BOOTSTRAP"]);
   });
@@ -818,7 +824,10 @@ describe("S-G14-03 a success ping never precedes a durable append", () => {
     expect(durable.ping).toBe("success");
     expect(earned.record.successes).toHaveLength(1);
 
-    // Same darkness, journal unwritable: the SKIP never lands, so nothing may claim liveness.
+    // Same darkness, journal unwritable: the SKIP never lands, so nothing may
+    // claim liveness -- and since 2026-09-05 the unwritable state is itself an
+    // active fail-signal (S-G12-08), so the operator hears about it now rather
+    // than through the dead-man's window. Success remains impossible either way.
     const dark = await harness();
     const ping = recordingPing(() => dark.clock.now);
     dark.fake.failNextReads(["account", "positions", "orders"]);
@@ -826,10 +835,10 @@ describe("S-G14-03 a success ping never precedes a durable append", () => {
     const report = await dark.cycle({ ping, market: marketDark });
     expect(report).toMatchObject({ primary: null, reasonCodes: ["WORLD_UNREACHABLE"] });
     expect(report.journalFailure).not.toBeNull();
-    expect(report.alarmConditions).toEqual([]);
-    expect(report.ping).toBe("none");
+    expect(report.alarmConditions.some(condition => condition.startsWith("STATE_NOT_DURABLE"))).toBe(true);
+    expect(report.ping).toBe("fail");
     expect(ping.record.successes).toEqual([]);
-    expect(ping.record.failures).toEqual([]);
+    expect(ping.record.failures).toHaveLength(1);
     unlockJournal(dark.paths);
     expect(types(dark.paths)).toEqual(["BOOTSTRAP"]);
   });
