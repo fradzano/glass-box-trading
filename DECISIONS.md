@@ -3125,3 +3125,27 @@ small, no ADR split).
   A round that dies without a verdict is not a passing round, and this entry
   does not claim one. `npm run verify` exit 0 at 47 files / 646 tests; the
   counter-gate is relaunched on the new head.
+- **2026-09-05 — a fourth fence instance was suspected, built, and refuted; the
+  code came back out.** After R45-A1 the obvious question was whether the rule
+  is missing anywhere else, so every construction of a `HALT` entry in `src/`
+  was walked against it. One looked open: `recordStartupBrokerFence` calls
+  `dispatchSafetyHalt`, which returns `EPOCH_ABSENT` **before** it can mark —
+  there is no store to mark in — and then falls back to acquiring authority,
+  which creates that store, and appends the halt directly. On a virgin
+  deployment with an unwritable journal that reads like a seeded store, no
+  halt and no mark.
+
+  A marking call was added there and a red-first probe was run against it. The
+  probe **refuted** the finding: acquisition on an unwritable journal does not
+  reach `WON`, so the fallback takes its retry branch instead, which calls
+  `dispatchSafetyHalt` a second time against the store that now exists — and
+  that marks. The added line was dead. It was removed again rather than kept as
+  harmless insurance: a marking call whose comment describes a defect that does
+  not exist is worse than no call, because the next reader will believe it.
+  What stays is the test, reframed as what it actually measures — the virgin
+  boundary ends fenced, through the retry.
+
+  Recorded because the negative result is the useful part: three consecutive
+  rounds found this rule missing somewhere, and the fourth candidate held. That
+  is the first evidence that the single implementation has actually closed the
+  generator rather than moved it.

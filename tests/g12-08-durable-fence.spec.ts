@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { createMutationGateway, NO_BROKER_PORT } from "../src/shell/mutation-gateway.js";
 import { manualUnhalt } from "../src/shell/manual-unhalt.js";
 import { readEpochStore, setFencePending, writeEpochStore } from "../src/shell/epoch-store.js";
+import { recordStartupBrokerFence } from "../src/shell/startup-broker-fence.js";
 import { readHaltState } from "../src/shell/halt-state.js";
 import { planEpochAcquisition } from "../src/core/authority.js";
 import { readinessDelivery } from "../src/shell/agent-runtime.js";
@@ -328,6 +329,43 @@ describe("S-G12-08 — the fence mark is set before the entry is attempted and o
     expect(readHaltState(harness.paths).halted).toBe(false);
     const store = readEpochStore(harness.paths);
     expect(store.kind === "present" && store.fencePending, "the fence mark stands after the journal recovers").toBe(true);
+  });
+
+  it("a credential rejection on a VIRGIN deployment still ends fenced, through the retry rather than a fourth marking site", async () => {
+    // Written while asking whether R45-A1 was the last instance of the rule,
+    // and kept because the answer was no rather than yes. `dispatchSafetyHalt`
+    // returns EPOCH_ABSENT before it can mark -- there is no store to mark in
+    // -- and the startup fence then acquires authority, which creates one. The
+    // suspicion was that its append path marks nothing. A probe refuted it:
+    // acquisition on an unwritable journal does not reach WON, so the retry
+    // branch runs `dispatchSafetyHalt` again against the store that now
+    // exists, and that marks. The extra marking call this test was written to
+    // justify was removed again; what stays is the boundary itself, asserted.
+    const paths = freshLifecyclePaths();
+    writeFileSync(paths.journal, "", "utf8");
+    expect(readEpochStore(paths).kind, "the deployment is virgin").toBe("absent");
+
+    makeJournalUnwritable(paths);
+    let journaled: boolean;
+    try {
+      journaled = await recordStartupBrokerFence({
+        paths,
+        secrets: [],
+        clock: () => P5_NOW,
+        instanceId: "virgin-startup",
+        lockTakeoverBoundMs: 60_000,
+        reason: "AUTH_FAILURE",
+        detail: "account read rejected on a first-ever run (HTTP 401)",
+        ping: { success: () => Promise.resolve(), fail: () => Promise.resolve() },
+      });
+    } finally {
+      makeJournalWritable(paths);
+    }
+
+    expect(journaled, "the HALT could not be journaled").toBe(false);
+    const store = readEpochStore(paths);
+    expect(store.kind, "acquisition created the store, so there was somewhere to mark").toBe("present");
+    expect(store.kind === "present" && store.fencePending, "and the mark stands").toBe(true);
   });
 
   it("R43-B1: a cycle whose state cannot be recorded blocks entries before touching the broker, but still reduces risk", async () => {
