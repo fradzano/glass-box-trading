@@ -16,7 +16,7 @@ owner calls (A–D) were decided 2026-08-25 — see DECISIONS.md; the axioms bel
 cite the decisions where they bind parameters.
 
 Each axiom cites the scenarios it distills. The coverage index at the bottom
-maps all 71 scenarios back to axioms — an uncovered scenario is a defect of
+maps all 75 scenarios back to axioms — an uncovered scenario is a defect of
 this file.
 
 ---
@@ -328,6 +328,20 @@ this file.
   separately; the paper origin stays policy and unknown config fields fail
   closed. (#57 #58 #59 #62 #69 #71)
 
+- **A29 — The observation covers the book.** Every cycle prices its management
+  actions in an observation that quotes each contract the account currently
+  holds, whatever window that contract could once have been opened in. An entry
+  window is a discovery device — a band around spot, a bounded range of
+  remaining sessions — and it is chosen for what may be *opened*; it is never
+  the universe a close is priced in. A held contract is therefore quoted by its
+  identity, taken from the book of the same cycle, and a refusal to close for a
+  missing price is a defect of the observation until that identity was quoted
+  and the broker still returned nothing. Corollary, and the reason this is an
+  axiom rather than a rule of one code path: A17's forced eviction is only as
+  good as the prices the evictor can see, so any window that narrows with time
+  or with spot silently disarms it. Added 2026-09-05 after the 2026-09-03
+  incident. (#72 #73)
+
 ---
 
 ## Owner calls — all decided 2026-08-25
@@ -376,6 +390,10 @@ this file.
 | # | Axioms | # | Axioms | # | Axioms | # | Axioms |
 |---|---|---|---|---|---|---|---|
 | 68 | A13 | 69 | A24 A28 | 70 | A5 A13 | 71 | A12 A28 |
+
+| # | Axioms | # | Axioms | # | Axioms | # | Axioms |
+|---|---|---|---|---|---|---|---|
+| 72 | A17 A29 | 73 | A17 A29 | 74 | A4 A18 | 75 | A4 A18 |
 
 A24 originally appeared in no row by design: it was requirement-derived
 (account separation), not scenario-derived. Scenario #49 now supplies the

@@ -26,7 +26,8 @@ import type { AnalystInput, CycleReport, LifecycleDeps, PingPort } from "./cycle
 import { createFileDiagnosticSink } from "./diagnostic-sink.js";
 import { computePolicyDigest, computeRuntimeDigest, sha256File } from "./digests.js";
 import type { BrokerReadPort } from "./fake-broker.js";
-import { expiriesWithin, newYorkDate, nextTradingDay, remainingSessions, sessionFor } from "./market-calendar.js";
+import { newYorkDate, nextTradingDay, remainingSessions, sessionFor } from "./market-calendar.js";
+import { cycleWindow, entryWindow } from "./market-window.js";
 import type { CalendarDay } from "./market-calendar.js";
 import { analystOsAllowlist, analystOsEnv, createEnvironmentPorts, environmentExists } from "./mcp-environment.js";
 import type { VerifiedChildHandle } from "./mcp-environment.js";
@@ -79,7 +80,8 @@ export interface AgentRuntime {
   readonly secrets: readonly string[];
   readonly ping: PingPort;
   cycle(cycleIndex: number, overrides?: CycleOverrides): Promise<CycleReport>;
-  market(): Promise<MarketObservation>;
+  /** The ad-hoc observation of the certificate driver and the CLI probe; held identities default to none. */
+  market(heldContractIds?: readonly string[]): Promise<MarketObservation>;
   shutdown(): Promise<void>;
 }
 
@@ -281,8 +283,10 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
   const session = sessionFor(days, tradingDay);
   const next = nextTradingDay(days, tradingDay);
   if (next === null) return releaseAndRefuse("calendar", "no next trading day in the calendar window");
-  const expiries = expiriesWithin(days, tradingDay, config.decision.expiryMinSessions, config.decision.expiryMaxSessions).slice(0, 3);
-  const window: MarketWindow = { underlyings: config.decision.underlyingUniverse, expiries, strikeWindowBps: Math.min(config.decision.maxStrikeDistanceBps, 300) };
+  // The entry window is discovery only; the contracts the book holds are added
+  // per cycle from that cycle's own book read (S-X-07, A29).
+  const window = entryWindow(days, tradingDay, config.decision);
+  const expiries = window.expiries;
 
   log(`authority epoch ${String(epoch)} (${acquired.kind}); trading day ${tradingDay}; expiries ${expiries.join(",")}`);
 
@@ -418,7 +422,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     runtime: {
       instanceId: options.instanceId, config, raw, env, paths, binding, broker, gateway, epoch, days, tradingDay, session, window, child,
       mcpInventory: launch.inventory, runtimeDigest: runtime.digest, policyDigest: policy.digest, secrets, ping,
-      market: () => broker.market(window),
+      market: (heldContractIds = []) => broker.market(cycleWindow(days, tradingDay, config.decision, heldContractIds)),
       cycle: async (cycleIndex, overrides = {}) => {
         let deadlineAtMs = 0;
         const report = await runWithinCycleWalltime(config.scheduling.cycleWalltimeBudgetMs, clock, cycleDeadlineMs => {
@@ -429,7 +433,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
           paths,
           binding,
           broker: overrides.broker ?? broker.read,
-          market: deadlineAtMs => broker.market(window, deadlineAtMs),
+          market: (heldContractIds, deadlineAtMs) => broker.market(cycleWindow(days, tradingDay, config.decision, heldContractIds), deadlineAtMs),
           analyst: overrides.analyst ?? analyst,
           analystTimeoutMs: config.analystTimeoutMs,
           clock,

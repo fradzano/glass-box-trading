@@ -29,7 +29,8 @@ import type { AlpacaCredentials, MarketWindow } from "./alpaca-broker.js";
 import { httpStatusOf } from "./broker-errors.js";
 import type { PingPort } from "./cycle-runner.js";
 import type { BrokerReadPort } from "./fake-broker.js";
-import { expiriesWithin, newYorkDate } from "./market-calendar.js";
+import { newYorkDate } from "./market-calendar.js";
+import { closingWindow } from "./market-window.js";
 import type { CalendarDay } from "./market-calendar.js";
 import type { BrokerMutationPort } from "./mutation-gateway.js";
 import { createPingPort } from "./ping-healthchecks.js";
@@ -217,12 +218,7 @@ function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStar
   return async (): Promise<MarketObservation> => {
     const now = clock();
     const days = await adapter.calendar(isoDate(now, CALENDAR_LOOKBACK_DAYS), isoDate(now, CALENDAR_LOOKAHEAD_DAYS));
-    const window: MarketWindow = {
-      underlyings: config.decision.underlyingUniverse,
-      expiries: expiriesWithin(days, newYorkDate(now), 0, config.decision.expiryMaxSessions),
-      strikeWindowBps: config.decision.maxStrikeDistanceBps,
-    };
-    return adapter.market(window);
+    return adapter.market(closingWindow(days, newYorkDate(now), config.decision));
   };
 }
 

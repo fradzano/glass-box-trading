@@ -38,6 +38,7 @@ export function minimalEntry(type: JournalEntryType, seq = 1): JournalEntry {
     KILL: { equityCents: 9_000_000, thresholdCents: 9_500_000 },
     DEADLINE_RECONCILIATION: { reasonCodes: [], snapshot: journalSnapshot() },
     TERMINAL: { reasonCodes: [], snapshot: journalSnapshot() },
+    MANAGEMENT_REFUSAL: { exposureLifecycleId: "exposure:entry:2026-08-31:7:abc:g0", route: "expiry", generation: 0, reason: "PRICE_UNAVAILABLE: QUOTE_MISSING" },
   };
   const body = Object.fromEntries(Object.entries(bodies[type]).filter(([key]) => key !== "seq" && key !== "at" && key !== "type" && key !== "epoch"));
   const epoch = isWitnessEntryType(type) ? null : 1;
@@ -47,7 +48,7 @@ export function minimalEntry(type: JournalEntryType, seq = 1): JournalEntry {
 describe("S-J-03 closed entry schemas", () => {
   it("S-J-03 accepts exactly the closed set of entry types and rejects everything outside it", () => {
     expect([...journalEntryTypes()].sort()).toEqual([
-      "BOOTSTRAP", "CYCLE", "DEADLINE_RECONCILIATION", "FENCED_OUT", "GAP", "HALT", "HUMAN_ACTION", "INTENT", "KILL",
+      "BOOTSTRAP", "CYCLE", "DEADLINE_RECONCILIATION", "FENCED_OUT", "GAP", "HALT", "HUMAN_ACTION", "INTENT", "KILL", "MANAGEMENT_REFUSAL",
       "OUTCOME", "RECONCILIATION", "SKIP", "SUPPRESSED", "TERMINAL", "UNHALT",
     ]);
     for (const type of journalEntryTypes()) {

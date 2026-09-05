@@ -8,14 +8,19 @@
     Registers two tasks under the "\GlassBoxTrading\" Task Scheduler folder:
 
       GlassBoxTrading-AgentCycle
-        `node dist/shell/agent-cli.js`, working directory = -RepoRoot, on a
-        weekly Mon-Fri trigger that fires every CYCLE_INTERVAL_MS (read from
-        config/policy.json; 900000 ms = 15 min as of writing) from the US
-        regular-hours open through the close, both computed for "today" in
-        America/New_York (see Get-TodaySessionLocal below). agent-cli.ts
-        loads .env itself via src/shell/runtime-config.ts, so no secrets are
-        passed on the command line or stored in the task definition -- the
-        task only needs to run with RepoRoot as its working directory.
+        `powershell.exe -File tools\cycle-run.ps1`, which runs
+        `node dist/shell/agent-cli.js` and appends everything it printed to
+        cycle-run.log in STATE_DIR (scenario #75: the task used to invoke node
+        directly and discard the cycle report, so on 2026-09-03 seven refused
+        cycles left no trace outside the journal). Working directory =
+        -RepoRoot, on a weekly Mon-Fri trigger that fires every
+        CYCLE_INTERVAL_MS (read from config/policy.json; 900000 ms = 15 min as
+        of writing) from the US regular-hours open through the close, both
+        computed for "today" in America/New_York (see Get-TodaySessionLocal
+        below). agent-cli.ts loads .env itself via
+        src/shell/runtime-config.ts, so no secrets are passed on the command
+        line or stored in the task definition -- the task only needs to run
+        with RepoRoot as its working directory.
 
       GlassBoxTrading-Watchdog
         `powershell.exe -File tools\watchdog-run.ps1`, firing every
@@ -182,12 +187,15 @@ if ([string]::IsNullOrWhiteSpace($NodePath)) {
 if (-not (Test-Path -LiteralPath $NodePath)) { throw "NodePath '$NodePath' does not exist." }
 
 $agentEntry = Join-Path $RepoRoot 'dist\shell\agent-cli.js'
+$cycleRunner = Join-Path $RepoRoot 'tools\cycle-run.ps1'
 $watchdogRunner = Join-Path $RepoRoot 'tools\watchdog-run.ps1'
 if (-not (Test-Path -LiteralPath $agentEntry)) {
     Write-Warning "'$agentEntry' is missing; run 'npm run build' before the tasks can actually operate. Registration continues -- the task will simply fail at run time until the build exists."
 }
-if (-not (Test-Path -LiteralPath $watchdogRunner)) {
-    throw "'$watchdogRunner' is missing; it ships alongside this installer and must not be removed."
+foreach ($runner in @($cycleRunner, $watchdogRunner)) {
+    if (-not (Test-Path -LiteralPath $runner)) {
+        throw "'$runner' is missing; it ships alongside this installer and must not be removed."
+    }
 }
 
 $policyPath = Join-Path $RepoRoot 'config\policy.json'
@@ -230,14 +238,17 @@ $commonSettings = @{
 # ---------------------------------------------------------------------------
 Remove-ExistingTask -Name $CycleTaskName
 
-$cycleAction = New-ScheduledTaskAction -Execute $NodePath -Argument "`"$agentEntry`"" -WorkingDirectory $RepoRoot
+# Through the wrapper, not straight to node: the wrapper keeps the printed
+# cycle report in STATE_DIR\cycle-run.log (scenario #75).
+$cycleArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$cycleRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`""
+$cycleAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs -WorkingDirectory $RepoRoot
 $cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $sessionDuration
 $cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
 $cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
 $cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 
-if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: node dist\shell\agent-cli.js every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
-    Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
+if ($PSCmdlet.ShouldProcess("$TaskFolder$CycleTaskName", "Register scheduled task: cycle-run.ps1 (node dist\shell\agent-cli.js, printed report kept) every $cycleIntervalMinutes min, Mon-Fri $($session.OpenLocal.ToString('HH:mm')) - $($session.CloseLocal.ToString('HH:mm')) local")) {
+    Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null
 }
 
 # ---------------------------------------------------------------------------

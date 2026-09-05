@@ -1,0 +1,122 @@
+<#
+.SYNOPSIS
+    Runs one agent cycle and keeps its printed report.
+
+.DESCRIPTION
+    The scheduled cycle task used to invoke `node dist\shell\agent-cli.js`
+    directly. agent-cli.js prints a full cycle report -- gate verdicts,
+    lifecycle vetoes, management closes and, since 2026-09-05, the refused
+    management closes -- and the task discarded all of it. On 2026-09-03 that
+    turned three structures the runner could not price into seven cycles that
+    read, from the outside, like an agent holding on purpose (scenario #75,
+    DECISIONS 2026-09-03). This wrapper is the fix: it runs the same command
+    and appends everything the process printed to `cycle-run.log` in
+    STATE_DIR, next to the journal and the watchdog's own log.
+
+    The journal remains the record of consequence -- the refusals themselves
+    are journaled as MANAGEMENT_REFUSAL entries (S-X-08), so this log is a
+    convenience for the operator, never the only copy of anything.
+
+    Deliberately mirrors tools\watchdog-run.ps1, including the one trap that
+    cost a day: Windows PowerShell 5.1 wraps every stderr line of a native
+    command in an ErrorRecord when the stream is redirected, and under a
+    script-wide $ErrorActionPreference = 'Stop' the first such line kills the
+    child. agent-cli.js writes its composition line to stderr, so the native
+    call runs under 'Continue' and the exit code, not stderr, is the verdict.
+
+.PARAMETER RepoRoot
+    Absolute path to the glass-box-trading checkout. Defaults to the parent of
+    this script's directory (tools\..).
+
+.PARAMETER NodePath
+    Absolute path to node.exe. Defaults to `(Get-Command node).Source`.
+
+.PARAMETER MaxLogBytes
+    Rotate cycle-run.log to cycle-run.log.1 once it exceeds this size. A cycle
+    report is a few kilobytes and the task fires every 15 minutes, so an
+    unrotated log would grow without bound across a long paper run. Default
+    16 MiB; 0 disables rotation.
+#>
+[CmdletBinding()]
+param(
+    [string]$RepoRoot,
+    [string]$NodePath,
+    [ValidateRange(0, 1073741824)]
+    [int]$MaxLogBytes = 16777216
+)
+
+$ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
+if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "RepoRoot '$RepoRoot' does not exist." }
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+
+if ([string]::IsNullOrWhiteSpace($NodePath)) {
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    if ($null -eq $nodeCommand) { throw 'node was not found on PATH; pass -NodePath explicitly.' }
+    $NodePath = $nodeCommand.Source
+}
+if (-not (Test-Path -LiteralPath $NodePath)) { throw "NodePath '$NodePath' does not exist." }
+
+$agentEntry = Join-Path $RepoRoot 'dist\shell\agent-cli.js'
+if (-not (Test-Path -LiteralPath $agentEntry)) { throw "'$agentEntry' is missing; run 'npm run build' in $RepoRoot before operating the scheduled tasks." }
+
+function Get-DotEnvValue {
+    # Minimal single-key .env reader mirroring parseDotEnv's KEY=value shape
+    # (# comments, optional surrounding quotes). Only ever asked for STATE_DIR
+    # here, which is a path, not a secret. Kept in sync by hand with the
+    # identical helper in watchdog-run.ps1.
+    param([string]$EnvFilePath, [string]$Key)
+    if (-not (Test-Path -LiteralPath $EnvFilePath)) { return $null }
+    foreach ($rawLine in Get-Content -LiteralPath $EnvFilePath) {
+        $line = $rawLine.Trim()
+        if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
+        $separator = $line.IndexOf('=')
+        if ($separator -le 0) { continue }
+        $lineKey = $line.Substring(0, $separator).Trim()
+        if ($lineKey -ne $Key) { continue }
+        $value = $line.Substring($separator + 1).Trim()
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        return $value
+    }
+    return $null
+}
+
+$stateDir = $env:STATE_DIR
+if ([string]::IsNullOrWhiteSpace($stateDir)) {
+    $stateDir = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'STATE_DIR'
+}
+if ([string]::IsNullOrWhiteSpace($stateDir)) { throw "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
+
+$logPath = Join-Path $stateDir 'cycle-run.log'
+if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
+    $existing = Get-Item -LiteralPath $logPath
+    if ($existing.Length -gt $MaxLogBytes) {
+        # One generation is kept. Losing an older report is acceptable; losing
+        # the disk is not, and the journal carries what matters either way.
+        try { Move-Item -LiteralPath $logPath -Destination "$logPath.1" -Force } catch { }
+    }
+}
+
+function Write-RunLog {
+    param([string]$Message)
+    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
+    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
+    Write-Verbose $line
+}
+
+Write-RunLog "run: pid=$PID stateDir=$stateDir entry=$agentEntry"
+
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $output = & $NodePath $agentEntry 2>&1
+    $exitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+$output | ForEach-Object { Write-RunLog "output: $_" }
+Write-RunLog "exit: $exitCode"
+exit $exitCode

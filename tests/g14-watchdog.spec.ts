@@ -172,7 +172,7 @@ describe("S-G11-04 / S-G14-02 — after the controlled end the watchdog stands d
     const terminal = await runTerminal({
       gateway: harness.gateway, epoch: 1, broker: harness.fake.read, market: lifecycleMarket(() => harness.clock.now),
       clock: () => harness.clock.now, profile: "dev", calendar: lifecycleCalendar(harness.clock.now), tradingDay: "2026-09-04",
-      cycleIndex: 40, ping: harness.ping,
+      cycleIndex: 40, ping: harness.ping, underlyingUniverse: ["SPY"],
     });
     expect(terminal.appended).toBe(true);
     harness.clock.now = P5_NOW + DEAD_MAN_BOUND_MS + 400_000;

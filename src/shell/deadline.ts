@@ -22,9 +22,12 @@ import { assertFlattened, deadlineReconciliationDraft, declaredExpiryHolds, plan
 import type { PingPlan, TerminalRemainder } from "../core/lifecycle.js";
 import type { CycleDependencies, PingPort } from "./cycle-runner.js";
 import type { MutationGateway } from "./mutation-gateway.js";
+import { heldOptionContractIds } from "./market-window.js";
 
 export type DeadlineDependencies = Pick<CycleDependencies, "gateway" | "epoch" | "broker" | "market" | "clock" | "profile" | "calendar" | "tradingDay" | "cycleIndex"> & {
   readonly ping: PingPort | null;
+  /** S-X-07: which position rows are share residue rather than option identities. */
+  readonly underlyingUniverse: readonly string[];
 };
 
 /** The alarm condition a Friday entry raises when it could not be written; the detail follows the failure class. */
@@ -70,12 +73,14 @@ async function handOverWithoutEntry(deps: DeadlineDependencies, failure: Deadlin
 }
 
 async function assembleForEntry(deps: DeadlineDependencies): Promise<{ readonly gateway: MutationGateway; readonly snapshot: ReturnType<typeof assembleDecisionSnapshot>; readonly book: BrokerBook; readonly entriesHolds: readonly string[] }> {
-  const [account, positions, openOrders, market] = await Promise.all([
+  // S-X-07: the book is read before the observation so every held contract is
+  // quoted by identity, not only by the close-oriented window's bounds.
+  const [account, positions, openOrders] = await Promise.all([
     deps.broker.account(),
     deps.broker.positions(),
     deps.broker.openOrders(),
-    deps.market(),
   ]);
+  const market = await deps.market(heldOptionContractIds(positions, deps.underlyingUniverse));
   const book: BrokerBook = { accountId: account.accountId, cashCents: account.cashCents, equityCents: account.equityCents, positions, openOrders, observedAtMs: deps.clock() };
   const opened = await deps.gateway.openJournal();
   const marketObservation: MarketObservation = market;

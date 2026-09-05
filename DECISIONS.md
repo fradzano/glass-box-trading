@@ -2495,3 +2495,68 @@ small, no ADR split).
   the one spelled in its own path) and `tests/publish-dashboard.spec.ts`
   pins that; until then the runbook's "a failed probe means the candidate
   is not promoted" requires the operator to read *which* check failed.
+- **2026-09-05 — The A-class backlog of 2026-09-03 is fixed: one window
+  builder, held contracts quoted by identity, refusals journaled, the printed
+  report kept.** The competition is over and both scheduled tasks are
+  disabled, so the digest may change again; this is the first change set of
+  the post-competition branch and it invalidates certificate two by design.
+  Built in the house order — four new scenarios (#72–#75), one new axiom
+  (A29, "the observation covers the book"), two new SPEC cases (S-X-07,
+  S-X-08, phase P8 in `config/implementation-phases.json`), then tests, then
+  code. `npm run verify` exit 0 at 44 files / 574 tests.
+
+  **S-X-07 — the window.** All three window sites now build through one pure
+  module, `src/shell/market-window.ts`: `entryWindow` (nearest three eligible
+  expiries, 300 bps — unchanged discovery for the runner), `closingWindow`
+  (from zero remaining sessions, full `MAX_STRIKE_DISTANCE_BPS` — the
+  watchdog's and the deadline runtime's behaviour, unchanged, now defined in
+  one place) and `cycleWindow` (the entry window plus the identities the book
+  holds). **Deviation from the backlog as written, deliberate:** the recorded
+  item said the runner's management step should adopt the close-oriented
+  window from zero sessions. It does not, and should not. That window walks
+  every expiry in `[0, EXPIRY_MAX_SESSIONS]` at ten percent of spot — roughly
+  25 chain requests and several thousand quoted symbols per cycle against the
+  current three-expiry, three-percent walk — which a fifteen-minute cycle
+  would pay for every firing, and every quoted contract also enters the
+  journaled `quoteSamples` (the dev journal is already 50 KB per entry). It
+  would also still miss a contract whose strike had drifted past the wider
+  band, so it buys cost without buying the invariant. `MarketWindow` therefore
+  gained `heldContractIds`: the adapter resolves each held identity through
+  `/v2/options/contracts/{symbol}` when the chain walk did not already produce
+  it, quotes it with the rest, and keeps it in the observation even unquoted,
+  so the management step reports a missing price for a contract it holds
+  rather than one it has never heard of. Cost: at most one extra request per
+  held leg. It covers both the observed defect (expiry nearer than
+  `EXPIRY_MIN_SESSIONS`, #72) and its unobserved sibling (spot drifts out of
+  the entry band, #73). Consequence in the runner: phase 1 reads the book
+  *before* the market instead of beside it, because the window is now built
+  from the book; either read failing is still the same S-CYC-02 abstention.
+  The deadline entry serializes the same way.
+
+  **S-X-08 — the refusal.** A refused management close appends a
+  `MANAGEMENT_REFUSAL` entry — exposure lifecycle, close route, the generation
+  the attempt would have carried (`null` when the close plan itself was
+  vetoed), the reason. It is an entry of its own rather than a field on
+  `CYCLE` because the order forbids the field: the primary entry is written
+  before any order exists (A5, A7) and management runs after phase 4, so at
+  `CYCLE` time no refusal has happened. It is not a primary type — one primary
+  per invocation still holds (S-J-03) — and it is appended at the instant of
+  the refusal, so a process that dies mid-management keeps what it had already
+  reached. A refused append is the ordinary A7 case. The 105 archived
+  competition entries are unaffected: they simply contain no such entry.
+
+  **#75 — the printed report.** The cycle task ran `node
+  dist\shell\agent-cli.js` directly and discarded standard output, which is
+  why the seven refused cycles of 2026-09-03 left nothing outside the journal.
+  It now runs `tools\cycle-run.ps1`, which appends the whole report to
+  `cycle-run.log` in `STATE_DIR` beside the journal and the watchdog log, with
+  one rotation generation at 16 MiB. It deliberately mirrors
+  `watchdog-run.ps1` including the trap that cost a day: the native call runs
+  under `$ErrorActionPreference = 'Continue'`, because PowerShell 5.1 wraps
+  every stderr line of a redirected native command in an ErrorRecord and
+  `agent-cli.js` writes its composition line to stderr. `tools/*.ps1` is not
+  digest material, so the wrapper alone is digest-neutral; the installer
+  refuses to register if either runner is missing. Measured end to end against
+  a scratch `STATE_DIR` on the dev profile: exit 0, three lines of composition
+  output and the full JSON report in `cycle-run.log`, the real dev and
+  competition journals untouched at 70 and 105 entries.

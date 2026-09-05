@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "expectedDefinedCases": 91,
-  "expectedTestCases": 90,
+  "expectedDefinedCases": 93,
+  "expectedTestCases": 92,
   "declaredLimits": [
     "S-G14-04"
   ],
@@ -36,6 +36,9 @@
     ],
     "P7": [
       "^S-ARM-01$"
+    ],
+    "P8": [
+      "^S-X-0[78]$"
     ]
   }
 }

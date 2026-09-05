@@ -51,6 +51,15 @@ export interface MarketWindow {
   readonly expiries: readonly string[];
   /** Strike window as a fraction of spot, e.g. 300 bps keeps strikes within 3% of spot. */
   readonly strikeWindowBps: number;
+  /**
+   * Contract identities that must be quoted whatever the expiry and strike
+   * bounds above select (S-X-07, A29): the contracts the account holds. They
+   * are resolved one by one against the contract endpoint and quoted with the
+   * walked chain, so a held structure stays priceable after its expiry has
+   * come nearer than `EXPIRY_MIN_SESSIONS` or the underlying has drifted out
+   * of the walked band. Build windows through `market-window.ts`, never here.
+   */
+  readonly heldContractIds: readonly string[];
 }
 
 export interface FullSnapshot {
@@ -353,6 +362,19 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
     return out;
   }
 
+  /**
+   * One held contract by its identity (S-X-07). The chain walk only finds what
+   * the expiry and strike bounds select; a contract the account holds must be
+   * priceable whatever those bounds say, so it is resolved directly. Unlike
+   * the walk this does not require `tradable`: an untradable held contract is
+   * a fact the management step must see, not one the observation may hide.
+   */
+  async function contractById(contractId: string, deadlineAtMs?: number): Promise<OptionContract | null> {
+    const json = await get(options.tradingOrigin, `/v2/options/contracts/${encodeURIComponent(contractId)}`, deadlineAtMs);
+    const raw = isRecord(json) && isRecord(json["option_contract"]) ? json["option_contract"] : json;
+    return mapOptionContract(raw);
+  }
+
   async function market(window: MarketWindow, deadlineAtMs?: number): Promise<MarketObservation> {
     const spotQuotes = await latestQuotes("/v2/stocks/quotes/latest?feed=iex&symbols=", window.underlyings, deadlineAtMs);
     const contractsById: Record<string, OptionContract> = {};
@@ -371,11 +393,26 @@ export function createAlpacaBroker(options: AlpacaBrokerOptions): AlpacaBroker {
         for (const contract of await contractsFor(underlying, expiry, spot - halfWindow, spot + halfWindow, deadlineAtMs)) contractsById[contract.contractId] = contract;
       }
     }
+    // Held identities the walk did not already produce. A lookup that fails is
+    // not fatal: the management step then reports a missing price for that
+    // contract, which is journaled (S-X-08) instead of vanishing silently.
+    for (const contractId of window.heldContractIds) {
+      if (contractsById[contractId] !== undefined || window.underlyings.includes(contractId)) continue;
+      try {
+        const held = await contractById(contractId, deadlineAtMs);
+        if (held !== null) contractsById[contractId] = held;
+      } catch {
+        continue;
+      }
+    }
     const optionSymbols = Object.keys(contractsById).filter(id => !window.underlyings.includes(id));
     const optionQuotes = await latestQuotes("/v1beta1/options/quotes/latest?feed=indicative&symbols=", optionSymbols, deadlineAtMs);
     for (const [symbol, quote] of Object.entries(optionQuotes)) quotesByContract[symbol] = quote;
     // Contracts without a quote are dropped: the gate would veto them anyway (S-G5-03), and the journal sample stays compact.
-    const quotedContracts = Object.fromEntries(Object.entries(contractsById).filter(([symbol]) => window.underlyings.includes(symbol) || optionQuotes[symbol] !== undefined));
+    // Contracts without a quote are dropped (see above), except a held identity:
+    // it stays in the observation so the management step reports a missing
+    // price for a contract it holds rather than one it has never heard of.
+    const quotedContracts = Object.fromEntries(Object.entries(contractsById).filter(([symbol]) => window.underlyings.includes(symbol) || window.heldContractIds.includes(symbol) || optionQuotes[symbol] !== undefined));
     return { quotesByContract, contractsById: quotedContracts, spotCentsByUnderlying };
   }
 

@@ -1246,6 +1246,45 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   every judge surface says not-flat until expiry. A stale quote, missing leg,
   ITM state, or uncertain exercise policy keeps escalation and alarm active.
   (#18 #55, A11, A17, A23)
+- **S-X-07** The cycle's market observation covers the book. A cycle builds
+  its observation window from two independent sources: the *entry* window it
+  has always used — the nearest three expiries inside
+  `[EXPIRY_MIN_SESSIONS, EXPIRY_MAX_SESSIONS]` within a narrow strike band, a
+  discovery device for what may be opened — and the *identities* of every
+  option contract the account currently holds, taken from the book read of
+  that same cycle. Held identities are quoted directly and are never subject
+  to the entry window's session bounds or strike band, so a structure whose
+  expiry has come nearer than `EXPIRY_MIN_SESSIONS` (the 2026-09-03 incident)
+  and one whose strikes the underlying has drifted away from are both still
+  priceable. Consequences that are part of the case, not of the
+  implementation: the book read therefore precedes the market read inside
+  phase 1 instead of running beside it, and a half-answer on either side is
+  still the S-CYC-02 abstention; a held identity the broker still cannot quote
+  reaches the management step as a missing price and is journaled under S-X-08
+  rather than disappearing with the window;
+  and the watchdog and the deadline runtime keep their close-oriented window
+  (from zero remaining sessions, full configured strike distance) but build it
+  through the same shared, pure window builder, so there is exactly one place
+  where a window is defined. (#72 #73, A17, A29)
+- **S-X-08** A management refusal is journaled, not merely printed. Whenever
+  the management step plans a close and then does not submit it — a plan veto,
+  an unavailable price, a failed eligibility check — it appends a
+  `MANAGEMENT_REFUSAL` entry naming the exposure lifecycle, the close route,
+  the generation the attempt would have carried (`null` when the close plan
+  itself was vetoed) and the reason. It is an entry of its own and not a field
+  on `CYCLE` because of the order the cycle already has: the primary entry is
+  written before any order exists (A5, A7) and the management step runs after
+  phase 4, so at CYCLE time no refusal has happened yet. It is deliberately
+  *not* a primary entry — exactly one primary per invocation still holds
+  (S-J-03) — and it is appended at the instant of the refusal, so a process
+  that dies mid-management still leaves the refusals it had already reached. A
+  cycle that holds a position on purpose and one that tried and was refused
+  are therefore distinguishable from the durable record alone, without the
+  process's standard output (#74, A4). A refused append is the ordinary A7
+  case: nothing is retried and nothing pretends. The deployment obligation of
+  #75 is separate and lives with the installer, not here: the scheduled cycle
+  task redirects the printed report to a kept file next to the journal, so the
+  full report survives the run that produced it.
 
 ---
 
@@ -1253,13 +1292,13 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
 
 Axiom → cases (spot map; the adversarial pass checks the inverse too):
 A1 (S-CYC-08, S-CORE-01), A2 (S-CYC-04/10, G10), A3 (S-CORE-02, S-CYC-02,
-G5), A4 (S-CYC-01/03/09, S-J-03), A5 (S-CYC-06, S-J-04, S-G10-04, S-X-03), A6
+G5), A4 (S-CYC-01/03/09, S-J-03, S-X-08), A5 (S-CYC-06, S-J-04, S-G10-04, S-X-03), A6
 (S-J-01), A7 (S-CYC-06), A8 (S-J-05), A9 (S-CYC-07, S-J-07), A10 (S-J-07/09),
 A11 (G1, S-G9-03, S-G10-03, S-X-05/06), A12 (G8, S-CYC-01/11), A13 (G7,
 S-CYC-05, S-G12-01/02/07, S-J-08), A14 (G1–G4, S-G8-06), A15 (§7), A16 (G6),
-A17 (G9, G11, S-X-06), A18 (S-G14-02/03, S-CYC-11), A19 (S-G12-03/04/06,
+A17 (G9, G11, S-X-06/07), A18 (S-G14-02/03, S-CYC-11), A19 (S-G12-03/04/06,
 G13), A20 (S-CYC-08/09), A21 (S-J-02), A22 (G11), A23 (G2 counting,
 S-G14-04, S-X-06), A24 (S-ARM-01, S-J-06, S-CYC-11), A25 (S-CYC-09,
 S-J-03/06/09), A26
 (`SUBMISSION-SPEC.md` acceptance gates), A27 (S-CYC-12, S-J-03/09 and
-`SUBMISSION-SPEC.md` criterion contract), A28 (S-ARM-01, S-CYC-11, G8).
+`SUBMISSION-SPEC.md` criterion contract), A28 (S-ARM-01, S-CYC-11, G8), A29 (S-X-07).

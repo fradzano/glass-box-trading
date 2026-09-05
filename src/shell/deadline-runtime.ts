@@ -30,7 +30,8 @@ import type { PingPort } from "./cycle-runner.js";
 import type { DeadlineDependencies } from "./deadline.js";
 import { releaseHolder } from "./epoch-store.js";
 import type { BrokerReadPort } from "./fake-broker.js";
-import { expiriesWithin, newYorkDate, sessionFor } from "./market-calendar.js";
+import { newYorkDate, sessionFor } from "./market-calendar.js";
+import { closingWindow } from "./market-window.js";
 import type { CalendarDay } from "./market-calendar.js";
 import { createMutationGateway } from "./mutation-gateway.js";
 import type { BrokerMutationPort } from "./mutation-gateway.js";
@@ -195,14 +196,9 @@ function isoDate(ms: number, offsetDays: number): string {
  * configured strike distance. The calendar is the one already read after the
  * fence — a deadline entry issues no second calendar request.
  */
-function marketObservation(adapter: DeadlineBrokerAdapter, config: ValidatedStartup, days: readonly CalendarDay[], clock: () => number): () => Promise<MarketObservation> {
-  return (): Promise<MarketObservation> => {
-    const window: MarketWindow = {
-      underlyings: config.decision.underlyingUniverse,
-      expiries: expiriesWithin(days, newYorkDate(clock()), 0, config.decision.expiryMaxSessions),
-      strikeWindowBps: config.decision.maxStrikeDistanceBps,
-    };
-    return adapter.market(window);
+function marketObservation(adapter: DeadlineBrokerAdapter, config: ValidatedStartup, days: readonly CalendarDay[], clock: () => number): (heldContractIds: readonly string[], deadlineAtMs?: number) => Promise<MarketObservation> {
+  return (heldContractIds: readonly string[], deadlineAtMs?: number): Promise<MarketObservation> => {
+    return adapter.market(closingWindow(days, newYorkDate(clock()), config.decision, heldContractIds), deadlineAtMs);
   };
 }
 
@@ -329,6 +325,7 @@ export async function composeDeadline(options: DeadlineRuntimeOptions): Promise<
       epoch,
       broker: adapter.read,
       market: marketObservation(adapter, config, days, options.clock),
+      underlyingUniverse: config.decision.underlyingUniverse,
       clock: options.clock,
       profile: config.profile,
       calendar: sessionFor(days, tradingDay),
