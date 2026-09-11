@@ -3732,3 +3732,70 @@ small, no ADR split).
   per-event blocks stay as the fallback, and block 9 — deriving new dates from
   a moved anchor rather than shifting them — is unchanged and still the one to
   use if the anchor moves.
+- **2026-09-11 — the anchor lapsed; it moves to Tue 2026-09-15, and the
+  activation becomes a script with a ledger (owner rulings).** None of the five
+  owner sessions planned for Mon 2026-09-07 to Wed 2026-09-09 took place. This
+  was checked on the host rather than assumed: no commit after `c1203aa`, no
+  file written after 2026-09-06 01:00 in any state directory, in `evidence/`, in
+  the verification store or in the checkout, and both `\GlassBoxTrading\` tasks
+  are still the competition registrations, `Disabled`, last run 2026-09-04
+  22:00. By the rule in the runbook the Wed 2026-09-09 anchor is gone, and a
+  slip means *change the date, then certify, then arm*.
+
+  **New dates, derived from the table in "Reading the clock", not shifted:**
+  anchor the **Tue 2026-09-15 15:15** firing; certificate day Mon 2026-09-14;
+  `FLATTEN_DATE` **2026-12-15** (three calendar months, a trading day);
+  journaling-only and installer coverage **2026-12-16**. None of the three
+  forbidden anchor kinds applies. `config/policy.json` changed in that one field;
+  `npm run verify` exit 0 at 48 files / 658 tests.
+
+  **Why a script and not new calendar slots.** The owner's day job makes the
+  two weekday-afternoon steps of the old plan — the 13:50–14:45 cold-start proof
+  and gate, and the supervised 15:15 first cycle — practically unplannable, and
+  every step of the plan is deterministic enough to execute from observations
+  rather than from a person at the machine. Four earlier rounds of findings came
+  from time arithmetic done by hand; a script that acts on observed log lines
+  and on the check status the healthchecks.io API reports removes that class
+  instead of adding reviewers to it. The owner ruled:
+
+  1. **The activation is scripted.** It runs certificate run four on the dev
+     account during Monday's session, enables the tasks after the US close,
+     runs the silence drills (watchdog alone, then both tasks disabled — the
+     same silence as a powered-off machine from healthchecks.io's side, and
+     verified through the API instead of by a person staying awake), pauses the
+     checks, reboots the machine on Tuesday before the trigger window with
+     nobody signing in (the 14:00 firing is then the restart and S4U proof in
+     one), and evaluates the gate at 14:45. Auto-logon is off on this host and
+     Windows 11 Home has no BitLocker pre-boot PIN, so an unattended reboot
+     comes back to a signed-out desktop (checked 2026-09-11).
+  2. **Pre-authorisation, with its condition in the owner's words: armed only on
+     PASS, a flat dev account and a green gate.** Any other outcome disables both
+     tasks and sends a `/fail` ping with the reason to `gbt-readiness`, which is
+     the alert path whose receipt the owner has confirmed. Nothing is inferred as
+     "close enough".
+  3. **The script writes down what it does**, append-only, so that any later
+     session can establish the phase from the record and not from memory — the
+     same discipline as the journal: entries are never edited, corrections are
+     new entries, and the phase is a fold over the record.
+
+  What this gives up, stated rather than smoothed over: nobody watches the first
+  trading cycle as it happens; it is read in the evening. The bound on that is
+  the code, not supervision — the account is paper, defined risk and the
+  analyst's lack of any path to an order are enforced by the core, and the
+  runtime's own arming gate refuses without a valid certificate, so a defect in
+  the activation script can cost a halt or a day, not an unsafe order.
+
+  **Open, and put to the owner:** whether `FLATTEN_DATE` is decoupled from the
+  anchor — a fixed end date, so that a start that slips by a day shortens the
+  run instead of changing the policy digest and voiding the certificate.
+
+  **Gate condition 4, first half re-confirmed:** `check-alert-path.ps1` at
+  2026-09-11 22:01, six signals HTTP 200 to three distinct fingerprints, all
+  three alerts on the owner's device at once. The recurring reminder is being
+  waited out the same evening. Alongside, `tools/healthchecks-provision.mjs`
+  gained `--pause` (pauses exactly the three checks whose URLs are in `.env`)
+  and returns its exit code instead of calling `process.exit()`: a successful
+  `--list` exited **9** with a libuv assertion, because the process was torn down
+  while fetch was still closing its sockets — harmless to a reader, and a false
+  failure to any script that reads the exit code, which the activation script
+  would.
