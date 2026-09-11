@@ -3833,3 +3833,15 @@ small, no ADR split).
   3. **The competition account `PA376WIK2ATL` stays untouched**, as before: the
      long run is bound to `PA3LPKKUDU97`, the certificate runs on the dev
      account `PA349COOGKZ1`.
+- **2026-09-11 23:54 — the recurring reminder was off; measured, not assumed.**
+  The three checks went down at 22:01 and no reminder arrived by 23:32. The
+  account setting "Ongoing reminders if any checks are down" read **"do not
+  remind me"** (the options are that, daily and hourly). The runbook had told
+  the operator on 2026-09-06 to switch it on, and nothing had verified that it
+  was — which is the same lesson as the alert path itself: a setting that has
+  never produced its effect once is not known to be on. The owner set it to
+  **hourly**. The management API cannot read this account setting, so the only
+  evidence is a received reminder; the checks stay down until 01:30 so that one
+  can arrive, and condition 4 of the activation gate stands open until its
+  arrival time is recorded. The activation script must treat condition 4 as a
+  precondition it cannot check by itself and read it from the record.
