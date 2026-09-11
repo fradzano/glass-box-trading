@@ -3799,3 +3799,37 @@ small, no ADR split).
   while fetch was still closing its sockets — harmless to a reader, and a false
   failure to any script that reads the exit code, which the activation script
   would.
+- **2026-09-11 (later) — `FLATTEN_DATE` is a fixed end date (owner ruling).**
+  2026-12-15 stays whatever day the first regular cycle actually lands on. A
+  start that slips by a day shortens the measurement period by a day instead of
+  changing the policy digest and voiding the certificate; the evaluation reports
+  the actual length, from the first successful cycle to the flatten date. This
+  replaces the runbook's "no exception, including a slip of a single day" for
+  P12. It changes nothing when the start is on time, and it is what makes a
+  retry of a failed activation step the next day cheap. A slip that would push
+  the start into the week between the two clock changes (2026-10-26 to 10-30)
+  is still forbidden for the reason given in "Reading the clock".
+- **2026-09-11 — while the hackathon jury has not announced its result, nothing
+  from after the deadline reaches what the submission points at.** Checked the
+  same evening: the submission cites `blob/main/...` for the one-pager, the
+  deck, `ACCOUNT-EVIDENCE.md` and `DECISIONS.md`, the plain repository URL, the
+  demo URL `https://glass-box-trading.vercel.app` and the pinned route
+  `/revisions/sha256-7b82959a344a7c7e/presentation/`. The live alias still
+  serves revision `sha256:78af85c1c238a49d` for `PA376WIK2ATL`. On `main`, the
+  cited PDFs, `ACCOUNT-EVIDENCE.md` and the README are byte-identical to the tag
+  `competition-close`; `DECISIONS.md` is not, because the P11 merge of
+  2026-09-05 appended dated post-deadline entries to it. That already happened,
+  is recorded here rather than undone — undoing it would mean rewriting public
+  history on `main` — and the entries carry their dates. No judging end date is
+  published (HACKATHON-FACTS, "Known ambiguities"). Until the result is
+  announced:
+
+  1. **No merge to `main`.** P12 work stays on `p7/dev-live-certificate`.
+  2. **No publication to the Vercel project `glass-box-trading`.** Its alias is
+     the submitted demo URL, and a long-run revision would show the jury a
+     different account from the one in the submission's account field. The
+     P12 weekly review publishes nothing until then; afterwards the long run
+     gets its own project. The runbook's weekly step says so.
+  3. **The competition account `PA376WIK2ATL` stays untouched**, as before: the
+     long run is bound to `PA3LPKKUDU97`, the certificate runs on the dev
+     account `PA349COOGKZ1`.

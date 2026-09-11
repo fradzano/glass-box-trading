@@ -975,9 +975,16 @@ after how long, and what the system will and will not close by itself:
 [`P12-INCIDENT-PATHS.md`](P12-INCIDENT-PATHS.md). Read it once before
 activation, not during the first alert.
 
-**Weekly:** publish the dashboard through the digest-neutral path in
-[`PUBLISH-RUNBOOK.md`](PUBLISH-RUNBOOK.md), from the `gbt-publish` worktree, and
-check the probe comes back clean.
+**Weekly:** review the run — missed firings, every halt with its reason and
+resolution, alerts and reaction time, free disk. **Do not publish to
+`https://glass-box-trading.vercel.app` while the hackathon jury has not
+announced its result.** That alias is the submitted demo URL, the publish path
+in [`PUBLISH-RUNBOOK.md`](PUBLISH-RUNBOOK.md) promotes onto it, and the
+projection it serves is bound to the competition account `PA376WIK2ATL`: a
+long-run revision there would show the jury a different account from the one the
+submission names. Until the result is announced the weekly review publishes
+nothing; after it, the long run gets its own Vercel project (DECISIONS
+2026-09-11).
 
 **Before anything else, at any hour: is the book exposed?** That is the
 question the alert does not answer, and it decides whether this can wait until
