@@ -22,6 +22,7 @@
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
 - `docs/P12-ACTIVATION-SCENARIOS.md` — Activation scenarios — independent yardstick
+- `docs/P12-ACTIVATION-SPEC.md` — P12 activation — specification
 - `docs/P12-CALENDAR-PROMPTS.md` — P12 — calendar prompts for Gemini
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/P12-INCIDENT-PATHS.md` — P12 — how an incident actually reaches me
