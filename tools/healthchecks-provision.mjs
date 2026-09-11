@@ -81,6 +81,11 @@ function dotEnv(repoRoot) {
 
 const fingerprint = url => (typeof url === "string" && url.length > 0 ? `hc:${createHash("sha256").update(url, "utf8").digest("hex").slice(0, 8)}` : "(unset)");
 
+// A check's UUID IS its ping credential (the ping URL is hc-ping.com/<uuid>),
+// so it is masked wherever it appears -- not only at the end of a URL, which
+// let the /pause and /flips/ forms through.
+const maskUuids = text => text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/giu, "<uuid>");
+
 async function api(key, method, urlOrPath, body) {
   const url = urlOrPath.startsWith("http") ? urlOrPath : `${API}${urlOrPath}`;
   const response = await fetch(url, {
@@ -89,7 +94,7 @@ async function api(key, method, urlOrPath, body) {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`${method} ${url.replace(/\/[0-9a-f-]{36}$/u, "/<uuid>")} -> HTTP ${String(response.status)} ${text.slice(0, 200)}`);
+  if (!response.ok) throw new Error(`${method} ${maskUuids(url)} -> HTTP ${String(response.status)} ${maskUuids(text.slice(0, 200))}`);
   try {
     return text.length > 0 ? JSON.parse(text) : null;
   } catch {

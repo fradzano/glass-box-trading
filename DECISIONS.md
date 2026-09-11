@@ -3845,3 +3845,27 @@ small, no ADR split).
   can arrive, and condition 4 of the activation gate stands open until its
   arrival time is recorded. The activation script must treat condition 4 as a
   precondition it cannot check by itself and read it from the record.
+- **2026-09-12 00:05 — my API probe printed the three check UUIDs, which are
+  ping credentials.** To learn whether the management API gives timestamped
+  up/down transitions (it does: `GET <update_url>/flips/`, newest first, with
+  `status`, `last_ping`, `next_ping` and `n_pings` on the check), a read-only
+  probe in the session scratchpad listed every field except those ending in
+  `url` — and so printed `uuid`. On healthchecks.io the ping URL is
+  `https://hc-ping.com/<uuid>`: the UUID is exactly the credential the masking
+  of 2026-09-05 exists to protect, because whoever holds it can send success
+  pings and suppress a silence alarm. Exposure: this session's transcript only;
+  nothing was committed, written into the repository or shared.
+
+  1. **Rotate** the three checks with `healthchecks-provision.mjs --rotate
+     --apply` together with Sunday's installation, before any drill. That is
+     where the installer's cron expressions are compared with the checks anyway;
+     rotating tonight would destroy the reminder test that is waiting for its
+     first reminder. The residual exposure until then is accepted as low: the
+     transcript stays on the owner's machine and with the model provider.
+  2. `api()` in `healthchecks-provision.mjs` masked a UUID only at the **end** of
+     a URL, so its error message for a `/pause` URL — added this evening — would
+     have printed one. It now masks every UUID anywhere in the URL and in the
+     quoted response body.
+  3. The activation script treats `uuid` and every `*_url` field of a check as a
+     secret: none of them enters its ledger or its output. Checks are named by
+     name and `hc:` fingerprint only.
