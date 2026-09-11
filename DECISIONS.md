@@ -3845,8 +3845,8 @@ small, no ADR split).
   can arrive, and condition 4 of the activation gate stands open until its
   arrival time is recorded. The activation script must treat condition 4 as a
   precondition it cannot check by itself and read it from the record.
-- **2026-09-12 00:05 — my API probe printed the three check UUIDs, which are
-  ping credentials.** To learn whether the management API gives timestamped
+- **2026-09-12, around midnight — my API probe printed the three check UUIDs,
+  which are ping credentials.** To learn whether the management API gives timestamped
   up/down transitions (it does: `GET <update_url>/flips/`, newest first, with
   `status`, `last_ping`, `next_ping` and `n_pings` on the check), a read-only
   probe in the session scratchpad listed every field except those ending in
