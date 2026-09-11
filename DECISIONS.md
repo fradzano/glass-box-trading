@@ -3869,3 +3869,44 @@ small, no ADR split).
   3. The activation script treats `uuid` and every `*_url` field of a check as a
      secret: none of them enters its ledger or its output. Checks are named by
      name and `hc:` fingerprint only.
+- **2026-09-12 — the activation spec's first revision was reviewed blind and
+  returned NO-GO; what changed is the default, not a list of patches.** The
+  yardstick was written first and cold: an agent that was forbidden to read this
+  repository produced 70 scenarios and 17 invariants
+  (`docs/P12-ACTIVATION-SCENARIOS.md`), because a catalogue derived from the
+  artefact it measures rationalises whatever it finds. The review of revision 1
+  against that catalogue and against the code returned **A=5 B=12 C=2**, and the
+  three A-findings that mattered were one defect seen three times: revision 1
+  assumed a long-lived process, defended an **armed** default with a timer, and
+  then rebooted the machine underneath both.
+
+  Revision 2 inverts it. **Every step is its own invocation** that reconstructs
+  the phase from the ledger plus the world. **`activation-pending.flag`** is
+  written before the tasks are enabled, `tools/cycle-run.ps1` refuses to run a
+  cycle while it exists — firings, pings and log lines continue, which is what the
+  drills and the restart proof measure — and deleting it is the arming act of a
+  green gate. That file lives in a `.ps1` the runtime digest does not cover
+  (`src/shell/digests.ts` takes `tools/**/*.mjs|py`), so the certificate is
+  untouched. **The silence drill ends with both tasks disabled**, and a re-arm step
+  at 13:50 on the anchor day turns the 14:00 firing into three proofs at once: the
+  restart, the signed-out execution, and the resumption of the paused checks —
+  which also removes the thirteen-hour window in which revision 1 would have left
+  the deployment armed and all three checks paused.
+
+  Two corrections to claims of revision 1, both verified here rather than taken on
+  the review's word: **`.env` is not digest-neutral** — `ANALYST_MODEL` is read
+  from the environment (`src/shell/runtime-config.ts:73`) and classified `policy`
+  (`src/core/certificate.ts:66`), so only `PRE_ARM_CERTIFICATE` is, which is what
+  licenses the one line the script writes; and **the 15:15 firing cannot open a
+  position** — `evaluateSession` vetoes every entry candidate while
+  `now < opensAt` (`src/core/decision.ts:216`). The anchor stays the 15:15 firing
+  because that is the first firing that runs a cycle and starts the measurement
+  period; the first firing that can enter is 15:30.
+
+  **Two host facts follow from the same review.** ARSO (automatic restart sign-on)
+  is active — `AutoLogonSID` and `LastUsedUsername` are set with an empty exclusion
+  list — so a restart would re-create a session and the signed-out proof would
+  prove nothing; `DisableAutomaticRestartSignOn = 1` is part of the elevated
+  registration step. And `quser` does not exist on Windows 11 Home, so the session
+  state is sampled from `Win32_LogonSession` and the presence of an `explorer`
+  process instead.
