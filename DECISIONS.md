@@ -3910,3 +3910,45 @@ small, no ADR split).
   registration step. And `quser` does not exist on Windows 11 Home, so the session
   state is sampled from `Win32_LogonSession` and the presence of an `explorer`
   process instead.
+- **2026-09-12 — the counter-verification of revision 2 also returned NO-GO, and
+  the answer is a different mechanism, not a third patch.** A=4 B=9 C=3. The
+  finding that mattered: revisions 1 and 2 have the same shape. Both leave a
+  deployment that **may trade by default** and then guard it with something the
+  activation has to do correctly — first a timer, then a file whose *absence*
+  means permission, on a path the cycle wrapper never resolves
+  (`tools/cycle-run.ps1:176-188` resolves `STATE_DIR` and nothing else). Three
+  further holes came from the same root: only two steps carried a deadline, so a
+  catch-up invocation could re-arm at 15:40 inside the session; a skipped or failed
+  reboot still produced a green gate, because the reboot step was not in the
+  conjunction and boot time was never read; and the three checks stayed paused for
+  fourteen unattended hours, which is exactly the state in which nothing can
+  alarm.
+
+  **Revision 3 makes permission a thing the script grants, never a thing it must
+  prevent.** The latch is `PRE_ARM_CERTIFICATE` itself: it stays out of `.env`
+  until the gate is green, and a competition runtime refuses to arm without a
+  certificate matching both digests. Nothing the activation fails to do can
+  produce permission. Two facts make this safe rather than merely elegant, and
+  both were verified here rather than assumed: the cycle wrapper invokes
+  `agent-cli.js` only inside the session plus a 20-minute lead-in and otherwise
+  only runs `readiness-cli.js` and pings (`tools/cycle-run.ps1:236-256`), so every
+  drill firing and the 14:00 firing cannot reach the runtime at all; and the
+  watchdog returns `quiet` outside the session and on a journal with no
+  authoritative entry, before it acquires authority
+  (`src/core/lifecycle.ts:745-746`, `src/shell/watchdog.ts:111`), with the wrapper
+  passing the real session window (`tools/watchdog-run.ps1:224-227`). The fresh
+  journal therefore stays empty until the anchor cycle writes `BOOTSTRAP`.
+
+  The pending flag survives, demoted and moved into `STATE_DIR`: its job is no
+  longer to withhold permission but to turn a stray in-session firing during an
+  aborted activation into a logged refusal instead of a `CONFIG_INVALID` halt with
+  a credential fence. Losing it now costs a loud halt, not a trade. The disarm
+  one-shot becomes the third layer at 15:05, after the gate's deadline and before
+  the first in-session firing at 15:10.
+
+  **One reduction is declared rather than fixed.** The runbook's third silence
+  drill switches the host off, which is the only proof that the alert path does not
+  depend on the machine it reports about. A script cannot switch the machine back
+  on, so the activation proves the weaker "both tasks disabled" silence. The owner
+  can run the real machine-off drill on any evening after 22:00 in the first week;
+  until then that claim rests on the cron schedules and graces alone.
