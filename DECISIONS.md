@@ -4041,3 +4041,53 @@ small, no ADR split).
   into an un-gated `.ps1` on the path of every firing. The latch already makes the
   case it guarded impossible. A layer that is counted but not built is worse than an
   admitted single mechanism.
+- **2026-09-12 — round five: A=4 B=7 C=4, and the rotation turns out to cost gate
+  condition 4.** The findings moved back into the step table, which is the right
+  place for them: it is the data the pure core folds over, and three of the four
+  A-findings were missing or too-weak clauses there rather than design errors.
+
+  1. **The rotation invalidates the confirmation.** Rotating the three checks
+     deletes and recreates them, so every ping URL and therefore every `hc:`
+     fingerprint changes. Gate condition 4 was confirmed on 2026-09-11 22:01 against
+     the old endpoints; after a rotation that confirmation attests endpoints that no
+     longer exist. Revision 6 makes step 0 compare the confirmation's fingerprints
+     against the live ones — so a rotation invalidates it loudly instead of silently
+     outliving it — and fixes the order: rotate, exercise the alert path, wait out
+     one reminder period, confirm, all on the new checks and all before Monday.
+     **Whether to rotate at all is the owner's call**: the exposure was one session
+     transcript on his own machine, and the alternative is to record the exposure as
+     accepted and keep the confirmation that already exists.
+  2. **A retry would have inherited the reboot proof.** Steps were resumed by
+     "first step whose result is not `ok`", with no day attached — so a Wednesday
+     attempt after a Tuesday abort would have skipped the reboot entirely and armed
+     a three-month unattended run on a cold-start proof from a day the machine did
+     not restart. Results now name their anchor day; steps 4 and 7 to 11 reset when
+     the anchor day changes; the gate compares `LastBootUpTime` against today's
+     intent line.
+  3. **Step 4 would have enabled both tasks after a failed certificate.** Its
+     preconditions never mentioned steps 2 and 3, and an abort did not end the
+     attempt, so the 22:05 invocation would have found every condition true. No
+     trade could have followed — the latch holds — but the owner's condition would
+     have been broken, and that is what the condition exists for. Both clauses are
+     in.
+  4. **The owner's abort could be swallowed by the single-instance lock.** It now
+     disables both tasks first and takes the lock afterwards, with a bounded wait,
+     and exits non-zero if it could not write its terminal entry.
+
+  Also folded in: a local discriminator for the silence drill (with both tasks
+  disabled no wrapper runs, so any line in the wrapper logs inside the silence
+  window means the cause was the network, not the disable) with every comparison in
+  UTC; the "longrun-1 is empty" assertion replaced by the four artefacts that matter,
+  because `resolveStateDir` creates `quarantine/` on any read; a 14-day staleness
+  bound on condition 4; `CLAUDE_CODE_OAUTH_TOKEN` and one verified analyst start
+  moved into step 0, because the gate's digest re-print needs both and a dead token
+  would otherwise cost the anchor at 14:35 instead of Monday at 15:35; an honest
+  list of what the rehearsal cannot rehearse; and the degraded-watchdog limit
+  declared (while the certificate line is out, the watchdog composes fence-and-halt
+  only, so the drill proves that path and not the armed one).
+
+  **One change must land inside the digest before the certificate run**, alongside
+  the architecture gate's second root: the certificate command guard should refuse
+  when the resolved `STATE_DIR` is the one `.env` names for the competition profile.
+  Today only the profile is enforced, and `--preflight` with the dev profile but a
+  forgotten `STATE_DIR` would seed `longrun-1` twenty minutes before the anchor.

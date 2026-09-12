@@ -10,13 +10,13 @@ than from judgement.
 Its yardstick is [`P12-ACTIVATION-SCENARIOS.md`](P12-ACTIVATION-SCENARIOS.md),
 derived by an agent that was not allowed to read this repository.
 
-**Revision 5.** Four adversarial rounds: revision 1 NO-GO (A=5 B=12 C=2),
-revision 2 NO-GO (A=4 B=9 C=3), revision 3 NO-GO (A=4 B=11 C=3), revision 4 NO-GO
-(A=2 B=8 C=6). Section 11 carries what each changed. Round 4 verified the latch's
-four load-bearing code facts independently, measured every line of §3 on the host,
-and found both remaining A-defects in the **alert path** rather than in the
-mechanism. Revision 5 answers them. One decision is still open (§10) and it is
-sharper now than it was.
+**Revision 6.** Five adversarial rounds: rev 1 NO-GO (A=5 B=12 C=2), rev 2 NO-GO
+(A=4 B=9 C=3), rev 3 NO-GO (A=4 B=11 C=3), rev 4 NO-GO (A=2 B=8 C=6), rev 5 NO-GO
+(A=4 B=7 C=4). Section 11 carries what each changed. Round 5's findings moved back
+into the **step table** — the data this spec's pure core folds over — and its
+reviewer's judgement was that the core is worth building once those clauses stand,
+which they now do. Two things remain the owner's: the order of the check rotation
+against gate condition 4 (§8.13), and the certificate's human checkpoint (§10).
 
 ---
 
@@ -88,7 +88,8 @@ line and refuses if any has changed.
    and setting the credential fence (`agent-runtime.ts:420-426`,
    `mutation-gateway.ts:289-294`). An absent key is refused at
    `core/startup.ts:353`, before the broker is even constructed. `CONFIG_INVALID`
-   is not sticky (`core/journal.ts:73-75`), so the damage is a releasable halt plus
+   is not sticky (`core/journal.ts:72-74` — only `KILL` and `PROVENANCE_BROKEN`
+   are), so the damage is a releasable halt plus
    a contaminated state directory, not an irreversible mark.
 3. **`ALPACA_PROFILE` decides whether the latch exists at all.**
    `evaluateArmingGate` returns `armed: true` for every non-competition profile
@@ -127,22 +128,27 @@ arrives late does not act; it aborts and records why.
 
 | Step | Runs at | Not valid after | Precondition | Action |
 |---|---|---|---|---|
-| `0-preflight` | before step 2 | — | §3 unchanged; free disk; lock taken; no duplicate key in `.env`; the wrapper's SHA-256 recorded; **gate condition 4 present as a dated human confirmation** — alert receipt and a received reminder — together with the three `hc:` fingerprints from the run that produced it | remove the `PRE_ARM_CERTIFICATE` line from `.env` (replace in place, re-read, re-hash); read the three checks through the API and require each `up` or `paused`. **It sends nothing.** `check-alert-path.ps1` deliberately ends with all three checks failing and needs `-ResolveOnly` afterwards; running it here would leave them down from 15:35 until the first firing after 22:05 and bury the activation's own pages under eighteen reminder mails |
+| `0-preflight` | before step 2 | — | §3 unchanged; free disk; lock taken; no duplicate key in `.env`; the wrapper's SHA-256 recorded; `CLAUDE_CODE_OAUTH_TOKEN` present and an analyst child started and verified once, because the gate's digest re-print needs both and a token that died over the weekend would otherwise cost the anchor at 14:35 rather than Monday at 15:35; **gate condition 4 present as a human confirmation no older than 14 days**, carrying the three `hc:` fingerprints — and those fingerprints must equal the three the API reports **now**, so that a rotation of the checks invalidates the confirmation instead of silently outliving it | remove the `PRE_ARM_CERTIFICATE` line from `.env` (replace in place, re-read, re-hash); read the three checks through the API and require each `up` or `paused`. **It sends nothing.** `check-alert-path.ps1` deliberately ends with all three checks failing and needs `-ResolveOnly` afterwards; running it here would leave them down from 15:35 until the first firing after 22:05 and bury the activation's own pages under eighteen reminder mails |
 | `1-install` | Sun/Mon, elevated | before step 2 | build current | re-register both tasks (`install-scheduled-task.ps1 -CoverageThroughDate 2026-12-16`), then `verify-scheduled-tasks.ps1` must print `SCHEDULER CHECK PASSED`; record its count and both action lines verbatim |
 | `0-resume` | every invocation | — | — | read both task **definitions and** states, the three check states, `.env` (hash, whether `PRE_ARM_CERTIFICATE` is set, `ALPACA_PROFILE`), the resolved account id (masked, read-only), both digests, the wrapper hash. World beats ledger; every conflict is recorded. Each observation is compared against **the expectation of the step the ledger says we are in** (table above), not against an absolute: an enabled task is red before step 4 and expected after it; a certificate line is red before step 10 and expected after it |
-| `2-certificate` | Mon, from 15:35 | 22:40 | a certificate file, verdict PASS, whose two digests equal this deployment's — obtained from `certificate-cli --preflight` run **with the dev profile *and* the dev `STATE_DIR` and diagnostic sink** (it builds a full runtime and would otherwise write `pings.log`, an `analyst/` directory and an epoch binding into `longrun-1`), followed by an assertion that `longrun-1` is still empty | validate only |
+| `2-certificate` | Mon, from 15:35 | 22:40 | a certificate file, verdict PASS, whose two digests equal this deployment's — obtained from `certificate-cli --preflight` run **with the dev profile *and* the dev `STATE_DIR` and diagnostic sink** (it builds a full runtime and would otherwise write `pings.log`, an `analyst/` directory and an epoch binding into `longrun-1`), followed by an assertion that `longrun-1` holds **no `journal.jsonl`, no `epoch.json`, no `analyst/`, no `pings.log`** — not "is empty", because `resolveStateDir` creates `quarantine/` on any read (`src/shell/state-dir.ts:77-78`) and `readiness-cli.js` reads that directory on every skipped firing, so an emptiness test would fail on the second attempt for a directory the design itself made | validate only |
 | `3-flat` | after 2 | 22:45 | dev account read-only: zero positions, zero non-terminal orders | validate only; never cancel or close anything |
-| `4-enable` | Mon, **22:05–22:20** | 22:20 | US session closed; both tasks `Disabled` and carrying the definitions verified in step 1, asserted **by value** for `-SkipOutsideSession` and `-SessionLeadInMinutes` (the verifier only resolves those parameters, it does not check them); `PRE_ARM_CERTIFICATE` absent; profile `competition` | enable both tasks; register the disarm one-shot |
+| `4-enable` | Mon, **22:05–22:20** | 22:20 | **steps 2 and 3 `ok` in this attempt**; US session closed; both tasks `Disabled` and carrying the definitions verified in step 1, asserted **by value** for `-SkipOutsideSession` and `-SessionLeadInMinutes` (the verifier only resolves those parameters, it does not check them); `PRE_ARM_CERTIFICATE` absent; profile `competition` | enable both tasks; register the disarm one-shot |
 | `5-drill-watchdog` | Mon, 22:15–22:50 | 22:50 | an observed watchdog firing at T ≤ 22:25; the API answers an independent read | disable the watchdog task only; wait until the API shows **exactly** `{gbt-watchdog}` down with its flip timestamp inside the window; re-enable; wait until up |
-| `6-drill-silence` | Mon, 22:50–23:15 start | 00:30 | watchdog up; API reachable; last observed ping **T ≤ 23:15** | disable both tasks after an observed ping; wait until all three are down with their flip timestamps; **then repeat the independent API read and check each flip timestamp against the moment of the disable** — if the API is unreachable, or a check fell before its own disable could explain it, the drill is **invalid**, is recorded as invalid and is repeated, never counted (ACT-45); then clear the three checks: readiness through `readiness-cli.js` so the signal keeps its meaning, liveness and watchdog by a direct success ping; leave both tasks disabled |
+| `6-drill-silence` | Mon, 22:50–23:15 start | 00:30 | watchdog up; API reachable; last observed ping **T ≤ 23:15** | disable both tasks after an observed ping; wait until all three are down with their flip timestamps; **then repeat the independent API read and check each flip timestamp against the moment of the disable** — if the API is unreachable, the drill is **invalid**, is recorded as invalid and is repeated, never counted (ACT-45). The decisive discriminator is **local**, because a down flip always carries the moment the grace expired and therefore always follows the disable: with both tasks disabled no wrapper runs, so `cycle-run.log` and `watchdog-run.log` must contain **no line** inside the silence window — a network outage leaves `run:` lines and undelivered pings there, and that is what separates "my disable caused this" from "the uplink did". Every timestamp comparison is made in UTC, since the API's stamps are UTC and the wrapper logs are too; then clear the three checks: readiness through `readiness-cli.js` so the signal keeps its meaning, liveness and watchdog by a direct success ping; leave both tasks disabled |
 | `7-rearm` | anchor day, 13:50 (second chance 13:55) | **13:59** | steps 2–6 `ok`; step 8 closed `ok`; §3 unchanged; wrapper hash unchanged | enable both tasks |
-| `8-reboot` | anchor day, 13:30 | 13:45 | steps 2–6 `ok` | write the intent line, then restart. **The process cannot write its own result**: the first invocation after the boot closes step 8 with `ok` when `LastBootUpTime` is later than the intent, and with `failed` otherwise |
+| `8-reboot` | anchor day, 13:30 | 13:45 | steps 2–6 `ok` | write the intent line, then restart. **The process cannot write its own result**: the first invocation after the boot closes step 8 with `ok` when `LastBootUpTime` is later than the intent, and with `failed` otherwise. **The result names its anchor day and counts only for that day** — a reboot proof from a previous attempt is not a reboot proof for today |
 | `9-proof` | anchor day, 14:05 | 14:35 | — | a `run:` or `skip:` line whose UTC stamp converts to 14:00–14:04 local, searched in `cycle-run.log` **and** `cycle-run.log.1`, both file names and the converted window recorded; session state sampled 13:55 and 14:05; `LastBootUpTime` recorded |
 | `10-gate` | anchor day, 14:35 | 14:55 | the conjunction in §7 | write **the certificate path validated in step 2** into `.env` (replace in place, never append; re-read, re-check duplicates, re-hash, and re-validate the file's two digests after the write), then delete the disarm one-shot |
 | `11-anchor` | anchor day, 15:20 | 16:00 | — | record the firing whose stamp converts to **15:15–15:19** local — a later catch-up is not the anchor — and the `BOOTSTRAP` entry; the measurement period started |
 
 **Abort, precisely.** Every abort **up to and including step 10** disables both
-tasks, leaves `PRE_ARM_CERTIFICATE` unset and pages. After step 10 has written the
+tasks, leaves `PRE_ARM_CERTIFICATE` unset and pages. **An `abort` entry ends the
+attempt**: no later invocation of that attempt may act, whatever the world then
+looks like. Without this clause a certificate that failed at 16:05 would still
+leave every precondition of step 4 true at 22:05, and the tasks would go on — no
+trade, because the latch holds, but outside the owner's condition, which is what
+the condition is for. After step 10 has written the
 certificate path and the anchor has fired, the deployment is the running system:
 an abort in step 11 pages and records, and does **not** tear down a correctly armed
 run (that decision is the owner's, through the entry below).
@@ -151,7 +157,12 @@ run (that decision is the owner's, through the entry below).
 entry point: it disables both tasks, removes the certificate line, deletes the
 disarm one-shot, sends one success ping per endpoint so silence stays visible
 rather than hidden, and writes a terminal entry naming the operator and the time.
-A deliberate stop must not be readable as a crash.
+A deliberate stop must not be readable as a crash. **It never defers to the
+single-instance lock**: it disables both tasks first — idempotent, safe under a
+race with a running invocation — and only then takes the lock, with a bounded
+wait, to write its terminal entry. If it cannot write that entry it says so and
+exits non-zero, because an owner who typed the abort and got a shrug would go to
+bed believing the run was stopped.
 
 **The invocation mechanism.** One task, `GlassBoxTrading-Activation`, RunLevel
 Highest, S4U, `StartWhenAvailable = true`, `MultipleInstances = IgnoreNew`, two
@@ -160,7 +171,12 @@ triggers: Monday 15:30 repeating every 5 minutes for 9h15m, and the anchor day
 decide what a late invocation may do.
 
 **Retry on the next trading day.** A new attempt runs `0-resume` and continues from
-the first step whose result is not `ok`. Before it may act: the disarm one-shot
+the first step whose result is not `ok` **for this attempt's anchor day**. A new
+anchor day resets steps 4, 7, 8, 9, 10 and 11 to "not run", because each of them
+asserts something about one particular day: an enable that was undone, a reboot
+that happened yesterday, a firing in yesterday's log. Steps 0 to 3 carry over —
+the certificate and the flat account are facts about the artefact, not about the
+day. Before it may act: the disarm one-shot
 must be **re-registered** for the new anchor day (its old trigger has passed and
 will never fire again), both tasks must read `Disabled`, the three checks must read
 `up`, and the certificate is re-validated against freshly printed digests — a
@@ -174,7 +190,7 @@ new certificate; only a failed certificate needs a new run.
   competition runtime cannot arm without a certificate matching both digests.
   Nothing the activation fails to do can produce permission.
 - **Writing it is digest-neutral**: one of three `deployment`-classified fields
-  (`src/core/certificate.ts:37-41`); only `policy` fields enter the policy digest.
+  (`src/core/certificate.ts:39-41`); only `policy` fields enter the policy digest.
 - **No firing before the gate reaches the runtime — once the tasks are the ones
   step 1 installs.** The wrapper invokes `agent-cli.js` only inside the session
   plus a 20-minute lead-in; outside it runs `readiness-cli.js`, pings liveness and
@@ -211,8 +227,8 @@ identity check — the one permitted touch of that account, and it mutates nothi
 both digests re-printed at gate time still equal the certificate's; the three checks
 `up` in a stable observation with bounded backoff, where a 429, a 5xx or an
 unreachable API is `unknown` and unknown is red; step 8 closed `ok` with
-`LastBootUpTime` later than its intent; step 9 satisfied; the wrapper hash
-unchanged.
+`LastBootUpTime` later than **today's** intent line, not an earlier attempt's;
+step 9 satisfied; the wrapper hash unchanged.
 
 ## 8. Reconciliation with the cold catalogue
 
@@ -247,6 +263,20 @@ unchanged.
     an update screen), **ACT-38** (power cut) — all three rest on "a dead machine
     alarms", which rests on the cron schedules and graces alone until the owner
     runs the real drill on an evening after 22:00.
+12. **Declared limit — the drill measures a degraded watchdog.** While the
+    certificate line is out of `.env`, `validateStartupConfig` refuses, so
+    `composeWatchdog` degrades to its fence-and-halt-only ports
+    (`src/shell/watchdog-runtime.ts`). A quiet run still exits 0 and the wrapper
+    still sends its success heartbeat, so the check stays green — fail-closed by
+    design, but it means step 5 proves the heartbeat path of a *degraded*
+    watchdog. The armed composition first runs after step 10, unobserved. Step 11
+    therefore records the first armed composition line from `watchdog-run.log`.
+13. **The rotation comes first.** Rotating the three checks replaces their URLs and
+    therefore their fingerprints, which is why step 0 compares the confirmation's
+    fingerprints against the live ones: a rotation after the confirmation would
+    leave it attesting endpoints that no longer exist (ACT-11, ACT-50). The order
+    is: rotate, then exercise the alert path, then wait out one reminder period,
+    then confirm — all on the new checks, all before Monday.
 
 ## 9. Where the code lives, and how it is tested before it matters
 
@@ -260,8 +290,14 @@ that must land **before** the certificate run.
 worlds in the test suite, and the shell gets a `--dry-run` mode that performs every
 read, prints every intended action and touches nothing — run once end to end on
 Sunday against the real host, with the ledger written to a scratch root. The first
-real execution then differs from a rehearsed one only in that the actions are
-carried out.
+rehearsal exercises the readers, the ledger and the step selection for the steps
+whose windows are open when it runs. **What it cannot rehearse, stated rather than
+implied:** the elevated re-registration, the certificate run with its human
+checkpoint, the reboot and the result derived from it, every drill observation (no
+disable, so no down flip), and — because on a Sunday every deadline is either past
+or not yet reached — the sequence itself. The sequence belongs in the test suite,
+where the pure core runs against recorded worlds and recorded clocks; the
+rehearsal proves the shell can read this host.
 
 ## 10. The open decision, sharpened
 
@@ -302,3 +338,17 @@ the certificate, and it is the owner's call, not mine.
   long-run state directory, absolutes in `0-resume` and in the abort rule that were
   wrong after the gate, an unnamed certificate path at step 10, and a ledger append
   that could fail unnoticed. Dropped rather than fixed: the pending flag.
+- **Round 5 (rev 5, A=4 B=7 C=4).** Both A-defects of round 4 were closed, and the
+  findings moved back into the step table — the data the pure core folds over, not
+  the design. The planned check rotation would have invalidated gate condition 4
+  without any clause noticing (→ step 0 compares fingerprints, §8.13 fixes the
+  order); a retry on a later day would have inherited the previous day's reboot
+  proof (→ results are anchor-day scoped, the gate compares against today's intent);
+  step 4 would have enabled both tasks on an evening whose certificate had failed,
+  because its preconditions never mentioned steps 2 and 3 (→ both, plus an abort
+  that ends the attempt); and the owner's own abort could be swallowed by the
+  single-instance lock (→ it disables first and takes the lock afterwards). Folded
+  in as well: the local log discriminator and UTC comparison for the drill, the
+  emptiness assertion named by artefact instead of by directory, a staleness bound
+  on condition 4, the OAuth token and analyst start moved into step 0, an honest
+  list of what the rehearsal cannot rehearse, and the degraded-watchdog limit.
