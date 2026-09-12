@@ -3998,3 +3998,46 @@ small, no ADR split).
   the certificate. Two normative documents disagreeing about the one question whose
   wrong answer arms a deployment is exactly the failure mode the spec's own §11
   warns about.
+- **2026-09-12 — round four: A=2 B=8 C=6, and both A-findings are in the alert
+  path, not in the mechanism.** The trend across the four rounds is A = 5, 4, 4, 2
+  with the subject moving outward each time: from the design, to the world the
+  design assumed, to the channel the design reports through. Round 4 re-measured
+  every line of the host table, executed `verify-scheduled-tasks.ps1` against the
+  registration currently installed (exit 1, `SCHEDULER CHECK FAILED: 2 of 51` — it
+  does catch it) and ran the installer preview (`SCHEDULE COVERAGE OK`, window
+  Mon–Fri 14:00–23:45 through 2026-12-16).
+
+  1. **Step 0 would have saturated the alert path before the activation began.**
+     Its precondition "the alert path exercised" has exactly one tool, and that
+     tool ends deliberately with all three checks failing —
+     `tools/check-alert-path.ps1` says so in its own header and requires
+     `-ResolveOnly` afterwards. Run at 15:35 with both tasks still disabled,
+     nothing pings until 22:05, so with the hourly reminder now switched on the
+     owner would receive roughly eighteen mails before anything happened, and every
+     real page from the activation would arrive inside that noise. Step 0 now
+     **sends nothing**: it reads the three checks through the API and requires the
+     dated human confirmation that already exists from 2026-09-11 22:01.
+  2. **The silence drill measured the shape of silence, not its cause.** A network
+     outage or a degraded healthchecks.io inside the drill window satisfies "all
+     three down" without proving anything about the disabled tasks — ACT-45 calls
+     such a drill invalid and demands it be repeated, not counted. The drill now
+     repeats the independent API read afterwards and checks each flip timestamp
+     against the moment of its own disable; failing that it is recorded invalid.
+
+  Four further defects were worth the round on their own: step 4's window ran to
+  22:40 while step 5 needed its firing by 22:25, so a legal sequence lost the anchor
+  day; step 8 writes its intent and then reboots, so it could never append its own
+  `ok`, which two other clauses required — the first invocation after the boot now
+  closes it from `LastBootUpTime`; `certificate-cli --preflight` builds a full
+  runtime and would have written `pings.log`, an `analyst/` directory and an epoch
+  binding into `longrun-1` at 14:35 on the anchor day, so it must run with the dev
+  state directory and be followed by an assertion that `longrun-1` is still empty;
+  and the absolutes in `0-resume` and in the abort rule were wrong after the gate,
+  where an enabled task and a certificate line are exactly what is expected.
+
+  **The pending flag is dropped rather than fixed.** It was invented in revision 2
+  and survived three rounds as a defence-in-depth layer, but no such check exists in
+  `tools/cycle-run.ps1` or anywhere else, and building it would put untested code
+  into an un-gated `.ps1` on the path of every firing. The latch already makes the
+  case it guarded impossible. A layer that is counted but not built is worse than an
+  admitted single mechanism.
