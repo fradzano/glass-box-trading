@@ -43,12 +43,17 @@ The certificate and the first regular cycle are **different days on purpose**:
 the first cycle may only happen after PASS *and* after the activation gate, and
 squeezing both into one afternoon turns a gate into a formality.
 
-**If the start slips.** The flatten date moves with it — three calendar months
-from the first regular cycle, always. Changing `FLATTEN_DATE` edits
-`config/policy.json`, which changes the **policy digest**, which **voids the
-certificate**, because the arming gate compares the deployment's policy digest
-with the certificate's. So a slip means: change the date, *then* certify, *then*
-arm. There is no exception, including a slip of a single day.
+**If the start slips — superseded on 2026-09-11.** This section used to say that
+the flatten date moves with the start, always, and that a slip of even one day
+therefore means: change the date, *then* certify, *then* arm. The mechanism behind
+it is real and unchanged — changing `FLATTEN_DATE` edits `config/policy.json`,
+which changes the **policy digest**, which **voids the certificate**, because the
+arming gate compares the deployment's policy digest with the certificate's. What
+changed is the owner's ruling about the measurement period: **`FLATTEN_DATE` is a
+fixed end date** (2026-12-15). A start that slips shortens the run and the
+evaluation reports its actual length; the date, the digest and the certificate all
+stay as they are, and a retry the next trading day needs no new certificate. Only a
+certificate that itself failed requires a new run. See DECISIONS, 2026-09-11.
 
 ---
 

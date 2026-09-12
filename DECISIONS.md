@@ -3952,3 +3952,49 @@ small, no ADR split).
   on, so the activation proves the weaker "both tasks disabled" silence. The owner
   can run the real machine-off drill on any evening after 22:00 in the first week;
   until then that claim rests on the cron schedules and graces alone.
+- **2026-09-12 — round three: the latch held, the picture of the world did not.**
+  A=4 B=11 C=3, NO-GO again, and the difference matters: the reviewer confirmed all
+  four load-bearing code facts of revision 3 individually and could not make the
+  latch permit a trade in any attack sequence. The class "armed by default" is
+  gone. What failed were statements the spec made about a deployment state it had
+  never established — and all three were then measured on the host rather than
+  argued about:
+
+  1. **The registered cycle task bypasses the wrapper.** It executes
+     `node.exe "…\dist\shell\agent-cli.js"` with a window starting 15:30 for 6½
+     hours: the registration from the competition week, never replaced after
+     `tools/cycle-run.ps1` landed. It has no session test, no lead-in, no flag
+     check, no liveness ping and no 14:00 firing, so every safety statement that
+     rests on the wrapper was true of the file and false of this host. Revision 4
+     gets a re-installation step whose evidence is the verifier's output and both
+     action lines verbatim, and the enable step checks the task **definition**, not
+     only its state.
+  2. **`.env` still carries `PRE_ARM_CERTIFICATE`**, pointing at the hackathon
+     certificate of 2026-09-02 (DECISIONS 2026-09-06 deliberately left it there).
+     A stale key is worse than an absent one: with the key present, startup
+     validation passes, the runtime acquires authority and reads the broker —
+     against the competition account — before the arming gate refuses, and the
+     `CONFIG_INVALID` halt then sets the credential fence
+     (`agent-runtime.ts:420-426`, `mutation-gateway.ts:289-294`). With the key
+     absent it is refused before any of that (`core/startup.ts:353`). Step 0 now
+     removes the line and verifies by re-reading.
+  3. **`ALPACA_PROFILE` was never observed.** `evaluateArmingGate` returns
+     `armed: true` for every non-competition profile (`arming-gate.ts:56`), so the
+     entire latch is profile-conditional — and the certificate run sets the profile
+     to `dev` for its own duration, restoring it in a `finally` the runbook itself
+     calls unreliable after a Ctrl-C. Profile and resolved account id are now
+     observations of `0-resume` and terms of the gate's conjunction.
+
+  A fourth finding was a regression of my own making: revision 3 ended the silence
+  drill with "resume the three checks through the API", but after the drill they
+  are **down**, not paused, the provisioning tool has no resume, and resume would
+  not clear a down state anyway. Left as written it would have sent the owner
+  thirteen hourly reminder mails overnight and put the dead man on the floor before
+  the anchor morning. The drill now sends one success ping per endpoint, which
+  clears both states and restores the arithmetic the spec claimed.
+
+  **The runbook's "if the start slips" section is superseded** and says so now:
+  `FLATTEN_DATE` is a fixed end date, so a slip shortens the run instead of voiding
+  the certificate. Two normative documents disagreeing about the one question whose
+  wrong answer arms a deployment is exactly the failure mode the spec's own §11
+  warns about.
