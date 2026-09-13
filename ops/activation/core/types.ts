@@ -1,0 +1,206 @@
+// The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
+//
+// Everything the core decides is a function of three inputs, and all three are
+// declared here: the ledger (what was done), a snapshot of observations (what the
+// world looks like now), and the schedule (which days the attempt is about).
+// Nothing in this file has a runtime value, so it cannot trip the architecture
+// gate; the rules that the gate enforces on src/core apply to the modules that
+// import it.
+
+/**
+ * A step of the activation. The identifiers carry the spec's numbers so that a
+ * ledger line can be traced to the table row it executes. Steps 5 and 6 are
+ * split into their phases because each phase is its own invocation: a drill
+ * disables, waits for an observation minutes later, re-enables, and waits again,
+ * and every one of those moments must be reconstructible from the ledger alone.
+ */
+export type StepId =
+  | "0-preflight"
+  | "1-install"
+  | "2-certificate"
+  | "3-flat"
+  | "4-enable"
+  | "5a-watchdog-disable"
+  | "5b-watchdog-down"
+  | "5c-watchdog-reenable"
+  | "5d-watchdog-up"
+  | "6a-silence-disable"
+  | "6b-silence-down"
+  | "6c-silence-clear"
+  | "7-rearm"
+  | "8-reboot"
+  | "9-proof"
+  | "10-gate"
+  | "11-anchor";
+
+export type EntryKind = "intent" | "result" | "observation" | "correction" | "abort" | "note";
+
+export type Outcome = "ok" | "failed" | "already_in_target_state" | "unknown";
+
+/** A wall-clock moment in Europe/Berlin, as the shell converted it. The core never converts time zones. */
+export interface LocalInstant {
+  /** `YYYY-MM-DD`; compares correctly as a string. */
+  readonly date: string;
+  /** Minutes since local midnight, 0..1439. */
+  readonly minute: number;
+}
+
+/** One ledger line. Field names follow the spec's §4; `anchorDay` scopes results to the day they are about. */
+export interface LedgerEntry {
+  readonly seq: number;
+  /** ISO 8601 with offset, exactly as written. */
+  readonly at: string;
+  /** The same instant in UTC milliseconds, parsed by the shell when it read the line. */
+  readonly atUtcMs: number;
+  readonly attempt: string;
+  /** The anchor day this attempt is for, `YYYY-MM-DD`. */
+  readonly anchorDay: string;
+  readonly step: StepId | null;
+  readonly kind: EntryKind;
+  readonly outcome: Outcome | null;
+  readonly evidence: Readonly<Record<string, unknown>>;
+  readonly nextOwnerAction: string | null;
+}
+
+/**
+ * A reading of the world that may have failed. Axiom A1 of the spec: unknown is
+ * never green, so every observation the core consumes carries the possibility
+ * that it could not be taken, and the reason why.
+ */
+export type Reading<T> =
+  | { readonly known: true; readonly value: T }
+  | { readonly known: false; readonly reason: string };
+
+export type TaskName = "cycle" | "watchdog";
+
+/** A scheduled task as registered: its state and its action line verbatim, which the core parses by value. */
+export interface TaskObservation {
+  readonly state: string;
+  readonly execute: string;
+  readonly arguments: string;
+}
+
+export type CheckName = "liveness" | "readiness" | "watchdog";
+
+export interface CheckFlip {
+  readonly utcMs: number;
+  readonly up: boolean;
+}
+
+/** One healthchecks.io check, identified by name and `hc:` fingerprint — never by URL or UUID. */
+export interface CheckObservation {
+  readonly fingerprint: string;
+  readonly status: string;
+  readonly lastPingUtcMs: number | null;
+  /** Newest first, as the API returns them. */
+  readonly flips: readonly CheckFlip[];
+}
+
+export interface EnvObservation {
+  readonly certificatePath: string | null;
+  readonly profile: string | null;
+  /** SHA-256 of the file's bytes. */
+  readonly hash: string;
+  readonly duplicateKeys: readonly string[];
+}
+
+export interface DigestPair {
+  readonly runtimeDigest: string;
+  readonly policyDigest: string;
+}
+
+export interface CertificateObservation {
+  readonly path: string;
+  readonly verdict: string;
+  readonly digests: DigestPair;
+}
+
+export interface DevAccountObservation {
+  readonly positions: number;
+  readonly nonTerminalOrders: number;
+}
+
+/** A wrapper log line the shell parsed: its UTC stamp, the same moment in local time, and which shape it had. */
+export interface LogLine {
+  readonly file: string;
+  readonly utcMs: number;
+  readonly local: LocalInstant;
+  readonly shape: "run" | "skip" | "other";
+}
+
+export interface SessionSample {
+  readonly local: LocalInstant;
+  readonly interactiveSessions: number;
+  readonly explorerProcesses: number;
+}
+
+/** The human confirmation of gate condition 4, as recorded: when, and for which three endpoints. */
+export interface AlertConfirmation {
+  readonly confirmedUtcMs: number;
+  readonly fingerprints: Readonly<Record<CheckName, string>>;
+}
+
+/** Everything one invocation observed, taken before the core is asked anything. */
+export interface Observations {
+  readonly nowUtcMs: number;
+  readonly now: LocalInstant;
+  readonly tasks: Reading<Readonly<Record<TaskName, TaskObservation>>>;
+  readonly checks: Reading<Readonly<Record<CheckName, CheckObservation>>>;
+  /** A management-API read the drills do not touch; its success is the independent proof that the API path works. */
+  readonly apiIndependentRead: Reading<true>;
+  readonly env: Reading<EnvObservation>;
+  readonly resolvedAccountMasked: Reading<string>;
+  readonly deploymentDigests: Reading<DigestPair>;
+  readonly certificate: Reading<CertificateObservation | null>;
+  readonly devAccount: Reading<DevAccountObservation>;
+  readonly bootUtcMs: Reading<number>;
+  readonly cycleLog: Reading<readonly LogLine[]>;
+  readonly watchdogLog: Reading<readonly LogLine[]>;
+  readonly logFilesSearched: readonly string[];
+  readonly sessionSamples: readonly SessionSample[];
+  readonly wrapperSha256: Reading<string>;
+  /** The measured host preconditions of §3, as name → value; step 0 records them and later steps compare. */
+  readonly hostPreconditions: Reading<Readonly<Record<string, string>>>;
+  readonly alertConfirmation: AlertConfirmation | null;
+  readonly longRunArtefacts: Reading<readonly string[]>;
+}
+
+/** Which days an attempt is about. The shell computes the dates; the core only compares them. */
+export interface Schedule {
+  /** The trading day of the certificate run and the drills, `YYYY-MM-DD`. */
+  readonly certificateDay: string;
+  /** The calendar day after `certificateDay`, into which the silence drill runs. */
+  readonly drillNightDay: string;
+  /** The day of the reboot, the gate and the first regular cycle. */
+  readonly anchorDay: string;
+  /** The masked id of the long-run account the gate expects. */
+  readonly longRunAccountMasked: string;
+  /** The wrapper hash recorded at step 0, or null before it exists. */
+  readonly expectedWrapperSha256: string | null;
+}
+
+/** What the shell is asked to do. Each variant is one effect; nothing else may change the world. */
+export type Action =
+  | { readonly kind: "record"; readonly outcome: Outcome; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "remove-certificate-line" }
+  | { readonly kind: "write-certificate-line"; readonly path: string }
+  | { readonly kind: "enable-tasks"; readonly tasks: readonly TaskName[] }
+  | { readonly kind: "disable-tasks"; readonly tasks: readonly TaskName[] }
+  | { readonly kind: "register-disarm"; readonly at: LocalInstant }
+  | { readonly kind: "delete-disarm" }
+  | { readonly kind: "restart" }
+  | { readonly kind: "clear-checks" };
+
+/**
+ * The answer to one invocation.
+ * - `act`: write the intent, apply the actions in order, write the result.
+ * - `wait`: nothing is due yet; record nothing unless the reason is new.
+ * - `abort`: the attempt ends here — disable both tasks, leave the certificate line
+ *   unset, page with the reason.
+ * - `done`: the activation is complete for this anchor day.
+ */
+export type Decision =
+  | { readonly kind: "act"; readonly step: StepId; readonly actions: readonly Action[]; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "wait"; readonly reason: string }
+  | { readonly kind: "abort"; readonly step: StepId | null; readonly reason: string; readonly nextOwnerAction: string; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "done"; readonly reason: string };

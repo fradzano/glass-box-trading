@@ -21,6 +21,7 @@
 - `docs/EVIDENCE-DEBT.md` — Evidence debt — trigger paths the red-first tests MUST execute
 - `docs/HACKATHON-FACTS.md` — Hackathon facts — frozen event contract
 - `docs/IMPLEMENTATION-PLAN.md` — Implementation plan — proof-gated sessions
+- `docs/P12-ACTIVATION-BUILD.md` — P12 activation — build log
 - `docs/P12-ACTIVATION-SCENARIOS.md` — Activation scenarios — independent yardstick
 - `docs/P12-ACTIVATION-SPEC.md` — P12 activation — specification
 - `docs/P12-CALENDAR-PROMPTS.md` — P12 — calendar prompts for Gemini
@@ -35,6 +36,13 @@
 - `fixtures/golden-journal.jsonl`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `LICENSE`
+- `ops/activation/core/fold.ts` — The fold (spec §4, §5): from the ledger to what the current attempt has done.
+- `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
+- `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
+- `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
+- `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
+- `ops/tsconfig.json`
+- `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the
 - `package-lock.json`
 - `package.json`
 - `README.md` — Glass Box Trading
