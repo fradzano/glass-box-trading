@@ -75,6 +75,7 @@
   { "id": "D64", "note": "analyst child start not required", "from": "if (!observations.analyst.value.childStartVerified)", "to": "if (false)" },
   { "id": "D65", "note": "6a accepts a ping from before the watchdog drill ended", "from": "check.lastPingUtcMs <= upAt) allPinged = false;", "to": "check.lastPingUtcMs < 0) allPinged = false;" },
   { "id": "D66", "note": "a host precondition nobody expected passes", "from": "if (!Object.hasOwn(expected, name)) changed.push(name);", "to": "" },
+  { "id": "D67", "note": "-MaxLogBytes accepted on the watchdog task, which does not declare it", "from": "        if (name !== \"cycle\") findings.push(`${name}.parameter.unknown:${parameter}`);", "to": "" },
   { "id": "W1", "note": "wiring: 0-resume not called", "from": "const world = worldFindings(fold, observations, schedule);", "to": "const world = { red: [], unknown: [] };" },
   { "id": "W2", "note": "wiring: interrupted reboot not closed", "from": "if (fold.interrupted !== null) return closeInterrupted(fold, fold.interrupted, observations, schedule);", "to": "" },
   { "id": "W3", "note": "wiring: re-arm skips its own checks", "from": "case \"7-rearm\": return step7(fold, observations);", "to": "case \"7-rearm\": return act(\"7-rearm\", [{ kind: \"enable-tasks\", tasks: [\"cycle\", \"watchdog\"] }], {});" },

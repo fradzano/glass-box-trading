@@ -133,7 +133,11 @@ function scriptParameterFindings(name: TaskName, tokens: readonly string[]): rea
     switch (parameter) {
       case "-reporoot":
       case "-nodepath":
+        if (takeValue() === null) findings.push(`${name}.parameter.${parameter.slice(1)}.no-value`);
+        break;
       case "-maxlogbytes":
+        // Declared by cycle-run.ps1 only; watchdog-run.ps1 would refuse to start with it.
+        if (name !== "cycle") findings.push(`${name}.parameter.unknown:${parameter}`);
         if (takeValue() === null) findings.push(`${name}.parameter.${parameter.slice(1)}.no-value`);
         break;
       case "-watchdogintervalminutes":

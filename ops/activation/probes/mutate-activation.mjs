@@ -16,9 +16,15 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const [target, mutantsFile] = process.argv.slice(2);
+// An optional third argument restricts the run to one spec file, to measure what that
+// file catches on its own (unit 6 measures the sequence tests this way).
+const [target, mutantsFile, onlySpec] = process.argv.slice(2);
 if (!target || !mutantsFile) {
-  process.stderr.write("usage: node ops/activation/probes/mutate-activation.mjs <core file> <mutants json>\n");
+  process.stderr.write("usage: node ops/activation/probes/mutate-activation.mjs <core file> <mutants json> [spec file]\n");
+  process.exit(2);
+}
+if (onlySpec !== undefined && !/^[\w./-]+\.spec\.ts$/.test(onlySpec)) {
+  process.stderr.write("the spec filter must be a plain relative *.spec.ts path\n");
   process.exit(2);
 }
 
@@ -36,7 +42,7 @@ try {
     }
     writeFileSync(target, originalText.replace(mutant.from, mutant.to), "utf8");
     // One command string with shell: true — Windows cannot spawn npx.cmd without a shell.
-    const run = spawnSync("npx.cmd vitest run --config ops/vitest.config.ts", { encoding: "utf8", shell: true });
+    const run = spawnSync(`npx.cmd vitest run --config ops/vitest.config.ts${onlySpec === undefined ? "" : ` ${onlySpec}`}`, { encoding: "utf8", shell: true });
     results.push({ id: mutant.id, status: run.status !== 0 ? "CAUGHT" : "SURVIVED", note: mutant.note });
     writeFileSync(target, original);
   }

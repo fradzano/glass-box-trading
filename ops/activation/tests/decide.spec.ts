@@ -411,6 +411,11 @@ describe("decide — task definitions by value", () => {
     expect(cycle(`${CYCLE_ARGS} -WatchdogIntervalMinutes 10`)).toEqual(["cycle.parameter.unknown:-watchdogintervalminutes"]);
   });
 
+  it("accepts -MaxLogBytes only where it is declared: cycle-run.ps1 has it, watchdog-run.ps1 does not", () => {
+    expect(cycle(`${CYCLE_ARGS} -MaxLogBytes 1048576`)).toEqual([]);
+    expect(watchdog(`${WATCHDOG_ARGS} -MaxLogBytes 1048576`)).toEqual(["watchdog.parameter.unknown:-maxlogbytes"]);
+  });
+
   it("refuses the direct-node registration found on the host", () => {
     expect(definitionFindings("cycle", task("Disabled", `"${REPO}\\dist\\shell\\agent-cli.js"`, "C:\\Program Files\\nodejs\\node.exe"))).toContain("cycle.execute");
   });

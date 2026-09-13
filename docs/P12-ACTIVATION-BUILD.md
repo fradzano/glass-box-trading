@@ -51,8 +51,8 @@ always named at the bottom.
 | 2 | Ledger codec: parse lines, torn tail, `seq` gaps, non-monotonic `at` | **done** — `ops/activation/core/ledger.ts`, 12 tests, mutation probe 14/14 | `ba30ed2` |
 | 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | **done** — `ops/activation/core/fold.ts`, 12 tests, mutation probe 13/13 with one declared equivalent (see decisions) | `56eb9e7` |
 | 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
-| 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions) | unit 5 commit |
-| 6 | Core tests against recorded worlds, including the retry and abort paths | open | |
+| 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions). **Corrected in unit 6:** `-MaxLogBytes` on the watchdog task (red-first test, mutant D67, probe 82/82) | `8b7b888`, fix in the unit 6 commit |
+| 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | open | |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | open | |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | open | |
@@ -192,6 +192,70 @@ always named at the bottom.
   and the ledger would read corrupt from then on. The store needs a rule for appending
   after a torn tail that keeps the torn bytes visible and never repairs them.
 
+### Unit 6 — sequences against a simulated world
+
+- **The simulator lives in the test tree** (`ops/activation/tests/simulator.ts`), so the
+  core cannot import its own yardstick. It advances a clock minute by minute, fires the
+  tasks, settles the checks, fires the disarm, and every five minutes inside the
+  activation task's trigger windows invokes `decide` and applies the answer by the shell
+  contracts of unit 5. Its model is written at the top of the file so it can be checked
+  against the host: cycle every 15 min 14:00–23:45 (`run:` 15:10–21:59), watchdog every
+  10 min 14:00–23:55, a check due at its next slot after the last ping (the next day's
+  14:00 when none is left) and down after slot plus grace (liveness 30, readiness 50,
+  watchdog 15 min), a paused check paused until a ping, a restart of three minutes.
+- **The happy path runs unaided** from Monday 15:30 to Tuesday 15:25: every step once, in
+  execution order, no abort, `done`, and the moments pinned — enable 22:05, watchdog
+  disable 22:15, down 22:40, up 22:50, silence 23:00, all down 00:10, reboot 13:30 closed
+  13:35, re-arm 13:50, proof 14:05, gate 14:35, anchor 15:20. Two of those are tight in
+  the model: 5d lands at 22:50, the last minute of its window, because the re-enabled
+  watchdog's first firing is 22:50; and 6a waits until 23:00 for a liveness ping after
+  22:50. **On the host this depends on the watchdog interval and the firing grid**; the
+  dry-run rehearsal (unit 13) cannot show it, so the drill windows deserve a look when the
+  real interval is known.
+- **Finding — the retry clause "the three checks must read up" cannot be met.** After a
+  tearing abort both tasks stay disabled, so no ping arrives, and each check goes down
+  within its slot plus grace. At 22:05 on a retry evening a check that was up at 15:00 is
+  down. What can hold is `paused`, which step 4 already accepts (unit 5); the gate still
+  requires `up`. The retry sequence therefore has the owner pause the checks before the
+  new attempt. **Consequence for unit 10:** opening a retry attempt should state, or do,
+  the pause; and the tearing aborts page into hourly reminders until then, which is loud
+  by design. Spec §5's retry paragraph needs the word changed at its next revision.
+- **Paths run end to end:** ACT-13 (a failed certificate at 16:05, then only `ended`,
+  nothing ever enabled), ACT-27 (the owner's abort at 22:27, read as deliberate), ACT-24
+  with round 5 A2 (a red gate, then a retry a week later that runs steps 4–11 again and
+  arms), ACT-29 twice (a crash before the enable's actions gives `STEP_INTERRUPTED`; after
+  them `0-resume` catches it first as `WORLD_MISMATCH`), ACT-26 (a task enabled by hand
+  in the silence drill), ACT-20 (a machine back after 13:59), ACT-39 (a torn tail after the
+  gate), ACT-45 (a stray wrapper firing during an outage makes the drill invalid),
+  ACT-46/48 (an outage before the silence drill waits out 6a and aborts at its deadline),
+  ACT-50 (a liveness ping reaching the watchdog check keeps it up, so 5b never records
+  and aborts at 22:55) and ACT-43 with spec §5's post-gate clause (a cycle task that reads
+  enabled but never starts misses the anchor; the abort at 16:05 pages and leaves the
+  armed run standing).
+- **What the sequences catch on their own** was measured with the decide mutant set
+  restricted to `sequences.spec.ts`. The first twelve sequences caught 20 of 81; with
+  the two added since, 21 of 82. The survivors are almost all refusal branches no
+  realistic run reaches, which unit 5's tests pin one by one. Two of the first survivors
+  were claims about composition: D3 (an abort after the gate must not tear down), now
+  caught by the ACT-43 sequence; and ACT-50, whose sequence shows that a mixed-up ping
+  cannot pass the watchdog drill but ends at the deadline, so it catches no extra
+  mutant — the down-set comparison (D34) stays pinned by its unit test. This is a
+  measure of the sequences, not a gate; the gate is the full probe, 82 of 82.
+- **Every sequence is held to invariants 1 and 3** by one helper: the cycle task never
+  enabled beside a certificate line without a recorded gate, a tearing abort leaving both
+  tasks disabled and no line, and an aborted attempt answering only `ended` afterwards —
+  except a ledger abort that could not be appended (the torn tail), which unit 9 decides.
+- **Defect in unit 5, found while writing unit 7's brief:** `definitionFindings` accepted
+  `-MaxLogBytes` on the watchdog task, but only `cycle-run.ps1` declares it
+  (`watchdog-run.ps1` declares `RepoRoot`, `NodePath`, `WatchdogIntervalMinutes`), so a
+  watchdog definition PowerShell would refuse to start passed as correct by value. The
+  unit-5 comment said "the full names the wrappers declare" and the code checked the
+  union of both. Fixed red-first: the test failed before the change.
+- **`mutate-activation.mjs` takes an optional spec file** so that one file's own catch
+  rate can be measured; the filter is checked against a plain relative `*.spec.ts` path,
+  and the baseline run with the filter must be green first, or every mutant would look
+  caught.
+
 ## How to run the checks
 
 From the repository root:
@@ -225,7 +289,45 @@ The second build session closed unit 5 here: `decide` with 105 tests, mutation p
 D9, D41 and D55 spot-checked to fail on exactly the test they target rather than on a
 syntax error. Nothing was run on the host.
 
+## Session boundary — 2026-09-14, 01:13
+
+Unit 6 closed here: the simulator, 14 sequences, the retry-clause finding and the
+`-MaxLogBytes` correction to unit 5. Nothing was run on the host.
+
 ## Next step
+
+**Unit 7: the shell readers** — one per field of `Observations`, each returning a
+`Reading` whose reason carries no credential. Functional core, imperative shell applies
+inside the shell too: every reader splits into a **pure parser** (text or JSON in, value
+or refusal out — tested without a host) and a **thin I/O call** (a command, a file read,
+an HTTP request). Parsers are where the defects will be, so they get the tests and a
+mutant set; the I/O calls get exercised by the `--dry-run` rehearsal of unit 13.
+
+| Field | Source | Parser to test |
+|---|---|---|
+| `tasks` | `Get-ScheduledTask -TaskPath \GlassBoxTrading\` as JSON: state, `Actions` (all of them, not `[0]`) | exactly one action per task, else unknown |
+| `checks`, `apiIndependentRead` | healthchecks.io management API, bounded backoff | 429 / 5xx / timeout → unknown; status, last ping, flips newest first; fingerprints by the scheme `tools/healthchecks-provision.mjs` already prints, never the UUID |
+| `env` | `.env` bytes | duplicate keys, `PRE_ARM_CERTIFICATE`, `ALPACA_PROFILE`, SHA-256 |
+| `resolvedAccountMasked`, `devAccount` | the existing read-only adapter, profile explicit per call | masking; positions and non-terminal orders |
+| `deploymentDigests`, `certificate` | the certificate CLI's digest print and the certificate file | verdict and both digests |
+| `bootUtcMs` | `Win32_OperatingSystem.LastBootUpTime` | CIM datetime → UTC ms |
+| `cycleLog`, `watchdogLog` | `cycle-run.log` + `.log.1` (the cycle wrapper rotates), `watchdog-run.log` (the watchdog wrapper does not rotate, verified 2026-09-14) in `STATE_DIR` | the leading ISO stamp, `run:` / `skip:` / other, local instant; **and the armed-composition shape step 11 needs** |
+| `sessionSamples` | an append-only sample log in the activation root, one line per invocation | `Win32_LogonSession` types 2, 10, 11 and `explorer` count |
+| `wrapperSha256` | `tools/cycle-run.ps1` (decide whether `watchdog-run.ps1` is hashed too — the spec says "the wrapper") | — |
+| `hostPreconditions`, `freeDiskBytes` | registry and volume reads of spec §3 | value normalisation |
+| `alertConfirmation` | a human-written file — **location and format to fix in this unit** | refuse anything but date plus three `hc:` fingerprints |
+| `analyst` | token presence, and **how "an analyst child started and verified" is observed — to design** | — |
+| `schedulerCheck`, `schedulerCheckExpectEnabled` | `verify-scheduled-tasks.ps1`, twice | `SCHEDULER CHECK PASSED: N checks.` / `FAILED: x of N`; anything else unknown |
+| `disarm` | `Get-ScheduledTask` for the one-shot | trigger → local instant |
+| `bootstrapEntry` | the long-run journal's first entry | the existing journal codec, read-only |
+| `longRunArtefacts` | directory listing of `longrun-1` | — |
+
+The readers never write, except the sample log. Nothing may run against the competition
+account except the identity read of spec §7, and nothing is enabled on the host.
+
+After unit 7: unit 8 (actions), 9 (ledger store), 10 (CLI).
+
+## Unit 6 brief, as it was given
 
 **Unit 6: the core against recorded worlds, as sequences.** Unit 5's tests ask one
 question per test — one ledger, one world, one answer. What they do not show is that

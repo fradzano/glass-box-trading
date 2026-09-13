@@ -49,6 +49,8 @@
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
+- `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
+- `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the
