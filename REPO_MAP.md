@@ -40,6 +40,10 @@
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
+- `ops/activation/probes/mutants-fold.json`
+- `ops/activation/probes/mutants-ledger.json`
+- `ops/activation/probes/mutants-steps.json`
+- `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the

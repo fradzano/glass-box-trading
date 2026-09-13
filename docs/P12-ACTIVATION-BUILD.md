@@ -49,8 +49,8 @@ always named at the bottom.
 |---|---|---|---|
 | 1 | Core types: step ids, ledger entry, observation snapshot, decision | **done** — `ops/activation/core/types.ts` | see unit 2 |
 | 2 | Ledger codec: parse lines, torn tail, `seq` gaps, non-monotonic `at` | **done** — `ops/activation/core/ledger.ts`, 12 tests, mutation probe 14/14 | `ba30ed2` |
-| 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | **done** — `ops/activation/core/fold.ts`, 12 tests, mutation probe 13/13 with one declared equivalent (see decisions) | unit 3 commit |
-| 4 | Step table: preconditions, deadlines, expectations per step | **in progress** — `ops/activation/core/steps.ts` written and lint-clean, tests and probe pending | |
+| 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | **done** — `ops/activation/core/fold.ts`, 12 tests, mutation probe 13/13 with one declared equivalent (see decisions) | `56eb9e7` |
+| 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
 | 5 | Decide: fold + observations + clock facts → act / wait / abort / done | open | |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | open | |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | open | |
@@ -113,8 +113,80 @@ npx.cmd eslint ops
 npx.cmd vitest run --config ops/vitest.config.ts
 ```
 
+Mutation probes, one set per core unit, live in `ops/activation/probes/`:
+
+```powershell
+node ops/activation/probes/mutate-activation.mjs ops/activation/core/ledger.ts ops/activation/probes/mutants-ledger.json
+node ops/activation/probes/mutate-activation.mjs ops/activation/core/fold.ts   ops/activation/probes/mutants-fold.json
+node ops/activation/probes/mutate-activation.mjs ops/activation/core/steps.ts  ops/activation/probes/mutants-steps.json
+```
+
+Never add or edit a `*.spec.ts` while a probe runs.
+
+## Session boundary — 2026-09-13, 23:55
+
+The first build session ended here on purpose, at a unit boundary: units 1–4 are
+done, verified and pushed, and unit 5 is the most safety-critical function of the
+core. It gets a fresh session rather than the tail of a very long one.
+
 ## Next step
 
-Unit 4: tests and the mutation probe for `ops/activation/core/steps.ts`. The code is
-written and lint-clean; `ops/activation/tests/steps.spec.ts` is being written against
-the windows of spec §5 rev 6. Then unit 5, `decide`.
+**Unit 5: `decide(fold, observations, schedule): Decision`** in
+`ops/activation/core/decide.ts`. Read spec §5 (the step table and the abort,
+owner-abort and retry paragraphs), §6 and §7 first; everything below is a brief,
+not a substitute for them.
+
+**Order of evaluation, as a starting point:**
+
+1. **Integrity.** An empty ledger starts at step 0. A torn or corrupt ledger, or any
+   `fold.inconsistencies`, is an abort: the state is unknown, verify against the
+   world.
+2. **Attempt ended.** `fold.attemptEnded` means this attempt may not act at all — no
+   action, whatever the world looks like. A new attempt is opened by the CLI or the
+   owner, never by `decide`.
+3. **`0-resume`.** Compare the world with the expectation of the current phase, using
+   `expectedTasks` and `expectedCertificateLine` from `steps.ts`: task states; once
+   step 1 is done, both task definitions **by value** (`powershell.exe`,
+   `-File …\tools\cycle-run.ps1`, `-SkipOutsideSession` and `-SessionLeadInMinutes`
+   absent or at their defaults); the certificate line; `ALPACA_PROFILE` is
+   `competition`; the resolved account equals `schedule.longRunAccountMasked`; no
+   duplicate `.env` key; the wrapper hash equals the one step 0 recorded. **Any
+   reading the current phase depends on that is `known: false` is an abort (A1).**
+4. **Interrupted step.** An interrupted `8-reboot` is closed by the first invocation
+   after the boot: `ok` when `bootUtcMs` is later than the intent, `failed` otherwise,
+   bound by `7-rearm`'s window. Any other interrupted step is an abort.
+5. **Next step and its window.** `nextStep(fold)`; `null` is done. Before `opens` is a
+   wait; after `notValidAfter` is an abort naming the missed deadline.
+6. **The step itself**, per spec §5: validate-only steps (2, 3, 9) record; acting
+   steps return their actions; the gate (10) evaluates the conjunction of §7 and only
+   then writes **the certificate path validated in step 2** and deletes the disarm
+   task.
+
+**Type gaps to close at the start of unit 5**, found while writing units 1–4:
+
+- `Observations` has no reading for the analyst start and the OAuth token that step 0
+  requires, and none for the `BOOTSTRAP` journal entry that step 11 records.
+- `Decision` has only an `abort` that tears down. Spec §5 says an abort **after** step
+  10 must page and record without disabling a correctly armed run, so a
+  non-tearing variant is needed.
+- The disarm registration needs its local time (15:05 on the anchor day) and the
+  certificate path to write needs to come from step 2's recorded evidence.
+
+**Design points to settle in unit 5, with a test each:**
+
+- An invalid silence drill (API unreachable, or a wrapper log line inside the silence
+  window) — the spec says "recorded invalid and repeated, never counted", but the
+  night's window may not allow a repeat. Decide whether that is an abort of the
+  attempt or a bounded retry, and write it into the build log.
+- What "an observed firing after the enable" (step 5a) and "an observed ping" (step
+  6a) mean precisely in terms of `cycleLog` / `watchdogLog` lines and their UTC stamps
+  relative to the enabling result's `atUtcMs`.
+- Session samples for step 9: which sample counts as "13:55" and "14:05" when the
+  invocations do not land exactly on those minutes.
+
+**Tests**: a recorded world per step for the happy path, one per red condition, one
+per deadline, the interrupted-reboot closing in both outcomes, the attempt-ended
+case, the integrity abort, and an unknown reading in every phase that depends on it.
+Then a mutant set in `ops/activation/probes/mutants-decide.json` and the probe.
+
+After unit 5: units 7–10, the shell.

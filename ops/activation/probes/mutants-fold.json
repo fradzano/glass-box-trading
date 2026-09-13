@@ -1,0 +1,80 @@
+[
+    {
+        "id":  "F1",
+        "note":  "day steps inherited across attempts",
+        "from":  "if (!carriesOver(step) \u0026\u0026 !inCurrent) continue;",
+        "to":  ""
+    },
+    {
+        "id":  "F2",
+        "note":  "no step carries over",
+        "from":  "return step === \"0-preflight\" || step === \"1-install\" || step === \"2-certificate\" || step === \"3-flat\";",
+        "to":  "return false;"
+    },
+    {
+        "id":  "F3",
+        "note":  "abort does not end the attempt",
+        "from":  "attemptEnded = { seq: entry.seq, step: entry.step, byOwner: entry.step === null };",
+        "to":  ""
+    },
+    {
+        "id":  "F4",
+        "note":  "an earlier attempt\u0027s abort ends the current one",
+        "from":  "if (entry.kind === \"abort\" \u0026\u0026 inCurrent \u0026\u0026 attemptEnded === null) {",
+        "to":  "if (entry.kind === \"abort\" \u0026\u0026 attemptEnded === null) {"
+    },
+    {
+        "id":  "F5",
+        "note":  "owner abort not distinguished",
+        "from":  "byOwner: entry.step === null",
+        "to":  "byOwner: false"
+    },
+    {
+        "id":  "F6b",
+        "note":  "an intent without a result counts as done (real mutant replacing the equivalent F6)",
+        "from":  "if (state === undefined || state.resultSeq === null) return false;",
+        "to":  "if (state === undefined) return false; if (state.resultSeq === null) return true;"
+    },
+    {
+        "id":  "F7",
+        "note":  "a result older than a re-run intent still counts",
+        "from":  "if (state.intentSeq !== null \u0026\u0026 state.resultSeq \u003c state.intentSeq) return false;",
+        "to":  ""
+    },
+    {
+        "id":  "F8",
+        "note":  "unknown outcome counts as done",
+        "from":  "return state.outcome === \"ok\" || state.outcome === \"already_in_target_state\";",
+        "to":  "return state.outcome !== \"failed\";"
+    },
+    {
+        "id":  "F9",
+        "note":  "interleaved attempts not flagged",
+        "from":  "if (closedAttempts.includes(entry.attempt)) inconsistencies.push",
+        "to":  "if (false) inconsistencies.push"
+    },
+    {
+        "id":  "F10",
+        "note":  "anchor day change not flagged",
+        "from":  "} else if (knownDay !== entry.anchorDay) {",
+        "to":  "} else if (false) {"
+    },
+    {
+        "id":  "F11",
+        "note":  "interrupted step not reported",
+        "from":  "if (open \u0026\u0026 (interrupted === null || (interrupted.intentSeq ?? 0) \u003c state.intentSeq)) interrupted = state;",
+        "to":  ""
+    },
+    {
+        "id":  "F12",
+        "note":  "results never recorded",
+        "from":  "if (entry.kind === \"result\") steps[step] = withResult(steps[step], entry, step);",
+        "to":  ""
+    },
+    {
+        "id":  "F13",
+        "note":  "corrections ignored",
+        "from":  "if (target !== null) corrections.push(target);",
+        "to":  ""
+    }
+]

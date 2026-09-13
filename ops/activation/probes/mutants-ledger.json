@@ -1,0 +1,16 @@
+[
+  { "id": "L1", "note": "seq gap undetected at read", "from": "if (validated.entry.seq !== expectedSeq) {", "to": "if (false) {" },
+  { "id": "L2", "note": "clock running backwards undetected at read", "from": "if (lastAtUtcMs !== null && validated.entry.atUtcMs < lastAtUtcMs) {", "to": "if (false) {" },
+  { "id": "L3", "note": "clock running backwards accepted at append", "from": "if (tail.lastAtUtcMs !== null && entry.atUtcMs < tail.lastAtUtcMs) return refuse(\"AT_NOT_MONOTONIC\");", "to": "" },
+  { "id": "L4", "note": "lines after a corrupt line trusted", "from": "if (corrupt.length > 0) {", "to": "if (false) {" },
+  { "id": "L5", "note": "torn tail silently dropped", "from": "return { entries, torn: torn.length === 0 ? null : torn, corrupt };", "to": "return { entries, torn: null, corrupt };" },
+  { "id": "L6", "note": "UUID-shaped evidence accepted", "from": "/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)", "to": "false" },
+  { "id": "L7", "note": "hc-ping URL accepted", "from": "|| /hc-ping\\.com/i.test(text)", "to": "|| false" },
+  { "id": "L8", "note": "healthchecks API URL accepted", "from": "|| /healthchecks\\.io\\/(api|ping)/i.test(text);", "to": "|| false;" },
+  { "id": "L9", "note": "unknown field accepted", "from": "if (!ledgerFields().includes(key)) return refuse(`UNKNOWN_FIELD:${key}`);", "to": "" },
+  { "id": "L10", "note": "abort without next owner action accepted", "from": "if (kind === \"abort\" && nextOwnerAction === null) return refuse(\"ABORT_WITHOUT_NEXT_OWNER_ACTION\");", "to": "" },
+  { "id": "L11", "note": "bare UTC Z accepted in at", "from": "[+-]\\d{2}:\\d{2}$/.test(at)", "to": "([+-]\\d{2}:\\d{2}|Z)$/.test(at)" },
+  { "id": "L12", "note": "intent or result without step accepted", "from": "if (step === null) return refuse(\"STEP_REQUIRED\");", "to": "" },
+  { "id": "L13", "note": "result without outcome accepted", "from": "if (!isOutcome(outcome)) return refuse(\"RESULT_WITHOUT_OUTCOME\");", "to": "if (false) return refuse(\"RESULT_WITHOUT_OUTCOME\");" },
+  { "id": "L14", "note": "missing field accepted", "from": "if (!Object.hasOwn(value, key)) return refuse(`MISSING_FIELD:${key}`);", "to": "" }
+]

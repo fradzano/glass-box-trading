@@ -1,0 +1,15 @@
+[
+  { "id": "S1", "note": "step 4 deadline widened to 22:40 (round 4: made step 5 impossible)", "from": "return { opens: localAt(certificate, 22, 5), notValidAfter: localAt(certificate, 22, 20) };", "to": "return { opens: localAt(certificate, 22, 5), notValidAfter: localAt(certificate, 22, 40) };" },
+  { "id": "S2", "note": "re-arm deadline after the 14:00 firing (round 3: must be 13:59)", "from": "return { opens: localAt(anchor, 13, 50), notValidAfter: localAt(anchor, 13, 59) };", "to": "return { opens: localAt(anchor, 13, 50), notValidAfter: localAt(anchor, 14, 30) };" },
+  { "id": "S3", "note": "silence drill deadline on the certificate day instead of the night after", "from": "notValidAfter: localAt(night, 0, 30)", "to": "notValidAfter: localAt(certificate, 0, 30)" },
+  { "id": "S4", "note": "re-arm ordered before the reboot", "from": "\"8-reboot\", \"7-rearm\", \"9-proof\", \"10-gate\", \"11-anchor\",", "to": "\"7-rearm\", \"8-reboot\", \"9-proof\", \"10-gate\", \"11-anchor\"," },
+  { "id": "S5", "note": "no prerequisites (round 5 A3: step 4 after a failed certificate)", "from": "return order.slice(0, order.indexOf(step));", "to": "return [];" },
+  { "id": "S6", "note": "local comparison ignores the date", "from": "if (a.date !== b.date) return a.date < b.date ? -1 : 1;", "to": "" },
+  { "id": "S7", "note": "tasks expected enabled after the silence drill disabled them", "from": "if (stepDone(fold, \"6a-silence-disable\")) return { cycle: \"disabled\", watchdog: \"disabled\" };", "to": "" },
+  { "id": "S8", "note": "watchdog expected enabled while its drill has it disabled", "from": "watchdog: watchdogDrilled ? \"disabled\" : \"enabled\"", "to": "watchdog: \"enabled\"" },
+  { "id": "S9", "note": "certificate line expected absent before step 0 removed it", "from": "  return \"any\";", "to": "  return \"absent\";" },
+  { "id": "S10", "note": "certificate line not expected after a green gate", "from": "if (stepDone(fold, \"10-gate\")) return \"present\";", "to": "" },
+  { "id": "S11", "note": "proof opens at 14:00, before the 14:00 firing can have been logged", "from": "return { opens: localAt(anchor, 14, 5), notValidAfter: localAt(anchor, 14, 35) };", "to": "return { opens: localAt(anchor, 14, 0), notValidAfter: localAt(anchor, 14, 35) };" },
+  { "id": "S12", "note": "next step picks a done step", "from": "return executionOrder().find(step => !stepDone(fold, step)) ?? null;", "to": "return executionOrder().find(step => stepDone(fold, step)) ?? null;" },
+  { "id": "S13", "note": "gate opens at 14:45, eating its own budget", "from": "return { opens: localAt(anchor, 14, 35), notValidAfter: localAt(anchor, 14, 55) };", "to": "return { opens: localAt(anchor, 14, 45), notValidAfter: localAt(anchor, 14, 55) };" }
+]
