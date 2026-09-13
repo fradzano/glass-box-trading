@@ -65,7 +65,8 @@ export interface LedgerEntry {
 /**
  * A reading of the world that may have failed. Axiom A1 of the spec: unknown is
  * never green, so every observation the core consumes carries the possibility
- * that it could not be taken, and the reason why.
+ * that it could not be taken, and the reason why. A reader keeps the reason free
+ * of credentials; the ledger codec refuses secret shapes as the backstop.
  */
 export type Reading<T> =
   | { readonly known: true; readonly value: T }
@@ -77,7 +78,7 @@ export type TaskName = "cycle" | "watchdog";
 export interface TaskObservation {
   readonly state: string;
   readonly execute: string;
-  readonly arguments: string;
+  readonly argumentLine: string;
 }
 
 export type CheckName = "liveness" | "readiness" | "watchdog";
@@ -128,7 +129,14 @@ export interface LogLine {
   readonly shape: "run" | "skip" | "other";
 }
 
+/**
+ * One sample of who is signed in. The shell takes one on every invocation and
+ * appends it to its own sample log without judging it — like a wrapper log line —
+ * so that step 9 can find the samples around the 14:00 firing, which were taken
+ * by earlier invocations.
+ */
 export interface SessionSample {
+  readonly utcMs: number;
   readonly local: LocalInstant;
   readonly interactiveSessions: number;
   readonly explorerProcesses: number;
@@ -140,10 +148,35 @@ export interface AlertConfirmation {
   readonly fingerprints: Readonly<Record<CheckName, string>>;
 }
 
+/** Step 0's analyst precondition: the token the gate's digest re-print needs, and one analyst child started and verified. */
+export interface AnalystObservation {
+  readonly oauthTokenPresent: boolean;
+  readonly childStartVerified: boolean;
+}
+
+/** What `verify-scheduled-tasks.ps1` printed: the verdict line and its counts. */
+export interface SchedulerCheckObservation {
+  readonly passed: boolean;
+  readonly checkCount: number;
+  readonly failedChecks: number;
+}
+
+/** The disarm one-shot: whether it is registered, and the local moment its trigger fires. */
+export interface DisarmObservation {
+  readonly registered: boolean;
+  readonly fires: LocalInstant | null;
+}
+
+/** The long-run journal's `BOOTSTRAP` entry, which step 11 records as the start of the measurement period. */
+export interface JournalBootstrapObservation {
+  readonly seq: number;
+  readonly utcMs: number;
+}
+
 /** Everything one invocation observed, taken before the core is asked anything. */
 export interface Observations {
   readonly nowUtcMs: number;
-  readonly now: LocalInstant;
+  readonly nowLocal: LocalInstant;
   readonly tasks: Reading<Readonly<Record<TaskName, TaskObservation>>>;
   readonly checks: Reading<Readonly<Record<CheckName, CheckObservation>>>;
   /** A management-API read the drills do not touch; its success is the independent proof that the API path works. */
@@ -162,10 +195,19 @@ export interface Observations {
   /** The measured host preconditions of §3, as name → value; step 0 records them and later steps compare. */
   readonly hostPreconditions: Reading<Readonly<Record<string, string>>>;
   readonly alertConfirmation: AlertConfirmation | null;
+  /** The top-level entry names of the long-run state directory. */
   readonly longRunArtefacts: Reading<readonly string[]>;
+  readonly freeDiskBytes: Reading<number>;
+  readonly analyst: Reading<AnalystObservation>;
+  /** The verifier run without `-ExpectEnabled`. The shell takes both runs on every invocation; the core picks. */
+  readonly schedulerCheck: Reading<SchedulerCheckObservation>;
+  /** The verifier run with `-ExpectEnabled`, which the gate requires. */
+  readonly schedulerCheckExpectEnabled: Reading<SchedulerCheckObservation>;
+  readonly disarm: Reading<DisarmObservation>;
+  readonly bootstrapEntry: Reading<JournalBootstrapObservation | null>;
 }
 
-/** Which days an attempt is about. The shell computes the dates; the core only compares them. */
+/** The parameters of one attempt. The shell computes the dates from the anchor day; the core only compares them. */
 export interface Schedule {
   /** The trading day of the certificate run and the drills, `YYYY-MM-DD`. */
   readonly certificateDay: string;
@@ -175,17 +217,21 @@ export interface Schedule {
   readonly anchorDay: string;
   /** The masked id of the long-run account the gate expects. */
   readonly longRunAccountMasked: string;
-  /** The wrapper hash recorded at step 0, or null before it exists. */
-  readonly expectedWrapperSha256: string | null;
+  /** The coverage date the installer is given, `YYYY-MM-DD` (spec §5, step 1). */
+  readonly coverageThroughDate: string;
+  /** The host preconditions of spec §3 as step 0 must find them, name → value. */
+  readonly expectedHostPreconditions: Readonly<Record<string, string>>;
+  readonly minFreeDiskBytes: number;
 }
 
-/** What the shell is asked to do. Each variant is one effect; nothing else may change the world. */
-export type Action =
-  | { readonly kind: "record"; readonly outcome: Outcome; readonly evidence: Readonly<Record<string, unknown>> }
+/** What the shell is asked to do to the world. Each variant is one effect; nothing else may change it. */
+export type WorldAction =
   | { readonly kind: "remove-certificate-line" }
   | { readonly kind: "write-certificate-line"; readonly path: string }
   | { readonly kind: "enable-tasks"; readonly tasks: readonly TaskName[] }
   | { readonly kind: "disable-tasks"; readonly tasks: readonly TaskName[] }
+  /** Re-register both tasks with the installer, then run the verifier; the action fails unless both exit 0. */
+  | { readonly kind: "install-tasks"; readonly coverageThroughDate: string }
   | { readonly kind: "register-disarm"; readonly at: LocalInstant }
   | { readonly kind: "delete-disarm" }
   | { readonly kind: "restart" }
@@ -193,14 +239,24 @@ export type Action =
 
 /**
  * The answer to one invocation.
- * - `act`: write the intent, apply the actions in order, write the result.
+ * - `act`: write an `intent` carrying `evidence`, apply the actions in order and stop
+ *   at the first that fails, then write a `result` carrying `evidence` plus what the
+ *   actions reported — `ok` when all applied, `failed` otherwise. Whether an applied
+ *   action took effect is judged by the next invocation, against the expectation of
+ *   the phase the result puts the ledger in.
+ * - `record`: nothing to change; write one `result` with this outcome.
  * - `wait`: nothing is due yet; record nothing unless the reason is new.
- * - `abort`: the attempt ends here — disable both tasks, leave the certificate line
- *   unset, page with the reason.
+ * - `abort`: write an `abort` entry, which ends the attempt, and page. `teardown`
+ *   says whether to disable both tasks and leave the certificate line unset: true for
+ *   every abort up to and including the gate, false once the gate has armed the run,
+ *   whose teardown is the owner's decision (spec §5).
+ * - `ended`: the attempt was ended by an earlier abort; do nothing at all.
  * - `done`: the activation is complete for this anchor day.
  */
 export type Decision =
-  | { readonly kind: "act"; readonly step: StepId; readonly actions: readonly Action[]; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "act"; readonly step: StepId; readonly actions: readonly WorldAction[]; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "record"; readonly step: StepId; readonly outcome: Outcome; readonly evidence: Readonly<Record<string, unknown>> }
   | { readonly kind: "wait"; readonly reason: string }
-  | { readonly kind: "abort"; readonly step: StepId | null; readonly reason: string; readonly nextOwnerAction: string; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "abort"; readonly step: StepId | null; readonly reason: string; readonly teardown: boolean; readonly nextOwnerAction: string; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "ended"; readonly seq: number; readonly reason: string }
   | { readonly kind: "done"; readonly reason: string };

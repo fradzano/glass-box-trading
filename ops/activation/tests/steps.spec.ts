@@ -15,7 +15,9 @@ const SCHEDULE: Schedule = {
   drillNightDay: "2026-09-22",
   anchorDay: "2026-09-22",
   longRunAccountMasked: "PA3L…U97",
-  expectedWrapperSha256: null,
+  coverageThroughDate: "2026-12-16",
+  expectedHostPreconditions: {},
+  minFreeDiskBytes: 0,
 };
 
 function foldOf(done: readonly StepId[]) {

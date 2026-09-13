@@ -51,7 +51,7 @@ always named at the bottom.
 | 2 | Ledger codec: parse lines, torn tail, `seq` gaps, non-monotonic `at` | **done** — `ops/activation/core/ledger.ts`, 12 tests, mutation probe 14/14 | `ba30ed2` |
 | 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | **done** — `ops/activation/core/fold.ts`, 12 tests, mutation probe 13/13 with one declared equivalent (see decisions) | `56eb9e7` |
 | 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
-| 5 | Decide: fold + observations + clock facts → act / wait / abort / done | open | |
+| 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions) | unit 5 commit |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | open | |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | open | |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | open | |
@@ -103,6 +103,95 @@ always named at the bottom.
   gets its second root in unit 11. Until then the core is written to its rules by
   hand, and the mutation probes carry the evidence that the tests bite.
 
+### Unit 5 — `decide`
+
+- **The gate's inspector was run against `ops/activation/core` without changing the
+  gate** (its `inspectCoreDirectory` is exported; a scratch script imports it). It
+  found two member names it forbids that date from unit 1 — `arguments` and `now` —
+  now `argumentLine` and `nowLocal`. What remains is one finding per file: the gate
+  type-checks without `allowImportingTsExtensions`, and Node 24 needs the `.ts`
+  extensions. **Unit 11 must decide** whether the second root gets that compiler
+  option or the core drops the extensions behind a loader; the AST checks already
+  pass.
+- **`record` is its own decision, not an action.** A validate-only step writes one
+  `result`; an acting step writes `intent`, applies its actions, and writes `result`
+  `ok` when all applied or `failed` at the first that did not. Whether an applied
+  action took effect is judged by the next invocation's `0-resume` against the
+  phase the result put the ledger in — the same observation that catches a manual
+  change (ACT-26). A `failed` or `unknown` result in the current attempt aborts; one
+  from a previous attempt is re-run.
+- **`abort` carries `teardown`**: true for every abort up to and including the gate,
+  and for every integrity abort even after it (a torn ledger cannot show that the run
+  is correctly armed); false once the gate is done, where an abort pages and records.
+  **`ended`** is a separate answer for an attempt an earlier abort ended.
+- **An empty ledger is a tearing abort (`LEDGER_EMPTY`)**, as spec §4 says for an
+  absent ledger. The CLI that opens an attempt writes its first note before the first
+  scheduled invocation, so an owner-started attempt never pages for this.
+- **The expected wrapper hash comes from the ledger**, step 0's result evidence, not
+  from `Schedule`, which lost that field: one source for one fact (A4). The same holds
+  for the certificate path the gate writes (step 2's evidence) and the host
+  preconditions the re-arm compares (step 0's evidence).
+- **Type gaps closed:** `Observations` gained the analyst start and OAuth token, free
+  disk, the verifier run both without and with `-ExpectEnabled` (the shell takes both
+  on every invocation, so it never decides which), the disarm registration, and the
+  journal's `BOOTSTRAP` entry; `SessionSample` gained `utcMs`; `Schedule` gained the
+  coverage date, the expected host preconditions and the free-disk floor;
+  `StepState` gained `resultAtUtcMs`, from which the drills measure.
+- **Step 1 is an action with its verifier inside it.** `install-tasks` runs the
+  installer and then the verifier and fails unless both exit 0; the shell records the
+  count and both action lines. It is skipped as already-in-target-state when the
+  definitions are right by value and the verifier passed. "Build current" is observable
+  only as printable digests; that limit is declared here.
+- **Task definitions by value** (`definitionFindings`): `powershell.exe`, exactly the
+  installer's host options before `-File`, the right script, and after it only the full
+  parameter names the wrappers declare. PowerShell binds any unambiguous prefix and
+  binds bare tokens positionally, so `-Skip:$false` or a stray token is red.
+  `-SkipOutsideSession` is accepted only as `-SkipOutsideSession:$true` (a `[bool]`
+  through `-File` binds only in the colon form), `-SessionLeadInMinutes` only as `20`;
+  the watchdog task may carry neither.
+- **Unknown in drill phases (design decision).** Local readings (logs, tasks, `.env`)
+  abort at once everywhere. The healthchecks.io API, while a drill phase waits for it
+  to show a state (5a, 5b, 5d, 6a, 6b), is a **wait bounded by the phase's deadline**:
+  a single 429 must not end the night (ACT-47), and the deadline turns lasting
+  blindness into an abort. At step 0, 4, 8 and the gate an unreadable API is an abort.
+- **Design point 1 — an invalid silence drill ends the attempt** (`DRILL_INVALID`,
+  tearing). A repeat inside the same night is arithmetically impossible: the drill can
+  only be judged once all three checks are down, and readiness needs about 65 minutes
+  from its last ping (spec §5: a ping by 23:15, down by 00:20), so not before about
+  23:55 even when 6a starts at 22:50 — while a second 6a would have to start by 23:15
+  and the cycle window closes at 23:45, so nothing could bring the checks back up for a
+  second run. "Repeated, never counted" therefore means:
+  the abort names the drill invalid, and the retry on the next trading day repeats it
+  from step 4. The same holds for the watchdog drill. An invalid drill is detected as
+  early as possible — wrapper lines inside the window invalidate it before the checks
+  go down.
+- **Design point 2 — what "observed" means.** 5a's observed firing is a `run:` or
+  `skip:` line in `watchdog-run.log` whose UTC stamp is after the enable's result, **and**
+  the watchdog check `up` on a ping after that same moment — a check still paused from
+  step 0 never goes down, so a firing without its ping proves nothing. 5d needs the
+  watchdog `up` on a ping after the re-enable's result. 6a's observed ping is every
+  check `up` on a ping after 5d's result; 6a also waits while either task reads
+  `Running`. 6b tolerates wrapper lines up to **120 s after the disable's result**:
+  disabling does not stop a running instance, and the wrapper writes its line after its
+  pings, so such a line is an invocation finishing, not a firing the disable failed to
+  prevent. Any later line is the outage signature.
+- **Design point 3 — step 9's samples.** The shell takes one session sample on every
+  invocation and appends it to its own sample log without judging it. The proof takes
+  the **last sample of 13:50–13:59** and the **first of 14:00–14:10** on the anchor day,
+  both with a UTC stamp after the recorded boot; neither may show an interactive session
+  or an explorer process. A missing 13:5x sample aborts at once (it cannot appear
+  later); a missing 14:0x sample or firing waits until 14:35.
+- **Two conditions added beyond the table, both fail-closed.** Step 4 requires each
+  check `up` or `paused` (step 0 accepts both; the gate later requires `up`). Step 8
+  requires all three `up` before restarting, so the machine is not rebooted into a gate
+  that cannot turn green; the retry paragraph of §5 asks the same.
+- **Step 11** records the first watchdog firing after the gate. Telling an armed
+  composition line from a degraded one (spec §8.12) needs a line shape the log reader
+  does not produce yet — **open for unit 7**.
+- **Open for unit 9:** after a torn tail the next append would glue onto the torn bytes
+  and the ledger would read corrupt from then on. The store needs a rule for appending
+  after a torn tail that keeps the torn bytes visible and never repairs them.
+
 ## How to run the checks
 
 From the repository root:
@@ -129,7 +218,53 @@ The first build session ended here on purpose, at a unit boundary: units 1–4 a
 done, verified and pushed, and unit 5 is the most safety-critical function of the
 core. It gets a fresh session rather than the tail of a very long one.
 
+## Session boundary — 2026-09-14, 00:25
+
+The second build session closed unit 5 here: `decide` with 105 tests, mutation probe
+81 of 81 (`node ops/activation/probes/mutate-activation.mjs ops/activation/core/decide.ts ops/activation/probes/mutants-decide.json`),
+D9, D41 and D55 spot-checked to fail on exactly the test they target rather than on a
+syntax error. Nothing was run on the host.
+
 ## Next step
+
+**Unit 6: the core against recorded worlds, as sequences.** Unit 5's tests ask one
+question per test — one ledger, one world, one answer. What they do not show is that
+the answers compose: that applying each decision the way the shell will, and letting
+the world change the way the actions say, walks from an opened attempt to `done` in
+exactly the order of `executionOrder()`, and that every abort path ends where the spec
+says. Build a small simulator **in the test tree, not in the core**: a world state
+(task states and definitions, certificate line, disarm, check statuses with flips and
+pings, log lines, boot time, session samples) that the actions mutate, a clock that
+advances to the next five-minute invocation, and an appender that writes `intent` /
+`result` / `abort` lines through `planLedgerAppend` exactly as the brief of unit 5
+defines the shell's semantics. Then, at minimum:
+
+- the happy path Monday 15:30 → Tuesday 15:20 reaches `done`, one `act` or `record` per
+  step in order, no abort, and the ledger it leaves folds to every step done;
+- ACT-13 + round 5 A3: a certificate FAIL at 16:05, then every invocation until 22:20
+  answers `ended`, and no task is ever enabled;
+- ACT-27: an owner abort entry during the watchdog drill, then `ended`;
+- ACT-24: the retry a week later continues at step 4 and reaches `done`;
+- ACT-29: a crash between the intent and the result of step 4 gives `STEP_INTERRUPTED`;
+- ACT-26: a task toggled by hand during the silence drill gives `WORLD_MISMATCH`;
+- ACT-39: a torn tail after the gate gives `LEDGER_TORN` with teardown;
+- ACT-45: an outage during the silence drill gives `DRILL_INVALID`, not a counted drill.
+
+**Contracts unit 5 fixed for the shell (units 7–10):** every reading is a `Reading`
+with a credential-free reason; the verifier runs twice per invocation (without and with
+`-ExpectEnabled`); one session sample per invocation goes to an append-only sample log;
+`act` means intent → actions in order, stop at the first failure → result with the
+decision's evidence plus what the actions reported; `record` means one result; `abort`
+means one abort entry and, when `teardown`, disable both tasks and leave the certificate
+line unset, then page; `ended` and `wait` write nothing new.
+
+**Open threads carried forward:** the armed-composition line shape for step 11 (unit 7);
+appending after a torn tail (unit 9); `.ts` import extensions under the architecture
+gate's second root (unit 11).
+
+After unit 6: units 7–10, the shell.
+
+## Unit 5 brief, as it was given
 
 **Unit 5: `decide(fold, observations, schedule): Decision`** in
 `ops/activation/core/decide.ts`. Read spec §5 (the step table and the abort,

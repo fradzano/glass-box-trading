@@ -22,6 +22,8 @@ export interface StepState {
   readonly intentSeq: number | null;
   readonly intentAtUtcMs: number | null;
   readonly resultSeq: number | null;
+  /** When the result was written; the drills measure their observations from it. */
+  readonly resultAtUtcMs: number | null;
   readonly outcome: Outcome | null;
   readonly resultEvidence: Readonly<Record<string, unknown>> | null;
 }
@@ -72,6 +74,7 @@ function withIntent(previous: StepState | undefined, entry: LedgerEntry, step: S
     intentSeq: entry.seq,
     intentAtUtcMs: entry.atUtcMs,
     resultSeq: previous?.attempt === entry.attempt ? previous.resultSeq : null,
+    resultAtUtcMs: previous?.attempt === entry.attempt ? previous.resultAtUtcMs : null,
     outcome: previous?.attempt === entry.attempt ? previous.outcome : null,
     resultEvidence: previous?.attempt === entry.attempt ? previous.resultEvidence : null,
   };
@@ -85,6 +88,7 @@ function withResult(previous: StepState | undefined, entry: LedgerEntry, step: S
     intentSeq: sameAttempt ? previous.intentSeq : null,
     intentAtUtcMs: sameAttempt ? previous.intentAtUtcMs : null,
     resultSeq: entry.seq,
+    resultAtUtcMs: entry.atUtcMs,
     outcome: entry.outcome,
     resultEvidence: entry.evidence,
   };
