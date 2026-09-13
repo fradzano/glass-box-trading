@@ -48,9 +48,9 @@ always named at the bottom.
 | # | Unit | Status | Commit |
 |---|---|---|---|
 | 1 | Core types: step ids, ledger entry, observation snapshot, decision | **done** — `ops/activation/core/types.ts` | see unit 2 |
-| 2 | Ledger codec: parse lines, torn tail, `seq` gaps, non-monotonic `at` | **done** — `ops/activation/core/ledger.ts`, 12 tests, mutation probe 14/14 | first `ops/` commit |
-| 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | open | |
-| 4 | Step table: preconditions, deadlines, expectations per step | open | |
+| 2 | Ledger codec: parse lines, torn tail, `seq` gaps, non-monotonic `at` | **done** — `ops/activation/core/ledger.ts`, 12 tests, mutation probe 14/14 | `ba30ed2` |
+| 3 | Fold: ledger → attempts, per anchor day, with abort ending an attempt | **done** — `ops/activation/core/fold.ts`, 12 tests, mutation probe 13/13 with one declared equivalent (see decisions) | unit 3 commit |
+| 4 | Step table: preconditions, deadlines, expectations per step | **in progress** — `ops/activation/core/steps.ts` written and lint-clean, tests and probe pending | |
 | 5 | Decide: fold + observations + clock facts → act / wait / abort / done | open | |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | open | |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | open | |
@@ -83,6 +83,22 @@ always named at the bottom.
   ESLint configuration already covers `ops/**/*.ts` (typed, via the project
   service), so `npm run verify` lints it. `allowImportingTsExtensions` and
   `erasableSyntaxOnly` are set so that Node 24 runs the code without a build.
+- **Day steps are scoped to the attempt, not only to the anchor day.** The spec
+  resets steps 4 and 7–11 when the anchor day changes; the fold goes one step
+  further and counts them only inside the attempt that ran them. An attempt has
+  exactly one anchor day, so this is the stricter form of the same rule, and it
+  also covers a new attempt on the same day after an owner abort. Steps 0–3 carry
+  over from any attempt, latest result wins — a later failure included.
+- **Mutation probe, fold: F6 is an equivalent mutant.** Removing the
+  `resultSeq === null` check changes nothing, because the fold sets `resultSeq` and
+  `outcome` together, so an intent-only step already fails the outcome test. It was
+  replaced by a real mutant at the same site (F6b: an intent-only step returns
+  done), which the suite catches.
+- **Steps 0 and 1 expire with step 2's window (22:40 on the certificate day).** The
+  spec gives them no clock, but they only exist to gate step 2.
+- **Closing the reboot's result is bound by `7-rearm`'s window, not by `8-reboot`'s.**
+  The first invocation after the boot writes that result, which can be later than
+  13:45; it must still come before 13:59.
 - **Not yet applied to `ops/`: the architecture gate.** It hardcodes `src/core` and
   gets its second root in unit 11. Until then the core is written to its rules by
   hand, and the mutation probes carry the evidence that the tests bite.
@@ -99,5 +115,6 @@ npx.cmd vitest run --config ops/vitest.config.ts
 
 ## Next step
 
-Unit 3: the fold — ledger to attempt state, per anchor day, with an abort ending the
-attempt.
+Unit 4: tests and the mutation probe for `ops/activation/core/steps.ts`. The code is
+written and lint-clean; `ops/activation/tests/steps.spec.ts` is being written against
+the windows of spec §5 rev 6. Then unit 5, `decide`.

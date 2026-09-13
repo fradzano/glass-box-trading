@@ -2,6 +2,7 @@
 
 - `ops/activation/tests/fold.spec.ts`
 - `ops/activation/tests/ledger.spec.ts`
+- `ops/activation/tests/steps.spec.ts`
 - `tests/alpaca-mapping.spec.ts`
 - `tests/arm01-certificate.spec.ts`
 - `tests/core-contract.spec.ts`

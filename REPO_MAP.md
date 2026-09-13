@@ -38,9 +38,11 @@
 - `LICENSE`
 - `ops/activation/core/fold.ts` — The fold (spec §4, §5): from the ledger to what the current attempt has done.
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
+- `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
+- `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the
 - `package-lock.json`
