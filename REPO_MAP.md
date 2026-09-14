@@ -43,12 +43,18 @@
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`
+- `ops/activation/probes/mutants-healthchecks.json`
 - `ops/activation/probes/mutants-ledger.json`
+- `ops/activation/probes/mutants-parse.json`
 - `ops/activation/probes/mutants-steps.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
+- `ops/activation/readers/parse-healthchecks.ts` — Pure parsers for the healthchecks.io management API (build log, unit 7).
+- `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
+- `ops/activation/tests/parse-healthchecks.spec.ts` — Unit 7: the healthchecks.io parsers. The first test is the one that matters most:
+- `ops/activation/tests/parse.spec.ts` — Unit 7: the pure parsers behind the activation's readers. Wherever this host could
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the

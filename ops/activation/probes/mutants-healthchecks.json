@@ -1,0 +1,12 @@
+[
+  { "id": "H1", "note": "the ping URL itself returned as the fingerprint: a credential leaves the parser", "from": "return known({ fingerprint: fingerprintOf(pingUrl), status, lastPingUtcMs });", "to": "return known({ fingerprint: pingUrl, status, lastPingUtcMs });" },
+  { "id": "H2", "note": "a check that appears twice accepted", "from": "if (found.length !== 1 || !isRecord(check))", "to": "if (!isRecord(check))" },
+  { "id": "H3", "note": "an empty ping URL fingerprinted as if it named a check", "from": "if (typeof pingUrl !== \"string\" || pingUrl.length === 0) return unknown(", "to": "if (typeof pingUrl !== \"string\") return unknown(" },
+  { "id": "H4", "note": "an unreadable last ping read as no ping", "from": "if (lastPingUtcMs === null) return unknown(`${name} has an unreadable last_ping`);", "to": "" },
+  { "id": "H5", "note": "flips left in the API's order instead of newest first", "from": "return known([...flips].sort((left, right) => right.utcMs - left.utcMs));", "to": "return known(flips);" },
+  { "id": "H6", "note": "any value of up accepted", "from": "if (up !== 1 && up !== 0 && up !== true && up !== false) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "H7", "note": "a boolean true read as down", "from": "up: up === 1 || up === true", "to": "up: up === 1" },
+  { "id": "H8", "note": "unreadable flips replaced by an empty list", "from": "if (!flipReading.known) return unknown(`${name} flips: ${flipReading.reason}`);", "to": "if (!flipReading.known) return known({ ...summaries.value[name], flips: [] });" },
+  { "id": "H9", "note": "the {\"flips\": [...]} envelope refused", "from": "isRecord(parsed.value) && Array.isArray(parsed.value[\"flips\"]) ? parsed.value[\"flips\"] : null", "to": "null" },
+  { "id": "H10", "note": "the watchdog check looked up under the wrong name", "from": "watchdog: \"gbt-watchdog\" };", "to": "watchdog: \"gbt-watchdogs\" };" }
+]

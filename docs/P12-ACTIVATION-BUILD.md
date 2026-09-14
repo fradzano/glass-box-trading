@@ -251,6 +251,10 @@ always named at the bottom.
   watchdog definition PowerShell would refuse to start passed as correct by value. The
   unit-5 comment said "the full names the wrappers declare" and the code checked the
   union of both. Fixed red-first: the test failed before the change.
+- **Corrected by a host reading on 2026-09-14:** the registered watchdog runs with
+  `-WatchdogIntervalMinutes 5`, not the 10 the simulator assumed. The simulator's
+  claim that 5d lands on the last minute of its window came from the wrong interval;
+  the model is to be corrected before the claim is repeated anywhere.
 - **`mutate-activation.mjs` takes an optional spec file** so that one file's own catch
   rate can be measured; the filter is checked against a plain relative `*.spec.ts` path,
   and the baseline run with the filter must be green first, or every mutant would look
@@ -288,6 +292,57 @@ The second build session closed unit 5 here: `decide` with 105 tests, mutation p
 81 of 81 (`node ops/activation/probes/mutate-activation.mjs ops/activation/core/decide.ts ops/activation/probes/mutants-decide.json`),
 D9, D41 and D55 spot-checked to fail on exactly the test they target rather than on a
 syntax error. Nothing was run on the host.
+
+### Unit 7 — readers (in progress)
+
+- **The parsers are pure and sit in `ops/activation/readers/parse.ts`**, outside
+  `core/`: they need `Date` and `Intl`, which the architecture gate forbids there, and
+  they decide nothing about the activation. Every thin I/O call will hand them text.
+  Done so far: ISO instants (seven fraction digits, zone required, impossible dates
+  refused), Europe/Berlin local time from the zone tables, wrapper logs, the task list
+  and the disarm, the verifier, session samples, the boot time, `.env` with its
+  environment shadowing, the certificate file, the preflight report, and the
+  confirmation file of gate condition 4. Still to write: the healthchecks.io checks
+  with their flips (names `gbt-liveness`, `gbt-readiness`, `gbt-watchdog`,
+  fingerprint as `tools/healthchecks-provision.mjs` computes it) and the journal's
+  first entry (the envelope's field is `type`, not `kind`), then the I/O calls.
+- **Fixtures are this host's own output**, read-only on 2026-09-14: the task list with
+  its stale direct-node registration, the verifier's `FAILED: 2 of 51`, the dev
+  watchdog log's lines, the session probe. Read, and deliberately **not** read: the
+  healthchecks.io API, whose answers carry the UUIDs that are ping credentials.
+- **Four facts the readings changed:**
+  1. **Wrapper logs start with a UTF-8 byte-order mark** (`EF BB BF`, measured on
+     `glass-box-state\dev\watchdog-run.log`): `Add-Content -Encoding utf8` writes it
+     when PowerShell 5.1 creates the file, and Node keeps it. Unstripped, the first
+     line has no instant, the log reads unknown, and every silence drill would be
+     invalid.
+  2. **One signed-in user holds two type-2 logon sessions** (the split token of an
+     administrator, both `DESKTOP-V6EGFDV\felix`). The probe counts distinct accounts
+     and leaves out the window manager's and font driver's identities. What a
+     signed-out host reports is not measured and stays a question for unit 13.
+  3. **The registered watchdog runs every 5 minutes**, not 10 as the simulator assumed.
+  4. **`.env` is not the whole latch.** The runtime's `loadEnvironment` lets process
+     variables win over `.env`, so the reader returns the effective value (user over
+     machine over `.env`) and names every shadowed key. The `.env` parser is held to the
+     runtime's own `parseDotEnv` by a differential test; that test refuted a claim of the
+     first draft — a byte-order mark does **not** hide the first key, because `trim`
+     removes U+FEFF.
+- **Verified so far:** `tsc` and ESLint clean, 208 tests in the activation suite, parser
+  probe 35 of 35 (`mutants-parse.json`) and healthchecks probe 10 of 10
+  (`mutants-healthchecks.json`), each run on a green baseline and restored
+  byte-identical. The healthchecks parser's first test proves that no UUID and no
+  healthchecks.io URL comes out of an answer that carried them.
+- **Secret scan before committing the parsers (C-class tooling finding).**
+  `tools/scan-secrets.ps1` exits 1 with 31 `HealthchecksUrl` rows, because that pattern
+  is only `hc-ping\.com/` and matches every prose mention of the host. Counted instead,
+  printing no values: URLs carrying a real UUID in the working tree (tracked and
+  untracked) and in every commit of `git rev-list --all` — **zero** in both, so there is
+  no leak. The new parser and its tests do not spell the ping host at all (example hosts
+  in the fixtures), so they add no row. The scanner's pattern is left as it is and named
+  here: its growing false-positive count is what would hide a real hit.
+- **Still to change in the core for the owner rulings:** `EnvObservation` gains the
+  shadowed keys as a red finding, `AnalystObservation` gains the live-token probe as a
+  step-0 and gate condition, and the simulator moves to the 5-minute watchdog.
 
 ## Session boundary — 2026-09-14, 01:13
 
