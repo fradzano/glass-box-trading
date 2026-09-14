@@ -617,8 +617,9 @@ D120 ignores it, D121 weakens equality, and D122 removes schedule consistency.
 Unit 8 adds `actions/apply.ts` and the pure `.env` transformer. Every WorldAction is
 behind a typed fakeable port. Certificate writes validate the entire certificate with
 the runtime validator, compare fresh deployment digests, freshly read Healthchecks and
-a fresh clock, then give the same authorization to the atomic CAS for a second check
-at linearisation. They reread `.env` and repeat both digest checks after the write. A
+a fresh clock, then give the same authorization callback to the atomic CAS primitive,
+which invokes it inside the commit operation at linearisation. They reread `.env` and
+repeat both digest checks after the write. A
 known-not-applied CAS preserves concurrent `.env` edits; an uncertain partial write
 removes every certificate latch without overwriting unrelated current bytes and tries
 to disable both tasks. Port errors become fixed credential-free codes. Mutating ports

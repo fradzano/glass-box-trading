@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { authorizeCertificateWrite } from "../core/decide.ts";
-import type { CertificateWriteAction } from "../core/decide.ts";
+import type { CertificateWriteAction, CertificateWriteAuthorization } from "../core/decide.ts";
 import type { CheckName, CheckObservation, DigestPair, LocalInstant, Reading, TaskName, WorldAction } from "../core/types.ts";
 import { inspectCertificateEnv, rewriteCertificateEnv } from "./env.ts";
 
@@ -25,7 +25,8 @@ const AUTHORIZED_ENV_REPLACE = Symbol("authorized-env-replace");
 
 export interface EnvCompareAndSwapPrimitive {
   readonly nowAtLinearisation: () => number;
-  readonly compareAndSwap: (file: string, expectedSha256: string, text: string, signal: AbortSignal) => Promise<EffectResult<string>>;
+  /** Invokes authorizeAtLinearisation inside the atomic commit operation and mutates only when it returns ok. */
+  readonly compareAndSwap: (file: string, expectedSha256: string, text: string, authorizeAtLinearisation: () => CertificateWriteAuthorization, signal: AbortSignal) => Promise<EffectResult<string>>;
 }
 
 export type AuthorizedEnvReplace = ((file: string, expectedSha256: string, text: string, guard: CertificateWriteGuard | null, signal: AbortSignal) => Promise<EffectResult<string>>) & {
@@ -33,19 +34,19 @@ export type AuthorizedEnvReplace = ((file: string, expectedSha256: string, text:
 };
 
 /**
- * The only constructor for a certificate-capable CAS port. It places the same
- * authorization immediately before the primitive whose invocation is the write's
- * linearisation point. Concrete host binding remains the elevated unit-13 work.
+ * The only constructor for a certificate-capable CAS port. It gives the primitive
+ * the same authorization callback to invoke inside its atomic commit operation at
+ * the write's linearisation point. Concrete host binding remains unit 13.
  */
 export function createAuthorizedEnvReplacePort(primitive: EnvCompareAndSwapPrimitive): AuthorizedEnvReplace {
   const replace = async (file: string, expectedSha256: string, text: string, guard: CertificateWriteGuard | null, signal: AbortSignal): Promise<EffectResult<string>> => {
-    if (guard !== null) {
+    const authorizeAtLinearisation = (): CertificateWriteAuthorization => {
+      if (guard === null) return { ok: true };
       let actionUtcMs: number;
-      try { actionUtcMs = primitive.nowAtLinearisation(); } catch { return { ok: false, reason: "ACTION_CLOCK_THREW", effect: "not-applied" }; }
-      const authorization = authorizeCertificateWrite(guard.action, actionUtcMs, guard.freshChecks);
-      if (!authorization.ok) return { ok: false, reason: authorization.reason, effect: "not-applied" };
-    }
-    return primitive.compareAndSwap(file, expectedSha256, text, signal);
+      try { actionUtcMs = primitive.nowAtLinearisation(); } catch { return { ok: false, reason: "ACTION_CLOCK_INVALID" }; }
+      return authorizeCertificateWrite(guard.action, actionUtcMs, guard.freshChecks);
+    };
+    return primitive.compareAndSwap(file, expectedSha256, text, authorizeAtLinearisation, signal);
   };
   return Object.assign(replace, { [AUTHORIZED_ENV_REPLACE]: true as const });
 }

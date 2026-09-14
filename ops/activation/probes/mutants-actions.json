@@ -16,5 +16,5 @@
   { "id": "A15", "note": "a late successful settlement is misclassified as not applied", "from": "effect: settled.ok ? \"unknown\" : settled.effect ?? \"unknown\"", "to": "effect: \"not-applied\"" },
   { "id": "A16", "note": "restart is reported as a result-recordable action", "from": "kind === \"restart\" ? \"await-post-boot\" : \"record-result\"", "to": "\"record-result\"" },
   { "id": "A17", "note": "an uncertain failed replace is not compensated", "from": "if (!replaced.ok) {\n    const compensation", "to": "if (false && !replaced.ok) {\n    const compensation" },
-  { "id": "A18", "note": "the production authorized-CAS constructor ignores a red linearisation-time authorization", "from": "if (!authorization.ok) return { ok: false, reason: authorization.reason, effect: \"not-applied\" };", "to": "if (false && !authorization.ok) return { ok: false, reason: authorization.reason, effect: \"not-applied\" };" }
+  { "id": "A18", "note": "the production CAS primitive receives an unconditional authorization instead of the linearisation callback", "from": "text, authorizeAtLinearisation, signal);", "to": "text, () => ({ ok: true }), signal);" }
 ]

@@ -76,11 +76,13 @@ function fake(options: FakeOptions = {}): { readonly ports: ActionPorts; readonl
   let replaced = false;
   const replaceEnv = createAuthorizedEnvReplacePort({
     nowAtLinearisation: () => options.commitNow ?? options.now ?? OBSERVED + 1_000,
-    compareAndSwap: (file, expectedSha256, text, signal) => {
+    compareAndSwap: (file, expectedSha256, text, authorizeAtLinearisation, signal) => {
       calls.push(`replace-env:${file}`);
       if (options.failReplace === true && !replaced) return Promise.resolve({ ok: false as const, reason: "CAS_REFUSED", effect: "not-applied" as const });
       if (options.conflictEnv !== undefined && !replaced) state.env = options.conflictEnv;
       if (hash(state.env) !== expectedSha256) return Promise.resolve({ ok: false as const, reason: "CAS_CHANGED", effect: "not-applied" as const });
+      const authorization = authorizeAtLinearisation();
+      if (!authorization.ok) return Promise.resolve({ ok: false as const, reason: authorization.reason, effect: "not-applied" as const });
       state.env = text;
       const wasFirstReplace = !replaced;
       replaced = true;

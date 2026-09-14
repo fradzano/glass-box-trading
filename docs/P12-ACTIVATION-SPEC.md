@@ -182,8 +182,9 @@ time and the later decision time are distinct. The decision does not grant an
 unconditional write: it carries both the absolute 14:55 schedule deadline and a
 five-second lease containing the observed check triplet. Immediately before changing
 `.env`, unit 8 reads the three checks and the clock again and passes both through
-`authorizeCertificateWrite`. The atomic compare-and-swap port repeats that same
-authorization against its linearisation-time clock. Equality at either deadline is
+`authorizeCertificateWrite`. The atomic compare-and-swap primitive invokes that same
+authorization callback inside its commit operation against its linearisation-time
+clock. Equality at either deadline is
 valid; after either deadline, with an unknown or changed check, or with a clock before
 the observation, no write occurs. The supplied UTC deadline must denote 14:55 on the
 anchor day as derived from the same local/UTC observation. Unit 7 proves this
