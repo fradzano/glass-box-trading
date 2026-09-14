@@ -27,8 +27,9 @@
 // Pure: no I/O, no clock, no `Date`, no module-scope tables.
 import type { LedgerFold, StepState } from "./fold.ts";
 import { stepDone } from "./fold.ts";
+import { crossCheckAlerts } from "./confirmation.ts";
 import { compareLocal, expectedCertificateLine, expectedTasks, localAt, nextStep, stepWindow } from "./steps.ts";
-import type { CheckName, CheckObservation, Decision, LocalInstant, LogLine, Observations, Reading, Schedule, SessionSample, StepId, TaskName, TaskObservation, WorldAction } from "./types.ts";
+import type { CheckName, CheckObservation, Decision, DisarmObservation, LocalInstant, LogLine, Observations, Reading, Schedule, SessionSample, StepId, TaskName, TaskObservation, WorldAction, WrapperName } from "./types.ts";
 
 /** Spec §5, step 0: gate condition 4 may be at most fourteen days old. */
 const ALERT_CONFIRMATION_MAX_AGE_MS = 1_209_600_000;
@@ -53,6 +54,10 @@ function taskNames(): readonly TaskName[] {
 
 function checkNames(): readonly CheckName[] {
   return ["liveness", "readiness", "watchdog"];
+}
+
+function wrapperNames(): readonly WrapperName[] {
+  return ["cycle-run.ps1", "watchdog-run.ps1"];
 }
 
 /** Spec §5, step 2: what `--preflight` would have left in the long-run state directory had it used the wrong one. */
@@ -176,6 +181,24 @@ export function definitionFindings(name: TaskName, task: TaskObservation): reado
   return findings;
 }
 
+/**
+ * Spec §6 by value (review of 2026-09-14, point 2): the one-shot is the second layer only if
+ * it will fire — its state is not `Disabled` — and if what it runs is exactly this attempt's
+ * disarm: one action, the registered node, the activation CLI in `disarm` mode, this attempt's
+ * state root and anchor day, nothing else. A trigger at 15:05 that runs anything else is red.
+ */
+export function disarmFindings(disarm: DisarmObservation, schedule: Schedule): readonly string[] {
+  const findings: string[] = [];
+  if (disarm.state === null || taskEnabled(disarm.state) !== true) findings.push(`disarm.state:${disarm.state ?? "absent"}`);
+  const action = disarm.actions[0];
+  if (disarm.actions.length !== 1 || action === undefined) return [...findings, `disarm.actions:${String(disarm.actions.length)}`];
+  if (action.execute.trim().toLowerCase() !== schedule.nodePath.toLowerCase()) findings.push("disarm.execute");
+  const tokens = tokenizeArguments(action.argumentLine);
+  const expected = [`${schedule.repoRoot}\\ops\\activation\\cli.ts`, "disarm", "--state-root", schedule.activationRoot, "--anchor-day", schedule.anchorDay];
+  if (tokens === null || tokens.length !== expected.length || tokens.some((token, index) => token.toLowerCase() !== (expected[index] ?? "").toLowerCase())) findings.push("disarm.arguments");
+  return findings;
+}
+
 // ---------------------------------------------------------------------------
 // What the ledger recorded
 // ---------------------------------------------------------------------------
@@ -273,6 +296,8 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
   } else {
     const env = observations.env.value;
     if (env.duplicateKeys.length > 0) red.push(`env.duplicate-keys:${env.duplicateKeys.join(",")}`);
+    // The runtime lets process variables win over .env, so a key set outside it bypasses what the ledger expects of .env.
+    if (env.shadowedKeys.length > 0) red.push(`env.shadowed-outside-dotenv:${env.shadowedKeys.join(",")}`);
     if (env.profile !== "competition") red.push(`env.profile:${env.profile ?? "absent"}`);
     const line = expectedCertificateLine(fold);
     if (line === "absent" && env.certificatePath !== null) red.push("env.certificate-line.expected-absent");
@@ -285,10 +310,11 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
   else if (observations.resolvedAccountMasked.value !== schedule.longRunAccountMasked) red.push(`account.expected-${schedule.longRunAccountMasked}:observed-${observations.resolvedAccountMasked.value}`);
 
   if (stepDone(fold, "0-preflight")) {
-    const recorded = recordedString(fold, "0-preflight", "wrapperSha256");
-    if (recorded === null) red.push("ledger.0-preflight.wrapperSha256-missing");
-    else if (!observations.wrapperSha256.known) unknown.push(`wrapper: ${observations.wrapperSha256.reason}`);
-    else if (observations.wrapperSha256.value !== recorded) red.push("wrapper.sha256-changed-since-step-0");
+    // Review of 2026-09-14, point 6: both wrappers, by name — each carries its own safety claims outside the runtime digest.
+    const recorded = recordedStringRecord(fold, "0-preflight", "wrapperHashes");
+    if (recorded === null || wrapperNames().some(name => recorded[name] === undefined)) red.push("ledger.0-preflight.wrapperHashes-missing");
+    else if (!observations.wrapperHashes.known) unknown.push(`wrappers: ${observations.wrapperHashes.reason}`);
+    else for (const name of wrapperNames()) if (observations.wrapperHashes.value[name] !== recorded[name]) red.push(`wrapper.${name}.sha256-changed-since-step-0`);
   }
 
   if (stepDone(fold, "2-certificate")) {
@@ -320,6 +346,8 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
         if (disarm.registered) red.push("disarm.expected-deleted-after-gate");
       } else if (!disarm.registered || disarm.fires === null || compareLocal(disarm.fires, localAt(schedule.anchorDay, 15, 5)) !== 0) {
         red.push("disarm.expected-registered-for-15:05-on-the-anchor-day");
+      } else {
+        red.push(...disarmFindings(disarm, schedule));
       }
     }
   }
@@ -393,7 +421,7 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   };
   note(observations.hostPreconditions, "hostPreconditions");
   note(observations.freeDiskBytes, "freeDiskBytes");
-  note(observations.wrapperSha256, "wrapperSha256");
+  note(observations.wrapperHashes, "wrapperHashes");
   note(observations.analyst, "analyst");
   note(observations.checks, "checks");
 
@@ -404,13 +432,37 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   if (observations.analyst.known) {
     if (!observations.analyst.value.oauthTokenPresent) red.push("analyst.oauth-token-absent");
     if (!observations.analyst.value.childStartVerified) red.push("analyst.child-start-not-verified");
+    if (!observations.analyst.value.tokenLive) red.push("analyst.token-not-live");
   }
   const confirmation = observations.alertConfirmation;
+  let confirmationEvidence: Readonly<Record<string, unknown>> | null = null;
   if (confirmation === null) {
     red.push("alert-confirmation.absent");
-  } else {
-    const age = observations.nowUtcMs - confirmation.confirmedUtcMs;
-    if (age < 0 || age > ALERT_CONFIRMATION_MAX_AGE_MS) red.push("alert-confirmation.stale-or-future");
+  } else if (observations.checks.known) {
+    // Review of 2026-09-14, point 3: the command's cross-check is repeated against the live flip history,
+    // each check's recorded down flip must be the one the history assigns, and the confirmation is dated by
+    // the oldest receipt it rests on, as an exact duration.
+    const live = observations.checks.value;
+    const cross = crossCheckAlerts(confirmation, { liveness: live.liveness.flips, readiness: live.readiness.flips, watchdog: live.watchdog.flips });
+    if (!cross.ok) {
+      for (const reason of cross.reasons) red.push(`alert-confirmation.${reason}`);
+    } else {
+      for (const name of checkNames()) {
+        if (cross.downFlipUtcMs[name] !== confirmation.downFlipUtcMs[name]) red.push(`alert-confirmation.${name}.down-flip-differs-from-recorded`);
+      }
+      const age = observations.nowUtcMs - cross.oldestReceiptUtcMs;
+      if (age < 0 || age > ALERT_CONFIRMATION_MAX_AGE_MS) red.push("alert-confirmation.stale-or-future");
+      confirmationEvidence = {
+        operator: confirmation.operator,
+        alertReceivedUtcMs: confirmation.alertReceivedUtcMs,
+        bundledAlert: confirmation.bundledAlert,
+        reminderReceivedUtcMs: confirmation.reminderReceivedUtcMs,
+        reminderListed: confirmation.reminderListed,
+        fingerprints: confirmation.fingerprints,
+        downFlipUtcMs: cross.downFlipUtcMs,
+        oldestReceiptUtcMs: cross.oldestReceiptUtcMs,
+      };
+    }
   }
   if (observations.checks.known) {
     for (const name of checkNames()) {
@@ -423,16 +475,17 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   if (unknown.length > 0 || red.length > 0) {
     return abortAt(fold, "0-preflight", unknown.length > 0 && red.length === 0 ? "PREFLIGHT_UNKNOWN" : "PREFLIGHT_RED", "Step 0's preconditions do not hold; the evidence names each. Fix them, then open a new attempt.", { unknown, red });
   }
-  if (!observations.env.known || !observations.wrapperSha256.known || !observations.hostPreconditions.known || !observations.checks.known) {
+  if (!observations.env.known || !observations.wrapperHashes.known || !observations.hostPreconditions.known || !observations.checks.known || !observations.analyst.known) {
     return abortAt(fold, "0-preflight", "PREFLIGHT_UNKNOWN", "A reading step 0 needs was not taken.");
   }
   const evidence = {
-    wrapperSha256: observations.wrapperSha256.value,
+    wrapperHashes: observations.wrapperHashes.value,
     hostPreconditions: observations.hostPreconditions.value,
     envHashBefore: observations.env.value.hash,
     fingerprints: { liveness: observations.checks.value.liveness.fingerprint, readiness: observations.checks.value.readiness.fingerprint, watchdog: observations.checks.value.watchdog.fingerprint },
     checkStatuses: statuses(observations.checks.value),
-    alertConfirmedUtcMs: confirmation?.confirmedUtcMs ?? null,
+    alertConfirmation: confirmationEvidence,
+    tokenProbe: observations.analyst.value.tokenProbeClass ?? "ok",
   };
   if (observations.env.value.certificatePath === null) return record("0-preflight", "already_in_target_state", evidence);
   return act("0-preflight", [{ kind: "remove-certificate-line" }], evidence);
@@ -459,7 +512,7 @@ function step2(fold: LedgerFold, observations: Observations): Decision {
   const certificate = observations.certificate.value;
   if (certificate === null) return wait("2-certificate: no certificate file yet");
   if (certificate.verdict !== "PASS") {
-    return abortAt(fold, "2-certificate", "CERTIFICATE_NOT_PASS", "The certificate run did not pass. A new certificate run is needed before any retry.", { certificatePath: certificate.path, verdict: certificate.verdict });
+    return abortAt(fold, "2-certificate", "CERTIFICATE_NOT_PASS", "The certificate run did not pass. A new certificate run is needed before any retry.", { certificatePath: certificate.path, verdict: certificate.verdict, violations: certificate.violations });
   }
   if (!observations.deploymentDigests.known) {
     return abortAt(fold, "2-certificate", "DIGESTS_UNKNOWN", "The deployment's digests could not be printed, so the certificate cannot be matched.", { reason: observations.deploymentDigests.reason });
@@ -682,6 +735,9 @@ function step10(fold: LedgerFold, observations: Observations): Decision {
     const current = statuses(observations.checks.value);
     for (const name of checkNames()) if (current[name] !== "up") red.push(`checks.${name}.status:${current[name]}`);
   }
+  // Owner ruling 2026-09-14: the gate is the last moment before arming to find a token that died since step 0.
+  if (!observations.analyst.known) unknown.push(`analyst: ${observations.analyst.reason}`);
+  else if (!observations.analyst.value.tokenLive) red.push("analyst.token-not-live");
   // Today's intent, not an earlier attempt's: the fold scopes step 8 to this attempt, and the gate re-checks the recorded pair.
   const reboot = fold.steps["8-reboot"];
   const bootUtcMs = recordedNumber(fold, "8-reboot", "bootUtcMs");

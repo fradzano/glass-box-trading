@@ -1,0 +1,12 @@
+[
+  { "id": "C1", "note": "a bundled alert accepted with different times", "from": "if (claim.bundledAlert && (alerts.readiness !== alerts.liveness || alerts.watchdog !== alerts.liveness))", "to": "if (false)" },
+  { "id": "C2", "note": "a reminder that does not list every check accepted", "from": "if (!claim.reminderListed.includes(name)) reasons.push(", "to": "if (false) reasons.push(" },
+  { "id": "C3", "note": "a reminder before an alert accepted", "from": "if (claim.reminderReceivedUtcMs < alertUtcMs) {", "to": "if (false) {" },
+  { "id": "C4", "note": "a down flip up to an hour after the alert accepted as its cause", "from": "flip.utcMs < alertUtcMs &&", "to": "flip.utcMs <= alertUtcMs + 3_600_000 &&" },
+  { "id": "C5", "note": "the earliest down flip taken instead of the latest before the alert", "from": "(latest === null || flip.utcMs > latest)", "to": "(latest === null || flip.utcMs < latest)" },
+  { "id": "C6", "note": "an up flip between down and reminder ignored: an old interval carries a new claim", "from": "if (flips[name].some(flip => flip.up && flip.utcMs > down && flip.utcMs <= claim.reminderReceivedUtcMs)) {", "to": "if (false) {" },
+  { "id": "C7", "note": "a reminder exactly one period after the down flip refused", "from": "if (claim.reminderReceivedUtcMs - down < REMINDER_PERIOD_MS) {", "to": "if (claim.reminderReceivedUtcMs - down <= REMINDER_PERIOD_MS) {" },
+  { "id": "C8", "note": "confirmation dated by the newest receipt", "from": "Math.min(alerts.liveness, alerts.readiness, alerts.watchdog, claim.reminderReceivedUtcMs)", "to": "Math.max(alerts.liveness, alerts.readiness, alerts.watchdog)" },
+  { "id": "C9", "note": "a confirmation without an operator accepted", "from": "if (claim.operator.trim().length === 0) reasons.push(", "to": "if (false) reasons.push(" },
+  { "id": "C10", "note": "the reminder period shrunk to a minute", "from": "export const REMINDER_PERIOD_MS = 3_600_000;", "to": "export const REMINDER_PERIOD_MS = 60_000;" }
+]

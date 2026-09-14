@@ -17,7 +17,7 @@
 // - cycle task: every 15 min from 14:00 to 23:45 local; `run:` inside 15:10–21:59
 //   (session minus the 20-minute lead-in), `skip:` otherwise; pings liveness and
 //   readiness; the first `run:` with a certificate line present writes BOOTSTRAP;
-// - watchdog task: every 10 min from 14:00 to 23:55; `run:`; pings the watchdog check;
+// - watchdog task: every 5 min from 14:00 to 23:55 (measured on the host, 2026-09-14); `run:`; pings the watchdog check;
 // - a check is due at the next slot of its schedule after its last ping (the next day
 //   at 14:00 when none is left today), goes to `grace` after the slot and `down` after
 //   slot plus grace — liveness 30 min, readiness 50 min, watchdog 15 min;
@@ -46,6 +46,7 @@ const NODE = "C:\\Program Files\\nodejs\\node.exe";
 export const CYCLE_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\cycle-run.ps1" -RepoRoot "${REPO}" -NodePath "${NODE}"`;
 export const WATCHDOG_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\watchdog-run.ps1" -RepoRoot "${REPO}" -NodePath "${NODE}" -WatchdogIntervalMinutes 10`;
 const STALE_CYCLE_ARGS = `"${REPO}\\dist\\shell\\agent-cli.js"`;
+export const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
 
 export function utcOf(date: string, hour: number, minute: number): number {
   const [year, month, day] = date.split("-").map(Number);
@@ -62,7 +63,7 @@ function atString(utcMs: number): string {
 }
 
 export function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000 };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: NODE, activationRoot: ACTIVATION_ROOT };
 }
 
 export interface SimCheck {
@@ -112,7 +113,8 @@ export interface Trace {
 }
 
 export function freshWorld(startUtcMs: number): SimWorld {
-  const paused = (): SimCheck => ({ status: "paused", lastPingUtcMs: null, flips: [] });
+  // The alert drill of two days earlier, which the confirmation below rests on: down, then back up two hours later.
+  const paused = (): SimCheck => ({ status: "paused", lastPingUtcMs: null, flips: [{ utcMs: startUtcMs - 2 * DAY_MS + 2 * 60 * MINUTE_MS, up: true }, { utcMs: startUtcMs - 2 * DAY_MS, up: false }] });
   return {
     nowUtcMs: startUtcMs,
     tasks: { cycle: { enabled: false, installed: false }, watchdog: { enabled: false, installed: false } },
@@ -130,7 +132,7 @@ export function freshWorld(startUtcMs: number): SimWorld {
     bootstrap: null,
     network: true,
     strayCycleWrapper: false,
-    alertConfirmedUtcMs: startUtcMs - 2 * DAY_MS,
+    alertConfirmedUtcMs: startUtcMs - 2 * DAY_MS + MINUTE_MS,
     crash: null,
     ledgerText: "",
     lastAppendUtcMs: 0,
@@ -189,7 +191,7 @@ function checkNames(): readonly CheckName[] {
 }
 
 function checkSchedule(name: CheckName): { readonly period: number; readonly grace: number; readonly windowEnd: number } {
-  if (name === "watchdog") return { period: 10, grace: 15, windowEnd: 23 * 60 + 55 };
+  if (name === "watchdog") return { period: 5, grace: 15, windowEnd: 23 * 60 + 55 };
   return { period: 15, grace: name === "liveness" ? 30 : 50, windowEnd: 23 * 60 + 45 };
 }
 
@@ -225,7 +227,7 @@ function fireTasks(world: SimWorld): void {
     ping(world, world.mixedUpLivenessPing === true ? "watchdog" : "liveness");
     if (inside && world.certificateLine !== null && world.bootstrap === null) world.bootstrap = { seq: 1, utcMs: world.nowUtcMs + 20_000 };
   }
-  const watchdogSlot = minute >= WINDOW_START && minute <= 23 * 60 + 55 && (minute - WINDOW_START) % 10 === 0;
+  const watchdogSlot = minute >= WINDOW_START && minute <= 23 * 60 + 55 && (minute - WINDOW_START) % 5 === 0;
   if (watchdogSlot && world.tasks.watchdog.enabled) {
     world.watchdogLog.push(line(world, "watchdog-run.log", "run"));
     ping(world, "watchdog");
@@ -289,25 +291,35 @@ export function observe(world: SimWorld): Observations {
     }),
     checks: world.network ? known(checks) : unreachable(),
     apiIndependentRead: world.network ? known(true) : unreachable(),
-    env: known({ certificatePath: world.certificateLine, profile: "competition", hash: `env:${world.certificateLine ?? "none"}`, duplicateKeys: [] }),
+    env: known({ certificatePath: world.certificateLine, profile: "competition", hash: `env:${world.certificateLine ?? "none"}`, duplicateKeys: [], shadowedKeys: [] }),
     resolvedAccountMasked: known(ACCOUNT),
     deploymentDigests: known({ runtimeDigest: "r1", policyDigest: "p1" }),
-    certificate: known(world.nowUtcMs >= world.certificateReadyAtUtcMs ? { path: CERT_PATH, verdict: world.certificateVerdict, digests: { runtimeDigest: "r1", policyDigest: "p1" } } : null),
+    certificate: known(world.nowUtcMs >= world.certificateReadyAtUtcMs ? { path: CERT_PATH, verdict: world.certificateVerdict, digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: world.certificateVerdict === "PASS" ? [] : ["certificate verdict is not PASS"] } : null),
     devAccount: known({ positions: 0, nonTerminalOrders: 0 }),
     bootUtcMs: known(world.bootUtcMs),
     cycleLog: known([...world.cycleLog]),
     watchdogLog: known([...world.watchdogLog]),
     logFilesSearched: ["cycle-run.log", "cycle-run.log.1"],
     sessionSamples: [...world.sessionSamples],
-    wrapperSha256: known("w1"),
+    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }),
     hostPreconditions: known(HOST),
-    alertConfirmation: { confirmedUtcMs: world.alertConfirmedUtcMs, fingerprints: FINGERPRINTS },
+    alertConfirmation: {
+      operator: "felix",
+      alertReceivedUtcMs: { liveness: world.alertConfirmedUtcMs, readiness: world.alertConfirmedUtcMs, watchdog: world.alertConfirmedUtcMs },
+      bundledAlert: true,
+      reminderReceivedUtcMs: world.alertConfirmedUtcMs + 90 * MINUTE_MS,
+      reminderListed: ["liveness", "readiness", "watchdog"],
+      fingerprints: FINGERPRINTS,
+      downFlipUtcMs: { liveness: world.alertConfirmedUtcMs - MINUTE_MS, readiness: world.alertConfirmedUtcMs - MINUTE_MS, watchdog: world.alertConfirmedUtcMs - MINUTE_MS },
+    },
     longRunArtefacts: known(["quarantine"]),
     freeDiskBytes: known(1_000_000_000_000),
-    analyst: known({ oauthTokenPresent: true, childStartVerified: true }),
+    analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: true, tokenProbeClass: null }),
     schedulerCheck: known({ passed: installed, checkCount: 51, failedChecks: installed ? 0 : 2 }),
     schedulerCheckExpectEnabled: known({ passed: installed && bothEnabled, checkCount: 53, failedChecks: installed && bothEnabled ? 0 : 2 }),
-    disarm: known({ ...world.disarm }),
+    disarm: known(world.disarm.registered && world.disarm.fires !== null
+      ? { registered: true, fires: world.disarm.fires, state: "Ready", actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${world.disarm.fires.date}` }] }
+      : { registered: false, fires: null, state: null, actions: [] }),
     bootstrapEntry: known(world.bootstrap),
   };
 }

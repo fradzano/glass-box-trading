@@ -1,0 +1,7 @@
+[
+  { "id": "Q1", "note": "one bundled alert and per-check alerts accepted together", "from": "if (bundled !== undefined && anyPerCheck) return refuse(", "to": "if (false) return refuse(" },
+  { "id": "Q2", "note": "an alert time without a zone accepted", "from": "if (parseIsoInstant(iso) === null) return refuse(", "to": "if (false) return refuse(" },
+  { "id": "Q3", "note": "a check listed twice in the reminder accepted", "from": "if (reminderListed.includes(item)) return refuse(", "to": "if (false) return refuse(" },
+  { "id": "Q4", "note": "a credential-shaped value written into the confirmation line", "from": "if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(line) || /hc-ping\\.com|healthchecks\\.io/i.test(line)) {", "to": "if (false) {" },
+  { "id": "Q5", "note": "--dry-run ignored: the command writes when told not to", "from": "      dryRun = true;", "to": "      dryRun = false;" }
+]

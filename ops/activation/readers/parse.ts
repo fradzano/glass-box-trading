@@ -6,7 +6,7 @@
 // which the architecture gate forbids there, and they decide nothing about the
 // activation — they only say what the host said. Every fixture in their tests that
 // can be taken from this host was taken from it, read-only, on 2026-09-14.
-import type { AlertConfirmation, CertificateObservation, DigestPair, DisarmObservation, EnvObservation, LocalInstant, LogLine, Reading, SchedulerCheckObservation, SessionSample, TaskName, TaskObservation } from "../core/types.ts";
+import type { AlertConfirmation, CertificateObservation, CheckName, DigestPair, DisarmObservation, EnvObservation, LocalInstant, LogLine, Reading, SchedulerCheckObservation, SessionSample, TaskName, TaskObservation } from "../core/types.ts";
 
 function known<T>(value: T): Reading<T> {
   return { known: true, value };
@@ -194,18 +194,19 @@ export function parseTasks(text: string, names: TaskNames): Reading<Readonly<Rec
   return known({ cycle: cycle.value, watchdog: watchdog.value });
 }
 
-/** The disarm one-shot: absent is a fact, not a failure; registered means exactly one trigger with a zoned start. */
+/** The disarm one-shot: absent is a fact, not a failure; registered means exactly one trigger with a zoned start, and all its actions as found. */
 export function parseDisarm(text: string, names: TaskNames): Reading<DisarmObservation> {
   const list = parseTaskList(text);
   if (!list.known) return list;
   const task = single(list.value, names.disarm);
   if (!task.known) return task;
-  if (task.value === null) return known({ registered: false, fires: null });
+  if (task.value === null) return known({ registered: false, fires: null, state: null, actions: [] });
   const boundary = task.value.startBoundaries[0];
   if (task.value.startBoundaries.length !== 1 || boundary === undefined || boundary === null) return unknown(`${names.disarm} has ${String(task.value.startBoundaries.length)} triggers`);
   const utcMs = parseIsoInstant(boundary);
   if (utcMs === null) return unknown(`${names.disarm} trigger has no zoned start`);
-  return known({ registered: true, fires: berlinLocal(utcMs) });
+  // Every action and the state, verbatim: the core judges what the one-shot would run (review of 2026-09-14, point 2).
+  return known({ registered: true, fires: berlinLocal(utcMs), state: task.value.state, actions: task.value.actions });
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +302,8 @@ function shadowableKeys(): readonly string[] {
   return ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE", "STATE_DIR"];
 }
 
-export interface EnvReading extends EnvObservation {
-  /** Shadowable keys set in the user or machine environment, whatever `.env` says. */
-  readonly shadowedKeys: readonly string[];
-}
+/** The environment reading is exactly the core's observation; `shadowedKeys` became part of it with the owner ruling of 2026-09-14. */
+export type EnvReading = EnvObservation;
 
 /**
  * `.env` plus the user and machine environment an S4U task inherits. The effective
@@ -322,8 +321,33 @@ export function parseEnv(input: { readonly dotEnvText: string; readonly sha256: 
 // Certificate and preflight
 // ---------------------------------------------------------------------------
 
-/** A pre-arm certificate file (`src/core/certificate.ts`, schema 2): only a dev certificate can certify this activation. */
-export function parseCertificateFile(text: string, path: string): Reading<CertificateObservation> {
+export interface ArmingExpectationsInput {
+  readonly runtimeDigest: string;
+  readonly policyDigest: string;
+  readonly canonicalTradingOrigin: string;
+}
+
+export type ArmingValidation = { readonly ok: true; readonly successfulDevLiveTestAt: string } | { readonly ok: false; readonly violations: readonly string[] };
+
+/**
+ * The runtime's own certificate validator — `validateArmingCertificate` from
+ * `src/core/certificate.ts`, the function `evaluateArmingGate` calls — handed in with this
+ * deployment's expectations, so the activation judges a certificate exactly as the arming
+ * gate will judge it at 15:15.
+ */
+export interface CertificateValidator {
+  readonly expectations: ArmingExpectationsInput;
+  readonly validate: (raw: unknown, expectations: ArmingExpectationsInput) => ArmingValidation;
+}
+
+/**
+ * A pre-arm certificate file. The flat fields are read first, so that a file that is not a
+ * certificate at all is unknown rather than a verdict. The verdict itself comes only from the
+ * runtime's full validator (review of 2026-09-14, point 1): exact schema, evidence digest,
+ * dev role, canonical origin, both digests of this deployment. A document that says PASS and
+ * fails any of that reads `REJECTED` with the validator's violations — never PASS.
+ */
+export function parseCertificateFile(text: string, path: string, validator: CertificateValidator): Reading<CertificateObservation> {
   const parsed = parseJson(withoutBom(text));
   if (!parsed.ok || !isRecord(parsed.value)) return unknown("certificate is not a JSON object");
   const certificate = parsed.value;
@@ -334,7 +358,9 @@ export function parseCertificateFile(text: string, path: string): Reading<Certif
   const runtimeDigest = certificate["runtimeDigest"];
   const policyDigest = certificate["policyDigest"];
   if (typeof runtimeDigest !== "string" || runtimeDigest.length === 0 || typeof policyDigest !== "string" || policyDigest.length === 0) return unknown("certificate digests missing");
-  return known({ path, verdict, digests: { runtimeDigest, policyDigest } });
+  const validation = validator.validate(certificate, validator.expectations);
+  if (validation.ok) return known({ path, verdict: "PASS", digests: { runtimeDigest, policyDigest }, violations: [] });
+  return known({ path, verdict: verdict === "FAIL" ? "FAIL" : "REJECTED", digests: { runtimeDigest, policyDigest }, violations: validation.violations });
 }
 
 export interface PreflightReport {
@@ -368,13 +394,28 @@ export function parsePreflightOutput(stdout: string): Reading<PreflightReport> {
 // The human confirmation of gate condition 4
 // ---------------------------------------------------------------------------
 
+function instantsByCheck(value: unknown): Readonly<Record<CheckName, number>> | null {
+  if (!isRecord(value)) return null;
+  const read = (name: CheckName): number | null => {
+    const raw = value[name];
+    return typeof raw === "string" ? parseIsoInstant(raw) : null;
+  };
+  const liveness = read("liveness");
+  const readiness = read("readiness");
+  const watchdog = read("watchdog");
+  return liveness === null || readiness === null || watchdog === null ? null : { liveness, readiness, watchdog };
+}
+
 /**
- * The confirmation file `activation confirm-alerts` appends to (owner ruling
- * 2026-09-14): one JSON object per line with `operator`, `alertReceivedAt`,
- * `reminderReceivedAt`, `fingerprints` and `crossCheck`. The **latest** line counts;
- * if it is malformed the reading is unknown rather than falling back to an older one,
- * which would silently revive a confirmation the owner meant to replace. The
- * confirmation is dated by the older receipt, the alert.
+ * The confirmation file `activation confirm-alerts` appends to (owner ruling and review,
+ * 2026-09-14), one JSON object per line:
+ * `{ operator, alertReceivedAt: { liveness, readiness, watchdog }, bundledAlert,
+ *    reminderReceivedAt, reminderListed: [...], fingerprints: {...}, downFlips: {...},
+ *    crossCheck: "passed" }`, every instant ISO 8601 with a zone.
+ * The latest line counts; a malformed latest line makes the reading unknown rather than
+ * reviving an older confirmation the owner meant to replace. This parser checks shape
+ * only: whether the story fits the flip history is `crossCheckAlerts`, which step 0
+ * repeats against the live checks.
  */
 export function parseAlertConfirmations(text: string): Reading<AlertConfirmation | null> {
   const rows = withoutBom(text).split(/\r?\n/).filter(row => row.trim().length > 0);
@@ -383,12 +424,25 @@ export function parseAlertConfirmations(text: string): Reading<AlertConfirmation
   const parsed = parseJson(latest);
   if (!parsed.ok || !isRecord(parsed.value)) return unknown("latest confirmation is not a JSON object");
   const line = parsed.value;
-  if (typeof line["operator"] !== "string" || line["operator"].trim().length === 0) return unknown("latest confirmation names no operator");
+  const operator = line["operator"];
+  if (typeof operator !== "string" || operator.trim().length === 0) return unknown("latest confirmation names no operator");
   if (line["crossCheck"] !== "passed") return unknown("latest confirmation did not pass the flip cross-check");
-  const alertUtcMs = typeof line["alertReceivedAt"] === "string" ? parseIsoInstant(line["alertReceivedAt"]) : null;
-  const reminderUtcMs = typeof line["reminderReceivedAt"] === "string" ? parseIsoInstant(line["reminderReceivedAt"]) : null;
-  if (alertUtcMs === null || reminderUtcMs === null) return unknown("latest confirmation lacks zoned receipt times");
-  if (reminderUtcMs < alertUtcMs) return unknown("the reminder was received before the alert");
+  const bundledAlert = line["bundledAlert"];
+  if (typeof bundledAlert !== "boolean") return unknown("latest confirmation does not say whether the alert was one mail");
+  const alertReceivedUtcMs = instantsByCheck(line["alertReceivedAt"]);
+  if (alertReceivedUtcMs === null) return unknown("latest confirmation lacks a zoned alert receipt per check");
+  const downFlipUtcMs = instantsByCheck(line["downFlips"]);
+  if (downFlipUtcMs === null) return unknown("latest confirmation lacks a zoned down flip per check");
+  const reminderReceivedUtcMs = typeof line["reminderReceivedAt"] === "string" ? parseIsoInstant(line["reminderReceivedAt"]) : null;
+  if (reminderReceivedUtcMs === null) return unknown("latest confirmation lacks a zoned reminder receipt");
+  const listed = line["reminderListed"];
+  if (!Array.isArray(listed)) return unknown("latest confirmation does not list the reminder's checks");
+  const items: readonly unknown[] = listed;
+  const reminderListed: CheckName[] = [];
+  for (const item of items) {
+    if (item !== "liveness" && item !== "readiness" && item !== "watchdog") return unknown("the reminder lists something that is not a check");
+    reminderListed.push(item);
+  }
   const fingerprints = line["fingerprints"];
   if (!isRecord(fingerprints)) return unknown("latest confirmation lacks fingerprints");
   const liveness = fingerprints["liveness"];
@@ -396,5 +450,5 @@ export function parseAlertConfirmations(text: string): Reading<AlertConfirmation
   const watchdog = fingerprints["watchdog"];
   const shaped = (value: unknown): value is string => typeof value === "string" && /^hc:[0-9a-f]{8}$/.test(value);
   if (!shaped(liveness) || !shaped(readiness) || !shaped(watchdog)) return unknown("a fingerprint is not of the form hc:xxxxxxxx");
-  return known({ confirmedUtcMs: alertUtcMs, fingerprints: { liveness, readiness, watchdog } });
+  return known({ operator, alertReceivedUtcMs, bundledAlert, reminderReceivedUtcMs, reminderListed, fingerprints: { liveness, readiness, watchdog }, downFlipUtcMs });
 }

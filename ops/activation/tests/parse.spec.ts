@@ -5,7 +5,9 @@
 // the runtime's own `parseDotEnv` by running both over the same texts: the latch is
 // what the runtime reads, not what this module believes it reads.
 import { describe, expect, it } from "vitest";
+import { buildCertificate, validateArmingCertificate } from "../../../src/core/certificate.ts";
 import { parseDotEnv } from "../../../src/shell/runtime-config.ts";
+import { inputs, ORIGIN } from "../../../tests/arm01-fixtures.ts";
 import { definitionFindings } from "../core/decide.ts";
 import { berlinLocal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "../readers/parse.ts";
 
@@ -145,10 +147,13 @@ describe("parse — scheduled tasks", () => {
   });
 
   it("reads the disarm as absent, as registered for its zoned start, and refuses an unzoned or doubled trigger", () => {
-    expect(parseDisarm(HOST_TASKS, NAMES)).toEqual({ known: true, value: { registered: false, fires: null } });
-    expect(parseDisarm("", NAMES)).toEqual({ known: true, value: { registered: false, fires: null } });
+    expect(parseDisarm(HOST_TASKS, NAMES)).toEqual({ known: true, value: { registered: false, fires: null, state: null, actions: [] } });
+    expect(parseDisarm("", NAMES)).toEqual({ known: true, value: { registered: false, fires: null, state: null, actions: [] } });
     const disarm = (triggers: unknown): string => JSON.stringify([{ TaskName: NAMES.disarm, State: "Ready", Actions: { Execute: "powershell.exe" }, Triggers: triggers }]);
-    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 } } });
+    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 }, state: "Ready", actions: [{ execute: "powershell.exe", argumentLine: "" }] } });
+    // A second action and a disabled state are facts for the core to judge, not reasons to stop reading (review 2026-09-14, point 2).
+    const doubled = JSON.stringify([{ TaskName: NAMES.disarm, State: "Disabled", Actions: [{ Execute: "node.exe", Arguments: "a" }, { Execute: "cmd.exe", Arguments: "/c b" }], Triggers: { StartBoundary: "2026-09-22T15:05:00+02:00" } }]);
+    expect(parseDisarm(doubled, NAMES)).toMatchObject({ known: true, value: { state: "Disabled", actions: [{ execute: "node.exe", argumentLine: "a" }, { execute: "cmd.exe", argumentLine: "/c b" }] } });
     expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00" }), NAMES).known).toBe(false);
     expect(parseDisarm(disarm([{ StartBoundary: "2026-09-22T15:05:00+02:00" }, { StartBoundary: "2026-09-23T15:05:00+02:00" }]), NAMES).known).toBe(false);
   });
@@ -228,15 +233,44 @@ describe("parse — .env as the runtime reads it", () => {
 });
 
 describe("parse — certificate and preflight", () => {
-  const certificate = (fields: Record<string, unknown>): string => JSON.stringify({ schemaVersion: 2, role: "dev", verdict: "PASS", runtimeDigest: "sha256:r", policyDigest: "sha256:p", ...fields });
+  // A real PASS certificate from the runtime's own builder and fixtures (tests/arm01-fixtures.ts), judged by the runtime's own validator.
+  const real = buildCertificate(inputs());
+  const expectations = { runtimeDigest: real.runtimeDigest, policyDigest: real.policyDigest, canonicalTradingOrigin: ORIGIN };
+  const PATH = "C:\\evidence\\pre-arm\\run-4.json";
+  const read = (document: unknown, against = expectations): ReturnType<typeof parseCertificateFile> => parseCertificateFile(JSON.stringify(document), PATH, { expectations: against, validate: validateArmingCertificate });
+  const verdictOf = (document: unknown, against = expectations): string => {
+    const reading = read(document, against);
+    return reading.known ? reading.value.verdict : `unknown: ${reading.reason}`;
+  };
 
-  it("reads a dev certificate and refuses any other role, schema or verdict", () => {
-    expect(parseCertificateFile(certificate({}), "C:\\c.json")).toEqual({ known: true, value: { path: "C:\\c.json", verdict: "PASS", digests: { runtimeDigest: "sha256:r", policyDigest: "sha256:p" } } });
-    expect(parseCertificateFile(certificate({ verdict: "FAIL" }), "c").known).toBe(true);
-    expect(parseCertificateFile(certificate({ role: "competition" }), "c").known).toBe(false);
-    expect(parseCertificateFile(certificate({ schemaVersion: 1 }), "c").known).toBe(false);
-    expect(parseCertificateFile(certificate({ verdict: "pass" }), "c").known).toBe(false);
-    expect(parseCertificateFile("{\"schemaVersion\":2,", "c").known).toBe(false);
+  it("reads PASS for a certificate the runtime's validator accepts", () => {
+    expect(real.verdict).toBe("PASS");
+    expect(read(real)).toEqual({ known: true, value: { path: PATH, verdict: "PASS", digests: { runtimeDigest: real.runtimeDigest, policyDigest: real.policyDigest }, violations: [] } });
+  });
+
+  it("never reads PASS for a document whose flat fields merely say so (review 2026-09-14, point 1)", () => {
+    expect(verdictOf({ schemaVersion: 2, role: "dev", verdict: "PASS", runtimeDigest: real.runtimeDigest, policyDigest: real.policyDigest })).toBe("REJECTED");
+    const fill = real.evidence.fill;
+    if (fill === null) throw new Error("fixture certificate has no fill evidence");
+    expect(verdictOf({ ...real, evidence: { ...real.evidence, fill: { ...fill, filledQuantity: fill.filledQuantity + 1 } } })).toBe("REJECTED");
+    expect(verdictOf({ ...real, operatorNote: "checked by hand" })).toBe("REJECTED");
+    expect(verdictOf({ ...real, tradingOrigin: "https://api.alpaca.markets" })).toBe("REJECTED");
+    expect(verdictOf(real, { ...expectations, runtimeDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" })).toBe("REJECTED");
+    expect(verdictOf(real, { ...expectations, policyDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" })).toBe("REJECTED");
+  });
+
+  it("carries the validator's violations, and keeps a certificate that says FAIL a FAIL", () => {
+    const edited = read({ ...real, operatorNote: "checked by hand" });
+    expect(edited.known && edited.value.violations).toContain("certificate schema mismatch: unexpected or missing fields");
+    const failed = buildCertificate(inputs({ orderObservations: [] }));
+    expect(verdictOf(failed, { ...expectations, runtimeDigest: failed.runtimeDigest, policyDigest: failed.policyDigest })).toBe("FAIL");
+  });
+
+  it("is unknown for a file that is not a dev certificate at all", () => {
+    expect(parseCertificateFile("{\"schemaVersion\":2,", PATH, { expectations, validate: validateArmingCertificate }).known).toBe(false);
+    expect(read({ ...real, schemaVersion: 1 }).known).toBe(false);
+    expect(read({ ...real, role: "competition" }).known).toBe(false);
+    expect(read({ ...real, verdict: "pass" }).known).toBe(false);
   });
 
   const report = (fields: Record<string, unknown>): string => JSON.stringify({ profile: "dev", accountId: "PA34…KZ1", mcpTools: 72, runtimeDigest: "sha256:r", policyDigest: "sha256:p", epoch: 3, ...fields }, null, 2);
@@ -251,18 +285,34 @@ describe("parse — certificate and preflight", () => {
 });
 
 describe("parse — the confirmation of gate condition 4", () => {
+  const perCheck = (iso: string): Record<string, string> => ({ liveness: iso, readiness: iso, watchdog: iso });
   const line = (fields: Record<string, unknown>): string => JSON.stringify({
     operator: "felix",
-    alertReceivedAt: "2026-09-11T22:01:00+02:00",
-    reminderReceivedAt: "2026-09-12T01:02:00+02:00",
+    alertReceivedAt: perCheck("2026-09-11T22:02:00+02:00"),
+    bundledAlert: true,
+    reminderReceivedAt: "2026-09-12T00:58:00+02:00",
+    reminderListed: ["liveness", "readiness", "watchdog"],
     fingerprints: { liveness: "hc:a685fe10", readiness: "hc:c4ad5b69", watchdog: "hc:b76072aa" },
+    downFlips: perCheck("2026-09-11T22:01:00+02:00"),
     crossCheck: "passed",
     ...fields,
   });
 
-  it("reads the latest line and dates it by the alert, the older receipt", () => {
-    const text = `${line({ operator: "earlier" })}\n${line({})}\n`;
-    expect(parseAlertConfirmations(text)).toEqual({ known: true, value: { confirmedUtcMs: Date.UTC(2026, 8, 11, 20, 1), fingerprints: { liveness: "hc:a685fe10", readiness: "hc:c4ad5b69", watchdog: "hc:b76072aa" } } });
+  it("reads the latest line with every receipt, the reminder's list and the assigned down flips", () => {
+    const alert = Date.UTC(2026, 8, 11, 20, 2);
+    const down = Date.UTC(2026, 8, 11, 20, 1);
+    expect(parseAlertConfirmations(`${line({ operator: "earlier" })}\n${line({})}\n`)).toEqual({
+      known: true,
+      value: {
+        operator: "felix",
+        alertReceivedUtcMs: { liveness: alert, readiness: alert, watchdog: alert },
+        bundledAlert: true,
+        reminderReceivedUtcMs: Date.UTC(2026, 8, 11, 22, 58),
+        reminderListed: ["liveness", "readiness", "watchdog"],
+        fingerprints: { liveness: "hc:a685fe10", readiness: "hc:c4ad5b69", watchdog: "hc:b76072aa" },
+        downFlipUtcMs: { liveness: down, readiness: down, watchdog: down },
+      },
+    });
     expect(parseAlertConfirmations("")).toEqual({ known: true, value: null });
   });
 
@@ -272,8 +322,12 @@ describe("parse — the confirmation of gate condition 4", () => {
 
   const refused: readonly (readonly [string, Record<string, unknown>])[] = [
     ["a failed cross-check", { crossCheck: "failed" }],
-    ["a reminder before the alert", { reminderReceivedAt: "2026-09-11T21:00:00+02:00" }],
-    ["an unzoned receipt time", { alertReceivedAt: "2026-09-11T22:01:00" }],
+    ["one alert time for three checks without the checks named", { alertReceivedAt: "2026-09-11T22:02:00+02:00" }],
+    ["no statement whether the alert was one mail", { bundledAlert: "yes" }],
+    ["an unzoned reminder time", { reminderReceivedAt: "2026-09-12T00:58:00" }],
+    ["a down flip missing for one check", { downFlips: { liveness: "2026-09-11T22:01:00+02:00", readiness: "2026-09-11T22:01:00+02:00" } }],
+    ["a reminder listing something that is not a check", { reminderListed: ["liveness", "everything"] }],
+    ["a reminder list that is not a list", { reminderListed: "all three" }],
     ["a fingerprint that is a UUID", { fingerprints: { liveness: "c4ad5b69-0000-4000-8000-000000000000", readiness: "hc:c4ad5b69", watchdog: "hc:b76072aa" } }],
     ["a missing operator", { operator: " " }],
   ];

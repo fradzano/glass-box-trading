@@ -4130,5 +4130,86 @@ small, no ADR split).
      change at the next revision. Rejected: the preflight alone, which does not prove
      what step 0 exists for; and `--smoke-cycle`, which writes into the dev journal and
      skips the analyst silently under a halt, so it can prove nothing without saying
-     so. **Open and not verified:** whether a failing analyst in the long run raises
-     any alarm at all — a lens for the adversarial review of unit 12.
+     so. **Settled the same day by the owner's review** (next entry): it raised
+     none, and a failed call now raises `ANALYST_UNAVAILABLE`.
+- **2026-09-14 — P12 activation: the owner's review of unit 7, and an alarm for
+  the analyst that dies after the gate (owner rulings).** The owner read `710ef9a`
+  and the uncommitted unit-7 snapshot and asked for six points before unit 7 closes
+  or is committed. The parser commit `c996333` had already been pushed when the
+  review arrived; it carries the flat certificate parser and the single-time
+  confirmation format the review rejects. Both are corrected forward in the commits
+  that follow, not rewritten.
+
+  1. **The certificate is judged by the runtime's full validator.** A flat check of
+     schema version, role, verdict and digests would have let a minimal or edited
+     JSON read as PASS. `parseCertificateFile` now takes `validateArmingCertificate`
+     — the function `evaluateArmingGate` calls — with this deployment's expectations;
+     PASS exists only when it accepts the whole document (exact schema, evidence
+     digest, PASS, dev role, canonical origin, both digests), and a document that
+     says PASS and fails reads `REJECTED` with the validator's violations. Probed
+     against a real PASS certificate from `tests/arm01-fixtures.ts`: a minimal fake,
+     edited evidence, an extra field, a wrong origin and either digest changed all
+     read `REJECTED`.
+  2. **The disarm one-shot is judged by what it runs.** The observation carries its
+     state and every action verbatim; from step 4 to the gate it must read enabled
+     and carry exactly one action — the registered node running
+     `ops\activation\cli.ts disarm --state-root <activation root> --anchor-day <day>`
+     and nothing else. A wrong executable, a second action, a wrong state root, a
+     wrong CLI mode, an extra argument and a disabled one-shot each have a red test.
+  3. **Gate condition 4 covers all three checks.** One typed time cannot stand for
+     three down notifications. `confirm-alerts` takes a receipt time per check, or
+     the owner's statement that one mail named all three, plus the reminder's receipt
+     time and the checks it listed. The cross-check (`ops/activation/core/
+     confirmation.ts`) assigns each check one contiguous down interval: a down flip
+     before its alert, no up flip of that check before the reminder, the alert no
+     later than the reminder, the reminder at least one reminder period after the
+     down flip. The fourteen days run as an exact duration from the oldest receipt.
+     The line records operator, every receipt, the reminder's list, the three
+     fingerprints and the three assigned down flips; step 0 repeats the cross-check
+     against the live flip history and carries the same fields into its ledger
+     evidence. **Flip retention**, per the owner's reading of the v3 documentation:
+     the current month plus two full months, so 2026-09-11 is readable on
+     2026-09-14; the command refuses anyway if the live read does not return them.
+     **Three states, kept apart:** the owner's statement exists (alert receipt
+     2026-09-11 22:01; reminders confirmed 2026-09-13 23:26); **no confirmation file
+     has been written**; and the exact receipt time of the reminder mail is not in
+     the repository. The entry stays pending until the owner types it. No mailbox is
+     read by anything.
+  4. **The live-token probe tests the actual runtime condition.** The pinned Agent
+     SDK's `query` with the configured `ANALYST_MODEL`, one turn, no tools, no
+     settings, `maxTurns: 1`, a hard deadline, and the analyst's constructed
+     environment — the token and the OS necessities, never `ANTHROPIC_API_KEY`.
+     Success is a `success` result with `is_error` false: the SDK reports a turn that
+     ended on an API error as `success` with `is_error` true. The reply text is not
+     evidence and is never kept; outwardly only `ok` or a normalised class. Step 0
+     and the gate each carry it as their own condition, and each is mutated.
+  5. **Owner ruling — `ANALYST_UNAVAILABLE`.** The silent failure was proven, not a
+     question for unit 12: `cycle-runner.ts` caught a failing call into
+     `analystSkip` and `finish()` raised no alarm, so a revoked token after the gate
+     would have left readiness green for the whole run. Every analyst call that was
+     made and ended in an authentication error, a 429, a timeout or an SDK error
+     still journals exactly one `ANALYST_SKIP`, is not retried and blocks no
+     management action, and it now raises the fixed, secret-free alarm condition
+     `ANALYST_UNAVAILABLE`, so readiness fails. No halt: risk management continues.
+     The next successful call raises nothing. A cycle that skipped the analyst on
+     purpose — halt, reconciliation block, gap — adds no analyst alarm, because its
+     own impediment already stands; an answer that fails the schema is a structural
+     rejection, not an unavailable analyst. Placed as scenario #81, axiom A31, SPEC
+     S-CYC-01 and S-G14-05; implemented as one line in the `catch` that only real
+     call failures reach, since `parseAnalystOutput` never throws; tests written red
+     first. **Declared limit:** the condition belongs to the cycle that saw the
+     failure — outside the session readiness comes from standing impediments only, so
+     it reads success overnight and fails again with the first cycle of the next
+     session. Making it standing would need a journal field inside the digest; the
+     ruling's "may turn readiness green again" covers the cycle-scoped form. This
+     change is inside the runtime digest and lands before the certificate run.
+  6. **Both deployment wrappers are hashed by name.** `cycle-run.ps1` and
+     `watchdog-run.ps1` sit outside the runtime digest and carry different safety
+     claims; step 0 records a named map, and every later invocation and the gate
+     compare both.
+
+  Folded in at the same time, and all in `docs/P12-ACTIVATION-SPEC.md` revision 7:
+  keys set in the user or machine environment are red, because the runtime lets
+  them win over `.env`; a retry asks for the checks `up` or `paused`, because with
+  both tasks disabled a check that was up in the afternoon is down by 22:05 (found by
+  the unit-6 simulator); and an invalid drill ends the attempt.

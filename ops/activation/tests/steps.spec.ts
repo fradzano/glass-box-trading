@@ -18,6 +18,9 @@ const SCHEDULE: Schedule = {
   coverageThroughDate: "2026-12-16",
   expectedHostPreconditions: {},
   minFreeDiskBytes: 0,
+  repoRoot: "repo",
+  nodePath: "node.exe",
+  activationRoot: "state",
 };
 
 function foldOf(done: readonly StepId[]) {

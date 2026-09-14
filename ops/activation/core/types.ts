@@ -1,4 +1,4 @@
-// The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
+// The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 7).
 //
 // Everything the core decides is a function of three inputs, and all three are
 // declared here: the ledger (what was done), a snapshot of observations (what the
@@ -81,6 +81,11 @@ export interface TaskObservation {
   readonly argumentLine: string;
 }
 
+export interface TaskAction {
+  readonly execute: string;
+  readonly argumentLine: string;
+}
+
 export type CheckName = "liveness" | "readiness" | "watchdog";
 
 export interface CheckFlip {
@@ -103,6 +108,8 @@ export interface EnvObservation {
   /** SHA-256 of the file's bytes. */
   readonly hash: string;
   readonly duplicateKeys: readonly string[];
+  /** Keys whose value in the user or machine environment would override `.env` for the runtime (owner ruling 2026-09-14). */
+  readonly shadowedKeys: readonly string[];
 }
 
 export interface DigestPair {
@@ -110,10 +117,18 @@ export interface DigestPair {
   readonly policyDigest: string;
 }
 
+/**
+ * A certificate file as the runtime's own arming gate would judge it. `verdict` is
+ * `PASS` only when `validateArmingCertificate` accepted the whole document against
+ * this deployment — exact schema, evidence digest, dev role, canonical origin, both
+ * digests (review of 2026-09-14, point 1). A document that merely says PASS and
+ * fails that validation reads `REJECTED`, with the validator's violations.
+ */
 export interface CertificateObservation {
   readonly path: string;
   readonly verdict: string;
   readonly digests: DigestPair;
+  readonly violations: readonly string[];
 }
 
 export interface DevAccountObservation {
@@ -142,16 +157,33 @@ export interface SessionSample {
   readonly explorerProcesses: number;
 }
 
-/** The human confirmation of gate condition 4, as recorded: when, and for which three endpoints. */
+/**
+ * The human confirmation of gate condition 4, as `activation confirm-alerts` recorded
+ * it (owner ruling and review, 2026-09-14). Three checks send three down alerts, so
+ * each has its own receipt time — or one mail named all three, which `bundledAlert`
+ * states. The reminder's receipt time comes with the checks the reminder listed. The
+ * command assigned each check the down flip its alert belongs to; step 0 repeats that
+ * cross-check against the live flip history and dates the confirmation by its oldest
+ * receipt.
+ */
 export interface AlertConfirmation {
-  readonly confirmedUtcMs: number;
+  readonly operator: string;
+  readonly alertReceivedUtcMs: Readonly<Record<CheckName, number>>;
+  readonly bundledAlert: boolean;
+  readonly reminderReceivedUtcMs: number;
+  readonly reminderListed: readonly CheckName[];
   readonly fingerprints: Readonly<Record<CheckName, string>>;
+  readonly downFlipUtcMs: Readonly<Record<CheckName, number>>;
 }
 
-/** Step 0's analyst precondition: the token the gate's digest re-print needs, and one analyst child started and verified. */
+/** Step 0's analyst precondition: the token the gate's digest re-print needs, one analyst child started and verified, and the token proven live. */
 export interface AnalystObservation {
   readonly oauthTokenPresent: boolean;
   readonly childStartVerified: boolean;
+  /** A minimal Claude call with the token succeeded now (owner ruling 2026-09-14): present is not live. */
+  readonly tokenLive: boolean;
+  /** The probe's normalised failure class when it did not succeed; null when it did. */
+  readonly tokenProbeClass: string | null;
 }
 
 /** What `verify-scheduled-tasks.ps1` printed: the verdict line and its counts. */
@@ -161,10 +193,16 @@ export interface SchedulerCheckObservation {
   readonly failedChecks: number;
 }
 
-/** The disarm one-shot: whether it is registered, and the local moment its trigger fires. */
+/**
+ * The disarm one-shot, judged by what it would do and not only by when (review of
+ * 2026-09-14, point 2): its trigger, its state — a disabled one-shot never fires —
+ * and every action it carries, verbatim.
+ */
 export interface DisarmObservation {
   readonly registered: boolean;
   readonly fires: LocalInstant | null;
+  readonly state: string | null;
+  readonly actions: readonly TaskAction[];
 }
 
 /** The long-run journal's `BOOTSTRAP` entry, which step 11 records as the start of the measurement period. */
@@ -172,6 +210,9 @@ export interface JournalBootstrapObservation {
   readonly seq: number;
   readonly utcMs: number;
 }
+
+/** The two deployment wrappers, both outside the runtime digest and each carrying its own safety claims. */
+export type WrapperName = "cycle-run.ps1" | "watchdog-run.ps1";
 
 /** Everything one invocation observed, taken before the core is asked anything. */
 export interface Observations {
@@ -191,7 +232,8 @@ export interface Observations {
   readonly watchdogLog: Reading<readonly LogLine[]>;
   readonly logFilesSearched: readonly string[];
   readonly sessionSamples: readonly SessionSample[];
-  readonly wrapperSha256: Reading<string>;
+  /** SHA-256 of each deployment wrapper, by name (review of 2026-09-14, point 6). */
+  readonly wrapperHashes: Reading<Readonly<Record<WrapperName, string>>>;
   /** The measured host preconditions of §3, as name → value; step 0 records them and later steps compare. */
   readonly hostPreconditions: Reading<Readonly<Record<string, string>>>;
   readonly alertConfirmation: AlertConfirmation | null;
@@ -222,6 +264,12 @@ export interface Schedule {
   /** The host preconditions of spec §3 as step 0 must find them, name → value. */
   readonly expectedHostPreconditions: Readonly<Record<string, string>>;
   readonly minFreeDiskBytes: number;
+  /** The repository root the disarm one-shot's CLI lives under, as registered. */
+  readonly repoRoot: string;
+  /** The node executable the disarm one-shot runs, as registered. */
+  readonly nodePath: string;
+  /** The activation state root the disarm one-shot reads the ledger from. */
+  readonly activationRoot: string;
 }
 
 /** What the shell is asked to do to the world. Each variant is one effect; nothing else may change it. */

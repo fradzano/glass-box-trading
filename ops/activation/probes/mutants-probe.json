@@ -1,0 +1,12 @@
+[
+  { "id": "R1", "note": "a success subtype that ended on an API error counted as live", "from": "if (message[\"is_error\"] === false) return { ok: true };", "to": "return { ok: true };" },
+  { "id": "R2", "note": "an authentication rejection not named as such", "from": "if (status === 401 || status === 403) return fail(\"AUTH_REJECTED\");", "to": "" },
+  { "id": "R3", "note": "no hard deadline: a hanging session is never aborted", "from": "const timer = setTimeout(() => { abort.abort(); }, input.deadlineMs);", "to": "const timer = setTimeout(() => undefined, input.deadlineMs);" },
+  { "id": "R4", "note": "the whole process environment passed through, ANTHROPIC_API_KEY included", "from": "  for (const name of osVariableNames()) {", "to": "  for (const name of Object.keys(processEnv)) {" },
+  { "id": "R5", "note": "more than one turn allowed", "from": "maxTurns: 1,", "to": "maxTurns: 16," },
+  { "id": "R6", "note": "user settings loaded", "from": "settingSources: [],", "to": "settingSources: [\"user\"] as [],\n" },
+  { "id": "R7", "note": "the SDK called without a token", "from": "if (input.oauthToken.length === 0) return fail(\"TOKEN_ABSENT\");", "to": "" },
+  { "id": "R8", "note": "a session without a result counted as live", "from": "return outcome ?? fail(\"NO_RESULT\");", "to": "return outcome ?? { ok: true };" },
+  { "id": "R9", "note": "non-result messages classified as results", "from": "if (isRecord(message) && message[\"type\"] === \"result\") outcome = classifyResultMessage(message);", "to": "if (isRecord(message)) outcome = classifyResultMessage(message);" },
+  { "id": "R10", "note": "tools offered to the probe", "from": "tools: [],", "to": "tools: [\"Bash\"]," }
+]

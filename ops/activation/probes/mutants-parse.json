@@ -28,10 +28,14 @@
   { "id": "P27", "note": "an empty MCP inventory accepted", "from": "mcpTools < 1)", "to": "mcpTools < 0)" },
   { "id": "P28", "note": "a malformed latest confirmation falls back to an older one", "from": "const latest = rows.at(-1);", "to": "const latest = rows.filter(row => parseJson(row).ok).at(-1);" },
   { "id": "P29", "note": "a failed cross-check accepted", "from": "if (line[\"crossCheck\"] !== \"passed\") return unknown(", "to": "if (false) return unknown(" },
-  { "id": "P30", "note": "a reminder before the alert accepted", "from": "if (reminderUtcMs < alertUtcMs) return unknown(", "to": "if (false) return unknown(" },
-  { "id": "P31", "note": "confirmation dated by the newer receipt", "from": "return known({ confirmedUtcMs: alertUtcMs,", "to": "return known({ confirmedUtcMs: reminderUtcMs," },
+  { "id": "P30", "note": "a receipt or down flip missing for one check read as zero", "from": "return liveness === null || readiness === null || watchdog === null ? null : { liveness, readiness, watchdog };", "to": "return { liveness: liveness ?? 0, readiness: readiness ?? 0, watchdog: watchdog ?? 0 };" },
+  { "id": "P31", "note": "a reminder list naming something that is not a check accepted", "from": "if (item !== \"liveness\" && item !== \"readiness\" && item !== \"watchdog\") return unknown(", "to": "if (false) return unknown(" },
   { "id": "P32", "note": "any fingerprint text accepted, a UUID included", "from": "/^hc:[0-9a-f]{8}$/.test(value)", "to": "value.length > 0" },
   { "id": "P33", "note": "local time taken in UTC", "from": "timeZone: \"Europe/Berlin\"", "to": "timeZone: \"UTC\"" },
   { "id": "P34", "note": "midnight written as hour 24", "from": "hourCycle: \"h23\"", "to": "hourCycle: \"h24\"" },
-  { "id": "P35", "note": "an empty task list is not JSON and becomes unknown", "from": "if (text.trim().length === 0) return known([]);", "to": "" }
+  { "id": "P35", "note": "an empty task list is not JSON and becomes unknown", "from": "if (text.trim().length === 0) return known([]);", "to": "" },
+  { "id": "P36", "note": "the runtime's validator bypassed: a flat PASS is a PASS (review 2026-09-14, point 1)", "from": "const validation = validator.validate(certificate, validator.expectations);", "to": "const validation = { ok: true as const, successfulDevLiveTestAt: \"\" };" },
+  { "id": "P37", "note": "a rejected PASS document read as PASS", "from": "verdict: verdict === \"FAIL\" ? \"FAIL\" : \"REJECTED\"", "to": "verdict: verdict === \"FAIL\" ? \"FAIL\" : \"PASS\"" },
+  { "id": "P38", "note": "a confirmation that does not say whether the alert was one mail accepted", "from": "if (typeof bundledAlert !== \"boolean\") return unknown(", "to": "if (false) return unknown(" },
+  { "id": "P39", "note": "the disarm's second action dropped before the core can see it (review 2026-09-14, point 2)", "from": "state: task.value.state, actions: task.value.actions });", "to": "state: task.value.state, actions: task.value.actions.slice(0, 1) });" }
 ]

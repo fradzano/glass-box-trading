@@ -11,7 +11,7 @@ import type { LedgerFold } from "../core/fold.ts";
 import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
 import type { LedgerDraft } from "../core/ledger.ts";
 import { executionOrder, expectedCertificateLine, expectedTasks } from "../core/steps.ts";
-import type { CheckObservation, Decision, LocalInstant, LogLine, Observations, Outcome, Reading, Schedule, SessionSample, StepId, TaskObservation } from "../core/types.ts";
+import type { AlertConfirmation, CheckObservation, Decision, DisarmObservation, LocalInstant, LogLine, Observations, Outcome, Reading, Schedule, SessionSample, StepId, TaskObservation } from "../core/types.ts";
 
 const MON = "2026-09-21";
 const TUE = "2026-09-22";
@@ -25,9 +25,45 @@ const REPO = "C:\\Users\\felix\\source\\repos\\glass-box-trading";
 const HOST_OPTIONS = "-NoProfile -NonInteractive -ExecutionPolicy Bypass";
 const CYCLE_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\cycle-run.ps1" -RepoRoot "${REPO}" -NodePath "C:\\Program Files\\nodejs\\node.exe"`;
 const WATCHDOG_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\watchdog-run.ps1" -RepoRoot "${REPO}" -NodePath "C:\\Program Files\\nodejs\\node.exe" -WatchdogIntervalMinutes 10`;
+const NODE = "C:\\Program Files\\nodejs\\node.exe";
+const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
+
+/** A drill history like the one of 2026-09-11: down a minute before the alert, back up two hours later. */
+function flipsFor(alertUtcMs: number): CheckObservation["flips"] {
+  return [{ utcMs: alertUtcMs - 60_000 + 2 * 3_600_000, up: true }, { utcMs: alertUtcMs - 60_000, up: false }];
+}
+
+/** The confirmation `confirm-alerts` would write for that history: one bundled alert, a reminder 90 minutes later listing all three checks. */
+function confirmationAt(alertUtcMs: number): AlertConfirmation {
+  const down = alertUtcMs - 60_000;
+  return {
+    operator: "felix",
+    alertReceivedUtcMs: { liveness: alertUtcMs, readiness: alertUtcMs, watchdog: alertUtcMs },
+    bundledAlert: true,
+    reminderReceivedUtcMs: alertUtcMs + 90 * 60_000,
+    reminderListed: ["liveness", "readiness", "watchdog"],
+    fingerprints: FINGERPRINTS,
+    downFlipUtcMs: { liveness: down, readiness: down, watchdog: down },
+  };
+}
+
+const CONFIRMED_ALERT = utc([MON, 0, 0]) - 2 * DAY_MS;
+const CONFIRMED_DOWN = CONFIRMED_ALERT - 60_000;
+const DRILL_FLIPS = flipsFor(CONFIRMED_ALERT);
+
+/** The disarm one-shot as unit 8 will register it; tests override one part at a time. */
+function disarmFor(anchorDay: string, overrides: Partial<DisarmObservation> = {}): DisarmObservation {
+  return {
+    registered: true,
+    fires: { date: anchorDay, minute: 15 * 60 + 5 },
+    state: "Ready",
+    actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${anchorDay}` }],
+    ...overrides,
+  };
+}
 
 function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000 };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: NODE, activationRoot: ACTIVATION_ROOT };
 }
 const SCHEDULE = scheduleFor(MON, TUE);
 
@@ -101,7 +137,7 @@ function foldOf(lines: readonly Line[]): LedgerFold {
 /** When each step of the happy path ran, and what its result recorded. */
 function happy(step: StepId): { readonly at: Clock; readonly evidence: Readonly<Record<string, unknown>> } {
   switch (step) {
-    case "0-preflight": return { at: [MON, 15, 30], evidence: { wrapperSha256: "w1", hostPreconditions: HOST } };
+    case "0-preflight": return { at: [MON, 15, 30], evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }, hostPreconditions: HOST } };
     case "1-install": return { at: [MON, 15, 31], evidence: { checkCount: 51 } };
     case "2-certificate": return { at: [MON, 16, 10], evidence: { certificatePath: CERT_PATH, runtimeDigest: "r1", policyDigest: "p1" } };
     case "3-flat": return { at: [MON, 16, 15], evidence: {} };
@@ -157,7 +193,7 @@ function task(state: string, argumentLine: string, execute = "powershell.exe"): 
   return { state, execute, argumentLine };
 }
 
-function check(fingerprint: string, status: string, lastPingUtcMs: number | null, flips: CheckObservation["flips"] = []): CheckObservation {
+function check(fingerprint: string, status: string, lastPingUtcMs: number | null, flips: CheckObservation["flips"] = DRILL_FLIPS): CheckObservation {
   return { fingerprint, status, lastPingUtcMs, flips };
 }
 
@@ -185,25 +221,25 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
       watchdog: check(FINGERPRINTS.watchdog, "up", now - 60_000),
     }),
     apiIndependentRead: known(true),
-    env: known({ certificatePath: expectedCertificateLine(fold) === "present" ? CERT_PATH : null, profile: "competition", hash: "e1", duplicateKeys: [] }),
+    env: known({ certificatePath: expectedCertificateLine(fold) === "present" ? CERT_PATH : null, profile: "competition", hash: "e1", duplicateKeys: [], shadowedKeys: [] }),
     resolvedAccountMasked: known("PA3L…U97"),
     deploymentDigests: known({ runtimeDigest: "r1", policyDigest: "p1" }),
-    certificate: known({ path: CERT_PATH, verdict: "PASS", digests: { runtimeDigest: "r1", policyDigest: "p1" } }),
+    certificate: known({ path: CERT_PATH, verdict: "PASS", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: [] }),
     devAccount: known({ positions: 0, nonTerminalOrders: 0 }),
     bootUtcMs: known(utc([TUE, 13, 33])),
     cycleLog: known([]),
     watchdogLog: known([]),
     logFilesSearched: ["cycle-run.log", "cycle-run.log.1"],
     sessionSamples: [],
-    wrapperSha256: known("w1"),
+    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }),
     hostPreconditions: known(HOST),
-    alertConfirmation: { confirmedUtcMs: utc([MON, 0, 0]) - 2 * DAY_MS, fingerprints: FINGERPRINTS },
+    alertConfirmation: confirmationAt(CONFIRMED_ALERT),
     longRunArtefacts: known(["quarantine"]),
     freeDiskBytes: known(1_000_000_000_000),
-    analyst: known({ oauthTokenPresent: true, childStartVerified: true }),
+    analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: true, tokenProbeClass: null }),
     schedulerCheck: known({ passed: true, checkCount: 51, failedChecks: 0 }),
     schedulerCheckExpectEnabled: known({ passed: true, checkCount: 53, failedChecks: 0 }),
-    disarm: known(disarmed ? { registered: true, fires: { date: TUE, minute: 15 * 60 + 5 } } : { registered: false, fires: null }),
+    disarm: known(disarmed ? disarmFor(TUE) : { registered: false, fires: null, state: null, actions: [] }),
     bootstrapEntry: known(null),
   };
   return { ...base, ...overrides };
@@ -293,20 +329,27 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts when the certificate line is back after step 0 removed it", () => {
     const fold = before("2-certificate");
-    const decision = decide(fold, worldFor(fold, [MON, 16, 0], { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e2", duplicateKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 16, 0], { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.certificate-line.expected-absent");
   });
 
   it("aborts on a non-competition profile, which would skip the latch (ACT-57)", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "dev", hash: "e2", duplicateKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "dev", hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.profile:dev");
   });
 
   it("aborts on a duplicate key in .env", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: ["ALPACA_PROFILE"] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: ["ALPACA_PROFILE"], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.duplicate-keys:ALPACA_PROFILE");
+  });
+
+  it("aborts when a certificate path or profile is set outside .env, which the runtime would prefer (owner ruling 2026-09-14)", () => {
+    const fold = before("4-enable");
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE"] }) }), SCHEDULE);
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: true });
+    expect(evidenceOf(decision)["red"]).toContain("env.shadowed-outside-dotenv:PRE_ARM_CERTIFICATE");
   });
 
   it("aborts when the resolved account is not the long-run account", () => {
@@ -314,10 +357,17 @@ describe("decide — 0-resume judges the world against the phase", () => {
     expect(abortReason(decide(fold, worldFor(fold, [MON, 22, 6], { resolvedAccountMasked: known("PA37…IK2") }), SCHEDULE))).toBe("WORLD_MISMATCH");
   });
 
-  it("aborts when the wrapper's hash changed since step 0", () => {
+  it("aborts when either wrapper's hash changed since step 0, naming the wrapper (review 2026-09-14, point 6)", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperSha256: known("w2") }), SCHEDULE);
-    expect(evidenceOf(decision)["red"]).toContain("wrapper.sha256-changed-since-step-0");
+    const watchdogEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2-edited" }) }), SCHEDULE);
+    expect(evidenceOf(watchdogEdited)["red"]).toEqual(["wrapper.watchdog-run.ps1.sha256-changed-since-step-0"]);
+    const cycleEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2" }) }), SCHEDULE);
+    expect(evidenceOf(cycleEdited)["red"]).toEqual(["wrapper.cycle-run.ps1.sha256-changed-since-step-0"]);
+  });
+
+  it("aborts when step 0 recorded a single hash instead of both wrappers", () => {
+    const fold = foldOf(linesThrough("3-flat", { "0-preflight": { wrapperSha256: "w1", hostPreconditions: HOST } }));
+    expect(evidenceOf(decide(fold, worldFor(fold, [MON, 22, 6]), SCHEDULE))["red"]).toContain("ledger.0-preflight.wrapperHashes-missing");
   });
 
   it("aborts when a digest changed after the certificate (ACT-25)", () => {
@@ -328,32 +378,46 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts when the certificate file is no longer the one step 2 validated", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { certificate: known({ path: CERT_PATH, verdict: "FAIL", digests: { runtimeDigest: "r1", policyDigest: "p1" } }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { certificate: known({ path: CERT_PATH, verdict: "FAIL", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("certificate.no-longer-the-file-validated-in-step-2");
   });
 
   it("aborts when the disarm one-shot is missing after the enable", () => {
     const fold = before("5a-watchdog-disable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known({ registered: false, fires: null }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known({ registered: false, fires: null, state: null, actions: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("disarm.expected-registered-for-15:05-on-the-anchor-day");
   });
 
   it("aborts when the disarm one-shot fires on the wrong day — a retry's old trigger never fires again", () => {
     const fold = before("5a-watchdog-disable");
-    expect(abortReason(decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known({ registered: true, fires: { date: MON, minute: 15 * 60 + 5 } }) }), SCHEDULE))).toBe("WORLD_MISMATCH");
+    expect(abortReason(decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known(disarmFor(TUE, { fires: { date: MON, minute: 15 * 60 + 5 } })) }), SCHEDULE))).toBe("WORLD_MISMATCH");
   });
 
   it("after the gate, pages without teardown when the certificate line names another file", () => {
     const fold = before("11-anchor");
-    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { env: known({ certificatePath: "C:\\other.json", profile: "competition", hash: "e3", duplicateKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { env: known({ certificatePath: "C:\\other.json", profile: "competition", hash: "e3", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: false });
   });
 
   it("after the gate, pages without teardown when the disarm one-shot is still registered", () => {
     const fold = before("11-anchor");
-    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { disarm: known({ registered: true, fires: { date: TUE, minute: 15 * 60 + 5 } }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { disarm: known(disarmFor(TUE)) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: false });
     expect(evidenceOf(decision)["red"]).toContain("disarm.expected-deleted-after-gate");
+  });
+
+  it("aborts when the disarm one-shot would run anything but this attempt's disarm (review 2026-09-14, point 2)", () => {
+    const fold = before("5a-watchdog-disable");
+    const at: Clock = [MON, 22, 16];
+    const redOf = (disarm: DisarmObservation): unknown => evidenceOf(decide(fold, worldFor(fold, at, { disarm: known(disarm) }), SCHEDULE))["red"];
+    expect(decide(fold, worldFor(fold, at), SCHEDULE).kind).toBe("wait");
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "powershell.exe", argumentLine: "-NoProfile -Command Get-Date" }] }))).toEqual(["disarm.execute", "disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [...disarmFor(TUE).actions, { execute: "cmd.exe", argumentLine: "/c exit 0" }] }))).toEqual(["disarm.actions:2"]);
+    expect(redOf(disarmFor(TUE, { actions: [] }))).toEqual(["disarm.actions:0"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "C:\\Users\\felix\\glass-box-state\\longrun-1" --anchor-day ${TUE}` }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" status --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE}` }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE} --force` }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { state: "Disabled" }))).toEqual(["disarm.state:Disabled"]);
   });
 
   it("checks task definitions by value once step 1 is done, and not before", () => {
@@ -426,29 +490,38 @@ describe("decide — step 0, preflight", () => {
   const at: Clock = [MON, 15, 30];
 
   it("removes the stale certificate line and records the wrapper hash and host preconditions", () => {
-    const decision = decide(fold, worldFor(fold, at, { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e0", duplicateKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, at, { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e0", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "act", step: "0-preflight", actions: [{ kind: "remove-certificate-line" }] });
-    expect(evidenceOf(decision)).toMatchObject({ wrapperSha256: "w1", hostPreconditions: HOST, envHashBefore: "e0", fingerprints: FINGERPRINTS });
+    expect(evidenceOf(decision)).toMatchObject({ wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }, hostPreconditions: HOST, envHashBefore: "e0", fingerprints: FINGERPRINTS, tokenProbe: "ok" });
+    expect(evidenceOf(decision)["alertConfirmation"]).toMatchObject({ operator: "felix", bundledAlert: true, downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN, watchdog: CONFIRMED_DOWN }, oldestReceiptUtcMs: CONFIRMED_ALERT });
   });
 
   it("records already-in-target-state when the line is already absent (ACT-12)", () => {
     expect(decide(fold, worldFor(fold, at), SCHEDULE)).toMatchObject({ kind: "record", step: "0-preflight", outcome: "already_in_target_state" });
   });
 
-  it("accepts a confirmation exactly fourteen days old and refuses one a millisecond older", () => {
+  it("accepts a confirmation whose oldest receipt is exactly fourteen days old and refuses one a millisecond older", () => {
     const now = utc(at);
-    expect(decide(fold, worldFor(fold, at, { alertConfirmation: { confirmedUtcMs: now - 14 * DAY_MS, fingerprints: FINGERPRINTS } }), SCHEDULE).kind).toBe("record");
-    expect(abortReason(decide(fold, worldFor(fold, at, { alertConfirmation: { confirmedUtcMs: now - 14 * DAY_MS - 1, fingerprints: FINGERPRINTS } }), SCHEDULE))).toBe("PREFLIGHT_RED");
+    const aged = (alertUtcMs: number): Partial<Observations> => ({
+      alertConfirmation: confirmationAt(alertUtcMs),
+      checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now - 60_000, flipsFor(alertUtcMs)), readiness: check(FINGERPRINTS.readiness, "up", now - 60_000, flipsFor(alertUtcMs)), watchdog: check(FINGERPRINTS.watchdog, "up", now - 60_000, flipsFor(alertUtcMs)) }),
+    });
+    expect(decide(fold, worldFor(fold, at, aged(now - 14 * DAY_MS)), SCHEDULE).kind).toBe("record");
+    expect(abortReason(decide(fold, worldFor(fold, at, aged(now - 14 * DAY_MS - 1)), SCHEDULE))).toBe("PREFLIGHT_RED");
   });
 
   const now = utc(at);
   const red: readonly (readonly [string, Partial<Observations>, string])[] = [
     ["no confirmation of gate condition 4 (ACT-11)", { alertConfirmation: null }, "alert-confirmation.absent"],
-    ["a confirmation dated in the future", { alertConfirmation: { confirmedUtcMs: now + 60_000, fingerprints: FINGERPRINTS } }, "alert-confirmation.stale-or-future"],
+    ["a confirmation dated in the future", { alertConfirmation: confirmationAt(now + 60_000), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now, flipsFor(now + 60_000)), readiness: check(FINGERPRINTS.readiness, "up", now, flipsFor(now + 60_000)), watchdog: check(FINGERPRINTS.watchdog, "up", now, flipsFor(now + 60_000)) }) }, "alert-confirmation.stale-or-future"],
+    ["a reminder that did not list the watchdog (review 2026-09-14, point 3)", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), reminderListed: ["liveness", "readiness"] } }, "alert-confirmation.reminder.does-not-list:watchdog"],
+    ["a watchdog alert no down flip precedes", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: CONFIRMED_DOWN - 60_000 } } }, "alert-confirmation.watchdog.no-down-flip-before-alert"],
+    ["a recorded down flip the live history does not show", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN - 1, watchdog: CONFIRMED_DOWN } } }, "alert-confirmation.readiness.down-flip-differs-from-recorded"],
     ["a rotated check the confirmation does not attest (§8.13)", { checks: checksWith(now, { readiness: check("hc:00000000", "up", now) }) }, "alert-confirmation.readiness.fingerprint-differs-from-live-check"],
     ["a check that is down", { checks: checksWith(now, { watchdog: check(FINGERPRINTS.watchdog, "down", now) }) }, "checks.watchdog.status:down"],
-    ["an analyst child that was not verified", { analyst: known({ oauthTokenPresent: true, childStartVerified: false }) }, "analyst.child-start-not-verified"],
-    ["a missing OAuth token", { analyst: known({ oauthTokenPresent: false, childStartVerified: true }) }, "analyst.oauth-token-absent"],
+    ["an analyst child that was not verified", { analyst: known({ oauthTokenPresent: true, childStartVerified: false, tokenLive: true, tokenProbeClass: null }) }, "analyst.child-start-not-verified"],
+    ["a missing OAuth token", { analyst: known({ oauthTokenPresent: false, childStartVerified: true, tokenLive: true, tokenProbeClass: null }) }, "analyst.oauth-token-absent"],
+    ["a token that is present but not live (owner ruling 2026-09-14)", { analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: false, tokenProbeClass: "AUTH_REJECTED" }) }, "analyst.token-not-live"],
     ["ARSO not switched off", { hostPreconditions: known({ HiberbootEnabled: "0", DisableAutomaticRestartSignOn: "0" }) }, "host.DisableAutomaticRestartSignOn"],
     ["a host precondition that disappeared", { hostPreconditions: known({ HiberbootEnabled: "0" }) }, "host.DisableAutomaticRestartSignOn"],
     ["a host precondition nobody expected", { hostPreconditions: known({ ...HOST, Extra: "1" }) }, "host.Extra"],
@@ -464,7 +537,7 @@ describe("decide — step 0, preflight", () => {
 
   it("refuses when the checks or the wrapper cannot be read, and says unknown rather than red", () => {
     expect(abortReason(decide(fold, worldFor(fold, at, { checks: unknown("429") }), SCHEDULE))).toBe("PREFLIGHT_UNKNOWN");
-    expect(abortReason(decide(fold, worldFor(fold, at, { wrapperSha256: unknown("locked") }), SCHEDULE))).toBe("PREFLIGHT_UNKNOWN");
+    expect(abortReason(decide(fold, worldFor(fold, at, { wrapperHashes: unknown("locked") }), SCHEDULE))).toBe("PREFLIGHT_UNKNOWN");
   });
 });
 
@@ -506,8 +579,15 @@ describe("decide — step 2, certificate", () => {
     expect(evidenceOf(decision)).toMatchObject({ certificatePath: CERT_PATH, runtimeDigest: "r1", policyDigest: "p1" });
   });
 
+  it("aborts on a certificate the runtime's validator rejected, and carries its violations into the evidence (review 2026-09-14, point 1)", () => {
+    const rejected = known({ path: CERT_PATH, verdict: "REJECTED", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: ["certificate schema mismatch: unexpected or missing fields"] });
+    const decision = decide(fold, worldFor(fold, [MON, 16, 10], { certificate: rejected }), SCHEDULE);
+    expect(decision).toMatchObject({ kind: "abort", step: "2-certificate", reason: "CERTIFICATE_NOT_PASS", teardown: true });
+    expect(evidenceOf(decision)["violations"]).toEqual(["certificate schema mismatch: unexpected or missing fields"]);
+  });
+
   it("aborts on a verdict other than PASS (ACT-13)", () => {
-    expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { certificate: known({ path: CERT_PATH, verdict: "FAIL", digests: { runtimeDigest: "r1", policyDigest: "p1" } }) }), SCHEDULE))).toBe("CERTIFICATE_NOT_PASS");
+    expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { certificate: known({ path: CERT_PATH, verdict: "FAIL", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: [] }) }), SCHEDULE))).toBe("CERTIFICATE_NOT_PASS");
   });
 
   it("aborts when either digest differs from this deployment's", () => {
@@ -856,6 +936,8 @@ describe("decide — step 10, the gate", () => {
     ["a verifier that failed", { schedulerCheckExpectEnabled: known({ passed: false, checkCount: 53, failedChecks: 1 }) }],
     ["a verdict line that contradicts its count", { schedulerCheckExpectEnabled: known({ passed: true, checkCount: 53, failedChecks: 2 }) }],
     ["a verifier that did not run", { schedulerCheckExpectEnabled: unknown("script missing") }],
+    ["a token that died since step 0 (owner ruling 2026-09-14)", { analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: false, tokenProbeClass: "AUTH_REJECTED" }) }],
+    ["an analyst probe that could not run", { analyst: unknown("probe timed out") }],
   ];
   for (const [name, overrides] of red) {
     it(`is red on ${name}, and tears down`, () => {

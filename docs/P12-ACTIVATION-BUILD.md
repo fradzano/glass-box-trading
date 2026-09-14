@@ -340,9 +340,44 @@ syntax error. Nothing was run on the host.
   no leak. The new parser and its tests do not spell the ping host at all (example hosts
   in the fixtures), so they add no row. The scanner's pattern is left as it is and named
   here: its growing false-positive count is what would hide a real hit.
-- **Still to change in the core for the owner rulings:** `EnvObservation` gains the
-  shadowed keys as a red finding, `AnalystObservation` gains the live-token probe as a
-  step-0 and gate condition, and the simulator moves to the 5-minute watchdog.
+- **Done for the owner rulings:** `EnvObservation` carries the shadowed keys, and any of
+  them is red in every phase; the live-token probe is a step-0 condition and a gate
+  condition of its own; the simulator runs the measured 5-minute watchdog. **Correction
+  to the unit-6 note above:** with 5 minutes the model's times do not change, because
+  they follow the activation's own five-minute invocation grid — 5d still lands at 22:50,
+  the last minute of its window, and the reason given earlier (a 10-minute interval) was
+  wrong. The tightness stands in the model and still needs the real grid at unit 13.
+
+#### The owner's review of 2026-09-14 (DECISIONS, same date)
+
+The review arrived after `c996333` was pushed; its six points are corrected forward.
+
+1. **Certificate by the runtime's full validator.** `parseCertificateFile(text, path,
+   validator)` takes `validateArmingCertificate` with this deployment's expectations;
+   PASS only when it accepts the whole document, otherwise `REJECTED` with violations.
+   Counter-probes against a real PASS certificate built from `tests/arm01-fixtures.ts`.
+   In the shell the validator comes from `dist/core/certificate.js`, the build the
+   runtime itself uses (unit 7 I/O).
+2. **Disarm by value.** `DisarmObservation` carries state and all actions;
+   `disarmFindings` in `decide.ts` requires an enabled one-shot with exactly one action,
+   `<nodePath> "<repoRoot>\ops\activation\cli.ts" disarm --state-root "<activationRoot>"
+   --anchor-day <anchorDay>`. `Schedule` gained `repoRoot`, `nodePath` and
+   `activationRoot`. The disarm CLI mode itself is unit 10's; this fixes its command line.
+3. **Gate condition 4 per check.** `core/confirmation.ts` (pure, under the gate's rules)
+   does the cross-check; `confirm/record.ts` parses the command line and builds the line;
+   `confirm-alerts.ts` is the I/O around them. Step 0 repeats the cross-check against the
+   live flips, compares the recorded down flips, dates by the oldest receipt, and records
+   the whole confirmation in its evidence. **Not yet run against the API**; the real
+   entry waits for the owner's receipt times.
+4. **Probe.** `readers/analyst-probe.ts` with the SDK's `query` handed in; tested with a
+   fake shaped like the pinned SDK's result types. The real call happens once on the host
+   in unit 13.
+5. **`ANALYST_UNAVAILABLE` in the long run** — inside the runtime digest: scenario #81,
+   A31, S-CYC-01, S-G14-05, one line in `src/shell/cycle-runner.ts`, four tests in
+   `tests/cyc-runner.spec.ts` written red first (two red before the change, as expected).
+6. **Both wrappers by name** (`wrapperHashes`).
+
+**Verified:** tsc and ESLint clean; 268 tests in the activation suite; mutation probes on green baselines, each restored byte-identical: decide 96 of 96 (95 in the full run, where D81 survived; a test was added and catches D81 in a single-mutant rerun), parse 39 of 39, healthchecks 10 of 10, confirmation 10 of 10, analyst probe 10 of 10, confirm-alerts 5 of 5, fold 13 of 13; npm run verify exit 0 including the src change.
 
 ## Session boundary — 2026-09-14, 01:13
 
