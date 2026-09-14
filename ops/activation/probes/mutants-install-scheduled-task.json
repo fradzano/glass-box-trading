@@ -1,0 +1,9 @@
+[
+  { "id": "IS1", "note": "any existing NodePath is accepted", "from": "if ($NodePath -ine $expectedNodePath)", "to": "if ($false)" },
+  { "id": "IS2", "note": "cycle task trusts PATH for PowerShell", "from": "New-ScheduledTaskAction -Execute $PowerShellPath -Argument $cycleArgs", "to": "New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs" },
+  { "id": "IS3", "note": "watchdog task trusts PATH for PowerShell", "from": "New-ScheduledTaskAction -Execute $PowerShellPath -Argument $watchdogArgs", "to": "New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $watchdogArgs" },
+  { "id": "IS4", "note": "installer accepts a caller-supplied principal with a different Windows SID", "from": "if ($candidateUserSid -ne $expectedUserSid)", "to": "if ($false)" },
+  { "id": "IS5", "note": "installer derives trusted PowerShell from a spoofable environment variable", "from": "$PowerShellPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", "to": "$PowerShellPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'" },
+  { "id": "IS6", "note": "installer derives the expected SID from a spoofable environment variable", "from": "$expectedUserSid = $currentIdentity.User.Value", "to": "$expectedUserSid = $env:USERNAME" },
+  { "id": "IS7", "note": "multiple Node applications on PATH are treated as one executable", "from": "Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1", "to": "Get-Command node -CommandType Application -ErrorAction SilentlyContinue" }
+]

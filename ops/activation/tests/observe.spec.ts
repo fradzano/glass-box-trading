@@ -32,12 +32,15 @@ const CONFIG: ObservationConfig = {
   canonicalTradingOrigin: ORIGIN,
 };
 const ALL: ObservationPlan = { preflight: true, analystProbe: true, devAccount: true };
+const NODE = "C:\\Program Files\\nodejs\\node.exe";
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const USER_SID = "S-1-5-21-1000";
 const NOW = Date.UTC(2026, 8, 21, 13, 30);
 
 /** `host/read-tasks.ps1` on this host, 2026-09-14. */
 const HOST_TASKS = JSON.stringify([
-  { TaskName: "GlassBoxTrading-AgentCycle", State: "Disabled", Actions: [{ Execute: "C:\\Program Files\\nodejs\\node.exe", Arguments: "\"C:\\Users\\felix\\source\\repos\\glass-box-trading\\dist\\shell\\agent-cli.js\"" }], Triggers: [{ StartBoundary: "2026-09-02T15:30:00+02:00" }], RunLevel: "Limited", LogonType: "S4U", StartWhenAvailable: true },
-  { TaskName: "GlassBoxTrading-Watchdog", State: "Disabled", Actions: [{ Execute: "powershell.exe", Arguments: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\Users\\felix\\source\\repos\\glass-box-trading\\tools\\watchdog-run.ps1\" -RepoRoot \"C:\\Users\\felix\\source\\repos\\glass-box-trading\" -NodePath \"C:\\Program Files\\nodejs\\node.exe\" -WatchdogIntervalMinutes 5" }], Triggers: [{ StartBoundary: "2026-09-02T15:30:00+02:00" }], RunLevel: "Limited", LogonType: "S4U", StartWhenAvailable: true },
+  { TaskName: "GlassBoxTrading-AgentCycle", State: "Disabled", Actions: [{ Execute: "C:\\Program Files\\nodejs\\node.exe", Arguments: "\"C:\\Users\\felix\\source\\repos\\glass-box-trading\\dist\\shell\\agent-cli.js\"" }], Triggers: [{ StartBoundary: "2026-09-02T15:30:00+02:00" }], RunLevel: "Limited", LogonType: "S4U", StartWhenAvailable: true, UserId: "felix", UserSid: USER_SID },
+  { TaskName: "GlassBoxTrading-Watchdog", State: "Disabled", Actions: [{ Execute: "powershell.exe", Arguments: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\Users\\felix\\source\\repos\\glass-box-trading\\tools\\watchdog-run.ps1\" -RepoRoot \"C:\\Users\\felix\\source\\repos\\glass-box-trading\" -NodePath \"C:\\Program Files\\nodejs\\node.exe\" -WatchdogIntervalMinutes 5" }], Triggers: [{ StartBoundary: "2026-09-02T15:30:00+02:00" }], RunLevel: "Limited", LogonType: "S4U", StartWhenAvailable: true, UserId: "felix", UserSid: USER_SID },
 ], null, 4);
 const HOST_BOOT = "2026-09-09T03:32:12.5000000Z\r\n";
 const HOST_SESSIONS = "{\"sessions\":[{\"type\":2,\"accounts\":[\"DESKTOP-V6EGFDV\\\\felix\"]},{\"type\":2,\"accounts\":[\"DESKTOP-V6EGFDV\\\\felix\"]}],\"explorer\":1}\r\n";
@@ -73,6 +76,7 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
   const calls: Calls = { names: [] };
   const files = new Map<string, string>(Object.entries({
     [`${REPO}\\.env`]: DOT_ENV,
+    [`${REPO}\\.node-version`]: "24.9.0\n",
     [`${REPO}\\tools\\cycle-run.ps1`]: "# cycle wrapper\n",
     [`${REPO}\\tools\\watchdog-run.ps1`]: "# watchdog wrapper\n",
     [`${REPO}\\evidence\\pre-arm\\2026-09-02T16-11-12-318Z.json`]: "{}",
@@ -98,10 +102,14 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
   };
   const ports: ObservationPorts = {
     now: () => NOW,
+    runtimeIdentity: () => ({ execPath: NODE, nodeVersion: "v24.9.0", powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: USER_SID }),
     runHostScript: script => { calls.names.push(`script:${script}`); return Promise.resolve(scripts[script]); },
     runVerifier: expectEnabled => { calls.names.push(`verifier:${String(expectEnabled)}`); return Promise.resolve({ exitCode: 1, stdout: HOST_VERIFIER_FAILED }); },
     readText: file => Promise.resolve(read(file)),
-    readFirstLine: file => Promise.resolve(read(file)),
+    readFirstLine: file => {
+      const value = read(file);
+      return Promise.resolve(value.kind === "text" ? { ...value, terminated: value.text.endsWith("\n") } : value);
+    },
     listDirectory: name => Promise.resolve({ ok: true, value: directory(name) }),
     appendLine: (file, line) => { files.set(file, `${files.get(file) ?? ""}${line}`); return Promise.resolve({ ok: true, value: true }); },
     freeDiskBytes: () => Promise.resolve({ ok: true, value: 1_100_000_000_000 }),
@@ -136,11 +144,11 @@ describe("observe — a complete snapshot from the readers", () => {
     const snapshot = await readObservations(ports, CONFIG, ALL);
     // Every field the core consumes, by name: a field added to Observations without a reader fails here.
     expect(Object.keys(snapshot).sort()).toEqual([
-      "alertConfirmation", "analyst", "apiIndependentRead", "bootUtcMs", "bootstrapEntry", "certificate", "checks", "cycleLog", "deploymentDigests", "devAccount", "disarm", "env",
+      "alertConfirmation", "analyst", "apiIndependentRead", "bootUtcMs", "bootstrapEntry", "certificate", "checks", "checksObservedAtUtcMs", "cycleLog", "deploymentDigests", "devAccount", "disarm", "env", "executionBoundary",
       "freeDiskBytes", "hostPreconditions", "logFilesSearched", "longRunArtefacts", "nowLocal", "nowUtcMs", "resolvedAccountMasked", "schedulerCheck", "schedulerCheckExpectEnabled",
       "sessionSamples", "tasks", "watchdogLog", "wrapperHashes",
     ]);
-    expect(Object.keys(readings(snapshot))).toHaveLength(21);
+    expect(Object.keys(readings(snapshot))).toHaveLength(22);
     expect(unknownNames(snapshot)).toEqual([]);
 
     expect(snapshot).toMatchObject({
@@ -177,7 +185,7 @@ describe("observe — a complete snapshot from the readers", () => {
     const opened = planLedgerAppend({ lastSeq: 0, lastAtUtcMs: null }, { at: "2026-09-21T15:00:00+02:00", atUtcMs: NOW - 1_800_000, attempt: "a1", anchorDay: "2026-09-22", step: null, kind: "note", outcome: null, evidence: {}, nextOwnerAction: null });
     if (!opened.ok) throw new Error(opened.reason);
     const expectedHost = { SleepAcSeconds: "0", HibernateAcSeconds: "0", HiberbootEnabled: "0", ActiveHoursStart: "9", ActiveHoursEnd: "3", AutoAdminLogon: "0", DisableAutomaticRestartSignOn: "1", ShutdownPrivilege: "present", AdministratorsMember: "yes" };
-    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: "C:\\Program Files\\nodejs\\node.exe", activationRoot: ACTIVATION_ROOT };
+    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
     const decision = decide(foldLedger(parseLedgerText(opened.line)), snapshot, schedule);
     // ARSO is still on (spec §3: the elevated step must switch it off), and gate condition 4 has not been recorded. Nothing else.
     expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true, evidence: { unknown: [], red: ["host.DisableAutomaticRestartSignOn", "alert-confirmation.absent"] } });
@@ -233,13 +241,43 @@ describe("observe — failures and plans", () => {
     expect((await readObservations(refused.ports, CONFIG, ALL)).sessionSamples.map(sample => sample.utcMs)).toEqual([NOW - 300_000]);
   });
 
+  it("timestamps the session sample at the session measurement and the decision snapshot after all reads", async () => {
+    const measured = NOW + 120_000;
+    const checksObserved = NOW + 299_000;
+    const decided = NOW + 300_000;
+    const moments = [NOW, measured, checksObserved, decided];
+    const observed = host({ now: () => moments.shift() ?? decided });
+    const snapshot = await readObservations(observed.ports, CONFIG, ALL);
+    expect(snapshot.sessionSamples.at(-1)?.utcMs).toBe(measured);
+    expect(snapshot.checksObservedAtUtcMs).toBe(checksObserved);
+    expect(snapshot.nowUtcMs).toBe(decided);
+    expect(snapshot.nowLocal).toEqual({ date: "2026-09-21", minute: 15 * 60 + 35 });
+    expect(observed.calls.names.at(-1)).toBe("healthchecks");
+  });
+
+  it("makes the executable boundary unknown when process.execPath does not match the pinned Node version", async () => {
+    const snapshot = await readObservations(host({ runtimeIdentity: () => ({ execPath: NODE, nodeVersion: "v24.10.0", powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: USER_SID }) }).ports, CONFIG, ALL);
+    expect(snapshot.executionBoundary).toEqual({ known: false, reason: "this node is v24.10.0; the repository pins v24.9.0" });
+  });
+
+  it("refuses a PowerShell trust root supplied by a spoofable environment boundary", async () => {
+    const snapshot = await readObservations(host({ runtimeIdentity: () => ({
+      execPath: NODE,
+      nodeVersion: "v24.9.0",
+      powerShellPath: "C:\\attacker\\WindowsPowerShell\\v1.0\\powershell.exe",
+      taskUserId: "ATTACKER\\felix",
+      taskUserSid: "S-1-5-21-attacker",
+    }) }).ports, CONFIG, ALL);
+    expect(snapshot.executionBoundary).toEqual({ known: false, reason: "the trusted Windows PowerShell path is unavailable" });
+  });
+
   it("reads a confirmation file that does not parse as unknown, not as absent", async () => {
     const snapshot = await readObservations(host({ files: { [`${ACTIVATION_ROOT}\\${ALERT_CONFIRMATIONS}`]: "{\"operator\":" } }).ports, CONFIG, ALL);
     expect(snapshot.alertConfirmation).toEqual({ known: false, reason: "latest confirmation is not a JSON object" });
   });
 
   it("reads the long run's logs and journal from its state directory, and an unreadable log file as unknown", async () => {
-    const journal = JSON.stringify({ seq: 1, at: "2026-09-22T13:15:20.000Z", epoch: 1, type: "BOOTSTRAP", epochSeeded: true, snapshot: { accountId: "TEST_ONLY_ACCOUNT", snapshotAt: "2026-09-22T13:15:19.000Z", cashCents: 10_000_000, equityCents: 10_000_000, positions: [], openOrders: [], quoteSamples: {} } });
+    const journal = `${JSON.stringify({ seq: 1, at: "2026-09-22T13:15:20.000Z", epoch: 1, type: "BOOTSTRAP", epochSeeded: true, snapshot: { accountId: "TEST_ONLY_ACCOUNT", snapshotAt: "2026-09-22T13:15:19.000Z", cashCents: 10_000_000, equityCents: 10_000_000, positions: [], openOrders: [], quoteSamples: {} } })}\n`;
     const files = {
       [`${LONG_RUN}\\cycle-run.log`]: "2026-09-22T13:15:01.0000000Z run: pid=1 stateDir=x entry=y\n",
       [`${LONG_RUN}\\watchdog-run.log`]: `${String.fromCharCode(0xfeff)}2026-09-22T12:40:00.5000000Z output: watchdog composed for the competition profile over ${LONG_RUN}; book recovery armed\n`,

@@ -13,5 +13,6 @@
   { "id": "PH12", "note": "a probe that failed reported as a live token", "from": "tokenLive: probe.ok,", "to": "tokenLive: true," },
   { "id": "PH13", "note": "another node version accepted as the expected node", "from": "if (runningVersion !== `v${pinned}`) return unknown(", "to": "if (false) return unknown(" },
   { "id": "PH14", "note": "a relative or non-node path accepted as the expected node", "from": "if (!/^[A-Za-z]:\\\\/.test(execPath) || !execPath.toLowerCase().endsWith(\"\\\\node.exe\")) return unknown(", "to": "if (false) return unknown(" },
-  { "id": "PH15", "note": "an unreadable .node-version compared as if it named a version", "from": "if (!/^\\d+\\.\\d+\\.\\d+$/.test(pinned)) return unknown(", "to": "if (false) return unknown(" }
+  { "id": "PH15", "note": "an unreadable .node-version compared as if it named a version", "from": "if (!/^\\d+\\.\\d+\\.\\d+$/.test(pinned)) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH16", "note": "a syntactically complete first journal line without LF is trusted", "from": "if (!terminated) return unknown(\"the journal's first line is not LF-terminated\");", "to": "" }
 ]

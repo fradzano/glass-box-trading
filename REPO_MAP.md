@@ -43,20 +43,25 @@
 - `ops/activation/core/fold.ts` — The fold (spec §4, §5): from the ledger to what the current attempt has done.
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
-- `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 7).
+- `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
 - `ops/activation/probes/mutants-analyst-claude.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`
 - `ops/activation/probes/mutants-healthchecks-io.json`
 - `ops/activation/probes/mutants-healthchecks.json`
+- `ops/activation/probes/mutants-host-ports.json`
+- `ops/activation/probes/mutants-install-scheduled-task.json`
 - `ops/activation/probes/mutants-ledger.json`
 - `ops/activation/probes/mutants-observe.json`
 - `ops/activation/probes/mutants-parse-host.json`
+- `ops/activation/probes/mutants-parse-integrity.json`
 - `ops/activation/probes/mutants-parse.json`
 - `ops/activation/probes/mutants-probe.json`
+- `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-steps.json`
+- `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
 - `ops/activation/readers/healthchecks-io.ts` — The healthchecks.io management API, read (build log, unit 7). This is the one place the
@@ -81,6 +86,7 @@
 - `ops/activation/tests/parse-healthchecks.spec.ts` — Unit 7: the healthchecks.io parsers. The first test is the one that matters most:
 - `ops/activation/tests/parse-host.spec.ts` — Unit 7, the parsers behind the host readers. Where this host could produce the input, the
 - `ops/activation/tests/parse.spec.ts` — Unit 7: the pure parsers behind the activation's readers. Wherever this host could
+- `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
@@ -227,6 +233,7 @@
 - `tests/x7-x8-window-and-refusals.spec.ts` — S-X-07 the cycle's market observation covers the book, and S-X-08 a
 - `tools/check-alert-path.ps1`
 - `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
+- `tools/check-implementation-phases.mjs` — Verify that implementation phases partition the runtime SPEC cases. Kept in
 - `tools/check-schedule-coverage.mjs` — S-G14-06 / scenario #80: does the registered trigger window actually contain
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.
 - `tools/clean.mjs`

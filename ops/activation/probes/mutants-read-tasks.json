@@ -1,0 +1,4 @@
+[
+  { "id": "RT1", "note": "task inventory omits the canonical principal SID", "from": "        UserSid            = $userSid", "to": "        UserSid            = $null" },
+  { "id": "RT2", "note": "task inventory stores the ambiguous account name as a SID", "from": ".Translate([Security.Principal.SecurityIdentifier]).Value", "to": ".Value" }
+]

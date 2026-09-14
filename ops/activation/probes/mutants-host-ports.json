@@ -1,0 +1,5 @@
+[
+  { "id": "HP1", "note": "production principal SID is replaced by its ambiguous account name", "from": "UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value", "to": "UserSid=$i.Name" },
+  { "id": "HP2", "note": "production PowerShell trust root is taken from a spoofable environment variable", "from": "powerShellPath: TRUSTED_WINDOWS_POWERSHELL", "to": "powerShellPath: path.join(process.env[\"SystemRoot\"] ?? \"\", \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\")" },
+  { "id": "HP3", "note": "production execution boundary discards the resolved task SID", "from": "        taskUserSid,", "to": "        taskUserSid: taskUserId," }
+]

@@ -86,6 +86,13 @@ describe("parse-host — the long-run journal's first entry", () => {
     expect(parseJournalHead(JSON.stringify(bootstrap), parseJournalText)).toEqual({ known: true, value: { seq: 1, utcMs: Date.UTC(2026, 8, 22, 13, 15, 20) } });
   });
 
+  it("keeps a syntactically complete first journal line torn when the file had no LF terminator", () => {
+    const line = JSON.stringify(bootstrap);
+    const parseWithBoundary = parseJournalHead as unknown as (text: string, codec: typeof parseJournalText, terminated: boolean) => unknown;
+    expect(parseWithBoundary(line, parseJournalText, false)).toEqual({ known: false, reason: "the journal's first line is not LF-terminated" });
+    expect(parseWithBoundary(line, parseJournalText, true)).toMatchObject({ known: true, value: { seq: 1 } });
+  });
+
   it("reads no journal and an empty one as not started", () => {
     expect(parseJournalHead(null, parseJournalText)).toEqual({ known: true, value: null });
     expect(parseJournalHead("", parseJournalText)).toEqual({ known: true, value: null });

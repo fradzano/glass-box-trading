@@ -43,6 +43,7 @@ export const ACCOUNT = "PA3L…U97";
 const REPO = "C:\\Users\\felix\\source\\repos\\glass-box-trading";
 const HOST_OPTIONS = "-NoProfile -NonInteractive -ExecutionPolicy Bypass";
 const NODE = "C:\\Program Files\\nodejs\\node.exe";
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 export const CYCLE_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\cycle-run.ps1" -RepoRoot "${REPO}" -NodePath "${NODE}"`;
 export const WATCHDOG_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\watchdog-run.ps1" -RepoRoot "${REPO}" -NodePath "${NODE}" -WatchdogIntervalMinutes 10`;
 const STALE_CYCLE_ARGS = `"${REPO}\\dist\\shell\\agent-cli.js"`;
@@ -63,7 +64,7 @@ function atString(utcMs: number): string {
 }
 
 export function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: NODE, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
 }
 
 export interface SimCheck {
@@ -285,11 +286,13 @@ export function observe(world: SimWorld): Observations {
   return {
     nowUtcMs: world.nowUtcMs,
     nowLocal: localOf(world.nowUtcMs),
+    checksObservedAtUtcMs: world.nowUtcMs,
+    executionBoundary: known({ nodePath: NODE, powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: "S-1-5-21-1000" }),
     tasks: known({
       cycle: world.tasks.cycle.installed
-        ? { state: world.tasks.cycle.enabled ? "Ready" : "Disabled", execute: "powershell.exe", argumentLine: CYCLE_ARGS }
-        : { state: world.tasks.cycle.enabled ? "Ready" : "Disabled", execute: NODE, argumentLine: STALE_CYCLE_ARGS },
-      watchdog: { state: world.tasks.watchdog.enabled ? "Ready" : "Disabled", execute: "powershell.exe", argumentLine: WATCHDOG_ARGS },
+        ? { state: world.tasks.cycle.enabled ? "Ready" : "Disabled", userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000", runLevel: "Limited", logonType: "S4U", startWhenAvailable: true, actions: [{ execute: POWERSHELL, argumentLine: CYCLE_ARGS, workingDirectory: REPO }], execute: POWERSHELL, argumentLine: CYCLE_ARGS }
+        : { state: world.tasks.cycle.enabled ? "Ready" : "Disabled", userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000", runLevel: "Limited", logonType: "S4U", startWhenAvailable: true, actions: [{ execute: NODE, argumentLine: STALE_CYCLE_ARGS, workingDirectory: REPO }], execute: NODE, argumentLine: STALE_CYCLE_ARGS },
+      watchdog: { state: world.tasks.watchdog.enabled ? "Ready" : "Disabled", userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000", runLevel: "Limited", logonType: "S4U", startWhenAvailable: true, actions: [{ execute: POWERSHELL, argumentLine: WATCHDOG_ARGS, workingDirectory: REPO }], execute: POWERSHELL, argumentLine: WATCHDOG_ARGS },
     }),
     checks: world.network ? known(checks) : unreachable(),
     apiIndependentRead: world.network ? known(true) : unreachable(),
@@ -320,8 +323,8 @@ export function observe(world: SimWorld): Observations {
     schedulerCheck: known({ passed: installed, checkCount: 51, failedChecks: installed ? 0 : 2 }),
     schedulerCheckExpectEnabled: known({ passed: installed && bothEnabled, checkCount: 53, failedChecks: installed && bothEnabled ? 0 : 2 }),
     disarm: known(world.disarm.registered && world.disarm.fires !== null
-      ? { registered: true, fires: world.disarm.fires, state: "Ready", actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${world.disarm.fires.date}` }], runLevel: "Highest", logonType: "S4U", startWhenAvailable: true }
-      : { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null }),
+      ? { registered: true, fires: world.disarm.fires, state: "Ready", actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${world.disarm.fires.date}`, workingDirectory: REPO }], runLevel: "Highest", logonType: "S4U", startWhenAvailable: true, userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000" }
+      : { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null, userId: null, userSid: null }),
     bootstrapEntry: known(world.bootstrap),
   };
 }

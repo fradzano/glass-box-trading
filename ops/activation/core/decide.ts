@@ -29,10 +29,28 @@ import type { LedgerFold, StepState } from "./fold.ts";
 import { stepDone } from "./fold.ts";
 import { crossCheckAlerts } from "./confirmation.ts";
 import { compareLocal, expectedCertificateLine, expectedTasks, localAt, nextStep, stepWindow } from "./steps.ts";
-import type { CheckName, CheckObservation, Decision, DisarmObservation, LocalInstant, LogLine, Observations, Reading, Schedule, SessionSample, StepId, TaskName, TaskObservation, WorldAction, WrapperName } from "./types.ts";
+import type { CheckName, CheckObservation, Decision, DisarmObservation, ExecutionBoundary, LocalInstant, LogLine, Observations, Reading, Schedule, SessionSample, StepId, TaskName, TaskObservation, WorldAction, WrapperName } from "./types.ts";
 
 /** Spec §5, step 0: gate condition 4 may be at most fourteen days old. */
 const ALERT_CONFIRMATION_MAX_AGE_MS = 1_209_600_000;
+/** A gate read older than this can no longer authorise a certificate write. */
+export const GATE_CHECK_MAX_AGE_MS = 5_000;
+
+export type CertificateWriteAction = Extract<WorldAction, { readonly kind: "write-certificate-line" }>;
+export type CertificateWriteAuthorization = { readonly ok: true } | { readonly ok: false; readonly reason: "ACTION_CLOCK_INVALID" | "ACTION_DEADLINE_EXPIRED" | "CHECKS_UNKNOWN" | "CHECK_CHANGED" };
+
+/** The fresh re-read lease which unit 8 must consume immediately before writing `.env`. */
+export function authorizeCertificateWrite(action: CertificateWriteAction, actionUtcMs: number, freshChecks: Reading<Readonly<Record<CheckName, CheckObservation>>>): CertificateWriteAuthorization {
+  if (actionUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
+  if (actionUtcMs > action.notAfterUtcMs) return { ok: false, reason: "ACTION_DEADLINE_EXPIRED" };
+  if (!freshChecks.known) return { ok: false, reason: "CHECKS_UNKNOWN" };
+  for (const name of ["liveness", "readiness", "watchdog"] as const) {
+    const expected = action.expectedChecks[name];
+    const actual = freshChecks.value[name];
+    if (actual.status !== "up" || actual.fingerprint !== expected.fingerprint || actual.status !== expected.status || actual.lastPingUtcMs !== expected.lastPingUtcMs) return { ok: false, reason: "CHECK_CHANGED" };
+  }
+  return { ok: true };
+}
 
 /**
  * Spec §5, step 6: wrapper lines inside the silence window mean a wrapper ran. An
@@ -117,6 +135,7 @@ export function tokenizeArguments(line: string): readonly string[] | null {
  */
 function scriptParameterFindings(name: TaskName, tokens: readonly string[]): readonly string[] {
   const findings: string[] = [];
+  const seen = new Set<string>();
   let index = 0;
   while (index < tokens.length) {
     const token = tokens[index] ?? "";
@@ -127,6 +146,8 @@ function scriptParameterFindings(name: TaskName, tokens: readonly string[]): rea
     }
     const colon = token.indexOf(":");
     const parameter = (colon < 0 ? token : token.slice(0, colon)).toLowerCase();
+    if (seen.has(parameter)) findings.push(`${name}.parameter.duplicate:${parameter}`);
+    seen.add(parameter);
     const inline = colon < 0 ? null : token.slice(colon + 1);
     const takeValue = (): string | null => {
       if (inline !== null) return inline;
@@ -164,10 +185,20 @@ function scriptParameterFindings(name: TaskName, tokens: readonly string[]): rea
 }
 
 /** Spec §5 step 4 and §7: a task's action line checked by value, not by what the verifier resolves. Empty means the definition is the installer's. */
-export function definitionFindings(name: TaskName, task: TaskObservation): readonly string[] {
+export function definitionFindings(name: TaskName, task: TaskObservation, schedule?: Schedule, boundary?: ExecutionBoundary): readonly string[] {
   const findings: string[] = [];
   const execute = task.execute.trim().toLowerCase();
-  if (execute !== "powershell.exe" && !execute.endsWith("\\powershell.exe")) findings.push(`${name}.execute`);
+  if (!execute.endsWith("powershell.exe")) findings.push(`${name}.execute`);
+  else if (!/^[a-z]:\\/.test(execute) || !execute.endsWith("\\windowspowershell\\v1.0\\powershell.exe")) findings.push(`${name}.execute-untrusted`);
+  if (schedule !== undefined && boundary !== undefined) {
+    if (task.actions.length !== 1) findings.push(`${name}.actions:${String(task.actions.length)}`);
+    if (execute !== boundary.powerShellPath.toLowerCase()) findings.push(`${name}.execute-not-expected`);
+    if (task.userSid !== boundary.taskUserSid) findings.push(`${name}.user-sid`);
+    if (task.runLevel !== "Limited") findings.push(`${name}.run-level:${task.runLevel ?? "absent"}`);
+    if (task.logonType !== "S4U") findings.push(`${name}.logon-type:${task.logonType ?? "absent"}`);
+    if (task.startWhenAvailable !== true) findings.push(`${name}.start-when-available`);
+    if (task.actions[0]?.workingDirectory?.toLowerCase() !== schedule.repoRoot.toLowerCase()) findings.push(`${name}.working-directory`);
+  }
   const tokens = tokenizeArguments(task.argumentLine);
   if (tokens === null) return [...findings, `${name}.argumentLine.unbalanced-quotes`];
   const fileAt = tokens.findIndex(token => token.toLowerCase() === "-file");
@@ -176,8 +207,16 @@ export function definitionFindings(name: TaskName, task: TaskObservation): reado
   if (tokens.slice(0, fileAt).join(" ").toLowerCase() !== "-noprofile -noninteractive -executionpolicy bypass") findings.push(`${name}.argumentLine.host-options`);
   const script = tokens[fileAt + 1];
   const expectedScript = name === "cycle" ? "\\tools\\cycle-run.ps1" : "\\tools\\watchdog-run.ps1";
-  if (script === undefined || !script.toLowerCase().endsWith(expectedScript)) findings.push(`${name}.argumentLine.script`);
+  if (script === undefined || (schedule === undefined ? !script.toLowerCase().endsWith(expectedScript) : script.toLowerCase() !== `${schedule.repoRoot}${expectedScript}`.toLowerCase())) findings.push(`${name}.argumentLine.script`);
   findings.push(...scriptParameterFindings(name, tokens.slice(fileAt + 2)));
+  if (schedule !== undefined && boundary !== undefined) {
+    const parameterValue = (parameter: string): string | null => {
+      const at = tokens.findIndex(token => token.toLowerCase() === parameter);
+      return at < 0 ? null : (tokens[at + 1] ?? null);
+    };
+    if (parameterValue("-reporoot")?.toLowerCase() !== schedule.repoRoot.toLowerCase()) findings.push(`${name}.parameter.reporoot.not-expected`);
+    if (parameterValue("-nodepath")?.toLowerCase() !== boundary.nodePath.toLowerCase()) findings.push(`${name}.parameter.nodepath.not-expected`);
+  }
   return findings;
 }
 
@@ -192,15 +231,17 @@ export function definitionFindings(name: TaskName, task: TaskObservation): reado
  * machine that was off or rebooting at 15:05 must still disarm when it comes back. Principal and
  * settings are judged before the action, so one finding never hides another.
  */
-export function disarmFindings(disarm: DisarmObservation, schedule: Schedule): readonly string[] {
+export function disarmFindings(disarm: DisarmObservation, schedule: Schedule, boundary: ExecutionBoundary): readonly string[] {
   const findings: string[] = [];
   if (disarm.state === null || taskEnabled(disarm.state) !== true) findings.push(`disarm.state:${disarm.state ?? "absent"}`);
   if (disarm.runLevel !== "Highest") findings.push(`disarm.run-level:${disarm.runLevel ?? "absent"}`);
   if (disarm.logonType !== "S4U") findings.push(`disarm.logon-type:${disarm.logonType ?? "absent"}`);
   if (disarm.startWhenAvailable !== true) findings.push(`disarm.start-when-available:${disarm.startWhenAvailable === null ? "absent" : "false"}`);
+  if (disarm.userSid !== boundary.taskUserSid) findings.push("disarm.user-sid");
   const action = disarm.actions[0];
   if (disarm.actions.length !== 1 || action === undefined) return [...findings, `disarm.actions:${String(disarm.actions.length)}`];
-  if (action.execute.trim().toLowerCase() !== schedule.nodePath.toLowerCase()) findings.push("disarm.execute");
+  if (action.execute.trim().toLowerCase() !== boundary.nodePath.toLowerCase()) findings.push("disarm.execute");
+  if (action.workingDirectory?.toLowerCase() !== schedule.repoRoot.toLowerCase()) findings.push("disarm.working-directory");
   const tokens = tokenizeArguments(action.argumentLine);
   const expected = [`${schedule.repoRoot}\\ops\\activation\\cli.ts`, "disarm", "--state-root", schedule.activationRoot, "--anchor-day", schedule.anchorDay];
   if (tokens === null || tokens.length !== expected.length || tokens.some((token, index) => token.toLowerCase() !== (expected[index] ?? "").toLowerCase())) findings.push("disarm.arguments");
@@ -299,7 +340,10 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
       const enabled = taskEnabled(task.state);
       if (enabled === null) red.push(`tasks.${name}.state-unrecognised:${task.state}`);
       else if (enabled !== (expected[name] === "enabled")) red.push(`tasks.${name}.expected-${expected[name]}:observed-${task.state}`);
-      if (stepDone(fold, "1-install")) red.push(...definitionFindings(name, task));
+      if (stepDone(fold, "1-install")) {
+        if (!observations.executionBoundary.known) unknown.push(`execution-boundary: ${observations.executionBoundary.reason}`);
+        else red.push(...definitionFindings(name, task, schedule, observations.executionBoundary.value));
+      }
     }
   }
 
@@ -359,7 +403,8 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
       } else if (!disarm.registered || disarm.fires === null || compareLocal(disarm.fires, localAt(schedule.anchorDay, 15, 5)) !== 0) {
         red.push("disarm.expected-registered-for-15:05-on-the-anchor-day");
       } else {
-        red.push(...disarmFindings(disarm, schedule));
+        if (!observations.executionBoundary.known) unknown.push(`execution-boundary: ${observations.executionBoundary.reason}`);
+        else red.push(...disarmFindings(disarm, schedule, observations.executionBoundary.value));
       }
     }
   }
@@ -517,9 +562,9 @@ function step1(fold: LedgerFold, observations: Observations, schedule: Schedule)
   if (!observations.deploymentDigests.known) {
     return abortAt(fold, "1-install", "BUILD_DIGESTS_UNKNOWN", "The deployment's digests could not be printed, so the build is not known to be current.", { reason: observations.deploymentDigests.reason });
   }
-  if (observations.tasks.known && observations.schedulerCheck.known && observations.schedulerCheck.value.passed && observations.schedulerCheck.value.failedChecks === 0) {
+  if (observations.tasks.known && observations.executionBoundary.known && observations.schedulerCheck.known && observations.schedulerCheck.value.passed && observations.schedulerCheck.value.failedChecks === 0) {
     const tasks = observations.tasks.value;
-    const findings = [...definitionFindings("cycle", tasks.cycle), ...definitionFindings("watchdog", tasks.watchdog)];
+    const findings = [...definitionFindings("cycle", tasks.cycle, schedule, observations.executionBoundary.value), ...definitionFindings("watchdog", tasks.watchdog, schedule, observations.executionBoundary.value)];
     if (findings.length === 0) {
       return record("1-install", "already_in_target_state", { checkCount: observations.schedulerCheck.value.checkCount, cycleArguments: tasks.cycle.argumentLine, watchdogArguments: tasks.watchdog.argumentLine });
     }
@@ -748,6 +793,8 @@ function step10(fold: LedgerFold, observations: Observations): Decision {
   if (path === null) return missingEvidence(fold, "10-gate", "the certificate path step 2 validated");
   const unknown: string[] = [];
   const red: string[] = [];
+  const checkAgeMs = observations.nowUtcMs - observations.checksObservedAtUtcMs;
+  if (checkAgeMs < 0 || checkAgeMs > GATE_CHECK_MAX_AGE_MS) red.push(`checks.stale:${String(checkAgeMs)}`);
   const verifier = observations.schedulerCheckExpectEnabled;
   if (!verifier.known) unknown.push(`scheduler-check: ${verifier.reason}`);
   else if (!verifier.value.passed || verifier.value.failedChecks !== 0) red.push(`scheduler-check.failed:${String(verifier.value.failedChecks)}`);
@@ -771,9 +818,9 @@ function step10(fold: LedgerFold, observations: Observations): Decision {
   }
   const checkCount = verifier.known ? verifier.value.checkCount : null;
   return act("10-gate", [
-    { kind: "write-certificate-line", path },
+    { kind: "write-certificate-line", path, observedAtUtcMs: observations.checksObservedAtUtcMs, notAfterUtcMs: observations.checksObservedAtUtcMs + GATE_CHECK_MAX_AGE_MS, expectedChecks: observations.checks.known ? observations.checks.value : {} as Readonly<Record<CheckName, CheckObservation>> },
     { kind: "delete-disarm" },
-  ], { certificatePath: path, schedulerCheckCount: checkCount, bootUtcMs });
+  ], { certificatePath: path, schedulerCheckCount: checkCount, bootUtcMs, checksObservedAtUtcMs: observations.checksObservedAtUtcMs, decisionUtcMs: observations.nowUtcMs });
 }
 
 function step11(fold: LedgerFold, observations: Observations, schedule: Schedule): Decision {
@@ -843,17 +890,42 @@ export function decide(fold: LedgerFold, observations: Observations, schedule: S
     return { kind: "abort", step: null, reason: "SCHEDULE_NOT_FOR_THIS_ATTEMPT", teardown: true, nextOwnerAction: "The invocation was given a schedule for another anchor day than the open attempt's. Check the activation task's arguments.", evidence: { attemptAnchorDay: attempt.anchorDay, scheduleAnchorDay: schedule.anchorDay } };
   }
 
-  const step = nextStep(fold);
+  // A certificate is an append-only fact about one deployment, not a permanent
+  // waiver for every later attempt. Once a fresh deployment/certificate pair
+  // proves different digests, the earlier attempt's step 2 stops carrying into
+  // this attempt and the new valid certificate can be recorded as a new result.
+  const carriedCertificate = fold.steps["2-certificate"];
+  const carriedCertificatePath = recordedString(fold, "2-certificate", "certificatePath");
+  const carriedRuntimeDigest = recordedString(fold, "2-certificate", "runtimeDigest");
+  const carriedPolicyDigest = recordedString(fold, "2-certificate", "policyDigest");
+  const certificateChanged = carriedCertificate !== undefined
+    && carriedCertificate.attempt !== attempt.id
+    && carriedCertificatePath !== null
+    && carriedRuntimeDigest !== null
+    && carriedPolicyDigest !== null
+    && observations.deploymentDigests.known
+    && observations.certificate.known
+    && observations.certificate.value !== null
+    && (carriedRuntimeDigest !== observations.deploymentDigests.value.runtimeDigest
+      || carriedPolicyDigest !== observations.deploymentDigests.value.policyDigest)
+    && observations.certificate.value.verdict === "PASS"
+    && observations.certificate.value.digests.runtimeDigest === observations.deploymentDigests.value.runtimeDigest
+    && observations.certificate.value.digests.policyDigest === observations.deploymentDigests.value.policyDigest;
+  const effectiveFold: LedgerFold = certificateChanged
+    ? { ...fold, steps: Object.fromEntries(Object.entries(fold.steps).filter(([step]) => step !== "2-certificate")) }
+    : fold;
+
+  const step = nextStep(effectiveFold);
   if (step === null) return { kind: "done", reason: `activation complete for anchor day ${attempt.anchorDay}` };
 
-  const world = worldFindings(fold, observations, schedule);
+  const world = worldFindings(effectiveFold, observations, schedule);
   if (world.red.length > 0 || world.unknown.length > 0) {
     return abortAt(fold, step, world.red.length > 0 ? "WORLD_MISMATCH" : "WORLD_UNKNOWN", "The world does not match the phase the ledger is in; the evidence names each difference. Nothing further was changed.", { unknown: world.unknown, red: world.red });
   }
 
-  if (fold.interrupted !== null) return closeInterrupted(fold, fold.interrupted, observations, schedule);
+  if (effectiveFold.interrupted !== null) return closeInterrupted(effectiveFold, effectiveFold.interrupted, observations, schedule);
 
-  const state = fold.steps[step];
+  const state = effectiveFold.steps[step];
   if (state !== undefined && state.attempt === attempt.id && (state.outcome === "failed" || state.outcome === "unknown")) {
     return abortAt(fold, step, "STEP_FAILED", `Step ${step} came back ${state.outcome} in this attempt. Read its evidence and the world before a retry.`, { resultSeq: state.resultSeq, resultEvidence: state.resultEvidence });
   }
@@ -865,5 +937,5 @@ export function decide(fold: LedgerFold, observations: Observations, schedule: S
   if (window.opens !== null && compareLocal(observations.nowLocal, window.opens) < 0) {
     return wait(`${step} opens at ${formatLocal(window.opens)}`);
   }
-  return decideStep(step, fold, observations, schedule);
+  return decideStep(step, effectiveFold, observations, schedule);
 }

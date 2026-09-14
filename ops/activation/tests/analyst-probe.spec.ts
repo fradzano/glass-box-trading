@@ -107,6 +107,33 @@ describe("analyst probe — what counts as live", () => {
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 
+  it("closes an abort-insensitive SDK query at timeout so repeated probes cannot accumulate sessions", async () => {
+    let closes = 0;
+    const deaf = (() => Object.assign({
+      [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<unknown>>(() => { /* never settles */ }) }),
+    }, { close: () => { closes += 1; } })) as ProbeQuery;
+    expect(await probe(deaf, { deadlineMs: 10 })).toEqual({ ok: false, failureClass: "TIMEOUT" });
+    expect(await probe(deaf, { deadlineMs: 10 })).toEqual({ ok: false, failureClass: "TIMEOUT" });
+    expect(closes).toBe(2);
+  });
+
+  it("aborts and closes the SDK query when an API error result ends the probe", async () => {
+    let signal: AbortSignal | null = null;
+    let closes = 0;
+    const rejected: ProbeQuery = request => {
+      signal = request.options.abortController.signal;
+      return Object.assign({
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          yield { type: "result", subtype: "success", is_error: true, api_error_status: 401 };
+        },
+      }, { close: () => { closes += 1; } });
+    };
+    expect(await probe(rejected)).toEqual({ ok: false, failureClass: "AUTH_REJECTED" });
+    expect((signal as unknown as AbortSignal).aborted).toBe(true);
+    expect(closes).toBe(1);
+  });
+
   it("does not count a success that a deaf iterator delivers after the deadline", async () => {
     const late: ProbeQuery = () => {
       let delivered = false;

@@ -34,7 +34,8 @@ export interface ProbeQueryOptions {
   readonly abortController: AbortController;
 }
 
-export type ProbeQuery = (request: { readonly prompt: string; readonly options: ProbeQueryOptions }) => AsyncIterable<unknown>;
+export type ProbeQuerySession = AsyncIterable<unknown> & { readonly close?: () => void };
+export type ProbeQuery = (request: { readonly prompt: string; readonly options: ProbeQueryOptions }) => ProbeQuerySession;
 
 export interface ProbeInput {
   readonly query: ProbeQuery;
@@ -102,8 +103,9 @@ export async function runAnalystProbe(input: ProbeInput): Promise<ProbeOutcome> 
   const deadline = new Promise<"deadline">(resolve => {
     timer = setTimeout(() => { abort.abort(); resolve("deadline"); }, input.deadlineMs);
   });
+  let messages: ProbeQuerySession | null = null;
   const session = (async (): Promise<ProbeOutcome> => {
-    const messages = input.query({
+    messages = input.query({
       prompt: PROBE_PROMPT,
       options: {
         model: input.model,
@@ -130,5 +132,8 @@ export async function runAnalystProbe(input: ProbeInput): Promise<ProbeOutcome> 
     return first.settled === "session" ? first.outcome : fail("SDK_ERROR");
   } finally {
     clearTimeout(timer);
+    abort.abort();
+    const active = messages as ProbeQuerySession | null;
+    active?.close?.();
   }
 }

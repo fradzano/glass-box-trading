@@ -11,5 +11,7 @@
   { "id": "R7", "note": "the SDK called without a token", "from": "if (input.oauthToken.length === 0) return fail(\"TOKEN_ABSENT\");", "to": "" },
   { "id": "R8", "note": "a session without a result counted as live", "from": "return outcome ?? fail(\"NO_RESULT\");", "to": "return outcome ?? { ok: true };" },
   { "id": "R9", "note": "non-result messages classified as results", "from": "if (isRecord(message) && message[\"type\"] === \"result\") outcome = classifyResultMessage(message);", "to": "if (isRecord(message)) outcome = classifyResultMessage(message);" },
-  { "id": "R10", "note": "tools offered to the probe", "from": "tools: [],", "to": "tools: [\"Bash\"]," }
+  { "id": "R10", "note": "tools offered to the probe", "from": "tools: [],", "to": "tools: [\"Bash\"]," },
+  { "id": "R14", "note": "the live-token probe leaves an abort-insensitive query open", "from": "    active?.close?.();", "to": "" },
+  { "id": "R15", "note": "an SDK error closes the probe transport without aborting its child work", "from": "    abort.abort();\n    const active", "to": "    const active" }
 ]

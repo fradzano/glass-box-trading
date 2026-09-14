@@ -136,27 +136,31 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
       "You may call the alpaca tools for additional read-only context (chains, snapshots, calendar). Then answer with the JSON object only.",
     ].join("\n\n");
     const abort = new AbortController();
-    const timer = setTimeout(() => { abort.abort(); }, options.timeoutMs);
+    const messages = query({
+      prompt,
+      options: {
+        model: options.model,
+        systemPrompt: SYSTEM_PROMPT,
+        tools: [],
+        mcpServers: { alpaca: server },
+        allowedTools: ["mcp__alpaca__*"],
+        permissionMode: "dontAsk",
+        maxTurns: options.maxTurns,
+        cwd: options.workingDirectory,
+        settingSources: [],
+        env: childEnvironment(),
+        abortController: abort,
+      },
+    });
+    const timer = setTimeout(() => {
+      abort.abort();
+      messages.close();
+    }, options.timeoutMs);
     let finalText = "";
     let failure: string | null = null;
     let sawResult = false;
     try {
-      for await (const message of query({
-        prompt,
-        options: {
-          model: options.model,
-          systemPrompt: SYSTEM_PROMPT,
-          tools: [],
-          mcpServers: { alpaca: server },
-          allowedTools: ["mcp__alpaca__*"],
-          permissionMode: "dontAsk",
-          maxTurns: options.maxTurns,
-          cwd: options.workingDirectory,
-          settingSources: [],
-          env: childEnvironment(),
-          abortController: abort,
-        },
-      })) {
+      for await (const message of messages) {
         if (message.type === "assistant") {
           for (const block of message.message.content) {
             if (block.type === "tool_use") log(`analyst tool ${block.name}`);
@@ -175,6 +179,10 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
       }
     } finally {
       clearTimeout(timer);
+      // Abort ends subprocess work; close releases the SDK query transport even
+      // when an iterator ignored the signal or an API error arrived as a result.
+      abort.abort();
+      messages.close();
     }
     if (failure !== null) throw new Error(`analyst session ended without a result: ${failure}`);
     if (!sawResult) throw new Error("analyst session ended without a result message");

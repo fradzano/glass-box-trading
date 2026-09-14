@@ -1,7 +1,7 @@
 # P12 activation — build log
 
 The working record of building the activation script specified in
-[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 8 since 2026-09-14). It exists so that
+[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 9 since 2026-09-14). It exists so that
 a fresh session can continue from here without the transcript of the one before:
 every unit below is either done — with its commit — or not, and the next step is
 always named at the bottom.
@@ -58,7 +58,7 @@ always named at the bottom.
 | 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
 | 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions). **Corrected in unit 6:** `-MaxLogBytes` on the watchdog task (red-first test, mutant D67, probe 82/82) | `8b7b888`, fix in the unit 6 commit |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
-| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — parsers `readers/parse.ts`, `parse-host.ts`, `parse-healthchecks.ts`; composition `readers/observe.ts` over `host-ports.ts`, `healthchecks-io.ts` and `readers/host/*.ps1`; the owner's two reviews incorporated, the second's five blockers red first; 325 tests; every probe caught all its mutants (see unit 7) | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, readers commit |
+| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — independent reader/gate integrity review closed red-first at A=0/B=0; unit 8 not started | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da` (reader implementation), this integrity-repair commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | open | |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | open | |
 | 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
@@ -491,6 +491,113 @@ re-anchored, D25c is replaced by D101.
   669 tests. Host re-checked read-only at 11:06: both tasks `Disabled`, no activation task
   and no disarm one-shot registered.
 
+## Unit 7 integrity repair — 2026-09-14
+
+The independent review reopened unit 7 at `bfdb4da`. The first focused run was red in
+four places: a complete JSON first line without LF was accepted; session and decision
+times came from before long I/O; a foreign healthchecks `update_url` received the API
+key; and an abort-insensitive analyst probe stayed open. Result: 4 failed, 53 passed.
+After those fixes, a second red run exposed the task boundary: UserId,
+WorkingDirectory and related execution semantics were absent, while a relative
+`powershell.exe` was accepted. Result: 3 failed, 163 passed.
+
+The repair preserves the journal terminator bit; takes session, healthcheck and
+decision timestamps after their respective I/O; makes the certificate write a bounded
+lease that requires a fresh identical check read and a new action-time clock;
+restricts management requests and redirects before attaching `X-Api-Key`; derives Node
+from `.node-version` plus `process.execPath`; binds Windows PowerShell by absolute path;
+reads and compares task identity/action semantics; closes Agent SDK queries; and lets a
+later attempt append a new certificate result when deployment digests changed.
+
+The first independent cold read was deliberately not accepted: its combined result
+was A=2/B=3. It found that `SystemRoot`, `USERDOMAIN` and `USERNAME` were being used
+as trust roots, that the probe closed but did not also abort after an SDK error, and
+that the action-time promise was stronger than the implemented unit-7 boundary. Four
+new counter-tests were red (4 failed, 34 passed). The production reader now uses the
+fixed host path `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` and the
+WindowsIdentity read through that fixed executable; installer and verifier use the
+same canonical Windows SID and fixed PowerShell path. Probe error exits both abort
+and close. The spec
+now distinguishes the tested lease from the not-yet-built unit-8 executor.
+
+### Executable red evidence
+
+The baseline and intermediate failures are kept separate from the green result:
+
+- On `bfdb4da`, the first focused counter-run failed 4 of 57: a complete JSON line
+  without LF was accepted, session/decision clocks were stale, a foreign
+  `update_url` received `X-Api-Key`, and the probe query remained open.
+- The task-definition counter-run failed 3 of 163: identity and execution semantics
+  were absent and a relative PowerShell host was trusted.
+- The first cold-read fixes produced 4 failures in 34 focused tests: spoofable host
+  trust roots and a probe error path that closed without aborting.
+- The real host returned the short task principal `felix`. Three static checks and a
+  raw-identity test then failed while replacing unsafe short-name normalization with
+  canonical SID comparison.
+- Mutation rehearsal also caught two harness gaps before acceptance: P40 was no
+  longer applicable after `userSid` entered the return shape, and P48/RT1 initially
+  survived because the tests did not require the SID value. Their counter-tests were
+  tightened before the lists were rerun.
+- The first nominal final cold round was rejected. One reviewer executed the tools
+  on this host and found that both installer and verifier treated the two results of
+  `Get-Command node` as one command, ending with `CommandNotFoundException`. Another
+  ran a duplicate `-RepoRoot` against Windows PowerShell and got
+  `ParameterAlreadyBound`, while both core and verifier had accepted that definition.
+  A stale rev7 comment was the same round's C finding. These were B=1 and B=1/C=1
+  verdicts, so the six-lens count reset instead of being averaged with a zero report.
+- The duplicate-parameter verifier mutant VS8 survived its first run because a static
+  test proved the check existed, not that its result controlled the check. The test
+  now requires `-Ok ($duplicates.Count -eq 0)`; the rerun catches VS8.
+- The next cold pass found that the standalone verifier accepted `LogonType=Password`
+  although the installer and core require `S4U` exactly. The predicate was executable
+  and green for the wrong definition, so the pass was reset at B=1. VS9 now proves the
+  exact S4U boundary. A constructed missing-evidence retry also prompted a stricter
+  counter-test: an incomplete carried step-2 result is ledger evidence missing, not
+  proof that digests changed; D118 catches that distinction.
+
+### Executable green evidence
+
+The final mutation inventory has 324 mutants across ledger, fold, step table,
+confirmation, healthcheck parsing and I/O, record command, observation assembly,
+host ports, task parsing, task installer/verifier, analyst probe and production
+analyst, and the decision core. Every mutant was caught and every target was restored
+byte-identical. The per-target totals are: ledger 14, fold 17, steps 13,
+confirmation 15, healthcheck parser 10, healthcheck I/O 10, confirmation record 6,
+parse 45 plus 3 integrity mutants, parse-host 16, observe 16, analyst probe 15,
+production analyst 6, host ports 3, installer 7, verifier 9, task reader 2, and
+decision core 117. The new classes are LF loss, stale clocks and gate reads, foreign
+origin/redirect credential forwarding, arbitrary Node/PowerShell paths, spoofed task
+principals, multiple Node applications on PATH, duplicate wrapper parameters, SDK
+close-without-abort/leaked queries, and stale carried certificates.
+
+The focused activation suite passes 346 of 346. `npm run verify` completed with
+process exit 0: 48 test files and 670 tests, followed by the architecture, fixture,
+dashboard, sandbox and implementation-phase gates. There was no post-test EPERM.
+
+### Passive-host and deliberately unexecuted evidence
+
+Host evidence is separate from executable test evidence. This session did not register,
+enable, start or remove tasks; did not reboot; did not call broker write methods; and did
+not run `confirm-alerts`. A read-only verifier run reached all 57 checks without the old
+multi-Node `CommandNotFoundException` and failed only the four expected checks against
+the stale registrations. An installer `-WhatIf` preview resolved the pinned v24.9.0
+runtime to `C:\Program Files\nodejs\node.exe` and exited 0 without registering or
+enabling anything. The final pre-commit inventory at 18:18 CEST contained exactly
+`GlassBoxTrading-AgentCycle` and `GlassBoxTrading-Watchdog`, both `Disabled`, both
+resolving `UserId=felix` to the same canonical SID. No Activation or Disarm task was
+present. A final post-push inventory and remote/branch equality check remain terminal
+session checks; they do not change repository state.
+
+### Final six-lens cold read
+
+After every earlier finding had reset the count, two independent reviewers read the
+current implementation and countertests afresh. Both returned **A=0, B=0, C=0** over
+exactly journal termination, measurement/gate/action freshness, credential origin,
+task identity and execution semantics, SDK cleanup, and append-only certificate retry.
+They explicitly rechecked the two-Node PATH, duplicate parameter, exact-S4U, canonical
+SID, and incomplete-carried-evidence cases. This is the accepted cold gate; earlier
+zero reports before later fixes are not counted.
+
 ## Session boundary — 2026-09-14, 01:13
 
 Unit 6 closed here: the simulator, 14 sequences, the retry-clause finding and the
@@ -498,8 +605,8 @@ Unit 6 closed here: the simulator, 14 sequences, the retry-clause finding and th
 
 ## Next step
 
-**Unit 8: the shell actions — not started.** Unit 7 is closed at the commits named in the
-units table; its sections above say what was built, measured and declared.
+**Unit 8: do not start in this session.** Unit 7 is honestly closed by the integrity
+repair above. Unit 8 belongs to the next session.
 
 What unit 7 fixed for the units after it:
 
@@ -508,9 +615,11 @@ What unit 7 fixed for the units after it:
   phase: the preflight at steps 1 and 2 and on every invocation after step 2 (the core
   compares the digests from then on), the live-token probe at step 0 and at the gate, the
   dev account's book at step 3. A reading not in the plan reads unknown and says so.
-- The schedule's `nodePath` comes from `expectedNodePath(process.execPath, process.version,
-  <.node-version>)` (`readers/parse-host.ts`), never from the registered disarm one-shot it
-  is compared against (unit 10).
+- The execution boundary's `nodePath` comes from
+  `expectedNodePath(process.execPath, process.version, <.node-version>)`
+  (`readers/parse-host.ts`), never from the task it is compared against. Its PowerShell
+  path is the fixed trusted host path and its task principal comes from Windows-backed
+  OS identity calls, not process environment variables.
 - The session sample log is `<activation root>/session-samples.jsonl`; the reader appends
   one line per invocation and nothing else writes it.
 - A full local read takes about 52 s on this host (measured 2026-09-14), most of it the two

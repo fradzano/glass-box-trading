@@ -15,17 +15,19 @@
 // step the ledger is in — the core reads the digests on every invocation after step 2, the
 // analyst only at step 0 and at the gate, the dev account only at step 3.
 import path from "node:path";
-import type { AnalystObservation, AlertConfirmation, CertificateObservation, DevAccountObservation, DigestPair, EnvObservation, JournalBootstrapObservation, LogLine, Observations, Reading, SchedulerCheckObservation, SessionSample, WrapperName } from "../core/types.ts";
+import type { AnalystObservation, AlertConfirmation, CertificateObservation, DevAccountObservation, DigestPair, EnvObservation, ExecutionBoundary, JournalBootstrapObservation, LogLine, Observations, Reading, SchedulerCheckObservation, SessionSample, WrapperName } from "../core/types.ts";
 import type { ProbeOutcome } from "./analyst-probe.ts";
 import type { HealthchecksReading } from "./healthchecks-io.ts";
 import { combineChecks } from "./parse-healthchecks.ts";
 import type { JournalCodec } from "./parse-host.ts";
-import { analystObservation, latestCertificateName, maskAccountId, parseEnvironmentShadow, parseHostPreconditions, parseJournalHead, parseSessionSampleLog, sessionSampleLine } from "./parse-host.ts";
+import { analystObservation, expectedNodePath, latestCertificateName, maskAccountId, parseEnvironmentShadow, parseHostPreconditions, parseJournalHead, parseSessionSampleLog, sessionSampleLine } from "./parse-host.ts";
 import type { CertificateValidator, LogFile, PreflightReport, TaskNames } from "./parse.ts";
 import { berlinLocal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseEnv, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "./parse.ts";
 
 /** The read-only PowerShell readers in `readers/host/`. */
 export type HostScript = "tasks" | "boot" | "sessions" | "preconditions" | "environment";
+
+export const TRUSTED_WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
 /** A command that ran: its exit code, or null when it did not finish (timeout, could not start), and what it printed. */
 export interface CommandResult {
@@ -39,15 +41,21 @@ export type FileRead =
   | { readonly kind: "absent" }
   | { readonly kind: "error"; readonly reason: string };
 
+export type FirstLineRead =
+  | { readonly kind: "text"; readonly text: string; readonly sha256: string; readonly terminated: boolean }
+  | { readonly kind: "absent" }
+  | { readonly kind: "error"; readonly reason: string };
+
 export type PortResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: string };
 
 export interface ObservationPorts {
   readonly now: () => number;
+  readonly runtimeIdentity: () => { readonly execPath: string; readonly nodeVersion: string; readonly powerShellPath: string; readonly taskUserId: string; readonly taskUserSid: string };
   readonly runHostScript: (script: HostScript) => Promise<CommandResult>;
   readonly runVerifier: (expectEnabled: boolean) => Promise<CommandResult>;
   readonly readText: (file: string) => Promise<FileRead>;
   /** The first line only: the long-run journal grows to hundreds of megabytes (tools/measure-longrun-scale.mjs). */
-  readonly readFirstLine: (file: string) => Promise<FileRead>;
+  readonly readFirstLine: (file: string) => Promise<FirstLineRead>;
   /** The entry names of a directory; null when it does not exist. */
   readonly listDirectory: (directory: string) => Promise<PortResult<readonly string[] | null>>;
   readonly appendLine: (file: string, line: string) => Promise<PortResult<true>>;
@@ -143,9 +151,11 @@ async function readLog(ports: ObservationPorts, directory: string, names: readon
  * failed or an append that failed loses this invocation's sample only; step 9 then finds a gap in
  * its window and aborts, which is the fail-closed answer for a sample that was never taken.
  */
-async function sampleSessions(ports: ObservationPorts, config: ObservationConfig, nowUtcMs: number): Promise<readonly SessionSample[]> {
+async function sampleSessions(ports: ObservationPorts, config: ObservationConfig): Promise<readonly SessionSample[]> {
   const output = commandOutput(await ports.runHostScript("sessions"), "session probe");
-  const sample = output.known ? parseSessionProbe(output.value, nowUtcMs) : output;
+  // Timestamp the measurement when the probe returns, not when the invocation began.
+  const measuredAtUtcMs = ports.now();
+  const sample = output.known ? parseSessionProbe(output.value, measuredAtUtcMs) : output;
   const log = path.join(config.activationRoot, SESSION_SAMPLE_LOG);
   if (sample.known) await ports.appendLine(log, sessionSampleLine(sample.value));
   const read = await ports.readText(log);
@@ -181,7 +191,7 @@ async function readVerifier(ports: ObservationPorts, expectEnabled: boolean): Pr
 async function readBootstrap(ports: ObservationPorts, config: ObservationConfig): Promise<Reading<JournalBootstrapObservation | null>> {
   const read = await ports.readFirstLine(path.join(config.longRunStateDir, "journal.jsonl"));
   if (read.kind === "error") return unknown(`journal: ${read.reason}`);
-  return parseJournalHead(read.kind === "text" ? read.text : null, ports.parseJournal);
+  return parseJournalHead(read.kind === "text" ? read.text : null, ports.parseJournal, read.kind !== "text" || read.terminated);
 }
 
 async function readAnalyst(ports: ObservationPorts, plan: ObservationPlan, preflight: Reading<PreflightReport>): Promise<Reading<AnalystObservation>> {
@@ -191,10 +201,18 @@ async function readAnalyst(ports: ObservationPorts, plan: ObservationPlan, prefl
 }
 
 export async function readObservations(ports: ObservationPorts, config: ObservationConfig, plan: ObservationPlan): Promise<Observations> {
-  const nowUtcMs = ports.now();
+  // Keep the start read only as a monotonic-call boundary. Decisions use the fresh
+  // read taken after every potentially long observation below.
+  ports.now();
 
   const taskList = commandOutput(await ports.runHostScript("tasks"), "task reader");
-  const health = await ports.healthchecks();
+  const pin = await ports.readText(path.join(config.repoRoot, ".node-version"));
+  const identity = ports.runtimeIdentity();
+  const node = pin.kind === "text" ? expectedNodePath(identity.execPath, identity.nodeVersion, pin.text) : unknown<string>(`.node-version: ${pin.kind === "error" ? pin.reason : "does not exist"}`);
+  const trustedPowerShell = path.resolve(identity.powerShellPath).toLowerCase() === TRUSTED_WINDOWS_POWERSHELL.toLowerCase();
+  const executionBoundary: Reading<ExecutionBoundary> = node.known && trustedPowerShell && identity.taskUserId.length > 0 && identity.taskUserSid.length > 0
+    ? known({ nodePath: node.value, powerShellPath: path.resolve(identity.powerShellPath), taskUserId: identity.taskUserId, taskUserSid: identity.taskUserSid })
+    : unknown(!node.known ? node.reason : !trustedPowerShell ? "the trusted Windows PowerShell path is unavailable" : "the trusted task identity is unavailable");
   const env = await readEnv(ports, config);
   const accountNumber = await ports.competitionAccountNumber();
   const resolvedAccountMasked = accountNumber.ok ? maskAccountId(accountNumber.value) : unknown<string>(`account: ${accountNumber.reason}`);
@@ -208,31 +226,50 @@ export async function readObservations(ports: ObservationPorts, config: Observat
   const preconditions = commandOutput(await ports.runHostScript("preconditions"), "host precondition reader");
   const longRunListing = await ports.listDirectory(config.longRunStateDir);
 
+  const sessionSamples = await sampleSessions(ports, config);
+  const certificate = await readCertificate(ports, config, deploymentDigests);
+  const devAccount = plan.devAccount ? portReading(await ports.devAccountBook(), "dev account") : notTaken<DevAccountObservation>("the dev account read");
+  const cycleLog = await readLog(ports, config.longRunStateDir, ["cycle-run.log.1", "cycle-run.log"]);
+  const watchdogLog = await readLog(ports, config.longRunStateDir, ["watchdog-run.log"]);
+  const wrapperHashes = await hashWrappers(ports, config);
+  const alertConfirmation = await readConfirmation(ports, config);
+  const freeDiskBytes = portReading(await ports.freeDiskBytes(config.activationRoot), "free disk");
+  const analyst = await readAnalyst(ports, plan, preflight);
+  const schedulerCheck = await readVerifier(ports, false);
+  const schedulerCheckExpectEnabled = await readVerifier(ports, true);
+  const bootstrapEntry = await readBootstrap(ports, config);
+  // The management API is the last external read. Nothing that can block occurs
+  // between this timestamp and the decision timestamp below.
+  const health = await ports.healthchecks();
+  const checksObservedAtUtcMs = ports.now();
+  const nowUtcMs = ports.now();
   return {
     nowUtcMs,
     nowLocal: berlinLocal(nowUtcMs),
     tasks: taskList.known ? parseTasks(taskList.value, config.taskNames) : taskList,
     checks: combineChecks(health.summaries, health.flips),
+    checksObservedAtUtcMs,
+    executionBoundary,
     apiIndependentRead: health.independent,
     env,
     resolvedAccountMasked,
     deploymentDigests,
-    certificate: await readCertificate(ports, config, deploymentDigests),
-    devAccount: plan.devAccount ? portReading(await ports.devAccountBook(), "dev account") : notTaken("the dev account read"),
+    certificate,
+    devAccount,
     bootUtcMs: boot.known ? parseBootInstant(boot.value) : boot,
-    cycleLog: await readLog(ports, config.longRunStateDir, ["cycle-run.log.1", "cycle-run.log"]),
-    watchdogLog: await readLog(ports, config.longRunStateDir, ["watchdog-run.log"]),
+    cycleLog,
+    watchdogLog,
     logFilesSearched: ["cycle-run.log", "cycle-run.log.1"],
-    sessionSamples: await sampleSessions(ports, config, nowUtcMs),
-    wrapperHashes: await hashWrappers(ports, config),
+    sessionSamples,
+    wrapperHashes,
     hostPreconditions: preconditions.known ? parseHostPreconditions(preconditions.value) : preconditions,
-    alertConfirmation: await readConfirmation(ports, config),
+    alertConfirmation,
     longRunArtefacts: longRunListing.ok ? known(longRunListing.value ?? []) : unknown(`long-run state directory: ${longRunListing.reason}`),
-    freeDiskBytes: portReading(await ports.freeDiskBytes(config.activationRoot), "free disk"),
-    analyst: await readAnalyst(ports, plan, preflight),
-    schedulerCheck: await readVerifier(ports, false),
-    schedulerCheckExpectEnabled: await readVerifier(ports, true),
+    freeDiskBytes,
+    analyst,
+    schedulerCheck,
+    schedulerCheckExpectEnabled,
     disarm: taskList.known ? parseDisarm(taskList.value, config.taskNames) : taskList,
-    bootstrapEntry: await readBootstrap(ports, config),
+    bootstrapEntry,
   };
 }

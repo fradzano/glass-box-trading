@@ -25,7 +25,8 @@ import type * as RuntimeConfig from "../../../src/shell/runtime-config.ts";
 import type { ProbeQuery } from "./analyst-probe.ts";
 import { runAnalystProbe } from "./analyst-probe.ts";
 import { readHealthchecks } from "./healthchecks-io.ts";
-import type { CommandResult, FileRead, HostScript, ObservationPorts, PortResult } from "./observe.ts";
+import type { CommandResult, FileRead, FirstLineRead, HostScript, ObservationPorts, PortResult } from "./observe.ts";
+import { TRUSTED_WINDOWS_POWERSHELL } from "./observe.ts";
 
 export interface HostPortOptions {
   readonly repoRoot: string;
@@ -85,7 +86,7 @@ function run(file: string, args: readonly string[], options: { readonly cwd: str
 }
 
 function powershell(script: string, args: readonly string[], cwd: string, timeoutMs: number): Promise<CommandResult> {
-  return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args], { cwd, timeoutMs });
+  return run(TRUSTED_WINDOWS_POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args], { cwd, timeoutMs });
 }
 
 async function importBuilt<T>(repoRoot: string, relative: string): Promise<T> {
@@ -101,7 +102,7 @@ async function readText(file: string): Promise<FileRead> {
   }
 }
 
-async function readFirstLine(file: string): Promise<FileRead> {
+async function readFirstLine(file: string): Promise<FirstLineRead> {
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     handle = await open(file, "r");
@@ -111,7 +112,7 @@ async function readFirstLine(file: string): Promise<FileRead> {
     const newline = chunk.indexOf(0x0a);
     if (newline < 0 && bytesRead === FIRST_LINE_LIMIT_BYTES) return { kind: "error", reason: "first line longer than the read limit" };
     const line = newline < 0 ? chunk : chunk.subarray(0, newline);
-    return { kind: "text", text: line.toString("utf8"), sha256: createHash("sha256").update(line).digest("hex") };
+    return { kind: "text", text: line.toString("utf8"), sha256: createHash("sha256").update(line).digest("hex"), terminated: newline >= 0 };
   } catch (error) {
     return errorCode(error) === "ENOENT" ? { kind: "absent" } : { kind: "error", reason: errorCode(error) };
   } finally {
@@ -125,6 +126,20 @@ export async function createHostPorts(options: HostPortOptions): Promise<Observa
   const runtimeConfig = await importBuilt<typeof RuntimeConfig>(options.repoRoot, "shell/runtime-config.js");
   const brokerShell = await importBuilt<BuiltBrokerModule>(options.repoRoot, "shell/alpaca-broker.js");
   const agentRuntime = await importBuilt<BuiltAgentRuntime>(options.repoRoot, "shell/agent-runtime.js");
+  const identityOutput = await run(TRUSTED_WINDOWS_POWERSHELL, ["-NoProfile", "-NonInteractive", "-Command", "$i=[Security.Principal.WindowsIdentity]::GetCurrent();[pscustomobject]@{UserId=$i.Name;UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value}|ConvertTo-Json -Compress"], { cwd: options.repoRoot, timeoutMs: 10_000 });
+  let taskUserId = "";
+  let taskUserSid = "";
+  if (identityOutput.exitCode === 0) {
+    try {
+      const identity = JSON.parse(identityOutput.stdout) as { readonly UserId?: unknown; readonly UserSid?: unknown };
+      if (typeof identity.UserId === "string" && typeof identity.UserSid === "string") {
+        taskUserId = identity.UserId;
+        taskUserSid = identity.UserSid;
+      }
+    } catch {
+      // Empty values below make the execution boundary unknown.
+    }
+  }
 
   const environment = (): RuntimeConfig.EnvRecord => runtimeConfig.loadEnvironment(options.repoRoot, process.env);
   const brokerFor = (profile: "dev" | "competition"): PortResult<BuiltBroker> => {
@@ -136,6 +151,17 @@ export async function createHostPorts(options: HostPortOptions): Promise<Observa
 
   return {
     now: () => Date.now(),
+    runtimeIdentity: () => {
+      return {
+        execPath: process.execPath,
+        nodeVersion: process.version,
+        powerShellPath: TRUSTED_WINDOWS_POWERSHELL,
+        // A fixed, trusted Windows PowerShell process obtained both values from
+        // WindowsIdentity, so environment variables never define the principal.
+        taskUserId,
+        taskUserSid,
+      };
+    },
     runHostScript: script => powershell(hostScript(script), script === "tasks" ? ["-TaskPath", options.taskPath] : [], options.repoRoot, 60_000),
     runVerifier: expectEnabled => powershell(path.join(options.repoRoot, "tools", "verify-scheduled-tasks.ps1"), ["-RepoRoot", options.repoRoot, ...(expectEnabled ? ["-ExpectEnabled"] : [])], options.repoRoot, 120_000),
     readText,

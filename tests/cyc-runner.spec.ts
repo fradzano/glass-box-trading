@@ -238,9 +238,23 @@ describe("S-CYC-01 a failed analyst call is an alarm, not a quiet abstention (#8
 vi.mock("@anthropic-ai/claude-agent-sdk", async importOriginal => ({ ...(await importOriginal<typeof AgentSdk>()), query: vi.fn() }));
 
 function sdkTurn(messages: readonly Readonly<Record<string, unknown>>[]): ReturnType<typeof query> {
-  return (async function* turn() {
+  const turn = (async function* turn() {
     for (const message of messages) yield await Promise.resolve(message);
-  })() as unknown as ReturnType<typeof query>;
+  })();
+  return Object.assign(turn, { close: vi.fn(() => { void turn.return(undefined); }) }) as unknown as ReturnType<typeof query>;
+}
+
+function deafSdkTurn(closes: ReturnType<typeof vi.fn>[]): ReturnType<typeof query> {
+  let release: ((result: IteratorResult<unknown>) => void) | null = null;
+  const close = vi.fn(() => { release?.({ done: true, value: undefined }); });
+  closes.push(close);
+  return {
+    [Symbol.asyncIterator]() { return this; },
+    next: () => new Promise<IteratorResult<unknown>>(resolve => { release = resolve; }),
+    return: () => Promise.resolve({ done: true, value: undefined }),
+    throw: (error?: unknown) => Promise.reject(error instanceof Error ? error : new Error("test SDK iterator failed")),
+    close,
+  } as unknown as ReturnType<typeof query>;
 }
 
 const TOOL_LESS_CHILD: VerifiedChildHandle = {
@@ -250,8 +264,8 @@ const TOOL_LESS_CHILD: VerifiedChildHandle = {
   callTool: () => Promise.reject(new Error("the test child offers no tools")),
 };
 
-function realAnalyst(): CycleDependencies["analyst"] {
-  return createClaudeAnalyst({ child: TOOL_LESS_CHILD, oauthToken: "test-only-oauth-token", model: "claude-sonnet-5", decisionConfig: TEST_ONLY_O5_CONFIG, workingDirectory: tmpdir(), maxTurns: 4, timeoutMs: 5_000, objective: "competition", processEnv: {}, sessionsUntil: () => 3 });
+function realAnalyst(timeoutMs = 5_000): CycleDependencies["analyst"] {
+  return createClaudeAnalyst({ child: TOOL_LESS_CHILD, oauthToken: "test-only-oauth-token", model: "claude-sonnet-5", decisionConfig: TEST_ONLY_O5_CONFIG, workingDirectory: tmpdir(), maxTurns: 4, timeoutMs, objective: "competition", processEnv: {}, sessionsUntil: () => 3 });
 }
 
 describe("S-CYC-01 the real Claude analyst: a turn the SDK ended on an API error is a failed call, not an answer (#81, review of 2026-09-14, point 1)", () => {
@@ -265,6 +279,9 @@ describe("S-CYC-01 the real Claude analyst: a turn the SDK ended on an API error
       const report = await run.cycle({ ping });
 
       expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+      const session = vi.mocked(query).mock.results[0]?.value as { readonly close: ReturnType<typeof vi.fn> } | undefined;
+      expect(session?.close.mock.calls.length ?? 0).toBeGreaterThan(0);
+      expect(vi.mocked(query).mock.calls[0]?.[0].options?.abortController?.signal.aborted).toBe(true);
       expect(run.analystCalls.count).toBe(1);
       expect(report.analystSkip).toEqual(expect.stringContaining(String(status)));
       expect(report.alarmConditions).toContain("ANALYST_UNAVAILABLE");
@@ -299,6 +316,20 @@ describe("S-CYC-01 the real Claude analyst: a turn the SDK ended on an API error
     expect(report.analystSkip).toBeNull();
     expect(report.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
     expect(report.ping).toBe("success");
+  });
+
+  it("S-CYC-01 timeout aborts and closes even an abort-insensitive SDK query, with no live query accumulating across cycles", async () => {
+    const closes: ReturnType<typeof vi.fn>[] = [];
+    vi.mocked(query).mockImplementation(() => deafSdkTurn(closes));
+    const run = await harness({ analyst: realAnalyst(10) });
+    const first = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    const second = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(first.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    expect(second.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(2);
+    expect(closes).toHaveLength(2);
+    expect(closes.every(close => close.mock.calls.length > 0)).toBe(true);
+    for (const [input] of vi.mocked(query).mock.calls) expect(input.options?.abortController?.signal.aborted).toBe(true);
   });
 });
 

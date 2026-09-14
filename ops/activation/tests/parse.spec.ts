@@ -135,9 +135,25 @@ describe("parse — scheduled tasks", () => {
     const reading = parseTasks(HOST_TASKS, NAMES);
     expect(reading.known).toBe(true);
     if (!reading.known) return;
-    expect(reading.value.cycle).toEqual({ state: "Disabled", execute: "C:\\Program Files\\nodejs\\node.exe", argumentLine: "\"C:\\Users\\felix\\source\\repos\\glass-box-trading\\dist\\shell\\agent-cli.js\"" });
+    expect(reading.value.cycle).toMatchObject({
+      state: "Disabled",
+      userId: null,
+      runLevel: null,
+      logonType: null,
+      startWhenAvailable: null,
+      actions: [{ execute: "C:\\Program Files\\nodejs\\node.exe", argumentLine: "\"C:\\Users\\felix\\source\\repos\\glass-box-trading\\dist\\shell\\agent-cli.js\"", workingDirectory: null }],
+    });
     expect(definitionFindings("cycle", reading.value.cycle)).toContain("cycle.execute");
-    expect(definitionFindings("watchdog", reading.value.watchdog)).toEqual([]);
+    expect(definitionFindings("watchdog", reading.value.watchdog)).toContain("watchdog.execute-untrusted");
+  });
+
+  it("carries the execution identity and semantics of cycle and watchdog tasks", () => {
+    const task = (name: string) => ({ TaskName: name, State: "Disabled", UserId: "DESKTOP-V6EGFDV\\felix", UserSid: "S-1-5-21-1000", RunLevel: "Limited", LogonType: "S4U", StartWhenAvailable: true, Actions: [{ Execute: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", Arguments: "-File x", WorkingDirectory: "C:\\repo" }], Triggers: [] });
+    const reading = parseTasks(JSON.stringify([task(NAMES.cycle), task(NAMES.watchdog)]), NAMES);
+    expect(reading).toMatchObject({ known: true, value: {
+      cycle: { userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000", runLevel: "Limited", logonType: "S4U", startWhenAvailable: true, actions: [{ workingDirectory: "C:\\repo" }] },
+      watchdog: { userId: "DESKTOP-V6EGFDV\\felix", userSid: "S-1-5-21-1000", runLevel: "Limited", logonType: "S4U", startWhenAvailable: true, actions: [{ workingDirectory: "C:\\repo" }] },
+    } });
   });
 
   it("accepts PowerShell 5.1's unwrapped one-element arrays", () => {
@@ -145,7 +161,7 @@ describe("parse — scheduled tasks", () => {
       { TaskName: NAMES.cycle, State: "Ready", Actions: { Execute: "powershell.exe", Arguments: "-File x" }, Triggers: { StartBoundary: "2026-09-02T14:00:00+02:00" } },
       { TaskName: NAMES.watchdog, State: "Disabled", Actions: { Execute: "powershell.exe", Arguments: null }, Triggers: [] },
     ]);
-    expect(parseTasks(unwrapped, NAMES)).toEqual({ known: true, value: { cycle: { state: "Ready", execute: "powershell.exe", argumentLine: "-File x" }, watchdog: { state: "Disabled", execute: "powershell.exe", argumentLine: "" } } });
+    expect(parseTasks(unwrapped, NAMES)).toMatchObject({ known: true, value: { cycle: { state: "Ready", execute: "powershell.exe", argumentLine: "-File x", actions: [{ workingDirectory: null }] }, watchdog: { state: "Disabled", execute: "powershell.exe", argumentLine: "", actions: [{ workingDirectory: null }] } } });
   });
 
   it("refuses a second action, a missing task, a task registered twice, and output that is not JSON", () => {
@@ -172,11 +188,11 @@ describe("parse — scheduled tasks", () => {
   });
 
   it("reads the disarm as absent, as registered for its zoned start, and refuses an unzoned or doubled trigger", () => {
-    const absent = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null };
+    const absent = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null, userId: null, userSid: null };
     expect(parseDisarm(HOST_TASKS, NAMES)).toEqual({ known: true, value: absent });
     expect(parseDisarm("", NAMES)).toEqual({ known: true, value: absent });
     const disarm = (triggers: unknown): string => JSON.stringify([{ TaskName: NAMES.disarm, State: "Ready", Actions: { Execute: "powershell.exe" }, Triggers: triggers }]);
-    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 }, state: "Ready", actions: [{ execute: "powershell.exe", argumentLine: "" }], runLevel: null, logonType: null, startWhenAvailable: null } });
+    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 }, state: "Ready", actions: [{ execute: "powershell.exe", argumentLine: "", workingDirectory: null }], runLevel: null, logonType: null, startWhenAvailable: null, userId: null, userSid: null } });
     // A second action and a disabled state are facts for the core to judge, not reasons to stop reading (review 2026-09-14, point 2).
     const doubled = JSON.stringify([{ TaskName: NAMES.disarm, State: "Disabled", Actions: [{ Execute: "node.exe", Arguments: "a" }, { Execute: "cmd.exe", Arguments: "/c b" }], Triggers: { StartBoundary: "2026-09-22T15:05:00+02:00" } }]);
     expect(parseDisarm(doubled, NAMES)).toMatchObject({ known: true, value: { state: "Disabled", actions: [{ execute: "node.exe", argumentLine: "a" }, { execute: "cmd.exe", argumentLine: "/c b" }] } });

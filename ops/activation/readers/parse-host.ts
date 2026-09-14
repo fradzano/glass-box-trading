@@ -156,8 +156,9 @@ export type JournalCodec = (text: string) => {
  * period has not started. A first entry that is not a valid BOOTSTRAP is unknown, because the run
  * then did not start the way step 11 records it.
  */
-export function parseJournalHead(firstLine: string | null, codec: JournalCodec): Reading<JournalBootstrapObservation | null> {
+export function parseJournalHead(firstLine: string | null, codec: JournalCodec, terminated = true): Reading<JournalBootstrapObservation | null> {
   if (firstLine === null || firstLine.trim().length === 0) return known(null);
+  if (!terminated) return unknown("the journal's first line is not LF-terminated");
   const parsed = codec(`${withoutBom(firstLine)}\n`);
   const entry = parsed.entries[0];
   if (entry === undefined) return unknown("the journal's first line does not read as an entry");

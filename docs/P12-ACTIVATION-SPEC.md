@@ -10,6 +10,11 @@ than from judgement.
 Its yardstick is [`P12-ACTIVATION-SCENARIOS.md`](P12-ACTIVATION-SCENARIOS.md),
 derived by an agent that was not allowed to read this repository.
 
+**Revision 9** (2026-09-14) defines and implements the independent integrity repair
+of the unit-7 reader and gate boundary: LF termination is evidence, measurement times follow I/O,
+the gate read is last and expires, management credentials stay on the exact HTTPS API
+origin/path, task identity and executable paths are compared by value, SDK queries are
+closed, and a changed deployment can record a new certificate in a later attempt.
 **Revision 8** (2026-09-14) folds in the owner's second review of unit 7: an SDK turn
 that ended on an API error is a failed analyst call, no receipt of gate condition 4 may
 lie after now, a new attempt runs steps 0 and 3 again, the disarm one-shot is judged by
@@ -52,9 +57,14 @@ carry the design:
   log line that could not be found and a step that timed out are all failures.
 - **A2 — Every exit is safe.** No path may end with the deployment able to trade
   unvalidated.
-- **A3 — Observe, don't assume.** Task *definitions* (not just states), check
-  states, `.env`, the profile, both digests and the wrapper's hash are read from
-  the world before every decision; on conflict the world wins and is recorded.
+- **A3 — Observe, don't assume.** The cycle and watchdog task *definitions* (not
+  just states), and the disarm task from step 4 through the gate; check states,
+  `.env`, the profile, both digests and both wrapper hashes are read before every
+  decision that uses them. The activation task is the invocation mechanism in §5,
+  not a unit-7 observation. Its registration is deferred to unit 13 and is not
+  claimed as measured here. Cycle and watchdog are observed throughout; the disarm
+  task is observed from step 4 through the gate, the phases in which this specification
+  requires it.
 - **A4 — The record is the only memory.** Intent before the action, result after,
   append-only; phase comes from the record *plus* a verification query. **An
   append that fails is itself an abort**: disable both tasks, page, exit (ACT-44).
@@ -115,6 +125,8 @@ line, UTF-8, LF, `fsync`ed, fields `seq` (monotonic), `at` (ISO 8601 with offset
 unknown, verify against the world. A torn line is never repaired; a `correction`
 names the damaged `seq`. **An append that throws** — a lock, Controlled Folder
 Access, no space — disables both tasks, pages and exits (A4).
+The LF is evidence, not formatting: a syntactically complete first journal line
+without its terminator is torn/unknown. The same bytes followed by LF are complete.
 
 **Absent, empty or stale** means: disable both tasks, page, open a new attempt
 whose first entry records what was found.
@@ -148,6 +160,24 @@ arrives late does not act; it aborts and records why.
 | `9-proof` | anchor day, 14:05 | 14:35 | — | a `run:` or `skip:` line whose UTC stamp converts to 14:00–14:04 local, searched in `cycle-run.log` **and** `cycle-run.log.1`, both file names and the converted window recorded; session state sampled 13:55 and 14:05; `LastBootUpTime` recorded |
 | `10-gate` | anchor day, 14:35 | 14:55 | the conjunction in §7 | write **the certificate path validated in step 2** into `.env` (replace in place, never append; re-read, re-check duplicates, re-hash, and re-validate the file's two digests after the write), then delete the disarm one-shot |
 | `11-anchor` | anchor day, 15:20 | 16:00 | — | record the firing whose stamp converts to **15:15–15:19** local — a later catch-up is not the anchor — and the `BOOTSTRAP` entry; the measurement period started |
+
+**Revision-9 task and time boundary.** The step-1 and `0-resume` task reading carries
+UserId, RunLevel, LogonType, StartWhenAvailable, WorkingDirectory, every action and
+the expected executables. Cycle and watchdog must use the absolute trusted Windows
+PowerShell path; their `-NodePath` must equal the running pinned runtime's
+`process.execPath`. An existing but different file, including `notepad.exe`, is red.
+The disarm task carries the same identity and action detail from step 4 through the
+gate. The activation task is not claimed as an observation in unit 7.
+
+Session samples are timestamped after their session probe completes. The
+healthchecks read is the last external I/O before the gate decision; its completion
+time and the later decision time are distinct. The decision does not grant an
+unconditional write: it returns a five-second lease containing the observed check
+triplet. Immediately before changing `.env`, the unit-8 action port must read the
+three checks and the clock again and pass both through `authorizeCertificateWrite`.
+An unknown or changed check, a clock before the observation, or an expired lease is
+a refusal. Unit 7 defines and tests that boundary; it does not claim that the unit-8
+executor already exists.
 
 **Abort, precisely.** Every abort **up to and including step 10** disables both
 tasks, leaves `PRE_ARM_CERTIFICATE` unset and pages. **An `abort` entry ends the
@@ -183,9 +213,11 @@ decide what a late invocation may do.
 the first step whose result is not `ok` **for this attempt's anchor day**. A new
 anchor day resets steps 4, 7, 8, 9, 10 and 11 to "not run", because each of them
 asserts something about one particular day: an enable that was undone, a reboot
-that happened yesterday, a firing in yesterday's log. Steps 1 and 2 carry over —
-the installation, which every invocation re-checks by value, and the certificate,
-which is re-validated against freshly printed digests, are facts about the artefact.
+that happened yesterday, a firing in yesterday's log. Step 1 carries over and is
+re-checked by value. Step 2 carries only while freshly printed digests and the
+current validated certificate match its recorded evidence. If the digests changed
+and a new PASS certificate matches the new pair, the old result remains in the
+append-only ledger but stops counting; the new attempt appends its own step-2 result.
 Steps 0 and 3 do not (revision 8): the confirmation's age, the token, the host, the
 disk and whether the dev account is flat are facts about now, so every attempt runs
 them again — a retry more than fourteen days after the oldest receipt stops at step 0,
@@ -197,7 +229,8 @@ will never fire again), both tasks must read `Disabled`, the three checks must r
 `up` or `paused` — with both tasks disabled since the abort, a check that read up in the
 afternoon is down long before 22:05, so the owner pauses them before the retry (found by
 the unit-6 simulator) — and the certificate is re-validated against freshly printed digests — a
-certificate from a previous day is fine, a changed digest is not. `FLATTEN_DATE`
+matching certificate from a previous day is fine; changed digests require a new
+certificate and do not create a permanent `WORLD_MISMATCH`. `FLATTEN_DATE`
 does not move (owner ruling 2026-09-11), so a slip shortens the run and needs no
 new certificate; only a failed certificate needs a new run.
 
@@ -232,7 +265,10 @@ new certificate; only a failed certificate needs a new run.
   exactly one action — the expected node running
   `ops\activation\cli.ts disarm --state-root <activation root> --anchor-day <anchor day>`
   and nothing else — and it must run the way it is registered here: `Highest`, `S4U`
-  and `StartWhenAvailable`, each read back from the scheduler (revision 8). The expected
+  and `StartWhenAvailable`, each read back from the scheduler (revision 8). Its
+  principal is resolved by Windows to a SID and compared with the current activation
+  identity's Windows SID; `felix`, `.\\felix`, and a domain account with the same short
+  name are not treated as interchangeable strings. The expected
   node is compared by full path; it is the node the activation itself runs on, and only
   if that is the pinned `.node-version`, never the node the registration names. A
   trigger at 15:05 that runs anything else, or runs it without those settings, is red in
@@ -246,6 +282,7 @@ new certificate; only a failed certificate needs a new run.
 
 Green means all of: `SCHEDULER CHECK PASSED` with both tasks enabled and zero
 failed checks (the count is recorded, not compared — `-ExpectEnabled` adds checks);
+both deployment tasks use `S4U` exactly, not merely any unattended logon type;
 the cycle task's `-SkipOutsideSession` and `-SessionLeadInMinutes` absent or at
 their defaults, asserted by parsing the action line by value; `ALPACA_PROFILE` reads
 `competition` and the resolved account id matches the long-run account (a read-only
@@ -257,6 +294,19 @@ unreachable API is `unknown` and unknown is red; step 8 closed `ok` with
 step 9 satisfied; both wrapper hashes unchanged, by name; and the analyst's token
 proven live by the probe at gate time, where a probe that fails or cannot run is red
 (owner ruling 2026-09-14).
+
+The healthcheck observation is the last external read before the decision. It carries
+its completion time, and the certificate-write decision carries that observation plus
+a five-second expiry. Immediately before unit 8 eventually applies that action, it must
+read all three checks again and read the clock again. Unknown, changed identity/status/
+last-ping data, a clock before the observation, or expiry refuses the write. Unit 7
+defines and proves this authorization contract; it does not claim that the unit-8
+executor already exists.
+
+Healthchecks management requests use manual redirects. `X-Api-Key` is sent only to
+the HTTPS `healthchecks.io` origin on `/api/v3/checks/`, `/api/v3/channels/`, or an
+exact `/api/v3/checks/<uuid>/flips/` path. A foreign `update_url`, malformed path or
+redirect is unknown and receives no key.
 
 ## 8. Reconciliation with the cold catalogue
 
@@ -318,6 +368,9 @@ proven live by the probe at gate time, where a probe that fails or cannot run is
     `is_error` true was returned as the analyst's answer and raised nothing. It now
     throws, and the path is tested through the real `createClaudeAnalyst` with only the
     SDK's `query` replaced.
+    Revision 9 aborts and closes the SDK query on timeout and error. Both the probe
+    and the real analyst have a repeated-cycle counterexample whose iterator ignores
+    abort; closing it ends the query and no live query accumulates.
 
 ## 9. Where the code lives, and how it is tested before it matters
 
@@ -411,3 +464,11 @@ the certificate, and it is the owner's call, not mine.
   the wrappers keep their baseline across attempts. The disarm one-shot was judged by
   what it runs but not by whether it could run elevated, signed out and after a missed
   start. And the probe's deadline depended on the SDK honouring the abort.
+- **Revision 9 (independent unit-7 integrity review, 2026-09-14).** The review supplied
+  fourteen falsifiable acceptance points. Red counterexamples covered LF termination,
+  stale clocks and gate reads, credential forwarding, arbitrary Node/PowerShell paths,
+  unused runtime identity, SDK cleanup, retry certificates and incomplete task identity.
+  The final task-identity correction compares canonical Windows SIDs, not short-name
+  spellings returned by Task Scheduler.
+  Unit 7 closes only after the expanded mutation set, full verification and the final
+  six-lens cold read report zero A and zero B findings.

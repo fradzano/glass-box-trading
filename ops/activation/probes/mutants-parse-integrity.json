@@ -1,0 +1,5 @@
+[
+  { "id": "P46", "note": "scheduled-task UserId is discarded", "from": "const userId = item[\"UserId\"] ?? null;", "to": "const userId = null;" },
+  { "id": "P47", "note": "scheduled-task WorkingDirectory is discarded", "from": "const workingDirectory = action[\"WorkingDirectory\"] ?? null;", "to": "const workingDirectory = null;" },
+  { "id": "P48", "note": "scheduled-task canonical UserSid is discarded", "from": "const userSid = item[\"UserSid\"] ?? null;", "to": "const userSid = null;" }
+]

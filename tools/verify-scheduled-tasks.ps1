@@ -42,6 +42,19 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 
+$pinnedNodeVersion = (Get-Content -LiteralPath (Join-Path $RepoRoot '.node-version') -Raw).Trim()
+if ($pinnedNodeVersion -notmatch '^\d+\.\d+\.\d+$') { throw '.node-version does not name an exact Node version.' }
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$runningNodeVersion = (& $nodeCommand.Source --version).Trim().TrimStart('v')
+if ($runningNodeVersion -ne $pinnedNodeVersion) { throw "PATH node is v$runningNodeVersion; the repository pins v$pinnedNodeVersion." }
+$expectedNodePath = (& $nodeCommand.Source -e 'process.stdout.write(process.execPath)').Trim()
+if (-not [System.IO.Path]::IsPathRooted($expectedNodePath) -or [System.IO.Path]::GetFileName($expectedNodePath) -ine 'node.exe') { throw 'The pinned runtime did not report a trusted absolute node.exe path.' }
+$expectedNodePath = (Resolve-Path -LiteralPath $expectedNodePath).Path
+$expectedPowerShellPath = (Resolve-Path -LiteralPath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe').Path
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$expectedUserId = $currentIdentity.Name
+$expectedUserSid = $currentIdentity.User.Value
+
 $checks = New-Object System.Collections.Generic.List[object]
 function Add-Check {
     param([string]$Name, [bool]$Ok, [string]$Detail)
@@ -179,8 +192,8 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) carries exactly one action" -Ok ($actions.Count -eq 1) -Detail "$($actions.Count) action(s); every one of them runs"
     $action = $actions[0]
     $argument = "$($action.Arguments)"
-    $executable = [System.IO.Path]::GetFileName("$($action.Execute)")
-    Add-Check -Name "$($spec.Name) runs powershell.exe" -Ok ($executable -ieq 'powershell.exe') -Detail "Execute=$($action.Execute)"
+    $executable = "$($action.Execute)"
+    Add-Check -Name "$($spec.Name) runs trusted Windows PowerShell" -Ok ($executable -ieq $expectedPowerShellPath) -Detail "Execute=$executable; expected=$expectedPowerShellPath"
 
     # R46-B1: PowerShell honours -Command and treats a following -File as one of
     # ITS arguments, so an action reading
@@ -204,6 +217,8 @@ foreach ($spec in $expected) {
     # verbatim, or a parameter this verifier has never been taught to judge.
     $unresolved = @($parsed | Where-Object { $_.Name -like 'UNKNOWN:*' -or $_.Name -like 'AMBIGUOUS:*' } | ForEach-Object { "$($_.Token) -> $($_.Name)" })
     Add-Check -Name "$($spec.Name) passes only parameters this check understands" -Ok ($unresolved.Count -eq 0) -Detail "$(if ($unresolved.Count -eq 0) { 'every parameter resolves to exactly one known name' } else { $unresolved -join '; ' })"
+    $duplicates = @($parsed | Group-Object -Property Name | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    Add-Check -Name "$($spec.Name) passes every parameter at most once" -Ok ($duplicates.Count -eq 0) -Detail "$(if ($duplicates.Count -eq 0) { 'no duplicate parameters' } else { $duplicates -join ', ' })"
 
     $fileArgument = Get-FileArgument -Arguments $argument
     $expectedFile = Join-Path $RepoRoot $spec.Script
@@ -223,8 +238,9 @@ foreach ($spec in $expected) {
     Add-Check -Name "$($spec.Name) -RepoRoot is this checkout" -Ok $repoRootOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedRepoRoot)) { '(not passed; the wrapper defaults to its own parent)' } else { $passedRepoRoot })"
 
     $passedNodePath = Get-ResolvedValue -Parsed $parsed -Name 'NodePath'
-    $nodePathOk = [string]::IsNullOrWhiteSpace($passedNodePath) -or (Test-Path -LiteralPath $passedNodePath)
-    Add-Check -Name "$($spec.Name) -NodePath exists" -Ok $nodePathOk -Detail "$(if ([string]::IsNullOrWhiteSpace($passedNodePath)) { '(not passed; the wrapper resolves node from PATH)' } else { $passedNodePath })"
+    $resolvedNodePath = if ([string]::IsNullOrWhiteSpace($passedNodePath) -or -not (Test-Path -LiteralPath $passedNodePath -PathType Leaf)) { $null } else { (Resolve-Path -LiteralPath $passedNodePath).Path }
+    $nodePathOk = $null -ne $resolvedNodePath -and $resolvedNodePath -ieq $expectedNodePath
+    Add-Check -Name "$($spec.Name) -NodePath is the pinned runtime" -Ok $nodePathOk -Detail "observed=$(if ($null -eq $resolvedNodePath) { '(absent or not a file)' } else { $resolvedNodePath }); expected=$expectedNodePath (v$pinnedNodeVersion)"
 
     $workingDirectoryOk = "$($action.WorkingDirectory)".TrimEnd('\') -eq $RepoRoot.TrimEnd('\')
     Add-Check -Name "$($spec.Name) working directory is the checkout" -Ok $workingDirectoryOk -Detail "$($action.WorkingDirectory)"
@@ -292,8 +308,11 @@ foreach ($spec in $expected) {
 
     # --- it can run unattended ----------------------------------------------
     $logonType = "$($task.Principal.LogonType)"
-    $unattended = $logonType -eq 'S4U' -or $logonType -eq 'Password'
-    Add-Check -Name "$($spec.Name) can run without an interactive session" -Ok $unattended -Detail "LogonType=$logonType (Interactive only runs while that user is signed in)"
+    $expectedLogonType = $logonType -eq 'S4U'
+    Add-Check -Name "$($spec.Name) uses the expected S4U logon type" -Ok $expectedLogonType -Detail "LogonType=$logonType (the activation definition requires S4U exactly)"
+    $observedUserSid = try { (New-Object Security.Principal.NTAccount("$($task.Principal.UserId)")).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+    Add-Check -Name "$($spec.Name) runs as the expected user" -Ok ($observedUserSid -eq $expectedUserSid) -Detail "UserId=$($task.Principal.UserId); expected=$expectedUserId"
+    Add-Check -Name "$($spec.Name) uses Limited run level" -Ok ("$($task.Principal.RunLevel)" -eq 'Limited') -Detail "RunLevel=$($task.Principal.RunLevel)"
 
     $settings = $task.Settings
     Add-Check -Name "$($spec.Name) starts when a missed run is possible" -Ok ($settings.StartWhenAvailable -eq $true) -Detail "StartWhenAvailable=$($settings.StartWhenAvailable) -- this is what recovers the schedule after a reboot or sleep"

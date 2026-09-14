@@ -18,7 +18,7 @@ import { parseIndependentRead } from "./parse-host.ts";
 
 export const HEALTHCHECKS_API = "https://healthchecks.io/api/v3";
 
-export type HealthchecksFetch = (url: string, init: { readonly headers: Readonly<Record<string, string>>; readonly signal: AbortSignal }) => Promise<{ readonly ok: boolean; readonly status: number; text(): Promise<string> }>;
+export type HealthchecksFetch = (url: string, init: { readonly headers: Readonly<Record<string, string>>; readonly signal: AbortSignal; readonly redirect: "manual" }) => Promise<{ readonly ok: boolean; readonly status: number; readonly url?: string; readonly redirected?: boolean; text(): Promise<string> }>;
 
 export interface HealthchecksOptions {
   readonly fetchImpl: HealthchecksFetch;
@@ -48,12 +48,25 @@ type Answer = { readonly ok: true; readonly text: string } | { readonly ok: fals
 const BACKOFF_MS: readonly number[] = [1_000, 3_000];
 
 async function getOnce(options: HealthchecksOptions, url: string): Promise<Answer & { readonly retryable: boolean }> {
+  if (!trustedApiUrl(url)) return { ok: false, reason: "UNTRUSTED_URL", retryable: false };
   try {
-    const response = await options.fetchImpl(url, { headers: { "X-Api-Key": options.apiKey }, signal: AbortSignal.timeout(options.timeoutMs ?? 10_000) });
+    const response = await options.fetchImpl(url, { headers: { "X-Api-Key": options.apiKey }, signal: AbortSignal.timeout(options.timeoutMs ?? 10_000), redirect: "manual" });
+    if (response.redirected === true || (response.url !== undefined && response.url !== url)) return { ok: false, reason: "UNTRUSTED_REDIRECT", retryable: false };
     if (response.ok) return { ok: true, text: await response.text(), retryable: false };
     return { ok: false, reason: `HTTP ${String(response.status)}`, retryable: response.status === 429 || response.status >= 500 };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.name : "request failed", retryable: true };
+  }
+}
+
+function trustedApiUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const api = new URL(HEALTHCHECKS_API);
+    return url.protocol === "https:" && url.origin === api.origin && url.username === "" && url.password === "" && url.search === "" && url.hash === ""
+      && (url.pathname === "/api/v3/checks/" || url.pathname === "/api/v3/channels/" || /^\/api\/v3\/checks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/flips\/$/i.test(url.pathname));
+  } catch {
+    return false;
   }
 }
 
@@ -83,7 +96,16 @@ function updateUrls(listText: string): Partial<Record<CheckName, string>> {
   for (const check of ["liveness", "readiness", "watchdog"] as const) {
     const matches = entries.filter(entry => isRecord(entry) && entry["name"] === names[check]);
     const entry = matches[0];
-    if (matches.length === 1 && isRecord(entry) && typeof entry["update_url"] === "string") urls[check] = entry["update_url"];
+    if (matches.length === 1 && isRecord(entry) && typeof entry["update_url"] === "string") {
+      try {
+        const update = new URL(entry["update_url"]);
+        if (/^\/api\/v3\/checks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(update.pathname)
+          && trustedApiUrl(`${update.origin}${update.pathname}/flips/`)
+          && update.search === "" && update.hash === "" && update.username === "" && update.password === "") urls[check] = `${update.origin}${update.pathname}`;
+      } catch {
+        // Malformed and foreign URLs are an unknown reading, never a request.
+      }
+    }
   }
   return urls;
 }
@@ -106,7 +128,7 @@ export async function readHealthchecks(options: HealthchecksOptions): Promise<He
   for (const check of ["liveness", "readiness", "watchdog"] as const) {
     const url = urls[check];
     if (url === undefined) {
-      flips[check] = notRead(list.ok ? "no update URL for this check" : `check list ${list.reason}`);
+      flips[check] = notRead(list.ok ? "no trusted update URL for this check" : `check list ${list.reason}`);
       continue;
     }
     const answer = await getWithBackoff(options, `${url}/flips/`);

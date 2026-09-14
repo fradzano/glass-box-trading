@@ -6,5 +6,7 @@
   { "id": "HI5", "note": "flips fetched from one shared URL instead of each check's own", "from": "await getWithBackoff(options, `${url}/flips/`);", "to": "await getWithBackoff(options, `${HEALTHCHECKS_API}/checks/flips/`);" },
   { "id": "HI6", "note": "the API asked without a key", "from": "if (options.apiKey.length === 0) {", "to": "if (false) {" },
   { "id": "HI7", "note": "the independent read's answer not looked at", "from": "const independent = channels.ok ? parseIndependentRead(channels.text) : notRead(", "to": "const independent = channels.ok ? { known: true as const, value: true as const } : notRead(" },
-  { "id": "HI8", "note": "a failed attempt after the last pause taken as final one attempt early", "from": "const BACKOFF_MS: readonly number[] = [1_000, 3_000];", "to": "const BACKOFF_MS: readonly number[] = [1_000];" }
+  { "id": "HI8", "note": "a failed attempt after the last pause taken as final one attempt early", "from": "const BACKOFF_MS: readonly number[] = [1_000, 3_000];", "to": "const BACKOFF_MS: readonly number[] = [1_000];" },
+  { "id": "HI9", "note": "a foreign update_url is allowed to receive X-Api-Key", "from": "&& trustedApiUrl(`${update.origin}${update.pathname}/flips/`)", "to": "&& true" },
+  { "id": "HI10", "note": "redirects are followed with X-Api-Key", "from": "redirect: \"manual\" });", "to": "redirect: \"follow\" as \"manual\" });" }
 ]

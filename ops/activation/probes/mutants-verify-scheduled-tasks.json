@@ -1,0 +1,11 @@
+[
+  { "id": "VS1", "note": "the verifier accepts any existing NodePath", "from": "$resolvedNodePath -ieq $expectedNodePath", "to": "$null -ne $resolvedNodePath" },
+  { "id": "VS2", "note": "the verifier accepts any powershell.exe basename", "from": "$executable -ieq $expectedPowerShellPath", "to": "[System.IO.Path]::GetFileName($executable) -ieq 'powershell.exe'" },
+  { "id": "VS3", "note": "the verifier ignores the scheduled principal SID", "from": "($observedUserSid -eq $expectedUserSid)", "to": "$true" },
+  { "id": "VS4", "note": "the verifier derives the expected SID from spoofable environment variables", "from": "$expectedUserSid = $currentIdentity.User.Value", "to": "$expectedUserSid = $env:USERNAME" },
+  { "id": "VS5", "note": "the verifier derives trusted PowerShell from a spoofable environment variable", "from": "(Resolve-Path -LiteralPath 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe').Path", "to": "(Resolve-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe')).Path" },
+  { "id": "VS6", "note": "the verifier trusts the expected SID without resolving the observed principal", "from": "$observedUserSid = try { (New-Object Security.Principal.NTAccount(\"$($task.Principal.UserId)\")).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }", "to": "$observedUserSid = $expectedUserSid" },
+  { "id": "VS7", "note": "multiple Node applications on PATH are treated as one executable", "from": "Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1", "to": "Get-Command node -CommandType Application -ErrorAction Stop" },
+  { "id": "VS8", "note": "the verifier accepts duplicate wrapper parameters", "from": "Add-Check -Name \"$($spec.Name) passes every parameter at most once\" -Ok ($duplicates.Count -eq 0)", "to": "Add-Check -Name \"$($spec.Name) passes every parameter at most once\" -Ok ($true)" },
+  { "id": "VS9", "note": "the verifier accepts Password although the activation definition requires S4U", "from": "$expectedLogonType = $logonType -eq 'S4U'", "to": "$expectedLogonType = $logonType -eq 'S4U' -or $logonType -eq 'Password'" }
+]

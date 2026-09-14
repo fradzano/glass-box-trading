@@ -5,7 +5,7 @@
 // unknown, a drill counted whose cause is ambiguous, a proof taken from yesterday
 // or from a catch-up firing — so most tests below pin a refusal.
 import { describe, expect, it } from "vitest";
-import { decide, definitionFindings, tokenizeArguments } from "../core/decide.ts";
+import { GATE_CHECK_MAX_AGE_MS, authorizeCertificateWrite, decide, definitionFindings, tokenizeArguments } from "../core/decide.ts";
 import { foldLedger, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
 import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
@@ -26,6 +26,8 @@ const HOST_OPTIONS = "-NoProfile -NonInteractive -ExecutionPolicy Bypass";
 const CYCLE_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\cycle-run.ps1" -RepoRoot "${REPO}" -NodePath "C:\\Program Files\\nodejs\\node.exe"`;
 const WATCHDOG_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\watchdog-run.ps1" -RepoRoot "${REPO}" -NodePath "C:\\Program Files\\nodejs\\node.exe" -WatchdogIntervalMinutes 10`;
 const NODE = "C:\\Program Files\\nodejs\\node.exe";
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const USER_SID = "S-1-5-21-1000";
 const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
 
 /** A drill history like the one of 2026-09-11: down a minute before the alert, back up two hours later. */
@@ -57,21 +59,23 @@ function disarmFor(anchorDay: string, overrides: Partial<DisarmObservation> = {}
     registered: true,
     fires: { date: anchorDay, minute: 15 * 60 + 5 },
     state: "Ready",
-    actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${anchorDay}` }],
+    actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${anchorDay}`, workingDirectory: REPO }],
     runLevel: "Highest",
     logonType: "S4U",
     startWhenAvailable: true,
+    userId: "DESKTOP-V6EGFDV\\felix",
+    userSid: USER_SID,
     ...overrides,
   };
 }
 
-const NO_DISARM: DisarmObservation = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null };
+const NO_DISARM: DisarmObservation = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null, userId: null, userSid: null };
 
 /** The checks of a drill that went down and were never resumed: no up flip can expose a receipt time typed into the future. */
 const STILL_DOWN: CheckObservation["flips"] = [{ utcMs: CONFIRMED_DOWN, up: false }];
 
 function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: NODE, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
 }
 const SCHEDULE = scheduleFor(MON, TUE);
 
@@ -197,8 +201,18 @@ function before(step: StepId): LedgerFold {
 // Worlds
 // ---------------------------------------------------------------------------
 
-function task(state: string, argumentLine: string, execute = "powershell.exe"): TaskObservation {
-  return { state, execute, argumentLine };
+function task(state: string, argumentLine: string, execute = POWERSHELL): TaskObservation {
+  return {
+    state,
+    userId: "DESKTOP-V6EGFDV\\felix",
+    userSid: USER_SID,
+    runLevel: "Limited",
+    logonType: "S4U",
+    startWhenAvailable: true,
+    actions: [{ execute, argumentLine, workingDirectory: REPO }],
+    execute,
+    argumentLine,
+  };
 }
 
 function check(fingerprint: string, status: string, lastPingUtcMs: number | null, flips: CheckObservation["flips"] = DRILL_FLIPS): CheckObservation {
@@ -222,6 +236,8 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
   const base: Observations = {
     nowUtcMs: now,
     nowLocal: local(at),
+    checksObservedAtUtcMs: now,
+    executionBoundary: known({ nodePath: NODE, powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: USER_SID }),
     tasks: known({ cycle: task(stateOf(tasks.cycle), CYCLE_ARGS), watchdog: task(stateOf(tasks.watchdog), WATCHDOG_ARGS) }),
     checks: known({
       liveness: check(FINGERPRINTS.liveness, "up", now - 60_000),
@@ -272,6 +288,12 @@ function evidenceOf(decision: Decision): Readonly<Record<string, unknown>> {
 // ---------------------------------------------------------------------------
 
 describe("decide — integrity and the attempt", () => {
+  it("distinguishes same-spelled Windows principals by SID instead of raw UserId text", () => {
+    const candidate = { ...task("Disabled", CYCLE_ARGS), userId: "felix", userSid: "S-1-5-21-other" };
+    const boundary = { nodePath: NODE, powerShellPath: POWERSHELL, taskUserId: "felix", taskUserSid: "S-1-5-21-expected" };
+    expect(definitionFindings("cycle", candidate, SCHEDULE, boundary)).toContain("cycle.user-sid");
+  });
+
   it("aborts with teardown on a torn ledger, even after the gate: the phase cannot be shown to be armed", () => {
     const fold = foldLedger(parseLedgerText(`${ledgerText(linesThrough("10-gate"))}{"seq":`));
     const decision = decide(fold, worldFor(fold, [TUE, 15, 20]), SCHEDULE);
@@ -419,12 +441,12 @@ describe("decide — 0-resume judges the world against the phase", () => {
     const at: Clock = [MON, 22, 16];
     const redOf = (disarm: DisarmObservation): unknown => evidenceOf(decide(fold, worldFor(fold, at, { disarm: known(disarm) }), SCHEDULE))["red"];
     expect(decide(fold, worldFor(fold, at), SCHEDULE).kind).toBe("wait");
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: "powershell.exe", argumentLine: "-NoProfile -Command Get-Date" }] }))).toEqual(["disarm.execute", "disarm.arguments"]);
-    expect(redOf(disarmFor(TUE, { actions: [...disarmFor(TUE).actions, { execute: "cmd.exe", argumentLine: "/c exit 0" }] }))).toEqual(["disarm.actions:2"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "powershell.exe", argumentLine: "-NoProfile -Command Get-Date", workingDirectory: REPO }] }))).toEqual(["disarm.execute", "disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [...disarmFor(TUE).actions, { execute: "cmd.exe", argumentLine: "/c exit 0", workingDirectory: REPO }] }))).toEqual(["disarm.actions:2"]);
     expect(redOf(disarmFor(TUE, { actions: [] }))).toEqual(["disarm.actions:0"]);
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "C:\\Users\\felix\\glass-box-state\\longrun-1" --anchor-day ${TUE}` }] }))).toEqual(["disarm.arguments"]);
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" status --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE}` }] }))).toEqual(["disarm.arguments"]);
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE} --force` }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "C:\\Users\\felix\\glass-box-state\\longrun-1" --anchor-day ${TUE}`, workingDirectory: REPO }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" status --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE}`, workingDirectory: REPO }] }))).toEqual(["disarm.arguments"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE} --force`, workingDirectory: REPO }] }))).toEqual(["disarm.arguments"]);
     expect(redOf(disarmFor(TUE, { state: "Disabled" }))).toEqual(["disarm.state:Disabled"]);
   });
 
@@ -437,13 +459,14 @@ describe("decide — 0-resume judges the world against the phase", () => {
     expect(redOf(disarmFor(TUE, { logonType: "Interactive" }))).toEqual(["disarm.logon-type:Interactive"]);
     expect(redOf(disarmFor(TUE, { logonType: "Password" }))).toEqual(["disarm.logon-type:Password"]);
     expect(redOf(disarmFor(TUE, { startWhenAvailable: false }))).toEqual(["disarm.start-when-available:false"]);
+    expect(redOf(disarmFor(TUE, { userId: "OTHER\\user", userSid: "S-1-5-21-other" }))).toEqual(["disarm.user-sid"]);
     expect(redOf(disarmFor(TUE, { runLevel: null, logonType: null, startWhenAvailable: null }))).toEqual(["disarm.run-level:absent", "disarm.logon-type:absent", "disarm.start-when-available:absent"]);
     // Principal and settings are judged even when the action is wrong too: one finding does not hide another.
     expect(redOf(disarmFor(TUE, { runLevel: "Limited", actions: [] }))).toEqual(["disarm.run-level:Limited", "disarm.actions:0"]);
     // The registered node must be the expected one, by full path: another installation, or a bare name the PATH resolves, is red.
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: "C:\\Users\\felix\\AppData\\Local\\fnm\\node.exe", argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: "node.exe", argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
-    expect(redOf(disarmFor(TUE, { actions: [{ execute: `${NODE}.bak`, argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "C:\\Users\\felix\\AppData\\Local\\fnm\\node.exe", argumentLine: disarmLine, workingDirectory: REPO }] }))).toEqual(["disarm.execute"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "node.exe", argumentLine: disarmLine, workingDirectory: REPO }] }))).toEqual(["disarm.execute"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: `${NODE}.bak`, argumentLine: disarmLine, workingDirectory: REPO }] }))).toEqual(["disarm.execute"]);
   });
 
   it("checks task definitions by value once step 1 is done, and not before", () => {
@@ -459,6 +482,22 @@ describe("decide — 0-resume judges the world against the phase", () => {
 describe("decide — task definitions by value", () => {
   const cycle = (argumentLine: string): readonly string[] => definitionFindings("cycle", task("Disabled", argumentLine));
   const watchdog = (argumentLine: string): readonly string[] => definitionFindings("watchdog", task("Disabled", argumentLine));
+
+  it("rejects a relative PowerShell host instead of trusting PATH", () => {
+    expect(definitionFindings("cycle", task("Disabled", CYCLE_ARGS, "powershell.exe"))).toContain("cycle.execute-untrusted");
+  });
+
+  it("binds the installed definition to the reader-derived Node, PowerShell, user and checkout", () => {
+    const boundary = { nodePath: NODE, powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: USER_SID };
+    expect(definitionFindings("cycle", task("Disabled", CYCLE_ARGS), SCHEDULE, boundary)).toEqual([]);
+    const notepad = CYCLE_ARGS.replace(NODE, "C:\\Windows\\System32\\notepad.exe");
+    expect(definitionFindings("cycle", task("Disabled", notepad), SCHEDULE, boundary)).toContain("cycle.parameter.nodepath.not-expected");
+    expect(definitionFindings("cycle", { ...task("Disabled", CYCLE_ARGS), userId: "OTHER\\user", userSid: "S-1-5-21-other" }, SCHEDULE, boundary)).toContain("cycle.user-sid");
+    const observed = task("Disabled", CYCLE_ARGS);
+    const firstAction = observed.actions[0];
+    if (firstAction === undefined) throw new Error("test task has no action");
+    expect(definitionFindings("cycle", { ...observed, actions: [{ ...firstAction, workingDirectory: "C:\\other" }] }, SCHEDULE, boundary)).toContain("cycle.working-directory");
+  });
 
   it("accepts exactly the installer's action lines", () => {
     expect(cycle(CYCLE_ARGS)).toEqual([]);
@@ -486,6 +525,11 @@ describe("decide — task definitions by value", () => {
 
   it("refuses an abbreviated parameter, which PowerShell would bind without spelling the name", () => {
     expect(cycle(`${CYCLE_ARGS} -Skip:$false`)).toEqual(["cycle.parameter.unknown:-skip"]);
+  });
+
+  it("refuses duplicate wrapper parameters that PowerShell rejects as already bound", () => {
+    expect(cycle(`${CYCLE_ARGS} -RepoRoot "${REPO}"`)).toContain("cycle.parameter.duplicate:-reporoot");
+    expect(cycle(`${CYCLE_ARGS} -NodePath "${NODE}"`)).toContain("cycle.parameter.duplicate:-nodepath");
   });
 
   it("refuses a positional token, host options other than the installer's, and another script", () => {
@@ -695,6 +739,17 @@ describe("decide — step 4, enable", () => {
       { at: [NEXT_MON, 15, 30], second: 1, step: "0-preflight", kind: "result", attempt: "a2", anchorDay: NEXT_TUE, evidence: happy("0-preflight").evidence },
     ]);
     expect(decide(fold2, worldFor(fold2, [NEXT_MON, 16, 0]), scheduleFor(NEXT_MON, NEXT_TUE))).toMatchObject({ kind: "record", step: "2-certificate", outcome: "ok" });
+
+    const installRetry = foldOf([
+      ...linesThrough("0-preflight"),
+      { at: [MON, 15, 31], step: "1-install", kind: "intent" },
+      { at: [MON, 15, 32], step: "1-install", kind: "result", outcome: "failed" },
+      { at: [MON, 15, 33], step: "1-install", kind: "abort" },
+      opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+      { at: [NEXT_MON, 15, 30], step: "0-preflight", kind: "intent", attempt: "a2", anchorDay: NEXT_TUE },
+      { at: [NEXT_MON, 15, 30], second: 1, step: "0-preflight", kind: "result", attempt: "a2", anchorDay: NEXT_TUE, evidence: happy("0-preflight").evidence },
+    ]);
+    expect(decide(installRetry, worldFor(installRetry, [NEXT_MON, 15, 31]), scheduleFor(NEXT_MON, NEXT_TUE))).toMatchObject({ kind: "record", step: "1-install", outcome: "already_in_target_state" });
   });
 });
 
@@ -725,6 +780,37 @@ describe("decide — a new attempt inherits no confirmation age and no flat chec
     const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE)]);
     const decision = decide(fold, worldFor(fold, [NEXT_MON, 15, 30]), scheduleFor(NEXT_MON, NEXT_TUE));
     expect(decision).toMatchObject({ kind: "record", step: "0-preflight", outcome: "already_in_target_state" });
+  });
+
+  it("records a fresh valid certificate after deployment digests change instead of deadlocking on carried step 2", () => {
+    const fold = foldOf([
+      ...linesThrough("2-certificate"),
+      { at: [MON, 16, 20], step: "3-flat", kind: "abort" },
+      opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+      ...preflightOf("a2", NEXT_TUE, NEXT_MON),
+    ]);
+    const schedule = scheduleFor(NEXT_MON, NEXT_TUE);
+    const changed = known({ runtimeDigest: "r2", policyDigest: "p2" });
+    const certificate = known({ path: "C:\\evidence\\pre-arm\\retry.json", verdict: "PASS", digests: { runtimeDigest: "r2", policyDigest: "p2" }, violations: [] });
+    expect(decide(fold, worldFor(fold, [NEXT_MON, 16, 10], { deploymentDigests: changed, certificate }), schedule)).toMatchObject({
+      kind: "record", step: "2-certificate", outcome: "ok", evidence: { certificatePath: "C:\\evidence\\pre-arm\\retry.json", runtimeDigest: "r2", policyDigest: "p2" },
+    });
+  });
+
+  it("does not call missing carried certificate evidence a digest change", () => {
+    const fold = foldOf([
+      ...linesThrough("1-install"),
+      { at: [MON, 16, 9], step: "2-certificate", kind: "intent" },
+      { at: [MON, 16, 10], step: "2-certificate", kind: "result", evidence: { certificatePath: CERT_PATH } },
+      { at: [MON, 16, 20], step: "3-flat", kind: "abort" },
+      opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+      ...preflightOf("a2", NEXT_TUE, NEXT_MON),
+    ]);
+    const changed = known({ runtimeDigest: "r2", policyDigest: "p2" });
+    const certificate = known({ path: "C:\\evidence\\pre-arm\\retry.json", verdict: "PASS", digests: { runtimeDigest: "r2", policyDigest: "p2" }, violations: [] });
+    const decision = decide(fold, worldFor(fold, [NEXT_MON, 16, 10], { deploymentDigests: changed, certificate }), scheduleFor(NEXT_MON, NEXT_TUE));
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH" });
+    expect(evidenceOf(decision)["red"]).toContain("ledger.2-certificate.evidence-missing");
   });
 
   it("keeps the wrapper baseline across attempts: a wrapper changed since the previous attempt's step 0 is red at the new step 0", () => {
@@ -1002,17 +1088,40 @@ describe("decide — step 10, the gate", () => {
   const at: Clock = [TUE, 14, 35];
 
   it("writes the certificate path step 2 validated, then deletes the disarm", () => {
-    expect(decide(fold, worldFor(fold, at), SCHEDULE)).toEqual({
+    const world = worldFor(fold, at);
+    if (!world.checks.known) throw new Error("expected known gate checks");
+    expect(decide(fold, world, SCHEDULE)).toEqual({
       kind: "act",
       step: "10-gate",
-      actions: [{ kind: "write-certificate-line", path: CERT_PATH }, { kind: "delete-disarm" }],
-      evidence: { certificatePath: CERT_PATH, schedulerCheckCount: 53, bootUtcMs: utc([TUE, 13, 33]) },
+      actions: [{ kind: "write-certificate-line", path: CERT_PATH, observedAtUtcMs: utc(at), notAfterUtcMs: utc(at) + GATE_CHECK_MAX_AGE_MS, expectedChecks: world.checks.value }, { kind: "delete-disarm" }],
+      evidence: { certificatePath: CERT_PATH, schedulerCheckCount: 53, bootUtcMs: utc([TUE, 13, 33]), checksObservedAtUtcMs: utc(at), decisionUtcMs: utc(at) },
     });
   });
 
   it("waits before 14:35 and aborts after 14:55", () => {
     expect(decide(fold, worldFor(fold, [TUE, 14, 34]), SCHEDULE).kind).toBe("wait");
     expect(abortReason(decide(fold, worldFor(fold, [TUE, 14, 56]), SCHEDULE))).toBe("STEP_DEADLINE_MISSED");
+  });
+
+  it("never arms from a healthcheck snapshot that aged past the pre-action bound", () => {
+    const world = worldFor(fold, at, { checksObservedAtUtcMs: utc(at) - GATE_CHECK_MAX_AGE_MS - 1 });
+    const decision = decide(fold, world, SCHEDULE);
+    expect(abortReason(decision)).toBe("GATE_RED");
+    expect(evidenceOf(decision)["red"]).toContain(`checks.stale:${String(GATE_CHECK_MAX_AGE_MS + 1)}`);
+  });
+
+  it("requires a fresh unchanged healthcheck read and clock immediately before the certificate write", () => {
+    const decision = decide(fold, worldFor(fold, at), SCHEDULE);
+    if (decision.kind !== "act") throw new Error("expected gate action");
+    const write = decision.actions.find(action => action.kind === "write-certificate-line");
+    if (write === undefined) throw new Error("expected certificate write");
+    const fresh = worldFor(fold, at).checks;
+    expect(authorizeCertificateWrite(write, utc(at) + 1, fresh)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, write.observedAtUtcMs - 1, fresh)).toEqual({ ok: false, reason: "ACTION_CLOCK_INVALID" });
+    expect(authorizeCertificateWrite(write, write.notAfterUtcMs + 1, fresh)).toEqual({ ok: false, reason: "ACTION_DEADLINE_EXPIRED" });
+    expect(authorizeCertificateWrite(write, utc(at) + 1, unknown("management API failed"))).toEqual({ ok: false, reason: "CHECKS_UNKNOWN" });
+    expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check(FINGERPRINTS.readiness, "paused", null) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
+    expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check("hc:changed", "up", utc(at) - 60_000) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
   });
 
   const now = utc(at);

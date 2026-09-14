@@ -14,7 +14,7 @@ function uuidFor(n: number): string {
 }
 
 function checkEntry(name: string, n: number): Record<string, unknown> {
-  return { name, status: "up", last_ping: "2026-09-22T12:00:01+00:00", ping_url: `https://ping.example/${uuidFor(n)}`, update_url: `https://api.example/api/v3/checks/${uuidFor(n)}`, unique_key: uuidFor(n + 10) };
+  return { name, status: "up", last_ping: "2026-09-22T12:00:01+00:00", ping_url: `https://ping.example/${uuidFor(n)}`, update_url: `${HEALTHCHECKS_API}/checks/${uuidFor(n)}`, unique_key: uuidFor(n + 10) };
 }
 
 const LIST = JSON.stringify({ checks: [checkEntry("gbt-liveness", 1), checkEntry("gbt-readiness", 2), checkEntry("gbt-watchdog", 3), checkEntry("someone-else", 4)] });
@@ -26,13 +26,15 @@ interface Recorded {
   readonly urls: string[];
   readonly keys: string[];
   readonly sleeps: number[];
+  readonly redirects: string[];
 }
 
 function api(script: Script): { readonly options: HealthchecksOptions; readonly recorded: Recorded } {
-  const recorded: Recorded = { urls: [], keys: [], sleeps: [] };
+  const recorded: Recorded = { urls: [], keys: [], sleeps: [], redirects: [] };
   const fetchImpl: HealthchecksFetch = (url, init) => {
     recorded.urls.push(url);
     recorded.keys.push(init.headers["X-Api-Key"] ?? "");
+    recorded.redirects.push(init.redirect);
     const answer = script(url);
     if (answer instanceof Error) return Promise.reject(answer);
     return Promise.resolve({ ok: answer.status >= 200 && answer.status < 300, status: answer.status, text: () => Promise.resolve(answer.body) });
@@ -66,9 +68,32 @@ describe("healthchecks-io — what comes out", () => {
     expect(text).not.toContain("example");
     expect(text).not.toContain(KEY);
     // The flips come from each check's own update URL, and the key goes only into the header.
-    expect(recorded.urls).toContain(`https://api.example/api/v3/checks/${uuidFor(3)}/flips/`);
+    expect(recorded.urls).toContain(`${HEALTHCHECKS_API}/checks/${uuidFor(3)}/flips/`);
     expect(new Set(recorded.keys)).toEqual(new Set([KEY]));
     expect(recorded.urls.some(url => url.includes(KEY))).toBe(false);
+  });
+
+  it("never sends X-Api-Key to a foreign update_url", async () => {
+    const hostile = JSON.stringify({ checks: [
+      { ...checkEntry("gbt-liveness", 1), update_url: `https://attacker.example/api/v3/checks/${uuidFor(1)}` },
+      checkEntry("gbt-readiness", 2),
+      checkEntry("gbt-watchdog", 3),
+    ] });
+    const { options, recorded } = api(url => url === `${HEALTHCHECKS_API}/checks/` ? { status: 200, body: hostile } : healthy(url));
+    const reading = await readHealthchecks(options);
+    expect(recorded.urls.some(url => url.startsWith("https://attacker.example/"))).toBe(false);
+    expect(reading.flips.liveness).toEqual({ known: false, reason: "no trusted update URL for this check" });
+  });
+
+  it("does not follow a redirect and therefore never forwards X-Api-Key to its foreign target", async () => {
+    const { options, recorded } = api(url => url === `${HEALTHCHECKS_API}/checks/`
+      ? { status: 302, body: "https://attacker.example/steal" }
+      : healthy(url));
+    const reading = await readHealthchecks(options);
+    expect(recorded.urls).toEqual([`${HEALTHCHECKS_API}/checks/`, `${HEALTHCHECKS_API}/channels/`]);
+    expect(recorded.urls.some(url => url.includes("attacker.example"))).toBe(false);
+    expect(recorded.redirects).toEqual(["manual", "manual"]);
+    expect(reading.summaries).toEqual({ known: false, reason: "check list HTTP 302" });
   });
 
   it("asks nothing and reads nothing without an API key", async () => {

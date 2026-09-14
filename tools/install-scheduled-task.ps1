@@ -64,7 +64,8 @@
     Absolute path to node.exe. Defaults to `(Get-Command node).Source`.
 
 .PARAMETER UserId
-    Account the tasks run as. Defaults to the current user ("$env:USERDOMAIN\$env:USERNAME").
+    Account the tasks run as. Defaults to the current Windows identity. A supplied
+    value must name that same identity.
 
 .PARAMETER LogonType
     'S4U' (default, see above) or 'Interactive'.
@@ -121,7 +122,7 @@ param(
     # so a default expressed here would silently break.
     [string]$RepoRoot,
     [string]$NodePath,
-    [string]$UserId = "$env:USERDOMAIN\$env:USERNAME",
+    [string]$UserId,
     [ValidateSet('S4U', 'Interactive')]
     [string]$LogonType = 'S4U',
     [ValidateRange(1, 1000)]
@@ -137,6 +138,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$expectedUserId = $currentIdentity.Name
+$expectedUserSid = $currentIdentity.User.Value
+if ([string]::IsNullOrWhiteSpace($UserId)) { $UserId = $expectedUserId }
+$candidateUserSid = try { (New-Object Security.Principal.NTAccount($UserId)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+if ($candidateUserSid -ne $expectedUserSid) { throw "UserId '$UserId' is not the current Windows identity '$expectedUserId'." }
 
 $CycleTaskName = 'GlassBoxTrading-AgentCycle'
 $WatchdogTaskName = 'GlassBoxTrading-Watchdog'
@@ -264,12 +271,23 @@ if ($Uninstall) {
 if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "RepoRoot '$RepoRoot' does not exist." }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 
-if ([string]::IsNullOrWhiteSpace($NodePath)) {
-    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
-    if ($null -eq $nodeCommand) { throw 'node was not found on PATH; pass -NodePath explicitly.' }
-    $NodePath = $nodeCommand.Source
-}
-if (-not (Test-Path -LiteralPath $NodePath)) { throw "NodePath '$NodePath' does not exist." }
+$pinnedNodeVersion = (Get-Content -LiteralPath (Join-Path $RepoRoot '.node-version') -Raw).Trim()
+if ($pinnedNodeVersion -notmatch '^\d+\.\d+\.\d+$') { throw '.node-version does not name an exact Node version.' }
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $nodeCommand) { throw 'node was not found on PATH.' }
+$runningNodeVersion = (& $nodeCommand.Source --version).Trim().TrimStart('v')
+if ($runningNodeVersion -ne $pinnedNodeVersion) { throw "PATH node is v$runningNodeVersion; the repository pins v$pinnedNodeVersion." }
+$expectedNodePath = (& $nodeCommand.Source -e 'process.stdout.write(process.execPath)').Trim()
+if (-not [System.IO.Path]::IsPathRooted($expectedNodePath) -or [System.IO.Path]::GetFileName($expectedNodePath) -ine 'node.exe') { throw 'The pinned runtime did not report a trusted absolute node.exe path.' }
+$expectedNodePath = (Resolve-Path -LiteralPath $expectedNodePath).Path
+if ([string]::IsNullOrWhiteSpace($NodePath)) { $NodePath = $expectedNodePath }
+if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) { throw "NodePath '$NodePath' does not exist." }
+$NodePath = (Resolve-Path -LiteralPath $NodePath).Path
+if ($NodePath -ine $expectedNodePath) { throw "NodePath '$NodePath' is not the pinned runtime '$expectedNodePath'." }
+
+$PowerShellPath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $PowerShellPath -PathType Leaf)) { throw "Trusted Windows PowerShell is missing at '$PowerShellPath'." }
+$PowerShellPath = (Resolve-Path -LiteralPath $PowerShellPath).Path
 
 $agentEntry = Join-Path $RepoRoot 'dist\shell\agent-cli.js'
 $cycleRunner = Join-Path $RepoRoot 'tools\cycle-run.ps1'
@@ -432,7 +450,7 @@ try {
     # Through the wrapper, not straight to node: the wrapper keeps the printed
     # cycle report in STATE_DIR\cycle-run.log (scenario #75).
     $cycleArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$cycleRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`""
-    $cycleAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $cycleArgs -WorkingDirectory $RepoRoot
+    $cycleAction = New-ScheduledTaskAction -Execute $PowerShellPath -Argument $cycleArgs -WorkingDirectory $RepoRoot
     $cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $cycleDuration
     $cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
     $cycleTrigger.Repetition = $cycleOnceTrigger.Repetition
@@ -449,7 +467,7 @@ try {
     Remove-ExistingTask -Name $WatchdogTaskName
 
     $watchdogArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watchdogRunner`" -RepoRoot `"$RepoRoot`" -NodePath `"$NodePath`" -WatchdogIntervalMinutes $WatchdogIntervalMinutes"
-    $watchdogAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $watchdogArgs -WorkingDirectory $RepoRoot
+    $watchdogAction = New-ScheduledTaskAction -Execute $PowerShellPath -Argument $watchdogArgs -WorkingDirectory $RepoRoot
     $watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $watchdogDuration
     $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal
     $watchdogTrigger.Repetition = $watchdogOnceTrigger.Repetition

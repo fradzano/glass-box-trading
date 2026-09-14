@@ -149,11 +149,13 @@ export interface TaskNames {
 interface RawTask {
   readonly name: string;
   readonly state: string;
-  readonly actions: readonly { readonly execute: string; readonly argumentLine: string }[];
+  readonly actions: readonly { readonly execute: string; readonly argumentLine: string; readonly workingDirectory: string | null }[];
   readonly startBoundaries: readonly (string | null)[];
   readonly runLevel: string | null;
   readonly logonType: string | null;
   readonly startWhenAvailable: boolean | null;
+  readonly userId: string | null;
+  readonly userSid: string | null;
 }
 
 /**
@@ -168,12 +170,14 @@ function parseTaskList(text: string): Reading<readonly RawTask[]> {
   const tasks: RawTask[] = [];
   for (const item of asList(parsed.value)) {
     if (!isRecord(item) || typeof item["TaskName"] !== "string" || typeof item["State"] !== "string") return unknown("task entry lacks TaskName or State");
-    const actions: { execute: string; argumentLine: string }[] = [];
+    const actions: { execute: string; argumentLine: string; workingDirectory: string | null }[] = [];
     for (const action of asList(item["Actions"])) {
       if (!isRecord(action) || typeof action["Execute"] !== "string") return unknown(`${item["TaskName"]}: action lacks Execute`);
       const argumentLine = action["Arguments"];
       if (argumentLine !== null && argumentLine !== undefined && typeof argumentLine !== "string") return unknown(`${item["TaskName"]}: Arguments is not text`);
-      actions.push({ execute: action["Execute"], argumentLine: typeof argumentLine === "string" ? argumentLine : "" });
+      const workingDirectory = action["WorkingDirectory"] ?? null;
+      if (workingDirectory !== null && typeof workingDirectory !== "string") return unknown(`${item["TaskName"]}: WorkingDirectory is not text`);
+      actions.push({ execute: action["Execute"], argumentLine: typeof argumentLine === "string" ? argumentLine : "", workingDirectory });
     }
     const startBoundaries: (string | null)[] = [];
     for (const trigger of asList(item["Triggers"])) {
@@ -188,7 +192,11 @@ function parseTaskList(text: string): Reading<readonly RawTask[]> {
     if (logonType !== null && typeof logonType !== "string") return unknown(`${item["TaskName"]}: LogonType is not text`);
     const startWhenAvailable = item["StartWhenAvailable"] ?? null;
     if (startWhenAvailable !== null && typeof startWhenAvailable !== "boolean") return unknown(`${item["TaskName"]}: StartWhenAvailable is not a boolean`);
-    tasks.push({ name: item["TaskName"], state: item["State"], actions, startBoundaries, runLevel, logonType, startWhenAvailable });
+    const userId = item["UserId"] ?? null;
+    if (userId !== null && typeof userId !== "string") return unknown(`${item["TaskName"]}: UserId is not text`);
+    const userSid = item["UserSid"] ?? null;
+    if (userSid !== null && typeof userSid !== "string") return unknown(`${item["TaskName"]}: UserSid is not text`);
+    tasks.push({ name: item["TaskName"], state: item["State"], actions, startBoundaries, runLevel, logonType, startWhenAvailable, userId, userSid });
   }
   return known(tasks);
 }
@@ -209,7 +217,7 @@ export function parseTasks(text: string, names: TaskNames): Reading<Readonly<Rec
     if (task.value === null) return unknown(`${name} is not registered`);
     const action = task.value.actions[0];
     if (task.value.actions.length !== 1 || action === undefined) return unknown(`${name} has ${String(task.value.actions.length)} actions`);
-    return known({ state: task.value.state, execute: action.execute, argumentLine: action.argumentLine });
+    return known({ state: task.value.state, userId: task.value.userId, userSid: task.value.userSid, runLevel: task.value.runLevel, logonType: task.value.logonType, startWhenAvailable: task.value.startWhenAvailable, actions: task.value.actions, execute: action.execute, argumentLine: action.argumentLine });
   };
   const cycle = observe(names.cycle);
   if (!cycle.known) return cycle;
@@ -224,13 +232,13 @@ export function parseDisarm(text: string, names: TaskNames): Reading<DisarmObser
   if (!list.known) return list;
   const task = single(list.value, names.disarm);
   if (!task.known) return task;
-  if (task.value === null) return known({ registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null });
+  if (task.value === null) return known({ registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null, userId: null, userSid: null });
   const boundary = task.value.startBoundaries[0];
   if (task.value.startBoundaries.length !== 1 || boundary === undefined || boundary === null) return unknown(`${names.disarm} has ${String(task.value.startBoundaries.length)} triggers`);
   const utcMs = parseIsoInstant(boundary);
   if (utcMs === null) return unknown(`${names.disarm} trigger has no zoned start`);
   // Every action, the state, the principal and the settings, verbatim: the core judges what the one-shot would run and how (review of 2026-09-14, points 2 and 4).
-  return known({ registered: true, fires: berlinLocal(utcMs), state: task.value.state, actions: task.value.actions, runLevel: task.value.runLevel, logonType: task.value.logonType, startWhenAvailable: task.value.startWhenAvailable });
+  return known({ registered: true, fires: berlinLocal(utcMs), state: task.value.state, actions: task.value.actions, runLevel: task.value.runLevel, logonType: task.value.logonType, startWhenAvailable: task.value.startWhenAvailable, userId: task.value.userId, userSid: task.value.userSid });
 }
 
 // ---------------------------------------------------------------------------

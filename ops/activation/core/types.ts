@@ -1,4 +1,4 @@
-// The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 7).
+// The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
 //
 // Everything the core decides is a function of three inputs, and all three are
 // declared here: the ledger (what was done), a snapshot of observations (what the
@@ -77,6 +77,13 @@ export type TaskName = "cycle" | "watchdog";
 /** A scheduled task as registered: its state and its action line verbatim, which the core parses by value. */
 export interface TaskObservation {
   readonly state: string;
+  readonly userId: string | null;
+  readonly userSid: string | null;
+  readonly runLevel: string | null;
+  readonly logonType: string | null;
+  readonly startWhenAvailable: boolean | null;
+  readonly actions: readonly TaskAction[];
+  /** First action convenience fields retained for the decision helpers. */
   readonly execute: string;
   readonly argumentLine: string;
 }
@@ -84,6 +91,15 @@ export interface TaskObservation {
 export interface TaskAction {
   readonly execute: string;
   readonly argumentLine: string;
+  readonly workingDirectory: string | null;
+}
+
+/** Executables and principal derived by the reader from this process and the trusted Windows host. */
+export interface ExecutionBoundary {
+  readonly nodePath: string;
+  readonly powerShellPath: string;
+  readonly taskUserId: string;
+  readonly taskUserSid: string;
 }
 
 export type CheckName = "liveness" | "readiness" | "watchdog";
@@ -215,6 +231,8 @@ export interface DisarmObservation {
   readonly runLevel: string | null;
   readonly logonType: string | null;
   readonly startWhenAvailable: boolean | null;
+  readonly userId: string | null;
+  readonly userSid: string | null;
 }
 
 /** The long-run journal's `BOOTSTRAP` entry, which step 11 records as the start of the measurement period. */
@@ -232,6 +250,10 @@ export interface Observations {
   readonly nowLocal: LocalInstant;
   readonly tasks: Reading<Readonly<Record<TaskName, TaskObservation>>>;
   readonly checks: Reading<Readonly<Record<CheckName, CheckObservation>>>;
+  /** Timestamp taken immediately after the management API returned. */
+  readonly checksObservedAtUtcMs: number;
+  /** Runtime trust roots, derived rather than supplied by an activation attempt. */
+  readonly executionBoundary: Reading<ExecutionBoundary>;
   /** A management-API read the drills do not touch; its success is the independent proof that the API path works. */
   readonly apiIndependentRead: Reading<true>;
   readonly env: Reading<EnvObservation>;
@@ -279,8 +301,6 @@ export interface Schedule {
   readonly minFreeDiskBytes: number;
   /** The repository root the disarm one-shot's CLI lives under, as registered. */
   readonly repoRoot: string;
-  /** The node executable the disarm one-shot runs, as registered. */
-  readonly nodePath: string;
   /** The activation state root the disarm one-shot reads the ledger from. */
   readonly activationRoot: string;
 }
@@ -288,7 +308,7 @@ export interface Schedule {
 /** What the shell is asked to do to the world. Each variant is one effect; nothing else may change it. */
 export type WorldAction =
   | { readonly kind: "remove-certificate-line" }
-  | { readonly kind: "write-certificate-line"; readonly path: string }
+  | { readonly kind: "write-certificate-line"; readonly path: string; readonly observedAtUtcMs: number; readonly notAfterUtcMs: number; readonly expectedChecks: Readonly<Record<CheckName, CheckObservation>> }
   | { readonly kind: "enable-tasks"; readonly tasks: readonly TaskName[] }
   | { readonly kind: "disable-tasks"; readonly tasks: readonly TaskName[] }
   /** Re-register both tasks with the installer, then run the verifier; the action fails unless both exit 0. */

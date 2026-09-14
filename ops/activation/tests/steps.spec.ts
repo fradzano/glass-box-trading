@@ -19,7 +19,6 @@ const SCHEDULE: Schedule = {
   expectedHostPreconditions: {},
   minFreeDiskBytes: 0,
   repoRoot: "repo",
-  nodePath: "node.exe",
   activationRoot: "state",
 };
 

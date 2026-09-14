@@ -28,13 +28,17 @@ try {
 if ($tasks.Count -eq 0) { exit 0 }
 
 $rows = foreach ($task in $tasks) {
+    $userId = [string]$task.Principal.UserId
+    $userSid = try { (New-Object Security.Principal.NTAccount($userId)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
     [pscustomobject]@{
         TaskName           = $task.TaskName
         State              = [string]$task.State
-        Actions            = @($task.Actions | ForEach-Object { [pscustomobject]@{ Execute = $_.Execute; Arguments = $_.Arguments } })
+        Actions            = @($task.Actions | ForEach-Object { [pscustomobject]@{ Execute = $_.Execute; Arguments = $_.Arguments; WorkingDirectory = $_.WorkingDirectory } })
         Triggers           = @($task.Triggers | ForEach-Object { [pscustomobject]@{ StartBoundary = $_.StartBoundary } })
         RunLevel           = [string]$task.Principal.RunLevel
         LogonType          = [string]$task.Principal.LogonType
+        UserId             = $userId
+        UserSid            = $userSid
         StartWhenAvailable = [bool]$task.Settings.StartWhenAvailable
     }
 }
