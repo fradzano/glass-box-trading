@@ -1,7 +1,7 @@
 # P12 activation — build log
 
 The working record of building the activation script specified in
-[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 6). It exists so that
+[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 7 since 2026-09-14). It exists so that
 a fresh session can continue from here without the transcript of the one before:
 every unit below is either done — with its commit — or not, and the next step is
 always named at the bottom.
@@ -35,10 +35,15 @@ always named at the bottom.
 
 ## Facts established since revision 6
 
-- **Gate condition 4 is met** for the three current endpoints `hc:c4ad5b69`
-  (readiness), `hc:a685fe10` (liveness), `hc:b76072aa` (watchdog): alert receipt
-  confirmed 2026-09-11 22:01, and the owner confirmed on 2026-09-13 23:26 that the
-  hourly reminders arrived after the setting was switched on at 23:54.
+- **Gate condition 4: owner evidence present, confirmation not recorded.** For the three
+  current endpoints `hc:c4ad5b69` (readiness), `hc:a685fe10` (liveness), `hc:b76072aa`
+  (watchdog) the owner reported the alert received 2026-09-11 22:01 and, on 2026-09-13
+  23:26, that the hourly reminders arrived after the setting was switched on at 23:54.
+  Since the review of 2026-09-14 that statement is not yet what step 0 reads: the
+  confirmation file does not exist, because `confirm-alerts` has not been run, and the
+  reminder mail's exact receipt time is not in the repository. The gate has never run.
+  (This bullet said "is met" until 2026-09-14; that mixed the owner's statement with a
+  recorded confirmation.)
 - **Host re-checked 2026-09-13 23:30:** both tasks `Disabled`, the cycle task still
   the stale direct-node registration, `longrun-1` empty, the three checks `paused`
   with the fingerprints above, branch in sync at `340444a`.
