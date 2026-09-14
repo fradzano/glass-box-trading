@@ -5,8 +5,12 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import type * as AgentSdk from "@anthropic-ai/claude-agent-sdk";
 import { integerUnit } from "../src/core/domain.js";
+import { createClaudeAnalyst } from "../src/shell/analyst-claude.js";
+import type { VerifiedChildHandle } from "../src/shell/mcp-environment.js";
 import type { DecisionSnapshot } from "../src/core/domain.js";
 import { entryAcknowledgementDraft, epochMsToUtcIso } from "../src/core/execution.js";
 import type { MarketObservation } from "../src/core/execution.js";
@@ -225,6 +229,76 @@ describe("S-CYC-01 a failed analyst call is an alarm, not a quiet abstention (#8
     expect(run.analystCalls.count).toBe(1);
     expect(halted.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
     expect(halted.ping).toBe("fail");
+  });
+});
+
+// The real analyst's SDK boundary. Only `query` is replaced, so `createClaudeAnalyst` runs unchanged against result
+// messages shaped like the pinned SDK's own declarations (`SDKResultSuccess`, `sdk.d.ts`): "subtype success carries the
+// final assistant text in result — or, with is_error true, the error text when the turn ended on an API error".
+vi.mock("@anthropic-ai/claude-agent-sdk", async importOriginal => ({ ...(await importOriginal<typeof AgentSdk>()), query: vi.fn() }));
+
+function sdkTurn(messages: readonly Readonly<Record<string, unknown>>[]): ReturnType<typeof query> {
+  return (async function* turn() {
+    for (const message of messages) yield await Promise.resolve(message);
+  })() as unknown as ReturnType<typeof query>;
+}
+
+const TOOL_LESS_CHILD: VerifiedChildHandle = {
+  listTools: () => Promise.resolve([]),
+  stop: () => Promise.resolve(),
+  listToolDefinitions: () => Promise.resolve([]),
+  callTool: () => Promise.reject(new Error("the test child offers no tools")),
+};
+
+function realAnalyst(): CycleDependencies["analyst"] {
+  return createClaudeAnalyst({ child: TOOL_LESS_CHILD, oauthToken: "test-only-oauth-token", model: "claude-sonnet-5", decisionConfig: TEST_ONLY_O5_CONFIG, workingDirectory: tmpdir(), maxTurns: 4, timeoutMs: 5_000, objective: "competition", processEnv: {}, sessionsUntil: () => 3 });
+}
+
+describe("S-CYC-01 the real Claude analyst: a turn the SDK ended on an API error is a failed call, not an answer (#81, review of 2026-09-14, point 1)", () => {
+  afterEach(() => { vi.mocked(query).mockReset(); });
+
+  for (const status of [401, 403, 429, 500, 529]) {
+    it(`S-CYC-01 subtype success with is_error true and HTTP ${String(status)}: createClaudeAnalyst throws, exactly one ANALYST_SKIP, ANALYST_UNAVAILABLE fails readiness, no halt, no retry`, async () => {
+      vi.mocked(query).mockImplementation(() => sdkTurn([{ type: "result", subtype: "success", is_error: true, api_error_status: status, result: "API Error: TEST_ONLY_SDK_ERROR_TEXT", num_turns: 1, total_cost_usd: 0 }]));
+      const run = await harness({ analyst: realAnalyst() });
+      const ping = recordingPing(() => run.clock.now);
+      const report = await run.cycle({ ping });
+
+      expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+      expect(run.analystCalls.count).toBe(1);
+      expect(report.analystSkip).toEqual(expect.stringContaining(String(status)));
+      expect(report.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+      expect(report.ping).toBe("fail");
+      expect(ping.record.successes).toEqual([]);
+      expect(ping.record.failures.map(failure => failure.conditions)).toEqual([expect.arrayContaining(["ANALYST_UNAVAILABLE"])]);
+      const verdicts = entriesOf(run.paths)[1]!["batchVerdicts"] as readonly { readonly code: string }[];
+      expect(verdicts.filter(verdict => verdict.code === "ANALYST_SKIP")).toHaveLength(1);
+      expect(readHaltState(run.paths).halted).toBe(false);
+      expect(run.fake.mutations).toHaveLength(0);
+      // The SDK's error text is not an answer and not evidence: it reaches neither the journal nor the report.
+      expect(JSON.stringify(entriesOf(run.paths))).not.toContain("TEST_ONLY_SDK_ERROR_TEXT");
+      expect(JSON.stringify(report)).not.toContain("TEST_ONLY_SDK_ERROR_TEXT");
+    });
+  }
+
+  it("S-CYC-01 a session that ends without any result message is a failed call too", async () => {
+    vi.mocked(query).mockImplementation(() => sdkTurn([{ type: "assistant", message: { content: [] } }]));
+    const run = await harness({ analyst: realAnalyst() });
+    const report = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+    expect(report.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    expect(report.ping).toBe("fail");
+    expect(readHaltState(run.paths).halted).toBe(false);
+  });
+
+  it("S-CYC-01 control: the same path with is_error false is an answer, and raises nothing", async () => {
+    vi.mocked(query).mockImplementation(() => sdkTurn([{ type: "result", subtype: "success", is_error: false, result: "{\"candidates\":[]}", num_turns: 1, total_cost_usd: 0 }]));
+    const run = await harness({ analyst: realAnalyst() });
+    const report = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+    expect(report.analystSkip).toBeNull();
+    expect(report.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
+    expect(report.ping).toBe("success");
   });
 });
 

@@ -146,11 +146,23 @@ describe("parse — scheduled tasks", () => {
     expect(parseTasks("Get-ScheduledTask : Access denied", NAMES).known).toBe(false);
   });
 
+  it("reads the disarm's principal and settings in the shape this host prints them, absent ones as null, and refuses a changed shape (review 2026-09-14, point 4)", () => {
+    // `[string]$task.Principal.RunLevel`, `[string]$task.Principal.LogonType` and `$task.Settings.StartWhenAvailable`
+    // as they read back for the two registered tasks on 2026-09-14: "Limited", "S4U", true.
+    const shaped = (fields: Readonly<Record<string, unknown>>): string => JSON.stringify([{ TaskName: NAMES.disarm, State: "Ready", Actions: { Execute: "C:\\Program Files\\nodejs\\node.exe", Arguments: "x" }, Triggers: { StartBoundary: "2026-09-22T15:05:00+02:00" }, ...fields }]);
+    expect(parseDisarm(shaped({ RunLevel: "Highest", LogonType: "S4U", StartWhenAvailable: true }), NAMES)).toMatchObject({ known: true, value: { runLevel: "Highest", logonType: "S4U", startWhenAvailable: true } });
+    expect(parseDisarm(shaped({ RunLevel: "Limited", LogonType: "Interactive", StartWhenAvailable: false }), NAMES)).toMatchObject({ known: true, value: { runLevel: "Limited", logonType: "Interactive", startWhenAvailable: false } });
+    expect(parseDisarm(shaped({}), NAMES)).toMatchObject({ known: true, value: { runLevel: null, logonType: null, startWhenAvailable: null } });
+    expect(parseDisarm(shaped({ RunLevel: 1 }), NAMES)).toEqual({ known: false, reason: "GlassBoxTrading-Disarm: RunLevel is not text" });
+    expect(parseDisarm(shaped({ StartWhenAvailable: "True" }), NAMES)).toEqual({ known: false, reason: "GlassBoxTrading-Disarm: StartWhenAvailable is not a boolean" });
+  });
+
   it("reads the disarm as absent, as registered for its zoned start, and refuses an unzoned or doubled trigger", () => {
-    expect(parseDisarm(HOST_TASKS, NAMES)).toEqual({ known: true, value: { registered: false, fires: null, state: null, actions: [] } });
-    expect(parseDisarm("", NAMES)).toEqual({ known: true, value: { registered: false, fires: null, state: null, actions: [] } });
+    const absent = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null };
+    expect(parseDisarm(HOST_TASKS, NAMES)).toEqual({ known: true, value: absent });
+    expect(parseDisarm("", NAMES)).toEqual({ known: true, value: absent });
     const disarm = (triggers: unknown): string => JSON.stringify([{ TaskName: NAMES.disarm, State: "Ready", Actions: { Execute: "powershell.exe" }, Triggers: triggers }]);
-    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 }, state: "Ready", actions: [{ execute: "powershell.exe", argumentLine: "" }] } });
+    expect(parseDisarm(disarm({ StartBoundary: "2026-09-22T15:05:00+02:00" }), NAMES)).toEqual({ known: true, value: { registered: true, fires: { date: "2026-09-22", minute: 15 * 60 + 5 }, state: "Ready", actions: [{ execute: "powershell.exe", argumentLine: "" }], runLevel: null, logonType: null, startWhenAvailable: null } });
     // A second action and a disabled state are facts for the core to judge, not reasons to stop reading (review 2026-09-14, point 2).
     const doubled = JSON.stringify([{ TaskName: NAMES.disarm, State: "Disabled", Actions: [{ Execute: "node.exe", Arguments: "a" }, { Execute: "cmd.exe", Arguments: "/c b" }], Triggers: { StartBoundary: "2026-09-22T15:05:00+02:00" } }]);
     expect(parseDisarm(doubled, NAMES)).toMatchObject({ known: true, value: { state: "Disabled", actions: [{ execute: "node.exe", argumentLine: "a" }, { execute: "cmd.exe", argumentLine: "/c b" }] } });

@@ -51,7 +51,7 @@ describe("activation fold — attempts and their steps", () => {
     expect(fold.integrity).toBe("intact");
   });
 
-  it("carries steps 0 to 3 into a new attempt, and nothing after them", () => {
+  it("carries steps 1 and 2 into a new attempt, and nothing else: the preflight and the flat check are facts about now", () => {
     const text = ledger([
       ...ok("a1", MON, "0-preflight"), ...ok("a1", MON, "1-install"), ...ok("a1", MON, "2-certificate"), ...ok("a1", MON, "3-flat"),
       ...ok("a1", MON, "4-enable"), ...ok("a1", MON, "8-reboot"), ...ok("a1", MON, "9-proof"),
@@ -60,10 +60,31 @@ describe("activation fold — attempts and their steps", () => {
     ]);
     const fold = foldLedger(parseLedgerText(text));
     expect(fold.currentAttempt).toEqual({ id: "a2", anchorDay: NEXT, firstSeq: 16 });
-    for (const step of ["0-preflight", "1-install", "2-certificate", "3-flat"] as const) expect(stepDone(fold, step)).toBe(true);
+    for (const step of ["1-install", "2-certificate"] as const) expect(stepDone(fold, step)).toBe(true);
+    // Review of 2026-09-14, point 3: a new attempt inherits neither the alert confirmation step 0 dated nor the flat account step 3 saw.
+    for (const step of ["0-preflight", "3-flat"] as const) expect(stepDone(fold, step)).toBe(false);
     // Round 5, A2: yesterday's reboot proof does not count for the new anchor day.
     for (const step of ["4-enable", "8-reboot", "9-proof"] as const) expect(stepDone(fold, step)).toBe(false);
     expect(fold.attemptEnded).toBeNull();
+  });
+
+  it("keeps the latest earlier preflight as the baseline a new attempt's step 0 is compared against", () => {
+    const text = ledger([
+      { attempt: "a1", anchorDay: MON, kind: "intent", step: "0-preflight" },
+      { attempt: "a1", anchorDay: MON, kind: "result", step: "0-preflight", outcome: "ok", evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" } } },
+      { attempt: "a1", anchorDay: MON, kind: "abort", step: "2-certificate", nextOwnerAction: "Retry." },
+      { attempt: "a2", anchorDay: NEXT, kind: "intent", step: "0-preflight" },
+      { attempt: "a2", anchorDay: NEXT, kind: "result", step: "0-preflight", outcome: "failed" },
+      { attempt: "a2", anchorDay: NEXT, kind: "abort", step: "0-preflight", nextOwnerAction: "Retry." },
+      { attempt: "a3", anchorDay: NEXT, kind: "note" },
+    ]);
+    const fold = foldLedger(parseLedgerText(text));
+    expect(stepDone(fold, "0-preflight")).toBe(false);
+    // A failed preflight is no baseline; the last one that came back ok is.
+    expect(fold.previousPreflight).toMatchObject({ attempt: "a1", outcome: "ok", resultEvidence: { wrapperHashes: { "cycle-run.ps1": "w1" } } });
+    expect(foldLedger(parseLedgerText(ledger([{ attempt: "a1", anchorDay: MON, kind: "note" }]))).previousPreflight).toBeNull();
+    // The current attempt's own preflight is not its previous one.
+    expect(foldLedger(parseLedgerText(ledger([...ok("a1", MON, "0-preflight")]))).previousPreflight).toBeNull();
   });
 
   it("ends an attempt at its first abort, and tells an owner's abort apart", () => {

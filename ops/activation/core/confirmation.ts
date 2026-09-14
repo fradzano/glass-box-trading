@@ -14,10 +14,13 @@
 // - it did not come back up before the reminder arrived;
 // - the alert arrived no later than the reminder;
 // - the reminder arrived at least one reminder period after the down flip.
-// The reminder must list all three checks. The confirmation is dated by the oldest
-// receipt it rests on, as an exact instant.
+// The reminder must list all three checks, and no receipt may lie after now — each
+// receipt on its own, not only the oldest (review of 2026-09-14, point 2): a check
+// that went down and was never resumed has no up flip that could expose a reminder
+// time typed into the future. The confirmation is dated by the oldest receipt it
+// rests on, as an exact instant.
 //
-// Pure: instants are UTC milliseconds; the flips need not be sorted.
+// Pure: instants are UTC milliseconds, now included; the flips need not be sorted.
 import type { CheckFlip, CheckName } from "./types.ts";
 
 /** The account's reminder setting is hourly (DECISIONS, 2026-09-11 23:54). */
@@ -50,7 +53,9 @@ function downFlipBefore(flips: readonly CheckFlip[], alertUtcMs: number): number
   return latest;
 }
 
-export function crossCheckAlerts(claim: AlertClaim, flips: Readonly<Record<CheckName, readonly CheckFlip[]>>): AlertCrossCheck {
+export function crossCheckAlerts(claim: AlertClaim, flips: Readonly<Record<CheckName, readonly CheckFlip[]>>, nowUtcMs: number): AlertCrossCheck {
+  // Every comparison below is against now; without an instant there is nothing to compare against.
+  if (!Number.isSafeInteger(nowUtcMs)) return { ok: false, reasons: ["now.unreadable"] };
   const reasons: string[] = [];
   if (claim.operator.trim().length === 0) reasons.push("operator.missing");
   for (const name of checkNames()) {
@@ -58,10 +63,15 @@ export function crossCheckAlerts(claim: AlertClaim, flips: Readonly<Record<Check
   }
   const alerts = claim.alertReceivedUtcMs;
   if (claim.bundledAlert && (alerts.readiness !== alerts.liveness || alerts.watchdog !== alerts.liveness)) reasons.push("alert.bundled-but-times-differ");
+  if (claim.reminderReceivedUtcMs > nowUtcMs) reasons.push("reminder.after-now");
 
   const found: { liveness: number | null; readiness: number | null; watchdog: number | null } = { liveness: null, readiness: null, watchdog: null };
   for (const name of checkNames()) {
     const alertUtcMs = alerts[name];
+    if (alertUtcMs > nowUtcMs) {
+      reasons.push(`${name}.alert-after-now`);
+      continue;
+    }
     if (claim.reminderReceivedUtcMs < alertUtcMs) {
       reasons.push(`${name}.reminder-before-alert`);
       continue;

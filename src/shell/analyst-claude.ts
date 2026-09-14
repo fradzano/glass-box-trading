@@ -139,6 +139,7 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
     const timer = setTimeout(() => { abort.abort(); }, options.timeoutMs);
     let finalText = "";
     let failure: string | null = null;
+    let sawResult = false;
     try {
       for await (const message of query({
         prompt,
@@ -162,15 +163,21 @@ export function createClaudeAnalyst(options: ClaudeAnalystOptions): (input: Anal
           }
         }
         if (message.type === "result") {
-          if (message.subtype === "success") finalText = message.result;
-          else failure = message.subtype;
-          log(`analyst result ${message.subtype} turns=${String(message.num_turns)} cost=${String(message.total_cost_usd)}`);
+          sawResult = true;
+          // A turn the SDK ended on an API error (401, 403, 429, 5xx) still reads `success`; `result` then carries the
+          // error text, which is not an answer. It is a failed call (S-CYC-01, #81; review of 2026-09-14, point 1), and
+          // only its status leaves this function, never the text.
+          if (message.subtype !== "success") failure = message.subtype;
+          else if (message.is_error) failure = `api error${typeof message.api_error_status === "number" ? ` HTTP ${String(message.api_error_status)}` : ""}`;
+          else finalText = message.result;
+          log(`analyst result ${message.subtype}${message.is_error ? " is_error" : ""} turns=${String(message.num_turns)} cost=${String(message.total_cost_usd)}`);
         }
       }
     } finally {
       clearTimeout(timer);
     }
     if (failure !== null) throw new Error(`analyst session ended without a result: ${failure}`);
+    if (!sawResult) throw new Error("analyst session ended without a result message");
     // The JSON object must be the whole answer. Prefixes, fences and suffixes stay present so the core's
     // structural parser rejects them; the shell never repairs an analyst protocol violation.
     return finalText;

@@ -58,9 +58,17 @@ function disarmFor(anchorDay: string, overrides: Partial<DisarmObservation> = {}
     fires: { date: anchorDay, minute: 15 * 60 + 5 },
     state: "Ready",
     actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${anchorDay}` }],
+    runLevel: "Highest",
+    logonType: "S4U",
+    startWhenAvailable: true,
     ...overrides,
   };
 }
+
+const NO_DISARM: DisarmObservation = { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null };
+
+/** The checks of a drill that went down and were never resumed: no up flip can expose a receipt time typed into the future. */
+const STILL_DOWN: CheckObservation["flips"] = [{ utcMs: CONFIRMED_DOWN, up: false }];
 
 function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
   return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, nodePath: NODE, activationRoot: ACTIVATION_ROOT };
@@ -239,7 +247,7 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
     analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: true, tokenProbeClass: null }),
     schedulerCheck: known({ passed: true, checkCount: 51, failedChecks: 0 }),
     schedulerCheckExpectEnabled: known({ passed: true, checkCount: 53, failedChecks: 0 }),
-    disarm: known(disarmed ? disarmFor(TUE) : { registered: false, fires: null, state: null, actions: [] }),
+    disarm: known(disarmed ? disarmFor(TUE) : NO_DISARM),
     bootstrapEntry: known(null),
   };
   return { ...base, ...overrides };
@@ -384,7 +392,7 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts when the disarm one-shot is missing after the enable", () => {
     const fold = before("5a-watchdog-disable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known({ registered: false, fires: null, state: null, actions: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 16], { disarm: known(NO_DISARM) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("disarm.expected-registered-for-15:05-on-the-anchor-day");
   });
 
@@ -418,6 +426,24 @@ describe("decide — 0-resume judges the world against the phase", () => {
     expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" status --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE}` }] }))).toEqual(["disarm.arguments"]);
     expect(redOf(disarmFor(TUE, { actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${TUE} --force` }] }))).toEqual(["disarm.arguments"]);
     expect(redOf(disarmFor(TUE, { state: "Disabled" }))).toEqual(["disarm.state:Disabled"]);
+  });
+
+  it("aborts when the disarm one-shot would not run elevated, signed out and after a missed start, or runs another node (review 2026-09-14, point 4)", () => {
+    const fold = before("5a-watchdog-disable");
+    const at: Clock = [MON, 22, 16];
+    const redOf = (disarm: DisarmObservation): unknown => evidenceOf(decide(fold, worldFor(fold, at, { disarm: known(disarm) }), SCHEDULE))["red"];
+    const disarmLine = disarmFor(TUE).actions[0]?.argumentLine ?? "";
+    expect(redOf(disarmFor(TUE, { runLevel: "Limited" }))).toEqual(["disarm.run-level:Limited"]);
+    expect(redOf(disarmFor(TUE, { logonType: "Interactive" }))).toEqual(["disarm.logon-type:Interactive"]);
+    expect(redOf(disarmFor(TUE, { logonType: "Password" }))).toEqual(["disarm.logon-type:Password"]);
+    expect(redOf(disarmFor(TUE, { startWhenAvailable: false }))).toEqual(["disarm.start-when-available:false"]);
+    expect(redOf(disarmFor(TUE, { runLevel: null, logonType: null, startWhenAvailable: null }))).toEqual(["disarm.run-level:absent", "disarm.logon-type:absent", "disarm.start-when-available:absent"]);
+    // Principal and settings are judged even when the action is wrong too: one finding does not hide another.
+    expect(redOf(disarmFor(TUE, { runLevel: "Limited", actions: [] }))).toEqual(["disarm.run-level:Limited", "disarm.actions:0"]);
+    // The registered node must be the expected one, by full path: another installation, or a bare name the PATH resolves, is red.
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "C:\\Users\\felix\\AppData\\Local\\fnm\\node.exe", argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: "node.exe", argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
+    expect(redOf(disarmFor(TUE, { actions: [{ execute: `${NODE}.bak`, argumentLine: disarmLine }] }))).toEqual(["disarm.execute"]);
   });
 
   it("checks task definitions by value once step 1 is done, and not before", () => {
@@ -513,7 +539,10 @@ describe("decide — step 0, preflight", () => {
   const now = utc(at);
   const red: readonly (readonly [string, Partial<Observations>, string])[] = [
     ["no confirmation of gate condition 4 (ACT-11)", { alertConfirmation: null }, "alert-confirmation.absent"],
-    ["a confirmation dated in the future", { alertConfirmation: confirmationAt(now + 60_000), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now, flipsFor(now + 60_000)), readiness: check(FINGERPRINTS.readiness, "up", now, flipsFor(now + 60_000)), watchdog: check(FINGERPRINTS.watchdog, "up", now, flipsFor(now + 60_000)) }) }, "alert-confirmation.stale-or-future"],
+    ["a confirmation dated in the future", { alertConfirmation: confirmationAt(now + 60_000), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now, flipsFor(now + 60_000)), readiness: check(FINGERPRINTS.readiness, "up", now, flipsFor(now + 60_000)), watchdog: check(FINGERPRINTS.watchdog, "up", now, flipsFor(now + 60_000)) }) }, "alert-confirmation.liveness.alert-after-now"],
+    // Review of 2026-09-14, point 2: each receipt on its own, not only the oldest; the checks were never resumed, so no up flip exposes the future time.
+    ["a reminder received after now, although the oldest receipt is in the past", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), reminderReceivedUtcMs: now + 3_600_000 }, checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.reminder.after-now"],
+    ["one alert received after now", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: now + 60_000 }, reminderReceivedUtcMs: now + 120_000 }, checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.watchdog.alert-after-now"],
     ["a reminder that did not list the watchdog (review 2026-09-14, point 3)", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), reminderListed: ["liveness", "readiness"] } }, "alert-confirmation.reminder.does-not-list:watchdog"],
     ["a watchdog alert no down flip precedes", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: CONFIRMED_DOWN - 60_000 } } }, "alert-confirmation.watchdog.no-down-flip-before-alert"],
     ["a recorded down flip the live history does not show", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN - 1, watchdog: CONFIRMED_DOWN } } }, "alert-confirmation.readiness.down-flip-differs-from-recorded"],
@@ -658,8 +687,57 @@ describe("decide — step 4, enable", () => {
       { at: [MON, 16, 6], step: "2-certificate", kind: "result", outcome: "failed" },
       { at: [MON, 16, 7], step: "2-certificate", kind: "abort" },
       opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+      { at: [NEXT_MON, 15, 30], step: "0-preflight", kind: "intent", attempt: "a2", anchorDay: NEXT_TUE },
+      { at: [NEXT_MON, 15, 30], second: 1, step: "0-preflight", kind: "result", attempt: "a2", anchorDay: NEXT_TUE, evidence: happy("0-preflight").evidence },
     ]);
     expect(decide(fold2, worldFor(fold2, [NEXT_MON, 16, 0]), scheduleFor(NEXT_MON, NEXT_TUE))).toMatchObject({ kind: "record", step: "2-certificate", outcome: "ok" });
+  });
+});
+
+describe("decide — a new attempt inherits no confirmation age and no flat check (review 2026-09-14, point 3)", () => {
+  /** The first attempt, through step 3, ended at step 4. */
+  const firstAttempt: Line[] = [...linesThrough("3-flat"), { at: [MON, 22, 21], step: "4-enable", kind: "abort" }];
+  const preflightOf = (attempt: string, anchorDay: string, date: string, evidence: Readonly<Record<string, unknown>> = happy("0-preflight").evidence): Line[] => [
+    { at: [date, 15, 30], step: "0-preflight", kind: "intent", attempt, anchorDay },
+    { at: [date, 15, 30], second: 1, step: "0-preflight", kind: "result", attempt, anchorDay, evidence },
+  ];
+
+  it("stops a retry more than fourteen days after the oldest receipt at step 0, before step 4 can enable anything", () => {
+    const LATE_MON = "2026-10-05";
+    const LATE_TUE = "2026-10-06";
+    const fold = foldOf([...firstAttempt, opened([LATE_MON, 15, 0], "a2", LATE_TUE)]);
+    const decision = decide(fold, worldFor(fold, [LATE_MON, 22, 6]), scheduleFor(LATE_MON, LATE_TUE));
+    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true });
+    expect(evidenceOf(decision)["red"]).toContain("alert-confirmation.stale");
+  });
+
+  it("stops a retry whose dev account is no longer flat at step 3, before step 4 can enable anything", () => {
+    const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE), ...preflightOf("a2", NEXT_TUE, NEXT_MON)]);
+    const decision = decide(fold, worldFor(fold, [NEXT_MON, 22, 6], { devAccount: known({ positions: 1, nonTerminalOrders: 0 }) }), scheduleFor(NEXT_MON, NEXT_TUE));
+    expect(decision).toMatchObject({ kind: "abort", step: "3-flat", reason: "DEV_ACCOUNT_NOT_FLAT", teardown: true });
+  });
+
+  it("runs step 0 again in the new attempt, and its evidence is this attempt's", () => {
+    const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE)]);
+    const decision = decide(fold, worldFor(fold, [NEXT_MON, 15, 30]), scheduleFor(NEXT_MON, NEXT_TUE));
+    expect(decision).toMatchObject({ kind: "record", step: "0-preflight", outcome: "already_in_target_state" });
+  });
+
+  it("keeps the wrapper baseline across attempts: a wrapper changed since the previous attempt's step 0 is red at the new step 0", () => {
+    const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE)]);
+    const decision = decide(fold, worldFor(fold, [NEXT_MON, 15, 30], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2" }) }), scheduleFor(NEXT_MON, NEXT_TUE));
+    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED" });
+    expect(evidenceOf(decision)["red"]).toEqual(["wrapper.cycle-run.ps1.sha256-changed-since-previous-attempt"]);
+  });
+
+  it("refuses a previous preflight that recorded a hash for only one wrapper, rather than letting the other re-baseline", () => {
+    const partial = foldOf([
+      ...linesThrough("3-flat", { "0-preflight": { wrapperHashes: { "cycle-run.ps1": "w1" }, hostPreconditions: HOST } }),
+      { at: [MON, 22, 21], step: "4-enable", kind: "abort" },
+      opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+    ]);
+    const decision = decide(partial, worldFor(partial, [NEXT_MON, 15, 30]), scheduleFor(NEXT_MON, NEXT_TUE));
+    expect(evidenceOf(decision)["red"]).toEqual(["ledger.previous-preflight.wrapperHashes-missing"]);
   });
 });
 
@@ -850,11 +928,15 @@ describe("decide — step 8, the reboot, and closing it after the boot", () => {
     expect(decide(fold, worldFor(fold, [MON, 22, 10]), SCHEDULE)).toMatchObject({ kind: "abort", step: "4-enable", reason: "STEP_INTERRUPTED", teardown: true });
   });
 
-  it("does not let a retry inherit the previous attempt's reboot: the new attempt starts again at the enable (round 5, A2)", () => {
+  it("does not let a retry inherit the previous attempt's reboot: after its own preflight and flat check, the new attempt starts again at the enable (round 5, A2)", () => {
     const fold = foldOf([
       ...linesThrough("8-reboot"),
       { at: [TUE, 13, 55], step: "7-rearm", kind: "abort" },
       opened([NEXT_MON, 15, 0], "a2", NEXT_TUE),
+      { at: [NEXT_MON, 15, 30], step: "0-preflight", kind: "intent", attempt: "a2", anchorDay: NEXT_TUE },
+      { at: [NEXT_MON, 15, 30], second: 1, step: "0-preflight", kind: "result", attempt: "a2", anchorDay: NEXT_TUE, evidence: happy("0-preflight").evidence },
+      { at: [NEXT_MON, 15, 35], step: "3-flat", kind: "intent", attempt: "a2", anchorDay: NEXT_TUE },
+      { at: [NEXT_MON, 15, 35], second: 1, step: "3-flat", kind: "result", attempt: "a2", anchorDay: NEXT_TUE },
     ]);
     expect(decide(fold, worldFor(fold, [NEXT_MON, 22, 6]), scheduleFor(NEXT_MON, NEXT_TUE))).toMatchObject({ kind: "act", step: "4-enable" });
     expect(abortReason(decide(fold, worldFor(fold, [NEXT_TUE, 13, 50]), scheduleFor(NEXT_MON, NEXT_TUE)))).toBe("STEP_DEADLINE_MISSED");

@@ -44,6 +44,7 @@
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 7).
+- `ops/activation/probes/mutants-analyst-claude.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`

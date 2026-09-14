@@ -105,7 +105,7 @@ async function main(): Promise<number> {
     flips[check] = answer.ok ? parseFlips(answer.text) : { known: false, reason: answer.reason };
   }
 
-  const result = buildConfirmation(args, summaries, flips, new Date().toISOString());
+  const result = buildConfirmation(args, summaries, flips, Date.now());
   if (!result.ok) {
     process.stderr.write(`refusing, nothing written:\n${result.reasons.map(reason => `  ${reason}`).join("\n")}\n`);
     return 1;

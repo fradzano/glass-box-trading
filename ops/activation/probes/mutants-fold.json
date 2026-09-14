@@ -5,12 +5,11 @@
         "from":  "if (!carriesOver(step) \u0026\u0026 !inCurrent) continue;",
         "to":  ""
     },
-    {
-        "id":  "F2",
-        "note":  "no step carries over",
-        "from":  "return step === \"0-preflight\" || step === \"1-install\" || step === \"2-certificate\" || step === \"3-flat\";",
-        "to":  "return false;"
-    },
+    { "id": "F2", "note": "no step carries over", "from": "return step === \"1-install\" || step === \"2-certificate\";", "to": "return false;" },
+    { "id": "F2b", "note": "the preflight and the flat check carried into a new attempt again (review 2026-09-14, point 3)", "from": "return step === \"1-install\" || step === \"2-certificate\";", "to": "return step === \"0-preflight\" || step === \"1-install\" || step === \"2-certificate\" || step === \"3-flat\";" },
+    { "id": "F14", "note": "no previous preflight kept as a baseline", "from": "previousPreflight = withResult(undefined, entry, step);", "to": "" },
+    { "id": "F15", "note": "the current attempt's own preflight taken as its previous one", "from": "if (step === \"0-preflight\" && !inCurrent && entry.kind === \"result\"", "to": "if (step === \"0-preflight\" && entry.kind === \"result\"" },
+    { "id": "F16", "note": "a failed preflight taken as the baseline", "from": " && (entry.outcome === \"ok\" || entry.outcome === \"already_in_target_state\")) {", "to": ") {" },
     {
         "id":  "F3",
         "note":  "abort does not end the attempt",

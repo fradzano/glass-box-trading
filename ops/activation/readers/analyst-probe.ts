@@ -88,12 +88,21 @@ export function classifyResultMessage(message: Readonly<Record<string, unknown>>
 
 const PROBE_PROMPT = "Reply with the single word: ok";
 
+/**
+ * The deadline is the probe's own, not the SDK's (review of 2026-09-14, point 5): the session
+ * races a timer, and the timer both aborts the session and ends the wait. An iterator that
+ * ignores the abort and never settles therefore still returns `TIMEOUT` on time, and a result
+ * it delivers afterwards is not counted. What no deadline can bound is a `query` call that
+ * never returns control at all; the SDK's `query` returns its iterator synchronously.
+ */
 export async function runAnalystProbe(input: ProbeInput): Promise<ProbeOutcome> {
   if (input.oauthToken.length === 0) return fail("TOKEN_ABSENT");
   const abort = new AbortController();
-  const timer = setTimeout(() => { abort.abort(); }, input.deadlineMs);
-  let outcome: ProbeOutcome | null = null;
-  try {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"deadline">(resolve => {
+    timer = setTimeout(() => { abort.abort(); resolve("deadline"); }, input.deadlineMs);
+  });
+  const session = (async (): Promise<ProbeOutcome> => {
     const messages = input.query({
       prompt: PROBE_PROMPT,
       options: {
@@ -109,14 +118,17 @@ export async function runAnalystProbe(input: ProbeInput): Promise<ProbeOutcome> 
         abortController: abort,
       },
     });
+    let outcome: ProbeOutcome | null = null;
     for await (const message of messages) {
       if (isRecord(message) && message["type"] === "result") outcome = classifyResultMessage(message);
     }
-  } catch {
-    return abort.signal.aborted ? fail("TIMEOUT") : fail("SDK_ERROR");
+    return outcome ?? fail("NO_RESULT");
+  })();
+  try {
+    const first = await Promise.race([session.then(outcome => ({ settled: "session" as const, outcome }), () => ({ settled: "error" as const })), deadline]);
+    if (first === "deadline") return fail("TIMEOUT");
+    return first.settled === "session" ? first.outcome : fail("SDK_ERROR");
   } finally {
     clearTimeout(timer);
   }
-  if (abort.signal.aborted) return fail("TIMEOUT");
-  return outcome ?? fail("NO_RESULT");
 }

@@ -1,7 +1,10 @@
 [
   { "id": "R1", "note": "a success subtype that ended on an API error counted as live", "from": "if (message[\"is_error\"] === false) return { ok: true };", "to": "return { ok: true };" },
   { "id": "R2", "note": "an authentication rejection not named as such", "from": "if (status === 401 || status === 403) return fail(\"AUTH_REJECTED\");", "to": "" },
-  { "id": "R3", "note": "no hard deadline: a hanging session is never aborted", "from": "const timer = setTimeout(() => { abort.abort(); }, input.deadlineMs);", "to": "const timer = setTimeout(() => undefined, input.deadlineMs);" },
+  { "id": "R3", "note": "no hard deadline: a hanging session is never aborted", "from": "timer = setTimeout(() => { abort.abort(); resolve(\"deadline\"); }, input.deadlineMs);", "to": "timer = setTimeout(() => undefined, input.deadlineMs);" },
+  { "id": "R11", "note": "the deadline trusts the SDK: the wait is on the session alone, and a deaf iterator hangs the probe (review 2026-09-14, point 5)", "from": "const first = await Promise.race([session.then(outcome => ({ settled: \"session\" as const, outcome }), () => ({ settled: \"error\" as const })), deadline]);", "to": "const first = await session.then(outcome => ({ settled: \"session\" as const, outcome }), () => ({ settled: \"error\" as const }));" },
+  { "id": "R12", "note": "the deadline aborts the session but does not end the wait", "from": "timer = setTimeout(() => { abort.abort(); resolve(\"deadline\"); }, input.deadlineMs);", "to": "timer = setTimeout(() => { abort.abort(); }, input.deadlineMs);" },
+  { "id": "R13", "note": "a session that failed after the SDK was called read as live", "from": "return first.settled === \"session\" ? first.outcome : fail(\"SDK_ERROR\");", "to": "return first.settled === \"session\" ? first.outcome : { ok: true };" },
   { "id": "R4", "note": "the whole process environment passed through, ANTHROPIC_API_KEY included", "from": "  for (const name of osVariableNames()) {", "to": "  for (const name of Object.keys(processEnv)) {" },
   { "id": "R5", "note": "more than one turn allowed", "from": "maxTurns: 1,", "to": "maxTurns: 16," },
   { "id": "R6", "note": "user settings loaded", "from": "settingSources: [],", "to": "settingSources: [\"user\"] as [],\n" },

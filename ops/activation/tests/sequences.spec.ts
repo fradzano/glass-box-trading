@@ -171,9 +171,49 @@ describe("activation sequences — backward paths", () => {
     openAttempt(world, "a2", NEXT_TUE);
     const retry = runUntil(world, scheduleFor(NEXT_MON, NEXT_TUE), utcOf(NEXT_TUE, 15, 30));
     expect(retry.filter(item => item.decision.kind === "abort").map(item => `${clock(item)} ${reason(item.decision) ?? ""}`)).toEqual([]);
-    expect(stepsInOrder(retry)).toEqual(executionOrder().slice(executionOrder().indexOf("4-enable")));
+    // Review of 2026-09-14, point 3: the preflight and the flat check run again; the installation and the certificate carry over.
+    expect(stepsInOrder(retry)).toEqual(["0-preflight", "3-flat", ...executionOrder().slice(executionOrder().indexOf("4-enable"))]);
     expect(retry.at(-1)?.decision.kind).toBe("done");
     expect(world.certificateLine).toBe(CERT_PATH);
+    expectSafe(retry);
+  });
+
+  /** The first attempt of ACT-24, ended by a red gate: the state every retry below starts from. */
+  function afterRedGate(): SimWorld {
+    const world = started();
+    const first = runUntil(world, SCHEDULE, utcOf(TUE, 16, 10), (w, now) => {
+      if (now.date === TUE && now.minute === 14 * 60 + 34) w.checks.readiness.status = "paused";
+    });
+    expect(reason(onlyAbort(first).entry.decision)).toBe("GATE_RED");
+    return world;
+  }
+
+  it("review 2026-09-14, point 3: a retry more than fourteen days after the alert confirmation stops at step 0, and nothing is enabled", () => {
+    const world = afterRedGate();
+    const LATE_MON = "2026-10-05";
+    const LATE_TUE = "2026-10-06";
+    world.nowUtcMs = utcOf(LATE_MON, 15, 0);
+    ownerPausesChecks(world);
+    openAttempt(world, "a2", LATE_TUE);
+    const retry = runUntil(world, scheduleFor(LATE_MON, LATE_TUE), utcOf(LATE_MON, 23, 0));
+    const { entry, index } = onlyAbort(retry);
+    expect([clock(entry), entry.decision.kind === "abort" ? entry.decision.step : null, reason(entry.decision)]).toEqual([`${LATE_MON} 15:30`, "0-preflight", "PREFLIGHT_RED"]);
+    expect(retry.slice(index + 1).every(item => item.decision.kind === "ended")).toBe(true);
+    expect(retry.some(item => item.cycleEnabled || item.watchdogEnabled)).toBe(false);
+    expectSafe(retry);
+  });
+
+  it("review 2026-09-14, point 3: a retry whose dev account is no longer flat stops at step 3, and nothing is enabled", () => {
+    const world = afterRedGate();
+    world.nowUtcMs = utcOf(NEXT_MON, 15, 0);
+    ownerPausesChecks(world);
+    world.devPositions = 1;
+    openAttempt(world, "a2", NEXT_TUE);
+    const retry = runUntil(world, scheduleFor(NEXT_MON, NEXT_TUE), utcOf(NEXT_MON, 23, 0));
+    const { entry, index } = onlyAbort(retry);
+    expect([clock(entry), entry.decision.kind === "abort" ? entry.decision.step : null, reason(entry.decision)]).toEqual([`${NEXT_MON} 15:35`, "3-flat", "DEV_ACCOUNT_NOT_FLAT"]);
+    expect(retry.slice(index + 1).every(item => item.decision.kind === "ended")).toBe(true);
+    expect(retry.some(item => item.cycleEnabled || item.watchdogEnabled)).toBe(false);
     expectSafe(retry);
   });
 

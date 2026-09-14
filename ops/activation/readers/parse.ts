@@ -137,6 +137,9 @@ interface RawTask {
   readonly state: string;
   readonly actions: readonly { readonly execute: string; readonly argumentLine: string }[];
   readonly startBoundaries: readonly (string | null)[];
+  readonly runLevel: string | null;
+  readonly logonType: string | null;
+  readonly startWhenAvailable: boolean | null;
 }
 
 /**
@@ -164,7 +167,14 @@ function parseTaskList(text: string): Reading<readonly RawTask[]> {
       const boundary = trigger["StartBoundary"];
       startBoundaries.push(typeof boundary === "string" ? boundary : null);
     }
-    tasks.push({ name: item["TaskName"], state: item["State"], actions, startBoundaries });
+    // Review of 2026-09-14, point 4. The reader prints the enums by name; a number means the reader changed, and is refused.
+    const runLevel = item["RunLevel"] ?? null;
+    if (runLevel !== null && typeof runLevel !== "string") return unknown(`${item["TaskName"]}: RunLevel is not text`);
+    const logonType = item["LogonType"] ?? null;
+    if (logonType !== null && typeof logonType !== "string") return unknown(`${item["TaskName"]}: LogonType is not text`);
+    const startWhenAvailable = item["StartWhenAvailable"] ?? null;
+    if (startWhenAvailable !== null && typeof startWhenAvailable !== "boolean") return unknown(`${item["TaskName"]}: StartWhenAvailable is not a boolean`);
+    tasks.push({ name: item["TaskName"], state: item["State"], actions, startBoundaries, runLevel, logonType, startWhenAvailable });
   }
   return known(tasks);
 }
@@ -200,13 +210,13 @@ export function parseDisarm(text: string, names: TaskNames): Reading<DisarmObser
   if (!list.known) return list;
   const task = single(list.value, names.disarm);
   if (!task.known) return task;
-  if (task.value === null) return known({ registered: false, fires: null, state: null, actions: [] });
+  if (task.value === null) return known({ registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null });
   const boundary = task.value.startBoundaries[0];
   if (task.value.startBoundaries.length !== 1 || boundary === undefined || boundary === null) return unknown(`${names.disarm} has ${String(task.value.startBoundaries.length)} triggers`);
   const utcMs = parseIsoInstant(boundary);
   if (utcMs === null) return unknown(`${names.disarm} trigger has no zoned start`);
-  // Every action and the state, verbatim: the core judges what the one-shot would run (review of 2026-09-14, point 2).
-  return known({ registered: true, fires: berlinLocal(utcMs), state: task.value.state, actions: task.value.actions });
+  // Every action, the state, the principal and the settings, verbatim: the core judges what the one-shot would run and how (review of 2026-09-14, points 2 and 4).
+  return known({ registered: true, fires: berlinLocal(utcMs), state: task.value.state, actions: task.value.actions, runLevel: task.value.runLevel, logonType: task.value.logonType, startWhenAvailable: task.value.startWhenAvailable });
 }
 
 // ---------------------------------------------------------------------------

@@ -42,7 +42,11 @@ try {
     }
     writeFileSync(target, originalText.replace(mutant.from, mutant.to), "utf8");
     // One command string with shell: true — Windows cannot spawn npx.cmd without a shell.
-    const run = spawnSync(`npx.cmd vitest run --config ops/vitest.config.ts${onlySpec === undefined ? "" : ` ${onlySpec}`}`, { encoding: "utf8", shell: true });
+    // A spec under tests/ is a runtime test (a mutant in src/): it runs under the root configuration, which compiles src/ first.
+    const command = onlySpec === undefined ? "npx.cmd vitest run --config ops/vitest.config.ts"
+      : onlySpec.startsWith("tests/") ? `npx.cmd vitest run ${onlySpec}`
+        : `npx.cmd vitest run --config ops/vitest.config.ts ${onlySpec}`;
+    const run = spawnSync(command, { encoding: "utf8", shell: true });
     results.push({ id: mutant.id, status: run.status !== 0 ? "CAUGHT" : "SURVIVED", note: mutant.note });
     writeFileSync(target, original);
   }

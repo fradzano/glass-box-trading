@@ -95,6 +95,8 @@ export interface SimWorld {
   mixedUpLivenessPing?: boolean;
   /** The cycle task reads enabled but never starts, as an S4U logon failure would leave it (ACT-43). */
   cycleStalled?: boolean;
+  /** Positions left on the dev account, as a manual test between attempts would leave them (review 2026-09-14, point 3). */
+  devPositions?: number;
   alertConfirmedUtcMs: number;
   /** Crash the next invocation that acts on this step: after its intent, before or after its actions. */
   crash: { step: StepId; afterActions: boolean } | null;
@@ -295,7 +297,7 @@ export function observe(world: SimWorld): Observations {
     resolvedAccountMasked: known(ACCOUNT),
     deploymentDigests: known({ runtimeDigest: "r1", policyDigest: "p1" }),
     certificate: known(world.nowUtcMs >= world.certificateReadyAtUtcMs ? { path: CERT_PATH, verdict: world.certificateVerdict, digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: world.certificateVerdict === "PASS" ? [] : ["certificate verdict is not PASS"] } : null),
-    devAccount: known({ positions: 0, nonTerminalOrders: 0 }),
+    devAccount: known({ positions: world.devPositions ?? 0, nonTerminalOrders: 0 }),
     bootUtcMs: known(world.bootUtcMs),
     cycleLog: known([...world.cycleLog]),
     watchdogLog: known([...world.watchdogLog]),
@@ -318,8 +320,8 @@ export function observe(world: SimWorld): Observations {
     schedulerCheck: known({ passed: installed, checkCount: 51, failedChecks: installed ? 0 : 2 }),
     schedulerCheckExpectEnabled: known({ passed: installed && bothEnabled, checkCount: 53, failedChecks: installed && bothEnabled ? 0 : 2 }),
     disarm: known(world.disarm.registered && world.disarm.fires !== null
-      ? { registered: true, fires: world.disarm.fires, state: "Ready", actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${world.disarm.fires.date}` }] }
-      : { registered: false, fires: null, state: null, actions: [] }),
+      ? { registered: true, fires: world.disarm.fires, state: "Ready", actions: [{ execute: NODE, argumentLine: `"${REPO}\\ops\\activation\\cli.ts" disarm --state-root "${ACTIVATION_ROOT}" --anchor-day ${world.disarm.fires.date}` }], runLevel: "Highest", logonType: "S4U", startWhenAvailable: true }
+      : { registered: false, fires: null, state: null, actions: [], runLevel: null, logonType: null, startWhenAvailable: null }),
     bootstrapEntry: known(world.bootstrap),
   };
 }

@@ -1,0 +1,7 @@
+[
+  { "id": "A1", "note": "a success subtype that ended on an API error taken as the answer (review 2026-09-14, point 1)", "from": "else if (message.is_error) failure = ", "to": "else if (false) failure = " },
+  { "id": "A2", "note": "a session without any result message returns an empty answer instead of failing", "from": "if (!sawResult) throw new Error(\"analyst session ended without a result message\");", "to": "" },
+  { "id": "A3", "note": "a recorded failure never thrown", "from": "if (failure !== null) throw new Error(", "to": "if (false) throw new Error(" },
+  { "id": "A4", "note": "the API status dropped from the failure, so the skip no longer says which error it was", "from": " HTTP ${String(message.api_error_status)}", "to": "" },
+  { "id": "A5", "note": "the result message never noticed", "from": "          sawResult = true;", "to": "" }
+]

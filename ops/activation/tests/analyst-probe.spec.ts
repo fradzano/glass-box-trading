@@ -97,6 +97,37 @@ describe("analyst probe — what counts as live", () => {
     expect(seen.aborted).toBe(true);
   });
 
+  it("returns fail-closed inside its outer deadline when the iterator ignores the abort and never settles (review 2026-09-14, point 5)", async () => {
+    const deaf: ProbeQuery = () => ({
+      [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<unknown>>(() => { /* never settles, and never looks at the abort signal */ }) }),
+    });
+    const started = Date.now();
+    const outcome = await Promise.race([probe(deaf, { deadlineMs: 50 }), new Promise<string>(resolve => { setTimeout(() => { resolve("STILL_WAITING"); }, 2_000); })]);
+    expect(outcome).toEqual({ ok: false, failureClass: "TIMEOUT" });
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  it("does not count a success that a deaf iterator delivers after the deadline", async () => {
+    const late: ProbeQuery = () => {
+      let delivered = false;
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<unknown>>(resolve => {
+            if (delivered) { resolve({ done: true, value: undefined }); return; }
+            delivered = true;
+            setTimeout(() => { resolve({ done: false, value: SUCCESS }); }, 300);
+          }),
+        }),
+      };
+    };
+    expect(await probe(late, { deadlineMs: 50 })).toEqual({ ok: false, failureClass: "TIMEOUT" });
+  });
+
+  it("is not live when the SDK's iterator cannot even be obtained, and says SDK_ERROR", async () => {
+    const broken: ProbeQuery = () => ({ [Symbol.asyncIterator]: () => { throw new Error("iterator unavailable"); } });
+    expect(await probe(broken)).toEqual({ ok: false, failureClass: "SDK_ERROR" });
+  });
+
   it("carries no text of the SDK's in any class", () => {
     const outcome = classifyResultMessage({ type: "result", subtype: "error_during_execution", errors: ["token sk-ant-oat01-test-only leaked"] });
     expect(JSON.stringify(outcome)).not.toContain("sk-ant");

@@ -8,5 +8,10 @@
   { "id": "C7", "note": "a reminder exactly one period after the down flip refused", "from": "if (claim.reminderReceivedUtcMs - down < REMINDER_PERIOD_MS) {", "to": "if (claim.reminderReceivedUtcMs - down <= REMINDER_PERIOD_MS) {" },
   { "id": "C8", "note": "confirmation dated by the newest receipt", "from": "Math.min(alerts.liveness, alerts.readiness, alerts.watchdog, claim.reminderReceivedUtcMs)", "to": "Math.max(alerts.liveness, alerts.readiness, alerts.watchdog)" },
   { "id": "C9", "note": "a confirmation without an operator accepted", "from": "if (claim.operator.trim().length === 0) reasons.push(", "to": "if (false) reasons.push(" },
-  { "id": "C10", "note": "the reminder period shrunk to a minute", "from": "export const REMINDER_PERIOD_MS = 3_600_000;", "to": "export const REMINDER_PERIOD_MS = 60_000;" }
+  { "id": "C10", "note": "the reminder period shrunk to a minute", "from": "export const REMINDER_PERIOD_MS = 3_600_000;", "to": "export const REMINDER_PERIOD_MS = 60_000;" },
+  { "id": "C11", "note": "a reminder receipt after now accepted (review 2026-09-14, point 2)", "from": "if (claim.reminderReceivedUtcMs > nowUtcMs) reasons.push(", "to": "if (false) reasons.push(" },
+  { "id": "C12", "note": "an alert receipt after now accepted (review 2026-09-14, point 2)", "from": "if (alertUtcMs > nowUtcMs) {", "to": "if (false) {" },
+  { "id": "C13", "note": "an unreadable now compared against as if it were an instant", "from": "if (!Number.isSafeInteger(nowUtcMs)) return { ok: false, reasons: [\"now.unreadable\"] };", "to": "" },
+  { "id": "C14", "note": "a reminder receipt at exactly now refused", "from": "if (claim.reminderReceivedUtcMs > nowUtcMs)", "to": "if (claim.reminderReceivedUtcMs >= nowUtcMs)" },
+  { "id": "C15", "note": "an alert receipt at exactly now refused", "from": "if (alertUtcMs > nowUtcMs) {", "to": "if (alertUtcMs >= nowUtcMs) {" }
 ]

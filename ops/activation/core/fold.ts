@@ -3,12 +3,17 @@
 // Three rules carry it, and each answers a finding of the spec's review rounds:
 // - An `abort` entry ends its attempt. No later invocation of that attempt may
 //   act, whatever the world then looks like (round 5, A3).
-// - Steps 0 to 3 are facts about the artefact — the host, the installation, the
-//   certificate, the flat dev account — and carry over from any attempt. Every
-//   later step asserts something about one attempt's day and counts only inside
-//   that attempt, so a retry can never inherit yesterday's reboot proof (round 5,
-//   A2). An attempt has exactly one anchor day; scoping to the attempt is the
-//   stricter form of scoping to the day.
+// - Steps 1 and 2 are facts about the artefact — the installation, which every
+//   invocation re-checks by value, and the certificate, which every invocation
+//   re-validates against freshly printed digests — and carry over from any attempt.
+//   Every other step counts only inside the attempt that ran it. Steps 0 and 3 are
+//   facts about now: the alert confirmation's age, the token, the host, the disk,
+//   and whether the dev account is flat (review of 2026-09-14, point 3). The later
+//   steps assert something about one attempt's day, so a retry can never inherit
+//   yesterday's reboot proof (round 5, A2). An attempt has exactly one anchor day;
+//   scoping to the attempt is the stricter form of scoping to the day.
+// - The latest earlier preflight stays visible as `previousPreflight`, so that a new
+//   attempt's step 0 can hold the wrappers to the baseline they had.
 // - An intent without a following result is an interrupted step, never a done one.
 //
 // Pure: the ledger is already parsed, and nothing here reads a clock.
@@ -55,11 +60,13 @@ export interface LedgerFold {
   readonly corrections: readonly number[];
   /** Ledger shapes that make the phase ambiguous even though every line parsed. */
   readonly inconsistencies: readonly string[];
+  /** The latest `0-preflight` result of an earlier attempt that came back ok: the baseline a new attempt's step 0 keeps. */
+  readonly previousPreflight: StepState | null;
 }
 
-/** The steps whose results are facts about the artefact rather than about one day. */
+/** The steps whose results are facts about the artefact rather than about now or one day. */
 export function carriesOver(step: StepId): boolean {
-  return step === "0-preflight" || step === "1-install" || step === "2-certificate" || step === "3-flat";
+  return step === "1-install" || step === "2-certificate";
 }
 
 function correctedSeq(entry: LedgerEntry): number | null {
@@ -101,7 +108,7 @@ export function foldLedger(parsed: ParsedLedger): LedgerFold {
   const inconsistencies: string[] = [];
 
   if (lastEntry === null) {
-    return { integrity: ledgerIntegrity(parsed), empty: true, lastEntry: null, currentAttempt: null, attemptEnded: null, steps: {}, interrupted: null, corrections, inconsistencies };
+    return { integrity: ledgerIntegrity(parsed), empty: true, lastEntry: null, currentAttempt: null, attemptEnded: null, steps: {}, interrupted: null, corrections, inconsistencies, previousPreflight: null };
   }
 
   // Attempts must be contiguous runs, each with one anchor day.
@@ -132,6 +139,7 @@ export function foldLedger(parsed: ParsedLedger): LedgerFold {
 
   const steps: Partial<Record<StepId, StepState>> = {};
   let attemptEnded: AttemptEnd | null = null;
+  let previousPreflight: StepState | null = null;
   for (const entry of entries) {
     const inCurrent = entry.attempt === currentId;
     if (entry.kind === "abort" && inCurrent && attemptEnded === null) {
@@ -139,6 +147,9 @@ export function foldLedger(parsed: ParsedLedger): LedgerFold {
     }
     const step = entry.step;
     if (step === null) continue;
+    if (step === "0-preflight" && !inCurrent && entry.kind === "result" && (entry.outcome === "ok" || entry.outcome === "already_in_target_state")) {
+      previousPreflight = withResult(undefined, entry, step);
+    }
     if (!carriesOver(step) && !inCurrent) continue;
     if (entry.kind === "intent") steps[step] = withIntent(steps[step], entry, step);
     if (entry.kind === "result") steps[step] = withResult(steps[step], entry, step);
@@ -151,7 +162,7 @@ export function foldLedger(parsed: ParsedLedger): LedgerFold {
     if (open && (interrupted === null || (interrupted.intentSeq ?? 0) < state.intentSeq)) interrupted = state;
   }
 
-  return { integrity: ledgerIntegrity(parsed), empty: false, lastEntry, currentAttempt, attemptEnded, steps, interrupted, corrections, inconsistencies };
+  return { integrity: ledgerIntegrity(parsed), empty: false, lastEntry, currentAttempt, attemptEnded, steps, interrupted, corrections, inconsistencies, previousPreflight };
 }
 
 /** Whether a step counts as done for the current attempt. `already_in_target_state` is done; `unknown` is not (A1). */

@@ -203,6 +203,13 @@ export interface DisarmObservation {
   readonly fires: LocalInstant | null;
   readonly state: string | null;
   readonly actions: readonly TaskAction[];
+  /**
+   * `Principal.RunLevel`, `Principal.LogonType` and `Settings.StartWhenAvailable` as the scheduler
+   * prints them (review of 2026-09-14, point 4); null when the reading carried none.
+   */
+  readonly runLevel: string | null;
+  readonly logonType: string | null;
+  readonly startWhenAvailable: boolean | null;
 }
 
 /** The long-run journal's `BOOTSTRAP` entry, which step 11 records as the start of the measurement period. */

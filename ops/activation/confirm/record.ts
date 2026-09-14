@@ -103,14 +103,15 @@ function instantOf(iso: string): number {
 
 /**
  * The line to append, or why none may be written. Any API reading that could not be taken
- * refuses (A1); the cross-check of `core/confirmation.ts` must pass; and a line that would
- * carry anything credential-shaped is refused by shape, whatever produced it.
+ * refuses (A1); the cross-check of `core/confirmation.ts` must pass, against the moment of
+ * writing, so that no receipt after it is written (review of 2026-09-14, point 2); and a
+ * line that would carry anything credential-shaped is refused by shape, whatever produced it.
  */
 export function buildConfirmation(
   args: ConfirmArgs,
   summaries: Reading<Readonly<Record<CheckName, CheckSummary>>>,
   flips: Readonly<Record<CheckName, Reading<readonly CheckFlip[]>>>,
-  recordedAtIso: string,
+  nowUtcMs: number,
 ): ConfirmationResult {
   if (!summaries.known) return { ok: false, reasons: [`checks: ${summaries.reason}`] };
   const liveness = flips.liveness;
@@ -128,7 +129,7 @@ export function buildConfirmation(
     bundledAlert: args.bundledAlert,
     reminderReceivedUtcMs: instantOf(args.reminderReceivedAt),
     reminderListed: args.reminderListed,
-  }, { liveness: liveness.value, readiness: readiness.value, watchdog: watchdog.value });
+  }, { liveness: liveness.value, readiness: readiness.value, watchdog: watchdog.value }, nowUtcMs);
   if (!cross.ok) return { ok: false, reasons: cross.reasons };
 
   const fingerprints = { liveness: summaries.value.liveness.fingerprint, readiness: summaries.value.readiness.fingerprint, watchdog: summaries.value.watchdog.fingerprint };
@@ -145,7 +146,7 @@ export function buildConfirmation(
       watchdog: new Date(cross.downFlipUtcMs.watchdog).toISOString(),
     },
     crossCheck: "passed",
-    recordedAt: recordedAtIso,
+    recordedAt: new Date(nowUtcMs).toISOString(),
   });
   if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(line) || /hc-ping\.com|healthchecks\.io/i.test(line)) {
     return { ok: false, reasons: ["the line would carry a credential-shaped value"] };

@@ -184,12 +184,20 @@ export function definitionFindings(name: TaskName, task: TaskObservation): reado
 /**
  * Spec §6 by value (review of 2026-09-14, point 2): the one-shot is the second layer only if
  * it will fire — its state is not `Disabled` — and if what it runs is exactly this attempt's
- * disarm: one action, the registered node, the activation CLI in `disarm` mode, this attempt's
- * state root and anchor day, nothing else. A trigger at 15:05 that runs anything else is red.
+ * disarm: one action, the expected node by its full path, the activation CLI in `disarm` mode,
+ * this attempt's state root and anchor day, nothing else. A trigger at 15:05 that runs anything
+ * else is red. Point 4 of the same review: it must also run as the spec registers it —
+ * `Highest`, because only an elevated process may disable tasks whose definitions `felix` can
+ * only read; `S4U`, because nobody is signed in at 15:05; and `StartWhenAvailable`, because a
+ * machine that was off or rebooting at 15:05 must still disarm when it comes back. Principal and
+ * settings are judged before the action, so one finding never hides another.
  */
 export function disarmFindings(disarm: DisarmObservation, schedule: Schedule): readonly string[] {
   const findings: string[] = [];
   if (disarm.state === null || taskEnabled(disarm.state) !== true) findings.push(`disarm.state:${disarm.state ?? "absent"}`);
+  if (disarm.runLevel !== "Highest") findings.push(`disarm.run-level:${disarm.runLevel ?? "absent"}`);
+  if (disarm.logonType !== "S4U") findings.push(`disarm.logon-type:${disarm.logonType ?? "absent"}`);
+  if (disarm.startWhenAvailable !== true) findings.push(`disarm.start-when-available:${disarm.startWhenAvailable === null ? "absent" : "false"}`);
   const action = disarm.actions[0];
   if (disarm.actions.length !== 1 || action === undefined) return [...findings, `disarm.actions:${String(disarm.actions.length)}`];
   if (action.execute.trim().toLowerCase() !== schedule.nodePath.toLowerCase()) findings.push("disarm.execute");
@@ -213,8 +221,8 @@ function recordedNumber(fold: LedgerFold, step: StepId, key: string): number | n
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
-function recordedStringRecord(fold: LedgerFold, step: StepId, key: string): Readonly<Record<string, string>> | null {
-  const value = fold.steps[step]?.resultEvidence?.[key];
+/** An evidence value that is an object of strings, or null for anything else. */
+function stringRecordOf(value: unknown): Readonly<Record<string, string>> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const result: Record<string, string> = {};
   for (const [name, item] of Object.entries(value)) {
@@ -222,6 +230,10 @@ function recordedStringRecord(fold: LedgerFold, step: StepId, key: string): Read
     result[name] = item;
   }
   return result;
+}
+
+function recordedStringRecord(fold: LedgerFold, step: StepId, key: string): Readonly<Record<string, string>> | null {
+  return stringRecordOf(fold.steps[step]?.resultEvidence?.[key]);
 }
 
 function resultAt(fold: LedgerFold, step: StepId): number | null {
@@ -428,6 +440,14 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   if (observations.hostPreconditions.known) {
     for (const name of sameRecord(schedule.expectedHostPreconditions, observations.hostPreconditions.value)) red.push(`host.${name}`);
   }
+  // Review of 2026-09-14, point 3: a new attempt runs step 0 again, but the wrappers keep the baseline the previous
+  // attempt's preflight recorded — tools/*.ps1 is outside the runtime digest, so nothing else would notice a change.
+  const previous = fold.previousPreflight;
+  if (previous !== null && observations.wrapperHashes.known) {
+    const baseline = stringRecordOf(previous.resultEvidence?.["wrapperHashes"]);
+    if (baseline === null || wrapperNames().some(name => baseline[name] === undefined)) red.push("ledger.previous-preflight.wrapperHashes-missing");
+    else for (const name of wrapperNames()) if (observations.wrapperHashes.value[name] !== baseline[name]) red.push(`wrapper.${name}.sha256-changed-since-previous-attempt`);
+  }
   if (observations.freeDiskBytes.known && observations.freeDiskBytes.value < schedule.minFreeDiskBytes) red.push("host.free-disk");
   if (observations.analyst.known) {
     if (!observations.analyst.value.oauthTokenPresent) red.push("analyst.oauth-token-absent");
@@ -441,17 +461,18 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   } else if (observations.checks.known) {
     // Review of 2026-09-14, point 3: the command's cross-check is repeated against the live flip history,
     // each check's recorded down flip must be the one the history assigns, and the confirmation is dated by
-    // the oldest receipt it rests on, as an exact duration.
+    // the oldest receipt it rests on, as an exact duration. Point 2 of the same review: against now, so that
+    // no single receipt may lie after it.
     const live = observations.checks.value;
-    const cross = crossCheckAlerts(confirmation, { liveness: live.liveness.flips, readiness: live.readiness.flips, watchdog: live.watchdog.flips });
+    const cross = crossCheckAlerts(confirmation, { liveness: live.liveness.flips, readiness: live.readiness.flips, watchdog: live.watchdog.flips }, observations.nowUtcMs);
     if (!cross.ok) {
       for (const reason of cross.reasons) red.push(`alert-confirmation.${reason}`);
     } else {
       for (const name of checkNames()) {
         if (cross.downFlipUtcMs[name] !== confirmation.downFlipUtcMs[name]) red.push(`alert-confirmation.${name}.down-flip-differs-from-recorded`);
       }
-      const age = observations.nowUtcMs - cross.oldestReceiptUtcMs;
-      if (age < 0 || age > ALERT_CONFIRMATION_MAX_AGE_MS) red.push("alert-confirmation.stale-or-future");
+      // No receipt lies after now (the cross-check refused it), so the age cannot be negative; only staleness remains.
+      if (observations.nowUtcMs - cross.oldestReceiptUtcMs > ALERT_CONFIRMATION_MAX_AGE_MS) red.push("alert-confirmation.stale");
       confirmationEvidence = {
         operator: confirmation.operator,
         alertReceivedUtcMs: confirmation.alertReceivedUtcMs,

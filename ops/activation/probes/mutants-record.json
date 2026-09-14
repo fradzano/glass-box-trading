@@ -3,5 +3,6 @@
   { "id": "Q2", "note": "an alert time without a zone accepted", "from": "if (parseIsoInstant(iso) === null) return refuse(", "to": "if (false) return refuse(" },
   { "id": "Q3", "note": "a check listed twice in the reminder accepted", "from": "if (reminderListed.includes(item)) return refuse(", "to": "if (false) return refuse(" },
   { "id": "Q4", "note": "a credential-shaped value written into the confirmation line", "from": "if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(line) || /hc-ping\\.com|healthchecks\\.io/i.test(line)) {", "to": "if (false) {" },
-  { "id": "Q5", "note": "--dry-run ignored: the command writes when told not to", "from": "      dryRun = true;", "to": "      dryRun = false;" }
+  { "id": "Q5", "note": "--dry-run ignored: the command writes when told not to", "from": "      dryRun = true;", "to": "      dryRun = false;" },
+  { "id": "Q6", "note": "the line cross-checked against the end of time instead of the moment of writing (review 2026-09-14, point 2)", "from": "watchdog: watchdog.value }, nowUtcMs);", "to": "watchdog: watchdog.value }, Number.MAX_SAFE_INTEGER);" }
 ]
