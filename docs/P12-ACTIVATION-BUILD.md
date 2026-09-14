@@ -1,7 +1,7 @@
 # P12 activation — build log
 
 The working record of building the activation script specified in
-[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 9 since 2026-09-14). It exists so that
+[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 10 since 2026-09-14). It exists so that
 a fresh session can continue from here without the transcript of the one before:
 every unit below is either done — with its commit — or not, and the next step is
 always named at the bottom.
@@ -58,8 +58,8 @@ always named at the bottom.
 | 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
 | 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions). **Corrected in unit 6:** `-MaxLogBytes` on the watchdog task (red-first test, mutant D67, probe 82/82) | `8b7b888`, fix in the unit 6 commit |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
-| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — independent reader/gate integrity review closed red-first at A=0/B=0; unit 8 not started | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da` (reader implementation), this integrity-repair commit |
-| 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | open | |
+| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — absolute schedule deadline restored beside the five-second lease; real step-10 14:55:01 counterexample and D119–D122 close the boundary | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da`, `fa0fbe7`, this commit |
+| 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | open | |
 | 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
 | 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
@@ -603,10 +603,56 @@ zero reports before later fixes are not counted.
 Unit 6 closed here: the simulator, 14 sequences, the retry-clause finding and the
 `-MaxLogBytes` correction to unit 5. Nothing was run on the host.
 
+## Unit 7 absolute-deadline repair and unit 8 — 2026-09-14
+
+An executed counterexample through the real step-10 action first failed: a decision
+at 14:54:58 produced a check lease through 14:55:03, and the old authorization still
+accepted an action at 14:55:01. The action now carries the canonical absolute 14:55
+deadline as well as the five-second lease. `authorizeCertificateWrite` accepts exact
+equality, refuses the first millisecond after either boundary, rejects clocks before
+the observation and invalid numeric contracts, and step 10 rejects a supplied UTC
+deadline that does not denote 14:55 on the anchor day. D119 removes the absolute field,
+D120 ignores it, D121 weakens equality, and D122 removes schedule consistency.
+
+Unit 8 adds `actions/apply.ts` and the pure `.env` transformer. Every WorldAction is
+behind a typed fakeable port. Certificate writes validate the entire certificate with
+the runtime validator, compare fresh deployment digests, freshly read Healthchecks and
+a fresh clock, then give the same authorization to the atomic CAS for a second check
+at linearisation. They reread `.env` and repeat both digest checks after the write. A
+known-not-applied CAS preserves concurrent `.env` edits; an uncertain partial write
+removes every certificate latch without overwriting unrelated current bytes and tries
+to disable both tasks. Port errors become fixed credential-free codes. Mutating ports
+receive an AbortSignal; timeout handling aborts and awaits settlement before
+compensation or return. An incomplete enable disables every requested task. Restart
+success is marked `await-post-boot`, and install evidence retains the verifier count
+and both action lines.
+
+This unit owns action orchestration and the branded authorized-CAS constructor. Its
+port contract requires abort, settlement and no later effect; a port that ignores that
+contract is not claimed bounded by the shell. Concrete Windows, Healthchecks and
+restart adapter bindings remain unit 13, as the canonical plan requires.
+
+The red evidence included the original 14:55:01 acceptance, late write-linearisation,
+post-mutation CAS failure, changed post-write digests, duplicate latch removal,
+credential-shaped port reasons, a clock throw, lost acknowledgements, a late effect
+after timeout, and concurrent `.env` changes. All unit-8 tests use fakes and fixtures;
+no host, broker or Healthchecks port was bound or invoked.
+
+Final relevant mutation runs are green and restored every target byte-identically:
+decision core 121/121 (including D119–D122), action shell 18/18, and `.env`
+transformation 4/4. Together with the previously closed inventory this is 350 caught
+mutants. The final activation suite passes 368/368. The complete repository
+`npm run verify` passes at 48 files / 670 tests, followed by every architecture,
+fixture, dashboard, sandbox and implementation-phase gate.
+
 ## Next step
 
-**Unit 8: do not start in this session.** Unit 7 is honestly closed by the integrity
-repair above. Unit 8 belongs to the next session.
+**Unit 9 only; do not begin it in this session.** The 2026-09-14 Activation/Disarm
+calendar run did not occur: there is no Activation task, no Disarm task and no state
+root, so nothing is planned retroactively. The next plausible supervised block is the
+certificate and drills on 2026-09-21 with the anchor on 2026-09-22. Before that run,
+capture the real alert/reminder receipt times and execute `confirm-alerts` under the
+owner's controlled procedure.
 
 What unit 7 fixed for the units after it:
 
@@ -625,7 +671,7 @@ What unit 7 fixed for the units after it:
 - A full local read takes about 52 s on this host (measured 2026-09-14), most of it the two
   verifier runs; the invocation cadence and the 13:50–13:59 re-arm window must leave room.
 
-Unit 8 (actions): enable and disable both tasks; register the disarm one-shot as spec §6
+Unit 8 (actions, now implemented): enable and disable both tasks; register the disarm one-shot as spec §6
 fixes it (`Highest`, `S4U`, `StartWhenAvailable`, the expected node, exactly the command
 line of `disarmFindings`) and delete it; restart; remove and write the certificate line in
 `.env` (replace in place, re-read, re-check duplicates, re-hash); clear the three checks
@@ -637,7 +683,7 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-After unit 8: units 9 (ledger store) and 10 (CLI).
+After unit 8: units 9 (ledger store) and 10 (CLI). Unit 9 has not started.
 
 ## Unit 7 brief, as it was given
 

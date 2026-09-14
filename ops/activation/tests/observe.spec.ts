@@ -185,7 +185,7 @@ describe("observe — a complete snapshot from the readers", () => {
     const opened = planLedgerAppend({ lastSeq: 0, lastAtUtcMs: null }, { at: "2026-09-21T15:00:00+02:00", atUtcMs: NOW - 1_800_000, attempt: "a1", anchorDay: "2026-09-22", step: null, kind: "note", outcome: null, evidence: {}, nextOwnerAction: null });
     if (!opened.ok) throw new Error(opened.reason);
     const expectedHost = { SleepAcSeconds: "0", HibernateAcSeconds: "0", HiberbootEnabled: "0", ActiveHoursStart: "9", ActiveHoursEnd: "3", AutoAdminLogon: "0", DisableAutomaticRestartSignOn: "1", ShutdownPrivilege: "present", AdministratorsMember: "yes" };
-    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", gateNotAfterUtcMs: Date.UTC(2026, 8, 22, 12, 55), longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
     const decision = decide(foldLedger(parseLedgerText(opened.line)), snapshot, schedule);
     // ARSO is still on (spec §3: the elevated step must switch it off), and gate condition 4 has not been recorded. Nothing else.
     expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true, evidence: { unknown: [], red: ["host.DisableAutomaticRestartSignOn", "alert-confirmation.absent"] } });

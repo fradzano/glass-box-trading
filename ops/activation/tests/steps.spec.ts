@@ -14,6 +14,7 @@ const SCHEDULE: Schedule = {
   certificateDay: "2026-09-21",
   drillNightDay: "2026-09-22",
   anchorDay: "2026-09-22",
+  gateNotAfterUtcMs: Date.UTC(2026, 8, 22, 12, 55),
   longRunAccountMasked: "PA3L…U97",
   coverageThroughDate: "2026-12-16",
   expectedHostPreconditions: {},

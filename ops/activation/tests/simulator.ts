@@ -64,7 +64,7 @@ function atString(utcMs: number): string {
 }
 
 export function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utcOf(anchorDay, 14, 55), longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
 }
 
 export interface SimCheck {

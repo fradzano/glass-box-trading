@@ -3,6 +3,13 @@
 Owner = Felix. Format: date — decision — rationale (one line each; this repo is
 small, no ADR split).
 
+- **2026-09-14 — A step-10 certificate write is authorized only while both the
+  canonical absolute 14:55 gate deadline and the five-second Healthchecks lease are
+  live.** Equality is valid; the first instant after either bound is fail-closed, and
+  the atomic `.env` CAS repeats the same authorization at linearisation. Unit 8 keeps
+  every external action behind ports that must abort, settle and have no later effect;
+  concrete host bindings remain unit 13 and restart remains intent-only.
+
 - **2026-08-24 — Enter the hackathon; framing: compete on every published
   criterion and treat P&L as declared variance.** One week of P&L is noise, but
   it is explicitly scored; pursue a positive absolute result inside declared

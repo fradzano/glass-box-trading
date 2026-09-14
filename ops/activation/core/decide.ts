@@ -37,12 +37,15 @@ const ALERT_CONFIRMATION_MAX_AGE_MS = 1_209_600_000;
 export const GATE_CHECK_MAX_AGE_MS = 5_000;
 
 export type CertificateWriteAction = Extract<WorldAction, { readonly kind: "write-certificate-line" }>;
-export type CertificateWriteAuthorization = { readonly ok: true } | { readonly ok: false; readonly reason: "ACTION_CLOCK_INVALID" | "ACTION_DEADLINE_EXPIRED" | "CHECKS_UNKNOWN" | "CHECK_CHANGED" };
+export type CertificateWriteAuthorization = { readonly ok: true } | { readonly ok: false; readonly reason: "ACTION_CLOCK_INVALID" | "ACTION_CONTRACT_INVALID" | "SCHEDULE_DEADLINE_EXPIRED" | "CHECK_LEASE_EXPIRED" | "CHECKS_UNKNOWN" | "CHECK_CHANGED" };
 
 /** The fresh re-read lease which unit 8 must consume immediately before writing `.env`. */
 export function authorizeCertificateWrite(action: CertificateWriteAction, actionUtcMs: number, freshChecks: Reading<Readonly<Record<CheckName, CheckObservation>>>): CertificateWriteAuthorization {
+  if (!Number.isSafeInteger(actionUtcMs)) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
+  if (![action.observedAtUtcMs, action.leaseNotAfterUtcMs, action.scheduleNotAfterUtcMs].every(Number.isSafeInteger) || action.leaseNotAfterUtcMs < action.observedAtUtcMs || action.scheduleNotAfterUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CONTRACT_INVALID" };
   if (actionUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
-  if (actionUtcMs > action.notAfterUtcMs) return { ok: false, reason: "ACTION_DEADLINE_EXPIRED" };
+  if (actionUtcMs > action.scheduleNotAfterUtcMs) return { ok: false, reason: "SCHEDULE_DEADLINE_EXPIRED" };
+  if (actionUtcMs > action.leaseNotAfterUtcMs) return { ok: false, reason: "CHECK_LEASE_EXPIRED" };
   if (!freshChecks.known) return { ok: false, reason: "CHECKS_UNKNOWN" };
   for (const name of ["liveness", "readiness", "watchdog"] as const) {
     const expected = action.expectedChecks[name];
@@ -788,7 +791,7 @@ function step9(fold: LedgerFold, observations: Observations, schedule: Schedule)
   return record("9-proof", "ok", { firing: { file: firing.file, utcMs: firing.utcMs, shape: firing.shape }, localWindow: "14:00-14:04", logFilesSearched: observations.logFilesSearched, sessionSamples: { before, after }, bootUtcMs });
 }
 
-function step10(fold: LedgerFold, observations: Observations): Decision {
+function step10(fold: LedgerFold, observations: Observations, schedule: Schedule): Decision {
   const path = recordedString(fold, "2-certificate", "certificatePath");
   if (path === null) return missingEvidence(fold, "10-gate", "the certificate path step 2 validated");
   const unknown: string[] = [];
@@ -816,9 +819,14 @@ function step10(fold: LedgerFold, observations: Observations): Decision {
   if (unknown.length > 0 || red.length > 0) {
     return abortAt(fold, "10-gate", "GATE_RED", "The gate is not green; the evidence names each failing condition. Nothing was armed.", { unknown, red });
   }
+  const minuteStartUtcMs = observations.nowUtcMs - ((observations.nowUtcMs % 60_000) + 60_000) % 60_000;
+  const canonicalGateDeadlineUtcMs = minuteStartUtcMs + (14 * 60 + 55 - observations.nowLocal.minute) * 60_000;
+  if (schedule.gateNotAfterUtcMs !== canonicalGateDeadlineUtcMs) {
+    return abortAt(fold, "10-gate", "SCHEDULE_DEADLINE_INVALID", "The supplied absolute gate deadline does not match 14:55 on the anchor day.", { suppliedUtcMs: schedule.gateNotAfterUtcMs, canonicalUtcMs: canonicalGateDeadlineUtcMs });
+  }
   const checkCount = verifier.known ? verifier.value.checkCount : null;
   return act("10-gate", [
-    { kind: "write-certificate-line", path, observedAtUtcMs: observations.checksObservedAtUtcMs, notAfterUtcMs: observations.checksObservedAtUtcMs + GATE_CHECK_MAX_AGE_MS, expectedChecks: observations.checks.known ? observations.checks.value : {} as Readonly<Record<CheckName, CheckObservation>> },
+    { kind: "write-certificate-line", path, observedAtUtcMs: observations.checksObservedAtUtcMs, leaseNotAfterUtcMs: observations.checksObservedAtUtcMs + GATE_CHECK_MAX_AGE_MS, scheduleNotAfterUtcMs: schedule.gateNotAfterUtcMs, expectedChecks: observations.checks.known ? observations.checks.value : {} as Readonly<Record<CheckName, CheckObservation>>, expectedDigests: observations.deploymentDigests.known ? observations.deploymentDigests.value : { runtimeDigest: "", policyDigest: "" } },
     { kind: "delete-disarm" },
   ], { certificatePath: path, schedulerCheckCount: checkCount, bootUtcMs, checksObservedAtUtcMs: observations.checksObservedAtUtcMs, decisionUtcMs: observations.nowUtcMs });
 }
@@ -865,7 +873,7 @@ function decideStep(step: StepId, fold: LedgerFold, observations: Observations, 
     case "8-reboot": return step8(fold, observations);
     case "7-rearm": return step7(fold, observations);
     case "9-proof": return step9(fold, observations, schedule);
-    case "10-gate": return step10(fold, observations);
+    case "10-gate": return step10(fold, observations, schedule);
     case "11-anchor": return step11(fold, observations, schedule);
   }
 }

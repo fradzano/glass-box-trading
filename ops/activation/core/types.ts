@@ -292,6 +292,8 @@ export interface Schedule {
   readonly drillNightDay: string;
   /** The day of the reboot, the gate and the first regular cycle. */
   readonly anchorDay: string;
+  /** The exact UTC instant at which step 10's authority ends; equality is still valid. */
+  readonly gateNotAfterUtcMs: number;
   /** The masked id of the long-run account the gate expects. */
   readonly longRunAccountMasked: string;
   /** The coverage date the installer is given, `YYYY-MM-DD` (spec §5, step 1). */
@@ -308,7 +310,7 @@ export interface Schedule {
 /** What the shell is asked to do to the world. Each variant is one effect; nothing else may change it. */
 export type WorldAction =
   | { readonly kind: "remove-certificate-line" }
-  | { readonly kind: "write-certificate-line"; readonly path: string; readonly observedAtUtcMs: number; readonly notAfterUtcMs: number; readonly expectedChecks: Readonly<Record<CheckName, CheckObservation>> }
+  | { readonly kind: "write-certificate-line"; readonly path: string; readonly observedAtUtcMs: number; readonly leaseNotAfterUtcMs: number; readonly scheduleNotAfterUtcMs: number; readonly expectedChecks: Readonly<Record<CheckName, CheckObservation>>; readonly expectedDigests: DigestPair }
   | { readonly kind: "enable-tasks"; readonly tasks: readonly TaskName[] }
   | { readonly kind: "disable-tasks"; readonly tasks: readonly TaskName[] }
   /** Re-register both tasks with the installer, then run the verifier; the action fails unless both exit 0. */

@@ -36,6 +36,8 @@
 - `fixtures/golden-journal.jsonl`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `LICENSE`
+- `ops/activation/actions/apply.ts` — Unit 8: the activation effect shell. Decisions arrive as closed WorldAction
+- `ops/activation/actions/env.ts` — Pure `.env` rewriting for activation actions. The shell replaces the whole file;
 - `ops/activation/confirm/record.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14).
 - `ops/activation/confirm-alerts.ts` — `activation confirm-alerts` — records the owner's confirmation of gate condition 4
 - `ops/activation/core/confirmation.ts` — The cross-check behind `activation confirm-alerts` (owner ruling 2026-09-14,
@@ -44,6 +46,8 @@
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
+- `ops/activation/probes/mutants-action-env.json`
+- `ops/activation/probes/mutants-actions.json`
 - `ops/activation/probes/mutants-analyst-claude.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
@@ -75,6 +79,7 @@
 - `ops/activation/readers/parse-healthchecks.ts` — Pure parsers for the healthchecks.io management API (build log, unit 7).
 - `ops/activation/readers/parse-host.ts` — Pure parsers for the host readers that complete unit 7 (build log, "Unit 7 — the I/O
 - `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
+- `ops/activation/tests/actions.spec.ts` — Unit 8: every effect is exercised only through fakes. These tests never spawn a
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
 - `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
 - `ops/activation/tests/confirmation.spec.ts` — The cross-check of gate condition 4 (owner ruling and review, 2026-09-14). The

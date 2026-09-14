@@ -8,19 +8,22 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-14 18:18 CEST. **P12 activation unit 7 is closed after the
-independent reader/gate integrity repair; unit 8 has not started and nothing is
-enabled.** The review reopened unit 7 at `bfdb4da` and found executable defects at the
-journal, clock/freshness, credential-origin, task-definition, SDK-lifecycle and retry
-boundaries. The repaired activation suite passes 346/346; all 324 old and new mutants
-are caught with byte-identical restoration; `npm run verify` completes with exit 0 at
-48 files / 670 tests; and two fresh independent six-lens reads each report A=0, B=0,
-C=0. The current reader implementation is `bfdb4da`; this closure is the subsequent
-integrity-repair commit, not an unnamed "readers commit". Final passive inventory before
-commit: exactly Cycle and Watchdog, both `Disabled`, no Activation or Disarm task.
-`confirm-alerts` remains unexecuted because the exact receipt times are unavailable.
-All older freeze and dirty-worktree statements below are historical cursors, not the
-current branch state. **Next session:** unit 8.
+**Last updated:** 2026-09-14 21:20 CEST. **P12 activation unit 7's absolute-deadline
+blocker is closed and unit 8 is complete; unit 9 has not started. Nothing was activated
+or changed on the host.** The real step-10 action was first red at 14:55:01 while its
+five-second lease still ran; authorization now requires both that lease and the
+canonical absolute 14:55 schedule deadline, including equality and both sides of each
+boundary. Unit 8 is a fake-only effect shell with typed ports, fresh checks/clock and
+the same authorization at certificate-write linearisation, pre/post certificate and
+deployment digest validation, credential-free failures, abort-and-settle timeouts,
+safe compensation, complete enable rollback, install evidence and intent-only reboot
+completion. The activation suite passes 368/368; all 350 mutants are caught with
+byte-identical restoration; full `npm run verify` passes at 48 files / 670 tests.
+Spec revision 10 and the build log own the full evidence. The 2026-09-14
+Activation/Disarm run did not happen; no Activation task, Disarm task or state root was
+created, and it is not planned retroactively. `confirm-alerts` remains unexecuted.
+Next plausible block: certificate/drills 2026-09-21, anchor 2026-09-22, after recording
+real receipt times and controlled `confirm-alerts`. **Next code unit: unit 9.**
 
 ## Historical cursors (not current state)
 

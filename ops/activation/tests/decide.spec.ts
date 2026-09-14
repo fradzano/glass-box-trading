@@ -75,7 +75,7 @@ const NO_DISARM: DisarmObservation = { registered: false, fires: null, state: nu
 const STILL_DOWN: CheckObservation["flips"] = [{ utcMs: CONFIRMED_DOWN, up: false }];
 
 function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utc([anchorDay, 14, 55]), longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
 }
 const SCHEDULE = scheduleFor(MON, TUE);
 
@@ -1093,7 +1093,7 @@ describe("decide — step 10, the gate", () => {
     expect(decide(fold, world, SCHEDULE)).toEqual({
       kind: "act",
       step: "10-gate",
-      actions: [{ kind: "write-certificate-line", path: CERT_PATH, observedAtUtcMs: utc(at), notAfterUtcMs: utc(at) + GATE_CHECK_MAX_AGE_MS, expectedChecks: world.checks.value }, { kind: "delete-disarm" }],
+      actions: [{ kind: "write-certificate-line", path: CERT_PATH, observedAtUtcMs: utc(at), leaseNotAfterUtcMs: utc(at) + GATE_CHECK_MAX_AGE_MS, scheduleNotAfterUtcMs: utc([TUE, 14, 55]), expectedChecks: world.checks.value, expectedDigests: { runtimeDigest: "r1", policyDigest: "p1" } }, { kind: "delete-disarm" }],
       evidence: { certificatePath: CERT_PATH, schedulerCheckCount: 53, bootUtcMs: utc([TUE, 13, 33]), checksObservedAtUtcMs: utc(at), decisionUtcMs: utc(at) },
     });
   });
@@ -1101,6 +1101,10 @@ describe("decide — step 10, the gate", () => {
   it("waits before 14:35 and aborts after 14:55", () => {
     expect(decide(fold, worldFor(fold, [TUE, 14, 34]), SCHEDULE).kind).toBe("wait");
     expect(abortReason(decide(fold, worldFor(fold, [TUE, 14, 56]), SCHEDULE))).toBe("STEP_DEADLINE_MISSED");
+  });
+
+  it("refuses a supplied absolute deadline that does not denote 14:55 on the anchor day", () => {
+    expect(abortReason(decide(fold, worldFor(fold, at), { ...SCHEDULE, gateNotAfterUtcMs: utc([TUE, 14, 55]) + 1 }))).toBe("SCHEDULE_DEADLINE_INVALID");
   });
 
   it("never arms from a healthcheck snapshot that aged past the pre-action bound", () => {
@@ -1116,12 +1120,33 @@ describe("decide — step 10, the gate", () => {
     const write = decision.actions.find(action => action.kind === "write-certificate-line");
     if (write === undefined) throw new Error("expected certificate write");
     const fresh = worldFor(fold, at).checks;
-    expect(authorizeCertificateWrite(write, utc(at) + 1, fresh)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, write.observedAtUtcMs, fresh)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, write.observedAtUtcMs + 1, fresh)).toEqual({ ok: true });
     expect(authorizeCertificateWrite(write, write.observedAtUtcMs - 1, fresh)).toEqual({ ok: false, reason: "ACTION_CLOCK_INVALID" });
-    expect(authorizeCertificateWrite(write, write.notAfterUtcMs + 1, fresh)).toEqual({ ok: false, reason: "ACTION_DEADLINE_EXPIRED" });
+    expect(authorizeCertificateWrite(write, Number.NaN, fresh)).toEqual({ ok: false, reason: "ACTION_CLOCK_INVALID" });
+    expect(authorizeCertificateWrite({ ...write, scheduleNotAfterUtcMs: write.observedAtUtcMs - 1 }, write.observedAtUtcMs, fresh)).toEqual({ ok: false, reason: "ACTION_CONTRACT_INVALID" });
+    expect(authorizeCertificateWrite(write, write.leaseNotAfterUtcMs - 1, fresh)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, write.leaseNotAfterUtcMs, fresh)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, write.leaseNotAfterUtcMs + 1, fresh)).toEqual({ ok: false, reason: "CHECK_LEASE_EXPIRED" });
     expect(authorizeCertificateWrite(write, utc(at) + 1, unknown("management API failed"))).toEqual({ ok: false, reason: "CHECKS_UNKNOWN" });
     expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check(FINGERPRINTS.readiness, "paused", null) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
     expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check("hc:changed", "up", utc(at) - 60_000) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
+  });
+
+  it("refuses the real step-10 action at 14:55:01 even while its five-second check lease still runs", () => {
+    const gateMinute: Clock = [TUE, 14, 54];
+    const gateAtUtcMs = utc(gateMinute, 58);
+    const world = worldFor(fold, gateMinute, { nowUtcMs: gateAtUtcMs, checksObservedAtUtcMs: gateAtUtcMs });
+    const decision = decide(fold, world, SCHEDULE);
+    if (decision.kind !== "act") throw new Error("expected gate action");
+    const write = decision.actions.find(action => action.kind === "write-certificate-line");
+    if (write === undefined) throw new Error("expected certificate write");
+
+    expect(write.leaseNotAfterUtcMs).toBe(utc([TUE, 14, 55], 3));
+    expect(write.scheduleNotAfterUtcMs).toBe(utc([TUE, 14, 55]));
+    expect(authorizeCertificateWrite(write, utc([TUE, 14, 55]) - 1, world.checks)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, utc([TUE, 14, 55]), world.checks)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(write, utc([TUE, 14, 55], 1), world.checks)).toEqual({ ok: false, reason: "SCHEDULE_DEADLINE_EXPIRED" });
   });
 
   const now = utc(at);
