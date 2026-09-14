@@ -307,7 +307,7 @@ mutant set; the I/O calls get exercised by the `--dry-run` rehearsal of unit 13.
 |---|---|---|
 | `tasks` | `Get-ScheduledTask -TaskPath \GlassBoxTrading\` as JSON: state, `Actions` (all of them, not `[0]`) | exactly one action per task, else unknown |
 | `checks`, `apiIndependentRead` | healthchecks.io management API, bounded backoff | 429 / 5xx / timeout → unknown; status, last ping, flips newest first; fingerprints by the scheme `tools/healthchecks-provision.mjs` already prints, never the UUID |
-| `env` | `.env` bytes | duplicate keys, `PRE_ARM_CERTIFICATE`, `ALPACA_PROFILE`, SHA-256 |
+| `env` | `.env` bytes, **and** `PRE_ARM_CERTIFICATE` / `ALPACA_PROFILE` in the user and machine environment | parse exactly as the runtime does (`parseDotEnv`, `src/shell/runtime-config.ts:14-27`: trimmed lines, `#` comments, first `=`, one pair of quotes stripped, **the last duplicate wins**, so `export KEY=` is a different key); duplicate keys, SHA-256. **Found 2026-09-14:** `loadEnvironment` lets process variables win over `.env` (`runtime-config.ts:37-38`), so a certificate path set in the user or machine environment would reach an S4U task although `.env` has no line — the latch would read closed while it is open. The reader reports either variable found outside `.env` as its own red value, never as absent |
 | `resolvedAccountMasked`, `devAccount` | the existing read-only adapter, profile explicit per call | masking; positions and non-terminal orders |
 | `deploymentDigests`, `certificate` | the certificate CLI's digest print and the certificate file | verdict and both digests |
 | `bootUtcMs` | `Win32_OperatingSystem.LastBootUpTime` | CIM datetime → UTC ms |
@@ -315,8 +315,8 @@ mutant set; the I/O calls get exercised by the `--dry-run` rehearsal of unit 13.
 | `sessionSamples` | an append-only sample log in the activation root, one line per invocation | `Win32_LogonSession` types 2, 10, 11 and `explorer` count |
 | `wrapperSha256` | `tools/cycle-run.ps1` (decide whether `watchdog-run.ps1` is hashed too — the spec says "the wrapper") | — |
 | `hostPreconditions`, `freeDiskBytes` | registry and volume reads of spec §3 | value normalisation |
-| `alertConfirmation` | a human-written file — **location and format to fix in this unit** | refuse anything but date plus three `hc:` fingerprints |
-| `analyst` | token presence, and **how "an analyst child started and verified" is observed — to design** | — |
+| `alertConfirmation` | the confirmation file in the activation state root, appended by `activation confirm-alerts` (**owner ruling 2026-09-14**, DECISIONS) | one JSON line: operator, the typed receipt times of an alert and a reminder, the three fingerprints the command read from the API, the result of the flip cross-check; anything else is unknown |
+| `analyst` | the dev `--preflight` JSON (token present, MCP child verified, digests) **plus a minimal Claude call** with the token (**owner ruling 2026-09-14**): one turn, no tools, reduced to `ok` or an error class | the preflight JSON and the probe result — and `decide` gains the probe as a step-0 condition and as a gate condition, with tests and mutants |
 | `schedulerCheck`, `schedulerCheckExpectEnabled` | `verify-scheduled-tasks.ps1`, twice | `SCHEDULER CHECK PASSED: N checks.` / `FAILED: x of N`; anything else unknown |
 | `disarm` | `Get-ScheduledTask` for the one-shot | trigger → local instant |
 | `bootstrapEntry` | the long-run journal's first entry | the existing journal codec, read-only |

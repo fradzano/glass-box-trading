@@ -4091,3 +4091,44 @@ small, no ADR split).
   when the resolved `STATE_DIR` is the one `.env` names for the competition profile.
   Today only the profile is enforced, and `--preflight` with the dev profile but a
   forgotten `STATE_DIR` would seed `longrun-1` twenty minutes before the anchor.
+- **2026-09-14 — P12 activation: how gate condition 4 is recorded, and how the
+  analyst's token is checked (owner ruling, as recommended).** Two design questions
+  from unit 7 of the activation build (`docs/P12-ACTIVATION-BUILD.md`), put to the
+  owner with options, trade-offs and a recommendation.
+
+  1. **Gate condition 4 is recorded by a command that cross-checks the owner's
+     word.** The only evidence that an alert and a reminder arrived is in the owner's
+     private Gmail. `activation confirm-alerts` (unit 10) takes the receipt times of
+     one alert mail and one reminder mail as the owner types them, reads the three
+     checks' `hc:` fingerprints from the management API itself, and refuses unless
+     each check's flip log shows a down flip before the typed alert time and the
+     reminder lies at least one reminder period after that flip. It appends one line
+     to a confirmation file in the activation state root, outside the repository;
+     step 0 reads the latest line and dates the confirmation by the **older** of the
+     two receipt times. The owner's statement stays the evidence (catalogue invariant
+     16); the command only rules out a mistyped fingerprint and an impossible time.
+     Rejected: a script reading Gmail, which would put a credential for the whole
+     private mailbox on the unattended host — the largest blast radius on that
+     machine — for evidence that still would not show the mail was seen; and a
+     hand-written file without the cross-check. **Consequences:** the current
+     confirmation (alert 2026-09-11 22:01) stays valid through 2026-09-25, so an
+     anchor later than that, or a rotation of the checks, needs the alert drill
+     again. Whether the API still lists the flips of 2026-09-11 is **not verified**;
+     if it does not, the command refuses and the drill is repeated.
+  2. **The analyst's token is proven live, not only present.** Reading the code for
+     this question corrected spec revision 6: `buildRuntime` checks
+     `CLAUDE_CODE_OAUTH_TOKEN` for presence only (`src/shell/agent-runtime.ts:428`),
+     `--preflight` never calls Claude, and the "verified analyst child" is the pinned
+     Alpaca MCP server (`agent-runtime.ts:346`). A token that died over the weekend
+     would therefore not "cost the anchor at 14:35" as the spec says: the gate would
+     turn green, and from 15:30 every cycle's analyst call would fail — an armed run
+     that never trades and measures nothing. Step 0 keeps the dev `--preflight`
+     (presence, the MCP child, both digests) and adds a minimal Claude call with the
+     token — one turn, no tools, reduced to `ok` or an error class, never echoing the
+     token — and the gate repeats that call at 14:35, the last moment before arming.
+     It lives in `ops/`, outside the digest; spec §5 step 0 and the §7 conjunction
+     change at the next revision. Rejected: the preflight alone, which does not prove
+     what step 0 exists for; and `--smoke-cycle`, which writes into the dev journal and
+     skips the analyst silently under a halt, so it can prove nothing without saying
+     so. **Open and not verified:** whether a failing analyst in the long run raises
+     any alarm at all — a lens for the adversarial review of unit 12.
