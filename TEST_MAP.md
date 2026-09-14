@@ -5,8 +5,11 @@
 - `ops/activation/tests/confirmation.spec.ts`
 - `ops/activation/tests/decide.spec.ts`
 - `ops/activation/tests/fold.spec.ts`
+- `ops/activation/tests/healthchecks-io.spec.ts`
 - `ops/activation/tests/ledger.spec.ts`
+- `ops/activation/tests/observe.spec.ts`
 - `ops/activation/tests/parse-healthchecks.spec.ts`
+- `ops/activation/tests/parse-host.spec.ts`
 - `ops/activation/tests/parse.spec.ts`
 - `ops/activation/tests/sequences.spec.ts`
 - `ops/activation/tests/steps.spec.ts`

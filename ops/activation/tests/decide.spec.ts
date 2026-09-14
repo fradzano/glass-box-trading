@@ -206,7 +206,7 @@ function check(fingerprint: string, status: string, lastPingUtcMs: number | null
 }
 
 function logLine(file: string, at: Clock, shape: LogLine["shape"], second = 0): LogLine {
-  return { file, utcMs: utc(at, second), local: local(at), shape };
+  return { file, utcMs: utc(at, second), local: local(at), shape, composition: null };
 }
 
 function sample(at: Clock, interactiveSessions = 0, explorerProcesses = 0): SessionSample {
@@ -241,7 +241,7 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
     sessionSamples: [],
     wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }),
     hostPreconditions: known(HOST),
-    alertConfirmation: confirmationAt(CONFIRMED_ALERT),
+    alertConfirmation: known(confirmationAt(CONFIRMED_ALERT)),
     longRunArtefacts: known(["quarantine"]),
     freeDiskBytes: known(1_000_000_000_000),
     analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: true, tokenProbeClass: null }),
@@ -529,7 +529,7 @@ describe("decide — step 0, preflight", () => {
   it("accepts a confirmation whose oldest receipt is exactly fourteen days old and refuses one a millisecond older", () => {
     const now = utc(at);
     const aged = (alertUtcMs: number): Partial<Observations> => ({
-      alertConfirmation: confirmationAt(alertUtcMs),
+      alertConfirmation: known(confirmationAt(alertUtcMs)),
       checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now - 60_000, flipsFor(alertUtcMs)), readiness: check(FINGERPRINTS.readiness, "up", now - 60_000, flipsFor(alertUtcMs)), watchdog: check(FINGERPRINTS.watchdog, "up", now - 60_000, flipsFor(alertUtcMs)) }),
     });
     expect(decide(fold, worldFor(fold, at, aged(now - 14 * DAY_MS)), SCHEDULE).kind).toBe("record");
@@ -538,14 +538,14 @@ describe("decide — step 0, preflight", () => {
 
   const now = utc(at);
   const red: readonly (readonly [string, Partial<Observations>, string])[] = [
-    ["no confirmation of gate condition 4 (ACT-11)", { alertConfirmation: null }, "alert-confirmation.absent"],
-    ["a confirmation dated in the future", { alertConfirmation: confirmationAt(now + 60_000), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now, flipsFor(now + 60_000)), readiness: check(FINGERPRINTS.readiness, "up", now, flipsFor(now + 60_000)), watchdog: check(FINGERPRINTS.watchdog, "up", now, flipsFor(now + 60_000)) }) }, "alert-confirmation.liveness.alert-after-now"],
+    ["no confirmation of gate condition 4 (ACT-11)", { alertConfirmation: known(null) }, "alert-confirmation.absent"],
+    ["a confirmation dated in the future", { alertConfirmation: known(confirmationAt(now + 60_000)), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "up", now, flipsFor(now + 60_000)), readiness: check(FINGERPRINTS.readiness, "up", now, flipsFor(now + 60_000)), watchdog: check(FINGERPRINTS.watchdog, "up", now, flipsFor(now + 60_000)) }) }, "alert-confirmation.liveness.alert-after-now"],
     // Review of 2026-09-14, point 2: each receipt on its own, not only the oldest; the checks were never resumed, so no up flip exposes the future time.
-    ["a reminder received after now, although the oldest receipt is in the past", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), reminderReceivedUtcMs: now + 3_600_000 }, checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.reminder.after-now"],
-    ["one alert received after now", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: now + 60_000 }, reminderReceivedUtcMs: now + 120_000 }, checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.watchdog.alert-after-now"],
-    ["a reminder that did not list the watchdog (review 2026-09-14, point 3)", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), reminderListed: ["liveness", "readiness"] } }, "alert-confirmation.reminder.does-not-list:watchdog"],
-    ["a watchdog alert no down flip precedes", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: CONFIRMED_DOWN - 60_000 } } }, "alert-confirmation.watchdog.no-down-flip-before-alert"],
-    ["a recorded down flip the live history does not show", { alertConfirmation: { ...confirmationAt(CONFIRMED_ALERT), downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN - 1, watchdog: CONFIRMED_DOWN } } }, "alert-confirmation.readiness.down-flip-differs-from-recorded"],
+    ["a reminder received after now, although the oldest receipt is in the past", { alertConfirmation: known({ ...confirmationAt(CONFIRMED_ALERT), reminderReceivedUtcMs: now + 3_600_000 }), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.reminder.after-now"],
+    ["one alert received after now", { alertConfirmation: known({ ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: now + 60_000 }, reminderReceivedUtcMs: now + 120_000 }), checks: checksWith(now, { liveness: check(FINGERPRINTS.liveness, "paused", null, STILL_DOWN), readiness: check(FINGERPRINTS.readiness, "paused", null, STILL_DOWN), watchdog: check(FINGERPRINTS.watchdog, "paused", null, STILL_DOWN) }) }, "alert-confirmation.watchdog.alert-after-now"],
+    ["a reminder that did not list the watchdog (review 2026-09-14, point 3)", { alertConfirmation: known({ ...confirmationAt(CONFIRMED_ALERT), reminderListed: ["liveness", "readiness"] }) }, "alert-confirmation.reminder.does-not-list:watchdog"],
+    ["a watchdog alert no down flip precedes", { alertConfirmation: known({ ...confirmationAt(CONFIRMED_ALERT), bundledAlert: false, alertReceivedUtcMs: { liveness: CONFIRMED_ALERT, readiness: CONFIRMED_ALERT, watchdog: CONFIRMED_DOWN - 60_000 } }) }, "alert-confirmation.watchdog.no-down-flip-before-alert"],
+    ["a recorded down flip the live history does not show", { alertConfirmation: known({ ...confirmationAt(CONFIRMED_ALERT), downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN - 1, watchdog: CONFIRMED_DOWN } }) }, "alert-confirmation.readiness.down-flip-differs-from-recorded"],
     ["a rotated check the confirmation does not attest (§8.13)", { checks: checksWith(now, { readiness: check("hc:00000000", "up", now) }) }, "alert-confirmation.readiness.fingerprint-differs-from-live-check"],
     ["a check that is down", { checks: checksWith(now, { watchdog: check(FINGERPRINTS.watchdog, "down", now) }) }, "checks.watchdog.status:down"],
     ["an analyst child that was not verified", { analyst: known({ oauthTokenPresent: true, childStartVerified: false, tokenLive: true, tokenProbeClass: null }) }, "analyst.child-start-not-verified"],
@@ -567,6 +567,10 @@ describe("decide — step 0, preflight", () => {
   it("refuses when the checks or the wrapper cannot be read, and says unknown rather than red", () => {
     expect(abortReason(decide(fold, worldFor(fold, at, { checks: unknown("429") }), SCHEDULE))).toBe("PREFLIGHT_UNKNOWN");
     expect(abortReason(decide(fold, worldFor(fold, at, { wrapperHashes: unknown("locked") }), SCHEDULE))).toBe("PREFLIGHT_UNKNOWN");
+    // A1: a confirmation file that cannot be read is not the same fact as no confirmation at all.
+    const unreadable = decide(fold, worldFor(fold, at, { alertConfirmation: unknown("latest confirmation is not a JSON object") }), SCHEDULE);
+    expect(abortReason(unreadable)).toBe("PREFLIGHT_UNKNOWN");
+    expect(evidenceOf(unreadable)["unknown"]).toEqual(["alertConfirmation: latest confirmation is not a JSON object"]);
   });
 });
 
@@ -1043,6 +1047,19 @@ describe("decide — step 11, the anchor", () => {
     const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { cycleLog: known([logLine("cycle-run.log", [TUE, 15, 15], "run", 3)]), bootstrapEntry: bootstrap }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "record", step: "11-anchor", outcome: "ok" });
     expect(evidenceOf(decision)).toMatchObject({ localWindow: "15:15-15:19", bootstrap: { seq: 1 } });
+  });
+
+  it("records the first watchdog composition line after the gate, and not the drills' degraded ones before it (spec §8.12)", () => {
+    const firing = known([logLine("cycle-run.log", [TUE, 15, 15], "run", 3)]);
+    const degradedInTheDrill = { ...logLine("watchdog-run.log", [MON, 22, 30], "other"), composition: "degraded" as const };
+    const armedAfterTheGate = { ...logLine("watchdog-run.log", [TUE, 14, 40], "other", 1), composition: "armed" as const };
+    const armed = worldFor(fold, [TUE, 15, 20], { cycleLog: firing, bootstrapEntry: bootstrap, watchdogLog: known([degradedInTheDrill, logLine("watchdog-run.log", [TUE, 14, 40], "run"), armedAfterTheGate]) });
+    expect(evidenceOf(decide(fold, armed, SCHEDULE))["firstWatchdogCompositionAfterGate"]).toEqual({ file: "watchdog-run.log", utcMs: utc([TUE, 14, 40], 1), composition: "armed" });
+    const degradedAfterTheGate = { ...armedAfterTheGate, composition: "degraded" as const };
+    const degraded = worldFor(fold, [TUE, 15, 20], { cycleLog: firing, bootstrapEntry: bootstrap, watchdogLog: known([degradedInTheDrill, degradedAfterTheGate]) });
+    expect(evidenceOf(decide(fold, degraded, SCHEDULE))["firstWatchdogCompositionAfterGate"]).toMatchObject({ composition: "degraded" });
+    const none = worldFor(fold, [TUE, 15, 20], { cycleLog: firing, bootstrapEntry: bootstrap, watchdogLog: known([degradedInTheDrill]) });
+    expect(decide(fold, none, SCHEDULE)).toMatchObject({ kind: "record", step: "11-anchor", evidence: { firstWatchdogCompositionAfterGate: null } });
   });
 
   it("waits on a skip at 15:15 and on a catch-up at 15:31, and aborts after 16:00 without teardown", () => {

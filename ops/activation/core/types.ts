@@ -142,6 +142,11 @@ export interface LogLine {
   readonly utcMs: number;
   readonly local: LocalInstant;
   readonly shape: "run" | "skip" | "other";
+  /**
+   * For a watchdog `output:` line that carries the runtime's composition log line (spec §8.12): `armed`
+   * when book recovery is armed, `degraded` when the watchdog can only fence and halt; null otherwise.
+   */
+  readonly composition: "armed" | "degraded" | null;
 }
 
 /**
@@ -243,7 +248,8 @@ export interface Observations {
   readonly wrapperHashes: Reading<Readonly<Record<WrapperName, string>>>;
   /** The measured host preconditions of §3, as name → value; step 0 records them and later steps compare. */
   readonly hostPreconditions: Reading<Readonly<Record<string, string>>>;
-  readonly alertConfirmation: AlertConfirmation | null;
+  /** Known null when no confirmation was ever recorded; unknown when the file could not be read or its latest line does not parse (A1). */
+  readonly alertConfirmation: Reading<AlertConfirmation | null>;
   /** The top-level entry names of the long-run state directory. */
   readonly longRunArtefacts: Reading<readonly string[]>;
   readonly freeDiskBytes: Reading<number>;

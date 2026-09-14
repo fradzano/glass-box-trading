@@ -48,23 +48,38 @@
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`
+- `ops/activation/probes/mutants-healthchecks-io.json`
 - `ops/activation/probes/mutants-healthchecks.json`
 - `ops/activation/probes/mutants-ledger.json`
+- `ops/activation/probes/mutants-observe.json`
+- `ops/activation/probes/mutants-parse-host.json`
 - `ops/activation/probes/mutants-parse.json`
 - `ops/activation/probes/mutants-probe.json`
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-steps.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
+- `ops/activation/readers/healthchecks-io.ts` — The healthchecks.io management API, read (build log, unit 7). This is the one place the
+- `ops/activation/readers/host/read-boot.ps1`
+- `ops/activation/readers/host/read-environment.ps1`
+- `ops/activation/readers/host/read-preconditions.ps1`
+- `ops/activation/readers/host/read-sessions.ps1`
+- `ops/activation/readers/host/read-tasks.ps1`
+- `ops/activation/readers/host-ports.ts` — The observation ports, bound to this host (build log, unit 7). Thin on purpose: each one
+- `ops/activation/readers/observe.ts` — One invocation's observations, from the host readers (build log, unit 7). This is the
 - `ops/activation/readers/parse-healthchecks.ts` — Pure parsers for the healthchecks.io management API (build log, unit 7).
+- `ops/activation/readers/parse-host.ts` — Pure parsers for the host readers that complete unit 7 (build log, "Unit 7 — the I/O
 - `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
 - `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
 - `ops/activation/tests/confirmation.spec.ts` — The cross-check of gate condition 4 (owner ruling and review, 2026-09-14). The
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
+- `ops/activation/tests/healthchecks-io.spec.ts` — Unit 7, the healthchecks.io read. The fake API below answers the way the management API does,
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
+- `ops/activation/tests/observe.spec.ts` — Unit 7: the whole observation, composed from the readers. The ports below replay this host's
 - `ops/activation/tests/parse-healthchecks.spec.ts` — Unit 7: the healthchecks.io parsers. The first test is the one that matters most:
+- `ops/activation/tests/parse-host.spec.ts` — Unit 7, the parsers behind the host readers. Where this host could produce the input, the
 - `ops/activation/tests/parse.spec.ts` — Unit 7: the pure parsers behind the activation's readers. Wherever this host could
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).

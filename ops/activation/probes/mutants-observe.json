@@ -1,0 +1,14 @@
+[
+  { "id": "OB1", "note": "the environment outside .env ignored: a shadowing certificate line goes unseen", "from": "userEnvironment: shadow.value.user, machineEnvironment: shadow.value.machine", "to": "userEnvironment: {}, machineEnvironment: {}" },
+  { "id": "OB2", "note": "the newest certificate never looked for", "from": "const name = listing.value === null ? null : latestCertificateName(listing.value);", "to": "const name = null;" },
+  { "id": "OB3", "note": "this invocation's session sample never appended", "from": "  if (sample.known) await ports.appendLine(log, sessionSampleLine(sample.value));", "to": "" },
+  { "id": "OB4", "note": "the verifier's exit code not weighed against its verdict", "from": "return parseVerifierOutput(result.stdout, result.exitCode);", "to": "return parseVerifierOutput(result.stdout, 0);" },
+  { "id": "OB5", "note": "the probe spent on an analyst whose preflight printed no report", "from": "  if (!preflight.known) return unknown(`preflight: ${preflight.reason}`);\n  return analystObservation(", "to": "  return analystObservation(" },
+  { "id": "OB6", "note": "the dev account read although the plan leaves it out", "from": "devAccount: plan.devAccount ? portReading(", "to": "devAccount: plan.preflight ? portReading(" },
+  { "id": "OB7", "note": "a confirmation file that does not exist read as unknown", "from": "if (read.kind === \"absent\") return known(null);", "to": "if (read.kind === \"absent\") return unknown(\"absent\");" },
+  { "id": "OB8", "note": "both wrapper hashes taken from the cycle wrapper", "from": "await ports.readText(path.join(config.repoRoot, \"tools\", name));", "to": "await ports.readText(path.join(config.repoRoot, \"tools\", \"cycle-run.ps1\"));" },
+  { "id": "OB9", "note": "the cycle log's rotation file not searched", "from": "[\"cycle-run.log.1\", \"cycle-run.log\"]", "to": "[\"cycle-run.log\"]" },
+  { "id": "OB10", "note": "a reader that exited non-zero taken at its output", "from": "if (result.exitCode !== 0) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "OB11", "note": "a preflight that did not finish taken at its word", "from": "preflightOutput.exitCode === null ? unknown<PreflightReport>(", "to": "false ? unknown<PreflightReport>(" },
+  { "id": "OB12", "note": "the disarm read from nothing when the task list failed", "from": "disarm: taskList.known ? parseDisarm(taskList.value, config.taskNames) : taskList,", "to": "disarm: parseDisarm(taskList.known ? taskList.value : \"\", config.taskNames)," }
+]

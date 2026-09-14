@@ -216,7 +216,7 @@ function ping(world: SimWorld, name: CheckName): void {
 }
 
 function line(world: SimWorld, file: string, shape: LogLine["shape"]): LogLine {
-  return { file, utcMs: world.nowUtcMs, local: localOf(world.nowUtcMs), shape };
+  return { file, utcMs: world.nowUtcMs, local: localOf(world.nowUtcMs), shape, composition: null };
 }
 
 function fireTasks(world: SimWorld): void {
@@ -305,7 +305,7 @@ export function observe(world: SimWorld): Observations {
     sessionSamples: [...world.sessionSamples],
     wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }),
     hostPreconditions: known(HOST),
-    alertConfirmation: {
+    alertConfirmation: known({
       operator: "felix",
       alertReceivedUtcMs: { liveness: world.alertConfirmedUtcMs, readiness: world.alertConfirmedUtcMs, watchdog: world.alertConfirmedUtcMs },
       bundledAlert: true,
@@ -313,7 +313,7 @@ export function observe(world: SimWorld): Observations {
       reminderListed: ["liveness", "readiness", "watchdog"],
       fingerprints: FINGERPRINTS,
       downFlipUtcMs: { liveness: world.alertConfirmedUtcMs - MINUTE_MS, readiness: world.alertConfirmedUtcMs - MINUTE_MS, watchdog: world.alertConfirmedUtcMs - MINUTE_MS },
-    },
+    }),
     longRunArtefacts: known(["quarantine"]),
     freeDiskBytes: known(1_000_000_000_000),
     analyst: known({ oauthTokenPresent: true, childStartVerified: true, tokenLive: true, tokenProbeClass: null }),

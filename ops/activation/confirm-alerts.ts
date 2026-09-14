@@ -8,63 +8,23 @@
 //     [--dry-run]
 //
 // The thin I/O around `confirm/record.ts`: it reads the healthchecks.io API key from
-// `.env`, reads the three checks and each check's flip history, and appends one line to
+// `.env`, reads the three checks and each check's flip history through
+// `readers/healthchecks-io.ts`, and appends one line to
 // `<state root>/alert-confirmations.jsonl` with an fsync — or, with `--dry-run`, prints
 // what it would write and writes nothing. It refuses, and writes nothing, when any read
-// fails or the statement does not fit the flip history.
+// fails, when the statement does not fit the flip history, or when a receipt lies after
+// the moment of writing.
 //
 // A check's UUID and every `*_url` field are credentials (DECISIONS, 2026-09-12). They
-// stay inside this process for the length of a request, are never printed, and error text
-// is reduced to a status or an error name before it is shown.
-import { createHash } from "node:crypto";
+// stay inside `healthchecks-io.ts` for the length of a request; nothing here sees them.
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { buildConfirmation, parseConfirmArgs } from "./confirm/record.ts";
-import type { CheckFlip, CheckName, Reading } from "./core/types.ts";
-import { checkNamesOnAccount, parseCheckList, parseFlips } from "./readers/parse-healthchecks.ts";
+import { readHealthchecks } from "./readers/healthchecks-io.ts";
 import { berlinLocal, parseDotEnvAsRuntime } from "./readers/parse.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-const API = "https://healthchecks.io/api/v3";
 const CONFIRMATION_VALID_MS = 14 * 24 * 60 * 60 * 1000;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function fingerprint(pingUrl: string): string {
-  return `hc:${createHash("sha256").update(pingUrl, "utf8").digest("hex").slice(0, 8)}`;
-}
-
-async function getText(url: string, key: string): Promise<{ readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }> {
-  try {
-    const response = await fetch(url, { headers: { "X-Api-Key": key }, signal: AbortSignal.timeout(15_000) });
-    const text = await response.text();
-    return response.ok ? { ok: true, text } : { ok: false, reason: `HTTP ${String(response.status)}` };
-  } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.name : "request failed" };
-  }
-}
-
-/** The per-check update URLs, which name the flips endpoint. Held here only; never returned to the printing code. */
-function updateUrls(listText: string): Partial<Record<CheckName, string>> {
-  const urls: Partial<Record<CheckName, string>> = {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(listText);
-  } catch {
-    return urls;
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed["checks"])) return urls;
-  const entries: readonly unknown[] = parsed["checks"];
-  const names = checkNamesOnAccount();
-  for (const [check, accountName] of Object.entries(names)) {
-    const matches = entries.filter(entry => isRecord(entry) && entry["name"] === accountName);
-    const entry = matches[0];
-    if (matches.length === 1 && isRecord(entry) && typeof entry["update_url"] === "string" && (check === "liveness" || check === "readiness" || check === "watchdog")) urls[check] = entry["update_url"];
-  }
-  return urls;
-}
 
 function formatLocal(utcMs: number): string {
   const local = berlinLocal(utcMs);
@@ -90,22 +50,8 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  const list = await getText(`${API}/checks/`, key);
-  const summaries = list.ok ? parseCheckList(list.text, fingerprint) : { known: false as const, reason: `check list ${list.reason}` };
-  const urls = list.ok ? updateUrls(list.text) : {};
-  const pending: Reading<readonly CheckFlip[]> = { known: false, reason: "not read" };
-  const flips: Record<CheckName, Reading<readonly CheckFlip[]>> = { liveness: pending, readiness: pending, watchdog: pending };
-  for (const check of ["liveness", "readiness", "watchdog"] as const) {
-    const url = urls[check];
-    if (url === undefined) {
-      flips[check] = { known: false, reason: "no update URL for this check" };
-      continue;
-    }
-    const answer = await getText(`${url}/flips/`, key);
-    flips[check] = answer.ok ? parseFlips(answer.text) : { known: false, reason: answer.reason };
-  }
-
-  const result = buildConfirmation(args, summaries, flips, Date.now());
+  const health = await readHealthchecks({ fetchImpl: fetch, apiKey: key, sleep: ms => new Promise(resolve => { setTimeout(resolve, ms); }) });
+  const result = buildConfirmation(args, health.summaries, health.flips, Date.now());
   if (!result.ok) {
     process.stderr.write(`refusing, nothing written:\n${result.reasons.map(reason => `  ${reason}`).join("\n")}\n`);
     return 1;

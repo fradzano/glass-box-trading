@@ -116,10 +116,24 @@ export function parseWrapperLogs(files: readonly LogFile[]): Reading<readonly Lo
       if (utcMs === null) return unknown(`${file.name}:${String(index + 1)} has no leading ISO instant`);
       const message = row.slice(space + 1);
       const shape = message.startsWith("run:") ? "run" : message.startsWith("skip:") ? "skip" : "other";
-      lines.push({ file: file.name, utcMs, local: berlinLocal(utcMs), shape });
+      lines.push({ file: file.name, utcMs, local: berlinLocal(utcMs), shape, composition: compositionOf(message) });
     }
   }
   return known([...lines].sort((left, right) => left.utcMs - right.utcMs));
+}
+
+/**
+ * The watchdog's composition log line, as `watchdog-run.ps1` records it: the runtime writes it to
+ * stderr (`src/shell/watchdog-runtime.ts`, "watchdog composed for the <profile> profile over <dir>;
+ * book recovery armed" or "watchdog book recovery unavailable, fencing and halting only: <reason>"),
+ * and the wrapper logs every line of the child's output as `output: <line>`. The shape is taken from
+ * the source, not from this host: no watchdog log here has ever held a composition line (checked
+ * 2026-09-14), so it stays unmeasured until the first firing after a gate.
+ */
+function compositionOf(message: string): LogLine["composition"] {
+  if (/^output: watchdog composed for the \S+ profile over .+; book recovery armed$/.test(message)) return "armed";
+  if (message.startsWith("output: watchdog book recovery unavailable, fencing and halting only: ")) return "degraded";
+  return null;
 }
 
 // ---------------------------------------------------------------------------

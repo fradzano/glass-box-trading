@@ -436,6 +436,7 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
   note(observations.wrapperHashes, "wrapperHashes");
   note(observations.analyst, "analyst");
   note(observations.checks, "checks");
+  note(observations.alertConfirmation, "alertConfirmation");
 
   if (observations.hostPreconditions.known) {
     for (const name of sameRecord(schedule.expectedHostPreconditions, observations.hostPreconditions.value)) red.push(`host.${name}`);
@@ -454,11 +455,11 @@ function step0(fold: LedgerFold, observations: Observations, schedule: Schedule)
     if (!observations.analyst.value.childStartVerified) red.push("analyst.child-start-not-verified");
     if (!observations.analyst.value.tokenLive) red.push("analyst.token-not-live");
   }
-  const confirmation = observations.alertConfirmation;
+  const confirmation = observations.alertConfirmation.known ? observations.alertConfirmation.value : null;
   let confirmationEvidence: Readonly<Record<string, unknown>> | null = null;
-  if (confirmation === null) {
+  if (observations.alertConfirmation.known && confirmation === null) {
     red.push("alert-confirmation.absent");
-  } else if (observations.checks.known) {
+  } else if (confirmation !== null && observations.checks.known) {
     // Review of 2026-09-14, point 3: the command's cross-check is repeated against the live flip history,
     // each check's recorded down flip must be the one the history assigns, and the confirmation is dated by
     // the oldest receipt it rests on, as an exact duration. Point 2 of the same review: against now, so that
@@ -786,12 +787,16 @@ function step11(fold: LedgerFold, observations: Observations, schedule: Schedule
   const bootstrap = observations.bootstrapEntry.value;
   if (firing === null || bootstrap === null) return wait("11-anchor: waiting for the 15:15 firing and the BOOTSTRAP entry");
   const gateAt = resultAt(fold, "10-gate");
-  const watchdogLine = gateAt === null || !observations.watchdogLog.known ? null : firstFiringAfter(observations.watchdogLog.value, gateAt);
+  const watchdogLines = gateAt === null || !observations.watchdogLog.known ? null : observations.watchdogLog.value;
+  const watchdogLine = gateAt === null || watchdogLines === null ? null : firstFiringAfter(watchdogLines, gateAt);
+  // Spec §8.12: the drills measured a degraded watchdog; the first composition line after the gate says which one runs now. Recorded, not required.
+  const composition = gateAt === null || watchdogLines === null ? null : watchdogLines.find(line => line.utcMs > gateAt && line.composition !== null) ?? null;
   return record("11-anchor", "ok", {
     firing: { file: firing.file, utcMs: firing.utcMs },
     localWindow: "15:15-15:19",
     bootstrap,
     firstWatchdogFiringAfterGate: watchdogLine === null ? null : { file: watchdogLine.file, utcMs: watchdogLine.utcMs },
+    firstWatchdogCompositionAfterGate: composition === null ? null : { file: composition.file, utcMs: composition.utcMs, composition: composition.composition },
   });
 }
 

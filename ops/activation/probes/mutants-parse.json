@@ -41,5 +41,7 @@
   { "id": "P40", "note": "the disarm's principal and settings reported as the spec wants them, whatever was registered (review 2026-09-14, point 4)", "from": "runLevel: task.value.runLevel, logonType: task.value.logonType, startWhenAvailable: task.value.startWhenAvailable });", "to": "runLevel: \"Highest\", logonType: \"S4U\", startWhenAvailable: true });" },
   { "id": "P41", "note": "a numeric RunLevel accepted as if the reader's shape had not changed", "from": "if (runLevel !== null && typeof runLevel !== \"string\") return unknown(", "to": "if (false) return unknown(" },
   { "id": "P42", "note": "a StartWhenAvailable that is not a boolean accepted", "from": "if (startWhenAvailable !== null && typeof startWhenAvailable !== \"boolean\") return unknown(", "to": "if (false) return unknown(" },
-  { "id": "P43", "note": "the logon type never read", "from": "const logonType = item[\"LogonType\"] ?? null;", "to": "const logonType = null;" }
+  { "id": "P43", "note": "the logon type never read", "from": "const logonType = item[\"LogonType\"] ?? null;", "to": "const logonType = null;" },
+  { "id": "P44", "note": "any line that mentions an armed book recovery read as the armed composition", "from": "if (/^output: watchdog composed for the \\S+ profile over .+; book recovery armed$/.test(message)) return \"armed\";", "to": "if (message.includes(\"book recovery armed\")) return \"armed\";" },
+  { "id": "P45", "note": "the degraded composition not recognised (spec §8.12)", "from": "  if (message.startsWith(\"output: watchdog book recovery unavailable, fencing and halting only: \")) return \"degraded\";", "to": "" }
 ]

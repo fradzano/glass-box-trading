@@ -10,6 +10,11 @@ than from judgement.
 Its yardstick is [`P12-ACTIVATION-SCENARIOS.md`](P12-ACTIVATION-SCENARIOS.md),
 derived by an agent that was not allowed to read this repository.
 
+**Revision 8** (2026-09-14) folds in the owner's second review of unit 7: an SDK turn
+that ended on an API error is a failed analyst call, no receipt of gate condition 4 may
+lie after now, a new attempt runs steps 0 and 3 again, the disarm one-shot is judged by
+its principal and settings as well, and the probe keeps its own deadline. Not a blind
+round either; section 11 says what it changed.
 **Revision 7** (2026-09-14) folds in the owner's review of unit 7 of the build and two
 owner rulings; it was not a blind round, and section 11 says what it changed.
 **Revision 6.** Five adversarial rounds: rev 1 NO-GO (A=5 B=12 C=2), rev 2 NO-GO
@@ -130,7 +135,7 @@ arrives late does not act; it aborts and records why.
 
 | Step | Runs at | Not valid after | Precondition | Action |
 |---|---|---|---|---|
-| `0-preflight` | before step 2 | — | §3 unchanged; free disk; lock taken; no duplicate key in `.env`, and `PRE_ARM_CERTIFICATE`, `ALPACA_PROFILE` and `STATE_DIR` set in neither the user nor the machine environment, because the runtime lets process variables win over `.env`; the SHA-256 of **both** wrappers, `cycle-run.ps1` and `watchdog-run.ps1`, recorded by name; `CLAUDE_CODE_OAUTH_TOKEN` present, the analyst's MCP child started and verified (the dev `--preflight`), **and the token proven live** by a minimal Claude call through the pinned Agent SDK — the configured `ANALYST_MODEL`, one turn, no tools, no settings, a hard deadline, the analyst's constructed environment without `ANTHROPIC_API_KEY`, and success only as a `success` result with `is_error` false (revision 6 said a dead token would cost the anchor at 14:35; the runtime checks the token for presence only, so it would instead have armed a run whose every analyst call fails); **gate condition 4 present as the confirmation `activation confirm-alerts` wrote**: a receipt time per check, or the owner's statement that one mail named all three; the reminder's receipt time and the checks it listed; the three `hc:` fingerprints, which must equal the three the API reports **now**; and the down flip assigned to each check. Step 0 repeats the cross-check against the live flip history — per check a down flip before its alert, no up flip before the reminder, the alert no later than the reminder, the reminder at least one reminder period after the down flip, all three checks listed — and the confirmation is at most 14 days old, measured as an exact duration from its **oldest** receipt | remove the `PRE_ARM_CERTIFICATE` line from `.env` (replace in place, re-read, re-hash); read the three checks through the API and require each `up` or `paused`. **It sends nothing.** `check-alert-path.ps1` deliberately ends with all three checks failing and needs `-ResolveOnly` afterwards; running it here would leave them down from 15:35 until the first firing after 22:05 and bury the activation's own pages under eighteen reminder mails |
+| `0-preflight` | before step 2 | — | §3 unchanged; free disk; lock taken; no duplicate key in `.env`, and `PRE_ARM_CERTIFICATE`, `ALPACA_PROFILE` and `STATE_DIR` set in neither the user nor the machine environment, because the runtime lets process variables win over `.env`; the SHA-256 of **both** wrappers, `cycle-run.ps1` and `watchdog-run.ps1`, recorded by name; `CLAUDE_CODE_OAUTH_TOKEN` present, the analyst's MCP child started and verified (the dev `--preflight`), **and the token proven live** by a minimal Claude call through the pinned Agent SDK — the configured `ANALYST_MODEL`, one turn, no tools, no settings, a hard deadline the probe keeps itself — it races the session, so an SDK iterator that ignores the abort still ends on time (revision 8) — the analyst's constructed environment without `ANTHROPIC_API_KEY`, and success only as a `success` result with `is_error` false (revision 6 said a dead token would cost the anchor at 14:35; the runtime checks the token for presence only, so it would instead have armed a run whose every analyst call fails); **gate condition 4 present as the confirmation `activation confirm-alerts` wrote**: a receipt time per check, or the owner's statement that one mail named all three; the reminder's receipt time and the checks it listed; the three `hc:` fingerprints, which must equal the three the API reports **now**; and the down flip assigned to each check. Step 0 repeats the cross-check against the live flip history — per check a down flip before its alert, no up flip before the reminder, the alert no later than the reminder, the reminder at least one reminder period after the down flip, all three checks listed — and the confirmation is at most 14 days old, measured as an exact duration from its **oldest** receipt; and no receipt — each alert and the reminder, one by one — lies after the moment `confirm-alerts` wrote the line or after step 0's clock (revision 8: a reminder typed into the future passed while the checks had not come back up) | remove the `PRE_ARM_CERTIFICATE` line from `.env` (replace in place, re-read, re-hash); read the three checks through the API and require each `up` or `paused`. **It sends nothing.** `check-alert-path.ps1` deliberately ends with all three checks failing and needs `-ResolveOnly` afterwards; running it here would leave them down from 15:35 until the first firing after 22:05 and bury the activation's own pages under eighteen reminder mails |
 | `1-install` | Sun/Mon, elevated | before step 2 | build current | re-register both tasks (`install-scheduled-task.ps1 -CoverageThroughDate 2026-12-16`), then `verify-scheduled-tasks.ps1` must print `SCHEDULER CHECK PASSED`; record its count and both action lines verbatim |
 | `0-resume` | every invocation | — | — | read both task **definitions and** states, the three check states, `.env` (hash, whether `PRE_ARM_CERTIFICATE` is set, `ALPACA_PROFILE`), the resolved account id (masked, read-only), both digests, the wrapper hash. World beats ledger; every conflict is recorded. Each observation is compared against **the expectation of the step the ledger says we are in** (table above), not against an absolute: an enabled task is red before step 4 and expected after it; a certificate line is red before step 10 and expected after it |
 | `2-certificate` | Mon, from 15:35 | 22:40 | a certificate file that the runtime's own `validateArmingCertificate` accepts against this deployment — the same function the arming gate calls: exact schema, evidence digest, PASS, dev role, canonical origin, both digests; a document whose flat fields say PASS and that fails this validation is REJECTED, never PASS — obtained from `certificate-cli --preflight` run **with the dev profile *and* the dev `STATE_DIR` and diagnostic sink** (it builds a full runtime and would otherwise write `pings.log`, an `analyst/` directory and an epoch binding into `longrun-1`), followed by an assertion that `longrun-1` holds **no `journal.jsonl`, no `epoch.json`, no `analyst/`, no `pings.log`** — not "is empty", because `resolveStateDir` creates `quarantine/` on any read (`src/shell/state-dir.ts:77-78`) and `readiness-cli.js` reads that directory on every skipped firing, so an emptiness test would fail on the second attempt for a directory the design itself made | validate only |
@@ -178,9 +183,15 @@ decide what a late invocation may do.
 the first step whose result is not `ok` **for this attempt's anchor day**. A new
 anchor day resets steps 4, 7, 8, 9, 10 and 11 to "not run", because each of them
 asserts something about one particular day: an enable that was undone, a reboot
-that happened yesterday, a firing in yesterday's log. Steps 0 to 3 carry over —
-the certificate and the flat account are facts about the artefact, not about the
-day. Before it may act: the disarm one-shot
+that happened yesterday, a firing in yesterday's log. Steps 1 and 2 carry over —
+the installation, which every invocation re-checks by value, and the certificate,
+which is re-validated against freshly printed digests, are facts about the artefact.
+Steps 0 and 3 do not (revision 8): the confirmation's age, the token, the host, the
+disk and whether the dev account is flat are facts about now, so every attempt runs
+them again — a retry more than fourteen days after the oldest receipt stops at step 0,
+a dev account that is no longer flat stops at step 3, both before step 4. The wrappers
+keep their baseline across attempts: the new step 0 compares both hashes with the
+previous attempt's preflight. Before it may act: the disarm one-shot
 must be **re-registered** for the new anchor day (its old trigger has passed and
 will never fire again), both tasks must read `Disabled`, the three checks must read
 `up` or `paused` — with both tasks disabled since the abort, a check that read up in the
@@ -218,10 +229,14 @@ new certificate; only a failed certificate needs a new run.
   `StartWhenAvailable`, firing at **15:05** on the anchor day, disabling both tasks
   unless the ledger shows a green gate, and disabling them when the ledger is
   unreadable. It is judged **by value**, not by its time: it must read enabled and carry
-  exactly one action — the registered node running
+  exactly one action — the expected node running
   `ops\activation\cli.ts disarm --state-root <activation root> --anchor-day <anchor day>`
-  and nothing else. A trigger at 15:05 that runs anything else is red in every phase
-  from step 4 to the gate.
+  and nothing else — and it must run the way it is registered here: `Highest`, `S4U`
+  and `StartWhenAvailable`, each read back from the scheduler (revision 8). The expected
+  node is compared by full path; it is the node the activation itself runs on, and only
+  if that is the pinned `.node-version`, never the node the registration names. A
+  trigger at 15:05 that runs anything else, or runs it without those settings, is red in
+  every phase from step 4 to the gate.
 - **Both wrappers are hashed**, `cycle-run.ps1` and `watchdog-run.ps1`, by name, at
   step 0, and re-checked on every later invocation and at the gate: `tools/*.ps1` is
   outside the runtime digest, outside the architecture gate and untouched by the
@@ -283,7 +298,10 @@ proven live by the probe at gate time, where a probe that fails or cannot run is
     still sends its success heartbeat, so the check stays green — fail-closed by
     design, but it means step 5 proves the heartbeat path of a *degraded*
     watchdog. The armed composition first runs after step 10, unobserved. Step 11
-    therefore records the first armed composition line from `watchdog-run.log`.
+    therefore records the first composition line after the gate from
+    `watchdog-run.log`, armed or degraded, as evidence rather than as a condition. Its
+    shape is taken from `src/shell/watchdog-runtime.ts`, because no watchdog log on this
+    host has held a composition line yet.
 13. **The rotation comes first.** Rotating the three checks replaces their URLs and
     therefore their fingerprints, which is why step 0 compares the confirmation's
     fingerprints against the live ones: a rotation after the confirmation would
@@ -295,7 +313,11 @@ proven live by the probe at gate time, where a probe that fails or cannot run is
     `ANALYST_UNAVAILABLE` on that cycle's readiness signal without halting (SPEC
     S-CYC-01, owner ruling 2026-09-14). Declared limit: outside the session readiness
     comes from standing impediments only, so it reads success overnight and fails again
-    with the first cycle of the next session.
+    with the first cycle of the next session. Revision 8: until the second review this
+    held for rejections and timeouts only — a turn the SDK ends as `success` with
+    `is_error` true was returned as the analyst's answer and raised nothing. It now
+    throws, and the path is tested through the real `createClaudeAnalyst` with only the
+    SDK's `query` replaced.
 
 ## 9. Where the code lives, and how it is tested before it matters
 
@@ -380,3 +402,12 @@ the certificate, and it is the owner's call, not mine.
   `.env` is not the whole latch: the three keys set in the user or machine environment
   are red. A retry asks for the checks up or paused. An invalid drill ends the attempt.
   And the long run's silent analyst failure became an alarm (§8.14).
+- **Revision 8 (the owner's second review of unit 7, 2026-09-14; not a blind round).** Five
+  clauses held only against the inputs the tests used, and each got a counter-test that
+  failed first. The alarm of §8.14 missed the SDK's `success`/`is_error` result. Gate
+  condition 4 checked the age of its oldest receipt but not whether any receipt lay in
+  the future. A retry inherited steps 0 to 3, so a confirmation older than fourteen days
+  and a dev account traded on since both passed; now only steps 1 and 2 carry over, and
+  the wrappers keep their baseline across attempts. The disarm one-shot was judged by
+  what it runs but not by whether it could run elevated, signed out and after a missed
+  start. And the probe's deadline depended on the SDK honouring the abort.

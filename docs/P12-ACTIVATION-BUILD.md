@@ -1,7 +1,7 @@
 # P12 activation — build log
 
 The working record of building the activation script specified in
-[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 7 since 2026-09-14). It exists so that
+[`P12-ACTIVATION-SPEC.md`](P12-ACTIVATION-SPEC.md) (revision 8 since 2026-09-14). It exists so that
 a fresh session can continue from here without the transcript of the one before:
 every unit below is either done — with its commit — or not, and the next step is
 always named at the bottom.
@@ -58,7 +58,7 @@ always named at the bottom.
 | 4 | Step table: windows, order, prerequisites, expected world per phase | **done** — `ops/activation/core/steps.ts`, 26 tests (every window of spec §5 pinned), mutation probe 13/13 | unit 4 commit |
 | 5 | Decide: fold + observations + clock facts → act / wait / abort / done | **done** — `ops/activation/core/decide.ts`, 105 tests (155 in the activation suite), mutation probe 81/81 including five wiring mutants; architecture-gate inspector clean except the `.ts` extensions (see decisions). **Corrected in unit 6:** `-MaxLogBytes` on the watchdog task (red-first test, mutant D67, probe 82/82) | `8b7b888`, fix in the unit 6 commit |
 | 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
-| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | open | |
+| 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — parsers `readers/parse.ts`, `parse-host.ts`, `parse-healthchecks.ts`; composition `readers/observe.ts` over `host-ports.ts`, `healthchecks-io.ts` and `readers/host/*.ps1`; the owner's two reviews incorporated, the second's five blockers red first; 325 tests; every probe caught all its mutants (see unit 7) | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, readers commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | open | |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | open | |
 | 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
@@ -92,8 +92,12 @@ always named at the bottom.
   resets steps 4 and 7–11 when the anchor day changes; the fold goes one step
   further and counts them only inside the attempt that ran them. An attempt has
   exactly one anchor day, so this is the stricter form of the same rule, and it
-  also covers a new attempt on the same day after an owner abort. Steps 0–3 carry
-  over from any attempt, latest result wins — a later failure included.
+  also covers a new attempt on the same day after an owner abort. Steps 1 and 2 carry
+  over from any attempt, latest result wins — a later failure included. (Until
+  `0e606d8` steps 0 and 3 carried over too; the second review of unit 7 showed that a
+  retry then inherited an expired alert confirmation and an old flat check. They now
+  run in every attempt, and step 0 keeps the previous attempt's wrapper hashes as its
+  baseline.)
 - **Mutation probe, fold: F6 is an equivalent mutant.** Removing the
   `resultSeq === null` check changes nothing, because the fold sets `resultSeq` and
   `outcome` together, so an intent-only step already fails the outcome test. It was
@@ -298,7 +302,7 @@ The second build session closed unit 5 here: `decide` with 105 tests, mutation p
 D9, D41 and D55 spot-checked to fail on exactly the test they target rather than on a
 syntax error. Nothing was run on the host.
 
-### Unit 7 — readers (in progress)
+### Unit 7 — readers
 
 - **The parsers are pure and sit in `ops/activation/readers/parse.ts`**, outside
   `core/`: they need `Date` and `Intl`, which the architecture gate forbids there, and
@@ -380,9 +384,112 @@ The review arrived after `c996333` was pushed; its six points are corrected forw
 5. **`ANALYST_UNAVAILABLE` in the long run** — inside the runtime digest: scenario #81,
    A31, S-CYC-01, S-G14-05, one line in `src/shell/cycle-runner.ts`, four tests in
    `tests/cyc-runner.spec.ts` written red first (two red before the change, as expected).
+   **Corrected by the second review:** this held for rejected and timed-out calls only. A
+   turn the SDK ends as `success` with `is_error` true was returned by `createClaudeAnalyst`
+   as the answer and raised nothing; closed red first in `0e606d8` (see "The second review").
 6. **Both wrappers by name** (`wrapperHashes`).
 
 **Verified:** tsc and ESLint clean; 268 tests in the activation suite; mutation probes on green baselines, each restored byte-identical: decide 96 of 96 (95 in the full run, where D81 survived; a test was added and catches D81 in a single-mutant rerun), parse 39 of 39, healthchecks 10 of 10, confirmation 10 of 10, analyst probe 10 of 10, confirm-alerts 5 of 5, fold 13 of 13; npm run verify exit 0 including the src change.
+
+#### The second review of 2026-09-14 (DECISIONS, same date)
+
+The owner's second review found five places where the recorded state claimed more than the
+code did. Each got a counter-test that ran red on the unchanged code first — 20 failing of
+287 in the activation suite (the new tests and the ones whose expectation the fix changes),
+6 failing of 40 in `tests/cyc-runner.spec.ts` — and then the fix:
+
+1. **`is_error` in the real analyst path.** `createClaudeAnalyst` returned the text of an SDK
+   result `subtype: success, is_error: true` as the analyst's answer. Five tests (401, 403,
+   429, 500, 529) run the real function with only the SDK's `query` replaced and assert one
+   SDK call, exactly one `ANALYST_SKIP`, `ANALYST_UNAVAILABLE` on the readiness ping, no halt,
+   no mutation and no SDK text in journal or report; a sixth covers a session without a
+   result message, and a control test the success path. The fix throws with the status only.
+2. **Every receipt at or before now.** `crossCheckAlerts(claim, flips, nowUtcMs)` refuses
+   `reminder.after-now` and `<check>.alert-after-now` one by one, and an unreadable now.
+   Counter case: checks down and never resumed, a reminder typed after now — accepted before,
+   by `buildConfirmation` and at step 0 alike.
+3. **No inherited step 0 or step 3.** `carriesOver` is steps 1 and 2 only; the fold's
+   `previousPreflight` keeps the wrapper baseline across attempts. Counter cases: a retry on
+   2026-10-05, more than fourteen days after the confirmation, and a retry with a position on
+   the dev account — both enabled the tasks at 22:05 before; both stop before step 4 now, as
+   decide tests and as simulator sequences. ACT-24's expected order changed with it: 0, 3,
+   then 4 to 11.
+4. **Disarm principal and settings.** `DisarmObservation` gained `runLevel`, `logonType` and
+   `startWhenAvailable`; `parseDisarm` reads them in the shape `read-tasks.ps1` prints (checked
+   against the two registered tasks: `Limited`, `S4U`, `true`); `disarmFindings` requires
+   `Highest`, `S4U` and `true` and reports them before the action, so one finding never hides
+   another. The node: another installation, a bare `node.exe` and a renamed file are red, and
+   `expectedNodePath` names the schedule's node from the running, pinned node.
+5. **The probe's own deadline.** A deaf iterator (never settles, ignores the abort) hung the
+   probe — still waiting after two seconds; it now returns `TIMEOUT` inside its deadline.
+
+Committed as `0e606d8` with `npm run verify` exit 0 at 48 files / 669 tests. The decide probe
+found three mutants whose anchors the fix removed (D25b, D25c, D74); D25b and D74 were
+re-anchored, D25c is replaced by D101.
+
+### Unit 7 — the I/O readers
+
+- **Built.** `readers/observe.ts` composes one invocation's `Observations` from thin ports and
+  the pure parsers; `readers/host-ports.ts` binds the ports to this host; the read-only
+  PowerShell readers are `readers/host/read-{tasks,boot,sessions,preconditions,environment}.ps1`;
+  `readers/parse-host.ts` holds the new parsers (host preconditions, the environment shadow,
+  account masking, the session sample log, the journal's first entry through the runtime's own
+  codec, the newest certificate, the independent read, the analyst reading, the expected node);
+  `readers/healthchecks-io.ts` is the only module that holds healthchecks.io credentials, with a
+  bounded backoff, and `confirm-alerts.ts` now reads through it.
+- **Core changes it needed.** `Observations.alertConfirmation` is a `Reading`: an unreadable
+  confirmation file is unknown, not absent (A1). `LogLine.composition` tells the watchdog's
+  armed composition line from its degraded one, and step 11 records the first one after the
+  gate (spec §8.12) as evidence.
+- **Proven by test.** `observe.spec.ts` builds every field of `Observations` from this host's
+  recorded reader output — the field list is compared by name, so a field added without a
+  reader fails — with every reading known, and feeds the snapshot to `decide`: step 0 is red
+  for exactly `host.DisableAutomaticRestartSignOn` and `alert-confirmation.absent`, the two
+  things this host still lacks. Further: a failed reader affects only its own field; readings
+  the plan leaves out are not taken and say so; no probe is spent without a preflight report;
+  no secret of `.env` and no unmasked account number reaches the snapshot; the session sample
+  is appended before the log is read back.
+- **Run on this host, read-only, 2026-09-14 about 10:55:** the real ports with every network
+  and costly reading stubbed out (healthchecks.io, the competition identity, the preflight, the
+  probe, the dev account) and the sample log in a scratch directory. Every local reading came
+  back known: both tasks `Disabled` (the cycle task still the direct-node registration), no
+  disarm one-shot, boot 2026-09-09 03:32:12Z, `.env` with the stale certificate line and no
+  shadowed or duplicate key, both wrapper hashes, the §3 preconditions, `longrun-1` empty, no
+  confirmation, no journal, the verifier `FAILED: 2 of 51` and with `-ExpectEnabled`
+  `FAILED: 4 of 55`, one session sample (one signed-in account, one explorer), 867 GB free.
+  The whole read took **52 s**, most of it the two verifier runs.
+- **Four facts the host changed:**
+  1. `Win32_PowerPlan` refuses an unelevated caller here, while `Win32_PowerSettingDataIndex`
+     answers; the active plan comes from the registry's `ActivePowerScheme`.
+  2. An unelevated token carries Administrators as deny-only, and `WindowsIdentity.Groups`
+     omits it; membership is read with `Get-LocalGroupMember` by SID.
+  3. No watchdog log on this host has ever held a composition line, so the armed shape is
+     taken from `src/shell/watchdog-runtime.ts` and stays unmeasured until the first firing
+     after a gate.
+  4. `tools/generate_map.py` lists untracked files, so an uncommitted file would appear in a
+     committed map; the blocker commit parked the unfinished readers for its duration.
+- **Decisions.** The digests come from the dev `--preflight` rather than a lighter
+  computation: `computeRuntimeDigest` needs the analyst runtime observation only the launch
+  path gathers, and copying that composition into `ops/` would turn every invocation red on the
+  first drift. The declared cost is a preflight on every invocation after step 2.
+  `parseJournalHead` only checks that the codec returned an entry: for one line with its newline
+  a torn or corrupt reading has none, so the extra conditions were an equivalent mutant and are
+  gone.
+- **Not exercised against the host, declared:** the healthchecks.io read (its answers carry the
+  ping credentials; the parser and `healthchecks-io.ts` are proven against answers with
+  credential-shaped values), the competition identity read, the dev account read, the preflight
+  and the probe. They are thin, type-checked and linted; unit 13's dry run rehearses them.
+- **Verified:** tsc and ESLint clean; 325 tests in the activation suite (268 before the
+  review); mutation probes on green baselines, each restored byte-identical: decide 105 of 105,
+  parse 45 of 45, parse-host 15 of 15, healthchecks-io 8 of 8, observe 12 of 12, fold 17 of 17,
+  confirmation 15 of 15, record 6 of 6, analyst probe 13 of 13, and
+  `src/shell/analyst-claude.ts` 5 of 5 against `tests/cyc-runner.spec.ts`
+  (`mutate-activation.mjs` now runs a `tests/` spec under the root configuration). The first
+  runs of parse-host and observe left three survivors — a first entry of another type that
+  the fixture could not produce, the node version's reason, a plan flag tested only together
+  with another — and each got a test before the rerun. npm run verify exit 0 at 48 files /
+  669 tests. Host re-checked read-only at 11:06: both tasks `Disabled`, no activation task
+  and no disarm one-shot registered.
 
 ## Session boundary — 2026-09-14, 01:13
 
@@ -390,6 +497,40 @@ Unit 6 closed here: the simulator, 14 sequences, the retry-clause finding and th
 `-MaxLogBytes` correction to unit 5. Nothing was run on the host.
 
 ## Next step
+
+**Unit 8: the shell actions — not started.** Unit 7 is closed at the commits named in the
+units table; its sections above say what was built, measured and declared.
+
+What unit 7 fixed for the units after it:
+
+- `readObservations(ports, config, plan)` (`ops/activation/readers/observe.ts`) is the only
+  way an invocation observes. The plan is the CLI's (unit 10), derived from the ledger's
+  phase: the preflight at steps 1 and 2 and on every invocation after step 2 (the core
+  compares the digests from then on), the live-token probe at step 0 and at the gate, the
+  dev account's book at step 3. A reading not in the plan reads unknown and says so.
+- The schedule's `nodePath` comes from `expectedNodePath(process.execPath, process.version,
+  <.node-version>)` (`readers/parse-host.ts`), never from the registered disarm one-shot it
+  is compared against (unit 10).
+- The session sample log is `<activation root>/session-samples.jsonl`; the reader appends
+  one line per invocation and nothing else writes it.
+- A full local read takes about 52 s on this host (measured 2026-09-14), most of it the two
+  verifier runs; the invocation cadence and the 13:50–13:59 re-arm window must leave room.
+
+Unit 8 (actions): enable and disable both tasks; register the disarm one-shot as spec §6
+fixes it (`Highest`, `S4U`, `StartWhenAvailable`, the expected node, exactly the command
+line of `disarmFindings`) and delete it; restart; remove and write the certificate line in
+`.env` (replace in place, re-read, re-check duplicates, re-hash); clear the three checks
+(readiness through `readiness-cli.js`, liveness and watchdog by a success ping). Every
+action returns applied or a credential-free reason. Registering anything elevated on the
+host is unit 13's.
+
+Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.io read, the
+competition identity read, the dev account read, the preflight and the probe ports. The
+local readers were run read-only on 2026-09-14 (see unit 7).
+
+After unit 8: units 9 (ledger store) and 10 (CLI).
+
+## Unit 7 brief, as it was given
 
 **Unit 7: the shell readers** — one per field of `Observations`, each returning a
 `Reading` whose reason carries no credential. Functional core, imperative shell applies

@@ -110,6 +110,20 @@ describe("parse — wrapper logs", () => {
     expect(parseWrapperLogs([{ name: "cycle-run.log.1", text: null }, { name: "cycle-run.log", text: newer }]).known).toBe(true);
   });
 
+  it("tells the watchdog's armed composition line from its degraded one, and every other line from both (spec §8.12)", () => {
+    // Shapes from src/shell/watchdog-runtime.ts as watchdog-run.ps1 logs the child's output; no host log has held one yet.
+    const log = [
+      "2026-09-22T12:40:00.1000000Z run: instanceId=watchdog-HOST-1 nowMs=1 opensAtMs=2 closesAtMs=3 deadManBoundMs=3000000 stateDir=C:\\state",
+      "2026-09-22T12:40:00.5000000Z output: watchdog composed for the competition profile over C:\\Users\\felix\\glass-box-state\\longrun-1; book recovery armed",
+      "2026-09-21T20:30:00.5000000Z output: watchdog book recovery unavailable, fencing and halting only: configuration refused to arm: PRE_ARM_CERTIFICATE missing",
+      "2026-09-22T12:40:01.0000000Z output: {\"assessment\":{\"kind\":\"quiet\",\"reason\":\"OUTSIDE_SESSION\"},\"acquired\":null}",
+      "2026-09-22T12:40:02.0000000Z output: watchdog composed for the competition profile over C:\\state; book recovery armed -- and then something else",
+      "2026-09-22T12:40:03.0000000Z exit: 0; heartbeat sent",
+    ].join("\r\n");
+    const reading = parseWrapperLogs([{ name: "watchdog-run.log", text: log }]);
+    expect(reading.known && reading.value.map(line => [line.shape, line.composition])).toEqual([["other", "degraded"], ["run", null], ["other", "armed"], ["other", null], ["other", null], ["other", null]]);
+  });
+
   it("makes the whole log unknown when one line has no leading instant — the drill's discriminator must see every line", () => {
     const torn = `${HOST_WATCHDOG_LOG}2026-09-02T08:3`;
     expect(parseWrapperLogs([{ name: "watchdog-run.log", text: torn }])).toEqual({ known: false, reason: "watchdog-run.log:4 has no leading ISO instant" });

@@ -1,0 +1,10 @@
+[
+  { "id": "HI1", "note": "no retry: a single 429 ends the reading", "from": "for (const pause of BACKOFF_MS) {", "to": "for (const pause of [] as number[]) {" },
+  { "id": "HI2", "note": "a 401 retried as if it could change", "from": "retryable: response.status === 429 || response.status >= 500", "to": "retryable: true" },
+  { "id": "HI3", "note": "a network error's message, which can carry the key or a URL, returned as the reason", "from": "reason: error instanceof Error ? error.name : \"request failed\"", "to": "reason: error instanceof Error ? error.message : \"request failed\"" },
+  { "id": "HI4", "note": "the ping URL itself returned as the fingerprint", "from": "return `hc:${createHash(\"sha256\").update(pingUrl, \"utf8\").digest(\"hex\").slice(0, 8)}`;", "to": "return pingUrl;" },
+  { "id": "HI5", "note": "flips fetched from one shared URL instead of each check's own", "from": "await getWithBackoff(options, `${url}/flips/`);", "to": "await getWithBackoff(options, `${HEALTHCHECKS_API}/checks/flips/`);" },
+  { "id": "HI6", "note": "the API asked without a key", "from": "if (options.apiKey.length === 0) {", "to": "if (false) {" },
+  { "id": "HI7", "note": "the independent read's answer not looked at", "from": "const independent = channels.ok ? parseIndependentRead(channels.text) : notRead(", "to": "const independent = channels.ok ? { known: true as const, value: true as const } : notRead(" },
+  { "id": "HI8", "note": "a failed attempt after the last pause taken as final one attempt early", "from": "const BACKOFF_MS: readonly number[] = [1_000, 3_000];", "to": "const BACKOFF_MS: readonly number[] = [1_000];" }
+]

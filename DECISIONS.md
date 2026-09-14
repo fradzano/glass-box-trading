@@ -4213,3 +4213,70 @@ small, no ADR split).
   them win over `.env`; a retry asks for the checks `up` or `paused`, because with
   both tasks disabled a check that was up in the afternoon is down by 22:05 (found by
   the unit-6 simulator); and an invalid drill ends the attempt.
+- **2026-09-14 — P12 activation: the second review of unit 7 — five blockers closed
+  red first, and the readers wired.** The owner's second review of unit 7 found that
+  the recorded state claimed more than the code did: `ANALYST_UNAVAILABLE` was named
+  as closed although the real analyst turned one kind of failed call into an answer,
+  and four activation clauses held only against the inputs the tests happened to use.
+  Each point got a counter-test that failed on the unchanged code first (`0e606d8`).
+
+  1. **An SDK turn that ended on an API error is a failed call.** The pinned Agent SDK
+     reports a turn cut off by a 401, 403, 429 or 5xx as `subtype: success` with
+     `is_error: true` and the error text in `result`. `createClaudeAnalyst` took that
+     text as the analyst's answer; `parseAnalystOutput` rejected it as structure, so
+     no `ANALYST_UNAVAILABLE` was raised and readiness stayed green — the silent
+     failure the previous entry's point 5 was meant to close. It now throws with the
+     status only, and a session that ends without any result message throws too.
+     Proven through the real `createClaudeAnalyst` with only the SDK's `query`
+     replaced: exactly one `ANALYST_SKIP`, `ANALYST_UNAVAILABLE` on the readiness
+     ping, no halt, one call. **Correction to the previous entry:** its point 5 held
+     for rejections and timeouts, not for this case, until `0e606d8`. The change is
+     inside the runtime digest and lands before the certificate run, like point 5.
+  2. **No receipt may lie after now.** The fourteen days were measured from the
+     oldest receipt only, so a reminder typed into the future passed whenever the
+     checks had not come back up since. `crossCheckAlerts` now takes now and refuses
+     each alert and the reminder after it, one by one; `confirm-alerts` passes the
+     moment of writing, step 0 the invocation's clock. The age check keeps only
+     staleness (`alert-confirmation.stale`), because a negative age can no longer
+     reach it.
+  3. **A new attempt inherits neither the confirmation's age nor the flat check.**
+     Steps 0 to 3 carried over as "facts about the artefact", so a retry three weeks
+     later skipped the fourteen-day bound, the token probe, the host and disk checks
+     and the dev account's flatness. Only step 1 (the installation, which every
+     invocation re-checks by value) and step 2 (the certificate, re-validated against
+     freshly printed digests) carry over now; steps 0 and 3 run in every attempt. So
+     that re-running step 0 does not quietly re-baseline the wrappers, the fold keeps
+     the latest earlier successful preflight, and a wrapper hash that differs from it
+     is red at the new step 0. Rejected: re-checking age and flatness inside step 4,
+     which would have left the rest of the preflight inherited.
+  4. **The disarm one-shot must be able to do its job.** Besides what it runs, it must
+     read `Highest` (only an elevated process may disable tasks whose definitions the
+     account can only read), `S4U` (nobody is signed in at 15:05) and
+     `StartWhenAvailable` (a machine that was off or rebooting at 15:05 must still
+     disarm when it comes back). The registered node is compared by full path with the
+     schedule's node, and the schedule takes that node from `expectedNodePath`: the
+     node the activation itself runs on, and only if it is the pinned `.node-version`
+     — never from the registration it is compared against. Building the schedule is
+     unit 10's.
+  5. **The probe keeps its own deadline.** It relied on the SDK honouring the abort; an
+     iterator that ignored it hung the probe without end. The session now races a
+     timer that both aborts and ends the wait. Declared limit: a `query` call that
+     never returns control cannot be bounded; the SDK returns its iterator at once.
+
+  **The readers, as decided while wiring them.** Every field of `Observations` comes
+  from `ops/activation/readers/observe.ts` over thin ports (`host-ports.ts`, and the
+  read-only PowerShell readers in `readers/host/`); a reading an invocation did not
+  take reads unknown and says so. Three are costly and are taken only when the
+  invocation's plan asks: the dev `--preflight` — which is also where the deployment's
+  digests come from, because computing the runtime digest without it would copy
+  `buildRuntime`'s composition into `ops/`, and any drift would turn every invocation
+  red — the live-token probe, and the dev account's book. Unit 10 derives the plan
+  from the ledger's phase. The preflight runs with the dev profile, the dev
+  `STATE_DIR` and diagnostic sink, and every ping URL emptied, so a refused preflight
+  cannot page through the long run's checks. healthchecks.io credentials live only in
+  `readers/healthchecks-io.ts` (bounded backoff: three attempts, 1 s and 3 s apart, on
+  429, 5xx and network errors), which `confirm-alerts` now uses as well. An unreadable
+  confirmation file is unknown, not absent. Step 11 records the first watchdog
+  composition line after the gate, armed or degraded (spec §8.12), as evidence rather
+  than as a condition; its shape comes from the runtime's source, because no watchdog
+  log on this host has held one.

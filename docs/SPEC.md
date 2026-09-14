@@ -260,7 +260,10 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   rhetorical: the analyst is invoked at most ONCE per cycle (no in-process
   retry), and the process never relaunches itself — restarts come only from
   the scheduler at the next interval. A call that was made and failed —
-  rejection, timeout, 429, authentication or SDK error — additionally raises
+  rejection, timeout, 429, authentication or SDK error, including a turn the
+  Agent SDK ends as `subtype: success` with `is_error: true` (its `result` is
+  then the API's error text, not an answer) and a session that ends without a
+  result message — additionally raises
   the fixed, secret-free alarm condition `ANALYST_UNAVAILABLE` on that cycle,
   so its readiness signal fails (S-G14-05); it is still exactly one
   `ANALYST_SKIP`, it does not halt, and management actions are not blocked.

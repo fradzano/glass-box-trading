@@ -1,0 +1,17 @@
+[
+  { "id": "PH1", "note": "an empty precondition object read as a reading", "from": "if (Object.keys(values).length === 0) return unknown(\"host preconditions are empty\");", "to": "" },
+  { "id": "PH2", "note": "a precondition that is not text accepted", "from": "    if (typeof item !== \"string\") return null;", "to": "" },
+  { "id": "PH3", "note": "an environment key the reader was not asked for passed on", "from": "if (unexpected.length > 0) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH4", "note": "the account number returned unmasked", "from": "return known(`${accountId.slice(0, 4)}…${accountId.slice(-3)}`);", "to": "return known(accountId);" },
+  { "id": "PH5", "note": "any text masked as if it were an account number", "from": "if (!/^[A-Z0-9]{8,32}$/.test(accountId)) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH6", "note": "a sample log read partly when one line does not read", "from": "if (!parsed.ok || !isRecord(parsed.value)) return [];", "to": "if (!parsed.ok || !isRecord(parsed.value)) continue;" },
+  { "id": "PH7", "note": "a negative count accepted in a sample", "from": "Number.isSafeInteger(value) && value >= 0 ? value : null", "to": "Number.isSafeInteger(value) ? value : null" },
+  { "id": "PH8", "note": "a journal that starts with something other than BOOTSTRAP read as started", "from": "if (entry.type !== \"BOOTSTRAP\") return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH9", "note": "the oldest certificate taken instead of the newest", "from": ".sort().at(-1) ?? null;", "to": ".sort().at(0) ?? null;" },
+  { "id": "PH10", "note": "any JSON file taken as a certificate", "from": "names.filter(name => /^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z\\.json$/.test(name))", "to": "names.filter(name => name.endsWith(\".json\"))" },
+  { "id": "PH11", "note": "an independent read of any shape accepted", "from": " || !Array.isArray(parsed.value[\"channels\"])", "to": "" },
+  { "id": "PH12", "note": "a probe that failed reported as a live token", "from": "tokenLive: probe.ok,", "to": "tokenLive: true," },
+  { "id": "PH13", "note": "another node version accepted as the expected node", "from": "if (runningVersion !== `v${pinned}`) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH14", "note": "a relative or non-node path accepted as the expected node", "from": "if (!/^[A-Za-z]:\\\\/.test(execPath) || !execPath.toLowerCase().endsWith(\"\\\\node.exe\")) return unknown(", "to": "if (false) return unknown(" },
+  { "id": "PH15", "note": "an unreadable .node-version compared as if it named a version", "from": "if (!/^\\d+\\.\\d+\\.\\d+$/.test(pinned)) return unknown(", "to": "if (false) return unknown(" }
+]
