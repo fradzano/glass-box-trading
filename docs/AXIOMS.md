@@ -370,8 +370,13 @@ this file.
   been exercised end to end against an explicit failure, a missing invocation
   and a dead machine. Deadlines come from the operating requirements already
   fixed (A18's 45–60 minute SLA, the cycle interval, the exchange calendar),
-  never from what is convenient to configure. Added 2026-09-05.
-  (#78 #79)
+  never from what is convenient to configure. Added 2026-09-05. An analyst that
+  was asked and did not answer — an authentication failure, a 429, a timeout, an
+  SDK error — is such an alarm on the invocation it happened in: the deployment
+  is alive and not halted and still cannot open a position. It does not halt, so
+  risk management continues, and the next successful call clears it; a cycle
+  that skipped the analyst on purpose raises nothing further. Added 2026-09-14
+  (owner ruling). (#78 #79 #81)
 
 ---
 
@@ -429,6 +434,7 @@ this file.
 | # | Axioms | # | Axioms | # | Axioms | # | Axioms | # | Axioms |
 |---|---|---|---|---|---|---|---|---|---|
 | 76 | A19 A30 | 77 | A13 A30 | 78 | A18 A31 | 79 | A18 A31 | 80 | A16 A18 |
+| 81 | A4 A12 A31 | | | | | | | | |
 
 A24 originally appeared in no row by design: it was requirement-derived
 (account separation), not scenario-derived. Scenario #49 now supplies the

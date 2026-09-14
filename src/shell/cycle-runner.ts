@@ -684,6 +684,10 @@ export async function runCycle(deps: CycleDependencies): Promise<CycleReport> {
       batch = parseAnalystOutput(raw);
     } catch (error) {
       analystSkip = messageOf(error);
+      // S-CYC-01, #81 (owner ruling 2026-09-14): a call that was made and failed is an alarm on this cycle's
+      // readiness — not a halt and not a retry, so management continues. parseAnalystOutput never throws, so
+      // only the call itself (rejection, timeout, 429, authentication, SDK error) reaches this line.
+      alarmConditions.push("ANALYST_UNAVAILABLE");
     }
   }
 

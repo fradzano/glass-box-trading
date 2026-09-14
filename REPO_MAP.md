@@ -36,20 +36,30 @@
 - `fixtures/golden-journal.jsonl`
 - `hooks/pre-commit` — Regenerate and stage the repo maps on every commit.
 - `LICENSE`
+- `ops/activation/confirm/record.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14).
+- `ops/activation/confirm-alerts.ts` — `activation confirm-alerts` — records the owner's confirmation of gate condition 4
+- `ops/activation/core/confirmation.ts` — The cross-check behind `activation confirm-alerts` (owner ruling 2026-09-14,
 - `ops/activation/core/decide.ts` — The decision (spec §5–§7): one invocation's answer, from the fold of the ledger,
 - `ops/activation/core/fold.ts` — The fold (spec §4, §5): from the ledger to what the current attempt has done.
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
-- `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 6).
+- `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 7).
+- `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`
 - `ops/activation/probes/mutants-healthchecks.json`
 - `ops/activation/probes/mutants-ledger.json`
 - `ops/activation/probes/mutants-parse.json`
+- `ops/activation/probes/mutants-probe.json`
+- `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-steps.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
+- `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
 - `ops/activation/readers/parse-healthchecks.ts` — Pure parsers for the healthchecks.io management API (build log, unit 7).
 - `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
+- `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
+- `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
+- `ops/activation/tests/confirmation.spec.ts` — The cross-check of gate condition 4 (owner ruling and review, 2026-09-14). The
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is

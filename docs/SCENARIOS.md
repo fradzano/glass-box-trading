@@ -548,6 +548,21 @@ under both offsets and the decision about whether a cycle is due comes from the
 exchange calendar, not from the trigger; the silence-detector's expectation must
 follow the same rule.
 
+**81. The analyst's credential dies after the run is armed**
+Actors: analyst session, subscription token, cycle runner, dead-man check,
+operator. Trigger: on the second day of a three-month run the token the analyst
+uses is revoked, expires or is rate-limited for good. Every cycle still runs,
+reconciles, manages what is open, journals a CYCLE with the analyst skipped and
+pings success, because nothing is halted and every append lands. The run is
+armed and alive and will never open another position; the measurement period
+records months of abstention nobody chose. (Found by reading the code during the
+activation build, 2026-09-14 — not by the cold catalogue.) What must hold: a
+cycle whose analyst call was made and failed says so on the readiness signal the
+operator watches, without halting and without retrying, so that risk management
+carries on; a cycle that did not ask the analyst on purpose — under a halt, a
+reconciliation block or a gap — adds no such alarm, because its own impediment
+already stands; and the first successful call clears it.
+
 ---
 
 ## Cross-cutting observation (not a scenario)

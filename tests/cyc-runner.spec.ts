@@ -171,6 +171,63 @@ describe("S-CYC-01 analyst failure is management-only, never a retry or a relaun
   });
 });
 
+describe("S-CYC-01 a failed analyst call is an alarm, not a quiet abstention (#81, owner ruling 2026-09-14)", () => {
+  it("S-CYC-01 an analyst rejection and an analyst timeout each raise ANALYST_UNAVAILABLE and fail readiness, still with exactly one ANALYST_SKIP and no retry", async () => {
+    const failing = await harness({ analyst: () => Promise.reject(new Error("analyst HTTP 401 TEST_ONLY_SECRET_KEY")) });
+    const ping = recordingPing(() => failing.clock.now);
+    const report = await failing.cycle({ ping });
+    expect(report.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    expect(report.ping).toBe("fail");
+    expect(ping.record.successes).toEqual([]);
+    expect(ping.record.failures).toHaveLength(1);
+    expect(JSON.stringify(ping.record.failures)).toContain("ANALYST_UNAVAILABLE");
+    expect(JSON.stringify(ping.record.failures)).not.toContain("TEST_ONLY_SECRET_KEY");
+    expect(failing.analystCalls.count).toBe(1);
+    expect(entriesOf(failing.paths)[1]!["batchVerdicts"]).toEqual([{ code: "ANALYST_SKIP", reason: expect.stringContaining("[REDACTED]") }]);
+    expect(failing.fake.mutations).toHaveLength(0);
+
+    const hanging = await harness({ analyst: () => new Promise<string>(() => { /* never resolves */ }) });
+    const timedOut = await hanging.cycle({ ping: recordingPing(() => hanging.clock.now) });
+    expect(timedOut.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    expect(timedOut.ping).toBe("fail");
+    expect(hanging.analystCalls.count).toBe(1);
+  });
+
+  it("S-CYC-01 the next successful analyst call raises nothing, and readiness reports success again", async () => {
+    const outcome = { fail: true };
+    const run = await harness({ analyst: () => (outcome.fail ? Promise.reject(new Error("analyst HTTP 429")) : Promise.resolve("{\"candidates\":[]}")) });
+    const first = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(first.alarmConditions).toContain("ANALYST_UNAVAILABLE");
+    outcome.fail = false;
+    const second = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(second.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
+    expect(second.ping).toBe("success");
+  });
+
+  it("S-CYC-01 an answer that fails the schema is a structural rejection, not an unavailable analyst", async () => {
+    const run = await harness({ analyst: () => Promise.resolve("Sure! Here are two ideas for today:") });
+    const report = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(report.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
+    expect(run.analystCalls.count).toBe(1);
+  });
+
+  it("S-CYC-01 a halted cycle does not ask the analyst and adds no ANALYST_UNAVAILABLE, even with an analyst that would fail — the halt is the impediment", async () => {
+    const outcome = { fail: false };
+    const run = await harness({
+      broker: { onSubmit: () => ({ kind: "fill", avgFillPriceCents: 150 }) },
+      analyst: () => (outcome.fail ? Promise.reject(new Error("analyst HTTP 401")) : Promise.resolve(CANDIDATE_JSON)),
+    });
+    await run.cycle();
+    expect(readHaltState(run.paths)).toMatchObject({ halted: true, reason: "BROKER_PRICE_BREACH" });
+    outcome.fail = true;
+    run.fake.setSubmitBehaviour(() => ({ kind: "fill" }));
+    const halted = await run.cycle({ ping: recordingPing(() => run.clock.now) });
+    expect(run.analystCalls.count).toBe(1);
+    expect(halted.alarmConditions).not.toContain("ANALYST_UNAVAILABLE");
+    expect(halted.ping).toBe("fail");
+  });
+});
+
 describe("S-CYC-02 a half-answering broker produces abstention", () => {
   it("S-CYC-02 positions OK but orders failing → SKIP WORLD_PARTIAL with no snapshot, no analyst call, no order; everything failing → WORLD_UNREACHABLE", async () => {
     const partial = await harness();

@@ -259,7 +259,19 @@ Phases per CONCEPT §3: 0 reconcile → 1 snapshot → 2 analyst → 3 core →
   `SKIP` reason is journaled, and the process exits cleanly. Bounded, not
   rhetorical: the analyst is invoked at most ONCE per cycle (no in-process
   retry), and the process never relaunches itself — restarts come only from
-  the scheduler at the next interval. (A4, A12)
+  the scheduler at the next interval. A call that was made and failed —
+  rejection, timeout, 429, authentication or SDK error — additionally raises
+  the fixed, secret-free alarm condition `ANALYST_UNAVAILABLE` on that cycle,
+  so its readiness signal fails (S-G14-05); it is still exactly one
+  `ANALYST_SKIP`, it does not halt, and management actions are not blocked.
+  A cycle that did not ask the analyst (halt, reconciliation block, gap)
+  raises no such condition, because its own impediment already stands; an
+  answer that fails the schema is a structural rejection (A12), not an
+  unavailable analyst; the next successful call raises nothing. **Declared
+  limit:** the condition belongs to the cycle that saw the failure — outside
+  the session the readiness CLI reports standing impediments only, so
+  readiness reads success overnight and fails again with the first cycle of
+  the next session. (A4, A12, A31, #81 — owner ruling 2026-09-14)
 - **S-CYC-02** Broker API half-answer (positions OK, orders endpoint fails —
   or vice versa), then the snapshot is marked incomplete, the core receives
   no candidates and emits no order actions, and the cycle journals
@@ -1403,7 +1415,8 @@ journaled structure), `RESIDUE` (assignment shares, orphan leg),
   cycle that correctly halted on `AUTH_FAILURE` sent `success` because its
   append had landed. The readiness signal's conditions are the union of the
   cycle's alarm conditions and the effective halt state; `HALT` reasons are
-  alarm conditions in their own right. Both signals are undeliverable when the
+  alarm conditions in their own right, and so is `ANALYST_UNAVAILABLE`
+  (S-CYC-01, #81). Both signals are undeliverable when the
   endpoint is unset, and an unattended deployment may not begin until the path
   to the operator has been exercised against an explicit failure, a missing
   invocation and a powered-off machine.
