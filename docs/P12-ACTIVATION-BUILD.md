@@ -60,7 +60,7 @@ always named at the bottom.
 | 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — absolute schedule deadline restored beside the five-second lease; real step-10 14:55:01 counterexample and D119–D122 close the boundary | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da`, `fa0fbe7`, this commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
-| 9 | Ledger store: append with fsync, lock file, append failure as abort | open | |
+| 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — invocation lease plus append guard, stale tombstones, immutable numbered torn recovery, closed failures | this commit |
 | 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
 | 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
 | 12 | Adversarial review of the code against the catalogue | open | |
@@ -646,9 +646,60 @@ mutants. The final activation suite passes 368/368. The complete repository
 `npm run verify` passes at 48 files / 670 tests, followed by every architecture,
 fixture, dashboard, sandbox and implementation-phase gate.
 
+## Unit 9 — durable ledger store — 2026-09-15
+
+`ops/activation/store/ledger-store.ts` is the imperative persistence boundary around
+the closed ledger codec. `withActivationLedger` owns a canonical-root pid/start-time
+lease for the whole invocation callback, not one append. A separate bounded,
+kernel-owned transition/write guard serializes each read-plan-write-fsync operation,
+including parallel appends made from one callback. Session appends call
+`planLedgerAppend`, write exactly its UTF-8 LF-terminated line, reject short writes or
+size changes, and fsync every line before return. A live second invocation takes only
+that short guard, writes exactly one note, returns `contended`, and never runs its host
+callback. Unknown liveness and malformed ownership data fail closed.
+
+A lock whose owner is provably dead is renamed to a tombstone under the same guard.
+The tombstone remains until its stale-lock note is durable, so an ENOSPC or crash cannot
+erase the takeover. Replay detects an already recorded owner and does not double-count
+it. Lock, ledger and release errors become fixed credential-free `LedgerStoreError`
+stages and are never returned as success. Unit 10 must catch that non-swallowable error
+and perform §4's disable-both/page/exit compensation. Unit 9 exposes no host-effect
+ports and does not pretend that compensation happened.
+
+**Torn-tail ruling.** Damaged bytes are immutable. A torn primary or recovery segment
+is never opened for append; continuation goes to the next six-digit recovery file and
+its first complete line is a `correction` naming the damaged segment and sequence. A
+zero-byte recovery file proves a crash after create but before its first write, and a
+partial first correction proves the next crash window; both remain visible torn
+segments and force another recovery file. Readers validate contiguous segment numbers
+and marker-first chains and retain every damage item. Thus absent, empty, intact, torn
+and corrupt stay distinguishable, and recovery never upgrades damaged history to
+intact. Complete noncanonical lines (BOM, CRLF, duplicate-key or reordered JSON),
+invalid UTF-8, impossible or divergent timestamps, sequence gaps and terminated bad
+JSON are corrupt and are never continued.
+
+Red-first counterexamples cover 24 processes and parallel same-session appends; a
+second invocation while the first sleeps; direct live-lock notes; Windows `wx`
+collision; ordinary, crashed and replayed stale takeover; torn primary, empty and
+partial recovery markers, and repeatedly torn recovery; forged recovery chains;
+partial write; concurrent size change; EACCES, EPERM and ENOSPC; ledger, lock and live
+note fsync; ledger/lock close and release failure; noncanonical bytes; timestamp and
+anchor mismatch; hostile accessors; correction references; and credential-shaped
+values and field names. The final activation suite passes **409/409**. Targeted
+mutation runs catch **25/25 store mutants** and **25/25 ledger-codec mutants**; both
+targets are restored byte-identically, bringing the full inventory from 350 to
+**386/386**. The final repository gate is `npm run verify` at 48 files / 670 tests.
+
+The formal `bis-0` store was degraded before this unit: its shared checkout held
+unrelated uncommitted evidence from older runs. This session did not mutate or clean
+that foreign state and therefore does not claim a formal archived loop. Two independent
+cold readers instead executed concurrency, recovery, integrity and failure probes
+against successive frozen trees; their last real findings were closed before the final
+gate.
+
 ## Next step
 
-**Unit 9 only; do not begin it in this session.** The 2026-09-14 Activation/Disarm
+**Unit 10 only; it was not begun in the unit-9 session.** The 2026-09-14 Activation/Disarm
 calendar run did not occur: there is no Activation task, no Disarm task and no state
 root, so nothing is planned retroactively. The next plausible supervised block is the
 certificate and drills on 2026-09-21 with the anchor on 2026-09-22. Before that run,
@@ -684,7 +735,7 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-After unit 8: units 9 (ledger store) and 10 (CLI). Unit 9 has not started.
+After unit 9: unit 10 (CLI), then units 11–13. Unit 10 has not started.
 
 ## Unit 7 brief, as it was given
 

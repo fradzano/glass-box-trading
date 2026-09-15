@@ -7,6 +7,7 @@
 - `ops/activation/tests/decide.spec.ts`
 - `ops/activation/tests/fold.spec.ts`
 - `ops/activation/tests/healthchecks-io.spec.ts`
+- `ops/activation/tests/ledger-store.spec.ts`
 - `ops/activation/tests/ledger.spec.ts`
 - `ops/activation/tests/observe.spec.ts`
 - `ops/activation/tests/parse-healthchecks.spec.ts`

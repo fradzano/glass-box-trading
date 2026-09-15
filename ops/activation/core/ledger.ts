@@ -78,27 +78,84 @@ function isOutcome(value: unknown): value is Outcome {
 function secretShaped(text: string): boolean {
   return /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)
     || /hc-ping\.com/i.test(text)
-    || /healthchecks\.io\/(api|ping)/i.test(text);
+    || /healthchecks\.io\/(api|ping)/i.test(text)
+    || /\bPA[A-Z0-9]{10}\b/.test(text)
+    || /\bPK[A-Z0-9]{16,}\b/.test(text)
+    || /\bsk-ant-[A-Za-z0-9_-]+/i.test(text)
+    || /\bBearer\s+\S+/i.test(text);
 }
 
-function findSecretShapedValue(value: unknown, where: string): string | null {
-  if (typeof value === "string") return secretShaped(value) ? where : null;
+function credentialField(key: string): boolean {
+  const normalized = key.replace(/[^A-Za-z]/g, "").toLowerCase();
+  return normalized.includes("apikey") || normalized.includes("apisecret")
+    || normalized.includes("secretkey") || normalized.includes("accesstoken")
+    || normalized.includes("authorization");
+}
+
+function inspectLedgerValue(value: unknown, stack: WeakSet<object>): "secret" | "invalid" | null {
+  if (value === null || typeof value === "boolean") return null;
+  if (typeof value === "string") return secretShaped(value) ? "secret" : null;
+  if (typeof value === "number") return Number.isFinite(value) ? null : "invalid";
+  if (typeof value !== "object") return "invalid";
+  if (stack.has(value)) return "invalid";
+  stack.add(value);
   if (Array.isArray(value)) {
     const items: readonly unknown[] = value;
-    for (const [index, item] of items.entries()) {
-      const hit = findSecretShapedValue(item, `${where}[${String(index)}]`);
+    for (const item of items) {
+      const hit = inspectLedgerValue(item, stack);
       if (hit !== null) return hit;
     }
+    stack.delete(value);
     return null;
   }
   if (isRecord(value)) {
-    for (const [key, item] of Object.entries(value)) {
-      if (secretShaped(key)) return `${where}.${key}`;
-      const hit = findSecretShapedValue(item, `${where}.${key}`);
+    const prototype: object | null = Object.getPrototypeOf(value) as object | null;
+    if (prototype !== Object.prototype && prototype !== null) return "invalid";
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (secretShaped(key) || credentialField(key)) return "secret";
+      if (!("value" in descriptor)) return "invalid";
+      const hit = inspectLedgerValue(descriptor.value, stack);
       if (hit !== null) return hit;
     }
+    stack.delete(value);
+    return null;
   }
-  return null;
+  return "invalid";
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function daysBeforeMonth(year: number, month: number): number {
+  const starts = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334] as const;
+  return (starts[month] ?? 0) + (month > 2 && isLeapYear(year) ? 1 : 0);
+}
+
+function daysBeforeYear(year: number): number {
+  const previous = year - 1;
+  return 365 * previous + Math.floor(previous / 4) - Math.floor(previous / 100) + Math.floor(previous / 400);
+}
+
+/** Pure ISO-offset decoder: core architecture forbids Date/Intl. */
+function isoAtUtcMs(at: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?([+-])(\d{2}):(\d{2})$/.exec(at);
+  if (match === null) return null;
+  const [year, month, day, hour, minute, second, millisecond, offsetHour, offsetMinute] = [
+    match[1], match[2], match[3], match[4], match[5], match[6], (match[7] ?? "0").padEnd(3, "0"), match[9], match[10],
+  ].map(Number);
+  if (year === undefined || month === undefined || day === undefined || hour === undefined || minute === undefined
+    || second === undefined || millisecond === undefined || offsetHour === undefined || offsetMinute === undefined) return null;
+  const monthLengths = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+  if (year < 1970 || month < 1 || month > 12 || day < 1 || day > (monthLengths[month - 1] ?? 0)
+    || hour > 23 || minute > 59 || second > 59 || offsetHour > 14 || offsetMinute > 59
+    || (offsetHour === 14 && offsetMinute !== 0)) return null;
+  const days = daysBeforeYear(year) - daysBeforeYear(1970) + daysBeforeMonth(year, month) + day - 1;
+  const localMs = (((days * 24 + hour) * 60 + minute) * 60 + second) * 1_000 + millisecond;
+  const offsetMs = (offsetHour * 60 + offsetMinute) * 60_000 * (match[8] === "+" ? 1 : -1);
+  const utcMs = localMs - offsetMs;
+  return Number.isSafeInteger(utcMs) && utcMs >= 0 ? utcMs : null;
 }
 
 function refuse(reason: string): { readonly ok: false; readonly reason: string } {
@@ -106,7 +163,7 @@ function refuse(reason: string): { readonly ok: false; readonly reason: string }
 }
 
 /** The closed schema of one line. Missing and unknown fields are both refusals: a line is either exactly this or not a line. */
-export function validateLedgerEntry(value: unknown): ValidatedEntry {
+function validateLedgerEntryUnsafe(value: unknown): ValidatedEntry {
   if (!isRecord(value)) return refuse("ENTRY_NOT_A_RECORD");
   for (const key of Object.keys(value)) {
     if (!ledgerFields().includes(key)) return refuse(`UNKNOWN_FIELD:${key}`);
@@ -118,10 +175,12 @@ export function validateLedgerEntry(value: unknown): ValidatedEntry {
 
   if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 1) return refuse("SEQ_INVALID");
   // Local time with its offset, so a reader needs no table; `Z` is refused on purpose.
-  if (typeof at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?[+-]\d{2}:\d{2}$/.test(at)) return refuse("AT_INVALID");
+  if (typeof at !== "string" || isoAtUtcMs(at) === null) return refuse("AT_INVALID");
   if (typeof atUtcMs !== "number" || !Number.isSafeInteger(atUtcMs) || atUtcMs < 0) return refuse("AT_UTC_MS_INVALID");
+  if (isoAtUtcMs(at) !== atUtcMs) return refuse("AT_UTC_MS_MISMATCH");
   if (typeof attempt !== "string" || !/^[A-Za-z0-9._:-]{1,64}$/.test(attempt)) return refuse("ATTEMPT_INVALID");
-  if (typeof anchorDay !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDay)) return refuse("ANCHOR_DAY_INVALID");
+  if (typeof anchorDay !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDay)
+    || isoAtUtcMs(`${anchorDay}T00:00:00+00:00`) === null) return refuse("ANCHOR_DAY_INVALID");
   if (step !== null && !isStepId(step)) return refuse("STEP_INVALID");
   if (!isEntryKind(kind)) return refuse("KIND_INVALID");
 
@@ -133,16 +192,21 @@ export function validateLedgerEntry(value: unknown): ValidatedEntry {
   if (kind === "result" || kind === "intent") {
     if (step === null) return refuse("STEP_REQUIRED");
   }
+  const correctionSeq = isRecord(evidence) ? evidence["damagedSeq"] ?? evidence["correctedSeq"] ?? evidence["corrects"] : null;
+  if (kind === "correction" && (!Number.isSafeInteger(correctionSeq)
+    || (correctionSeq as number) < 1 || (correctionSeq as number) > seq)) {
+    return refuse("CORRECTION_SEQ_REQUIRED");
+  }
 
   if (!isRecord(evidence)) return refuse("EVIDENCE_NOT_A_RECORD");
-  const leak = findSecretShapedValue(evidence, "evidence");
-  if (leak !== null) return refuse(`SECRET_SHAPED_VALUE:${leak}`);
+  const evidenceInspection = inspectLedgerValue(evidence, new WeakSet<object>());
+  if (evidenceInspection === "secret") return refuse("SECRET_SHAPED_VALUE");
+  if (evidenceInspection === "invalid") return refuse("EVIDENCE_NOT_JSON");
 
   if (nextOwnerAction !== null && (typeof nextOwnerAction !== "string" || nextOwnerAction.trim().length === 0)) return refuse("NEXT_OWNER_ACTION_INVALID");
   if (kind === "abort" && nextOwnerAction === null) return refuse("ABORT_WITHOUT_NEXT_OWNER_ACTION");
   if (typeof nextOwnerAction === "string") {
-    const leakInAction = findSecretShapedValue(nextOwnerAction, "nextOwnerAction");
-    if (leakInAction !== null) return refuse(`SECRET_SHAPED_VALUE:${leakInAction}`);
+    if (secretShaped(nextOwnerAction)) return refuse("SECRET_SHAPED_VALUE");
   }
 
   return {
@@ -160,6 +224,14 @@ export function validateLedgerEntry(value: unknown): ValidatedEntry {
       nextOwnerAction,
     },
   };
+}
+
+export function validateLedgerEntry(value: unknown): ValidatedEntry {
+  try {
+    return validateLedgerEntryUnsafe(value);
+  } catch {
+    return refuse("ENTRY_ACCESS_FAILED");
+  }
 }
 
 /** Assigns `seq`, refuses a clock that runs backwards, and encodes one LF-terminated line with a stable field order. */
@@ -190,14 +262,14 @@ export function planLedgerAppend(tail: LedgerTail, draft: LedgerDraft): EncodedL
  * chain or runs the clock backwards is corrupt, and nothing after the first
  * corrupt line is trusted — the history is a chain.
  */
-export function parseLedgerText(text: string): ParsedLedger {
+export function parseLedgerText(text: string, initialTail: LedgerTail = { lastSeq: 0, lastAtUtcMs: null }): ParsedLedger {
   const entries: LedgerEntry[] = [];
   const corrupt: { line: number; reason: string }[] = [];
   const segments = text.split("\n");
   const torn = segments.at(-1) ?? "";
   const terminated = segments.slice(0, -1);
-  let expectedSeq = 1;
-  let lastAtUtcMs: number | null = null;
+  let expectedSeq = initialTail.lastSeq + 1;
+  let lastAtUtcMs: number | null = initialTail.lastAtUtcMs;
   for (const [index, segment] of terminated.entries()) {
     const lineNumber = index + 1;
     if (corrupt.length > 0) {
@@ -214,6 +286,10 @@ export function parseLedgerText(text: string): ParsedLedger {
     const validated = validateLedgerEntry(parsed);
     if (!validated.ok) {
       corrupt.push({ line: lineNumber, reason: validated.reason });
+      continue;
+    }
+    if (JSON.stringify(validated.entry) !== segment) {
+      corrupt.push({ line: lineNumber, reason: "NON_CANONICAL_LINE" });
       continue;
     }
     if (validated.entry.seq !== expectedSeq) {

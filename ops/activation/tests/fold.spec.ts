@@ -17,7 +17,7 @@ function ledger(lines: readonly Line[]): string {
   for (const line of lines) {
     clock += 60_000;
     const draft: LedgerDraft = {
-      at: "2026-09-21T15:35:00+02:00",
+      at: new Date(clock + 2 * 60 * 60 * 1_000).toISOString().replace("Z", "+02:00"),
       atUtcMs: clock,
       step: null,
       outcome: null,
@@ -181,10 +181,10 @@ describe("activation fold — shapes that make the phase ambiguous", () => {
   it("collects the seq values that corrections name, and passes a torn tail through as integrity", () => {
     const text = ledger([
       { attempt: "a1", anchorDay: MON, kind: "note" },
-      { attempt: "a1", anchorDay: MON, kind: "correction", evidence: { corrects: 7 } },
+      { attempt: "a1", anchorDay: MON, kind: "correction", evidence: { corrects: 1 } },
     ]);
     const fold = foldLedger(parseLedgerText(`${text}{"seq":3,"at`));
-    expect(fold.corrections).toEqual([7]);
+    expect(fold.corrections).toEqual([1]);
     expect(fold.integrity).toBe("torn");
   });
 });

@@ -31,7 +31,7 @@ function foldOf(done: readonly StepId[]) {
     for (const kind of ["intent", "result"] as const) {
       clock += 1_000;
       const planned = planLedgerAppend(tail, {
-        at: "2026-09-21T15:35:00+02:00",
+        at: new Date(clock + 2 * 60 * 60 * 1_000).toISOString().replace("Z", "+02:00"),
         atUtcMs: clock,
         attempt: "a1",
         anchorDay: SCHEDULE.anchorDay,

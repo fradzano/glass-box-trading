@@ -8,22 +8,27 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-14 21:20 CEST. **P12 activation unit 7's absolute-deadline
-blocker is closed and unit 8 is complete; unit 9 has not started. Nothing was activated
-or changed on the host.** The real step-10 action was first red at 14:55:01 while its
-five-second lease still ran; authorization now requires both that lease and the
-canonical absolute 14:55 schedule deadline, including equality and both sides of each
-boundary. Unit 8 is a fake-only effect shell with typed ports, fresh checks/clock and
-the same authorization at certificate-write linearisation, pre/post certificate and
-deployment digest validation, credential-free failures, abort-and-settle timeouts,
-safe compensation, complete enable rollback, install evidence and intent-only reboot
-completion. The activation suite passes 368/368; all 350 mutants are caught with
-byte-identical restoration; full `npm run verify` passes at 48 files / 670 tests.
-Spec revision 10 and the build log own the full evidence. The 2026-09-14
+**Last updated:** 2026-09-15 04:15 CEST. **P12 activation unit 9 is complete; unit 10
+has not started. Nothing was activated or changed on the host.** The ledger store holds
+one pid/start-time lease over the complete invocation callback and a short kernel-owned
+write guard over every append. It writes only canonical UTF-8 LF-terminated codec
+lines, fsyncs before success, serializes parallel processes and same-session appends,
+and exposes failures as non-swallowable credential-free `LedgerStoreError`s. A live
+competitor writes exactly one note under the write guard and never enters the protected
+callback. Proven-dead locks remain tombstones until their takeover note is durable.
+Torn bytes, including empty or partial recovery markers, are never changed:
+continuation uses the next numbered recovery segment, begins with a correction, and
+aggregate state remains `torn`; terminated corruption is not continued. Absent, empty,
+intact, torn and corrupt remain distinct. The activation suite passes 409/409; the
+complete mutation inventory is 386/386, including store 25/25 and ledger codec 25/25,
+with byte-identical restoration. Final `npm run verify` evidence is in the unit-9 build
+log. The managed `bis-0` archive could not start because its shared verification
+checkout contains unrelated dirty runs; no foreign evidence was changed, and two
+independent repository cold reads supplied the fallback gate. The 2026-09-14
 Activation/Disarm run did not happen; no Activation task, Disarm task or state root was
-created, and it is not planned retroactively. `confirm-alerts` remains unexecuted.
-Next plausible block: certificate/drills 2026-09-21, anchor 2026-09-22, after recording
-real receipt times and controlled `confirm-alerts`. **Next code unit: unit 9.**
+created. `confirm-alerts` remains unexecuted. Next plausible block: certificate/drills
+2026-09-21, anchor 2026-09-22, only after the controlled mail confirmation. **Next code
+unit: unit 10.**
 
 ## Historical cursors (not current state)
 

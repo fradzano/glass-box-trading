@@ -1,5 +1,21 @@
 # DECISIONS
 
+- **2026-09-15 — Unit 9 treats every torn tail as immutable evidence and continues
+  only in a numbered recovery segment.** The first complete line of each recovery
+  segment is a codec-validated `correction` naming the prior segment and damaged
+  sequence. A recovery file left empty or with a partial marker by a crash is itself
+  torn and forces another segment. No continuation edits or appends to damaged bytes,
+  and aggregate state never returns from `torn` to `intact`; terminated corruption is
+  not recoverable by the store.
+- **2026-09-15 — The activation lease encloses the complete invocation while a
+  separate kernel-owned guard serializes every ledger append.** Unit 10 must perform
+  its reads, appends and host work inside `withActivationLedger`. A live competitor
+  takes only the append guard, writes one note, and exits without entering that
+  callback. A proven-dead lock is renamed to a tombstone that survives failed appends
+  until one stale-lock note is durable. Store errors are closed, credential-free and
+  thrown to unit 10; disable-both/page/exit compensation is deliberately not faked in
+  unit 9 and remains unit 10's orchestration contract.
+
 Owner = Felix. Format: date — decision — rationale (one line each; this repo is
 small, no ADR split).
 

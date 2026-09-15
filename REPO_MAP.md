@@ -56,6 +56,7 @@
 - `ops/activation/probes/mutants-healthchecks.json`
 - `ops/activation/probes/mutants-host-ports.json`
 - `ops/activation/probes/mutants-install-scheduled-task.json`
+- `ops/activation/probes/mutants-ledger-store.json`
 - `ops/activation/probes/mutants-ledger.json`
 - `ops/activation/probes/mutants-observe.json`
 - `ops/activation/probes/mutants-parse-host.json`
@@ -79,6 +80,7 @@
 - `ops/activation/readers/parse-healthchecks.ts` — Pure parsers for the healthchecks.io management API (build log, unit 7).
 - `ops/activation/readers/parse-host.ts` — Pure parsers for the host readers that complete unit 7 (build log, "Unit 7 — the I/O
 - `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
+- `ops/activation/store/ledger-store.ts` — Unit 9: the durable shell around the closed ledger codec.
 - `ops/activation/tests/actions.spec.ts` — Unit 8: every effect is exercised only through fakes. These tests never spawn a
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
 - `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
@@ -86,6 +88,7 @@
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/healthchecks-io.spec.ts` — Unit 7, the healthchecks.io read. The fake API below answers the way the management API does,
+- `ops/activation/tests/ledger-store.spec.ts` — Unit 9, red first: the activation record is useful only if the store makes
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
 - `ops/activation/tests/observe.spec.ts` — Unit 7: the whole observation, composed from the readers. The ports below replay this host's
 - `ops/activation/tests/parse-healthchecks.spec.ts` — Unit 7: the healthchecks.io parsers. The first test is the one that matters most:

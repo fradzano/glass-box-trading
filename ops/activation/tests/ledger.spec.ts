@@ -73,11 +73,33 @@ describe("activation ledger — the codec", () => {
   });
 
   it("refuses a clock that runs backwards, at append and at read", () => {
-    const planned = planLedgerAppend({ lastSeq: 1, lastAtUtcMs: 2_000 }, draft({ atUtcMs: 1_000 }));
+    const planned = planLedgerAppend(
+      { lastSeq: 1, lastAtUtcMs: 1_789_997_703_000 },
+      draft({ at: "2026-09-21T15:35:02+02:00", atUtcMs: 1_789_997_702_000 }),
+    );
     expect(planned).toEqual({ ok: false, reason: "AT_NOT_MONOTONIC" });
 
-    const text = encode([draft({ atUtcMs: 5_000 })]) + encode([draft({ atUtcMs: 4_000 })]).replace('"seq":1', '"seq":2');
+    const text = encode([draft({ at: "2026-09-21T15:35:03+02:00", atUtcMs: 1_789_997_703_000 })])
+      + encode([draft({ at: "2026-09-21T15:35:02+02:00", atUtcMs: 1_789_997_702_000 })]).replace('"seq":1', '"seq":2');
     expect(parseLedgerText(text).corrupt).toEqual([{ line: 2, reason: "AT_NOT_MONOTONIC" }]);
+  });
+
+  it("binds the offset timestamp to atUtcMs and refuses impossible civil times", () => {
+    expect(validateLedgerEntry({ seq: 1, ...draft({ at: "2026-09-20T15:35:02+02:00" }) }))
+      .toEqual({ ok: false, reason: "AT_UTC_MS_MISMATCH" });
+    expect(validateLedgerEntry({ seq: 1, ...draft({ at: "2026-99-99T99:99:99+14:30" }) }))
+      .toEqual({ ok: false, reason: "AT_INVALID" });
+    expect(validateLedgerEntry({ seq: 1, ...draft({ at: "2026-02-30T15:35:02+02:00", atUtcMs: 1_772_458_502_000 }) }))
+      .toEqual({ ok: false, reason: "AT_INVALID" });
+    expect(validateLedgerEntry({ seq: 1, ...draft({ at: "2026-09-21T15:35:02+14:30", atUtcMs: 1_789_952_702_000 }) }))
+      .toEqual({ ok: false, reason: "AT_INVALID" });
+  });
+
+  it("refuses byte-regenerated lines including CRLF and duplicate JSON keys", () => {
+    const line = encode([draft()]).slice(0, -1);
+    expect(parseLedgerText(`${line}\r\n`).corrupt).toEqual([{ line: 1, reason: "NON_CANONICAL_LINE" }]);
+    const duplicated = line.replace('"evidence":{}', '"evidence":{"shadow":"Bearer hidden"},"evidence":{}');
+    expect(parseLedgerText(`${duplicated}\n`).corrupt).toEqual([{ line: 1, reason: "NON_CANONICAL_LINE" }]);
   });
 
   it("refuses a line that is not JSON", () => {
@@ -116,9 +138,58 @@ describe("activation ledger — the closed schema", () => {
   });
 
   it("refuses evidence that carries a check UUID or a ping URL, and accepts a fingerprint", () => {
-    expect(validateLedgerEntry({ ...valid, evidence: { check: "31a4eae7-f576-4e4a-8d49-a97c64ad5b58" } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE:evidence.check" });
-    expect(validateLedgerEntry({ ...valid, evidence: { pings: ["ok", "https://hc-ping.com/abc"] } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE:evidence.pings[1]" });
-    expect(validateLedgerEntry({ ...valid, kind: "abort", nextOwnerAction: "resume via https://healthchecks.io/api/v3/checks" })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE:nextOwnerAction" });
+    expect(validateLedgerEntry({ ...valid, evidence: { check: "31a4eae7-f576-4e4a-8d49-a97c64ad5b58" } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+    expect(validateLedgerEntry({ ...valid, evidence: { pings: ["ok", "https://hc-ping.com/abc"] } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+    expect(validateLedgerEntry({ ...valid, kind: "abort", nextOwnerAction: "resume via https://healthchecks.io/api/v3/checks" })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
     expect(validateLedgerEntry({ ...valid, evidence: { readiness: "hc:c4ad5b69", status: "up" } }).ok).toBe(true);
+  });
+
+  it("refuses other credential shapes without echoing the credential in its reason", () => {
+    for (const value of ["PA349COOGKZ1", "PKABCDEFGHIJKLMNOP", "sk-ant-api03-secret", "Bearer secret-value"]) {
+      const result = validateLedgerEntry({ ...valid, evidence: { value } });
+      expect(result).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+      if (!result.ok) expect(result.reason).not.toContain(value);
+    }
+  });
+
+  it("rejects credential-bearing evidence field names and unreferenced corrections", () => {
+    expect(validateLedgerEntry({ ...valid, evidence: { apiKey: "masked-ish" } }))
+      .toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+    expect(validateLedgerEntry({ ...valid, kind: "correction", step: null, evidence: {} }))
+      .toEqual({ ok: false, reason: "CORRECTION_SEQ_REQUIRED" });
+    expect(validateLedgerEntry({ ...valid, kind: "correction", step: null, evidence: { correctedSeq: 1 } }).ok).toBe(true);
+  });
+
+  it("rejects nested credential-like field names without invoking accessors", () => {
+    for (const key of ["alpacaSecretKey", "serviceAccessToken", "authorizationHeader"]) {
+      expect(validateLedgerEntry({ ...valid, evidence: { [key]: "opaque" } }))
+        .toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+    }
+    const evidence = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(evidence, "value", { enumerable: true, get() { throw new Error("Bearer must-not-escape"); } });
+    expect(validateLedgerEntry({ ...valid, evidence })).toEqual({ ok: false, reason: "EVIDENCE_NOT_JSON" });
+    const hostile = new Proxy({}, { ownKeys() { throw new Error("Bearer must-not-escape"); } });
+    expect(validateLedgerEntry({ ...valid, evidence: hostile })).toEqual({ ok: false, reason: "ENTRY_ACCESS_FAILED" });
+  });
+
+  it("requires corrections to reference a real-or-damaged sequence no later than themselves", () => {
+    for (const correctedSeq of [-1, 0, 2, 999_999]) {
+      expect(validateLedgerEntry({ ...valid, kind: "correction", step: null, evidence: { correctedSeq } }))
+        .toEqual({ ok: false, reason: "CORRECTION_SEQ_REQUIRED" });
+    }
+    expect(validateLedgerEntry({ ...valid, kind: "correction", step: null, evidence: { damagedSeq: 1 } }).ok).toBe(true);
+  });
+
+  it("rejects impossible anchor days", () => {
+    expect(validateLedgerEntry({ ...valid, anchorDay: "2026-99-99" })).toEqual({ ok: false, reason: "ANCHOR_DAY_INVALID" });
+    expect(validateLedgerEntry({ ...valid, anchorDay: "2026-02-30" })).toEqual({ ok: false, reason: "ANCHOR_DAY_INVALID" });
+  });
+
+  it("refuses evidence that JSON cannot represent as the same closed value", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    for (const evidence of [{ value: 1n }, { value: Number.NaN }, { value: undefined }, cyclic]) {
+      expect(validateLedgerEntry({ ...valid, evidence })).toEqual({ ok: false, reason: "EVIDENCE_NOT_JSON" });
+    }
   });
 });
