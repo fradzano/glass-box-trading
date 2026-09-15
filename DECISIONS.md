@@ -1,5 +1,33 @@
 # DECISIONS
 
+- **2026-09-16 — Unit 9's review residuals: G2, G3 and G4 are closed; G1 is a declared
+  residual with a runbook step.** The external review of 2026-09-15 left four findings.
+  Three are fixed and pinned: the transition guard around `session.read()` now has a test
+  in which a contended tick's live-lock note is paused mid-line and the holder's read
+  still returns `intact` (G3); `assertRootIdentity` in `withLockTransition` is pinned
+  through release, the one transition that reads no ledger and therefore has no second
+  identity check behind it (G4); and a failure raised by the `work` callback now has its
+  own closed stage `callback` / `WORK_FAILED` instead of `write-ledger:IO_ERROR` (G2).
+  **G2 is a contract change for unit 10** and was made before unit 10 exists, so no typed
+  abort of the CLI pages as a ledger defect. The original error travels as the error's
+  `cause`, which keeps the message credential-free while unit 10 can still discriminate;
+  a store error raised inside the callback keeps its own stage. Mutants LS33, LS34 and
+  LS35 cover the three; the store's set is 35/35 and the activation suite is 420/420.
+  **G1 — an unparseable `ledger.lock` (a 0-byte file left by a kill inside the ~2–3 ms
+  create window) is never taken over, so every later invocation fails
+  `read-lock:LOCK_INVALID` — is declared a residual by owner ruling.** Its fix sketch (a
+  root-scoped lease endpoint plus an `invalid-lock` tombstone and note) touches the codec
+  and the fold, the two parts already sewn twice in unit 9; a third seam under the
+  certificate deadline is the more expensive risk, and the manual recovery is a single
+  file deletion. The runbook carries that step; the fix stays in the backlog without a
+  date. **Gate condition 4 was verified rather than believed:** the confirmation line in
+  `alert-confirmations.jsonl` carries the rotated fingerprints `hc:e4f605dd`,
+  `hc:94c5f859` and `hc:40a81113`, so the fourteen days from the oldest receipt
+  (2026-09-15T22:08:59+02:00) expire on 2026-09-29 22:08 Europe/Berlin. Step 0 re-checks
+  that age on every attempt, so a one-week slip of the certificate run leaves the anchor
+  day as the last day inside the window and no room for a retry: a slip requires a
+  repeated drill and a fresh `confirm-alerts` beforehand.
+
 - **2026-09-15 — The three healthchecks were rotated; the alert drill on the new checks
   is deferred by owner ruling.** An external review of unit 9 found the live readiness
   check's UUID (its ping credential) as a bare string literal in two test fixtures of

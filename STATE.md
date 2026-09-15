@@ -8,7 +8,24 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-16 00:55 CEST. **Update 00:55 — gate condition 4 recorded
+**Last updated:** 2026-09-16 01:10 CEST. **Update 01:10 — three of unit 9's four review
+residuals are closed; G1 is a declared residual.** G3 (the transition guard around
+`session.read()`) and G4 (`assertRootIdentity` in `withLockTransition`, pinned through
+release) now have tests; G2 gives a callback's own failure the closed stage
+`callback` / `WORK_FAILED` with the original error as `cause`, which is a contract
+change made before unit 10 exists so that a typed abort never pages as a ledger defect.
+Mutants LS33–LS35 were added, the store's set is 35/35 restored byte-identically, the
+activation suite is 420/420, and `ops` typecheck and lint pass. G1 (an unparseable
+`ledger.lock` blocks every later tick) is a residual by owner ruling of 2026-09-16, with
+a manual runbook step instead of a fix; the fix sketch would touch codec and fold a third
+time under deadline. **Gate condition 4 was re-verified against the file, not believed:**
+the confirmation carries `hc:e4f605dd` / `hc:94c5f859` / `hc:40a81113` and is valid
+through 2026-09-29 22:08 Europe/Berlin. Step 0 re-checks that age on every attempt, so
+a one-week slip of the certificate run leaves no retry room on the anchor day and needs
+a repeated drill with a fresh `confirm-alerts` beforehand. **Next code unit: unit 10
+(CLI), then 11–13.** The earlier 00:55 cursor follows unchanged.
+
+**Update 00:55 — gate condition 4 recorded
 for the rotated checks.** The alert drill ran against the new `hc:e4f605dd` /
 `hc:94c5f859` / `hc:40a81113` fingerprints: three separate down alerts confirmed on
 the operator's device at 2026-09-15T22:08:59+02:00, the hourly reminder (naming

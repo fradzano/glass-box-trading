@@ -678,7 +678,10 @@ it; a repeated takeover chooses the first unused tombstone suffix. Exclusive-cre
 races consume the bounded acquisition budget. The lock's PID and start time also name
 a kernel-owned endpoint held for the callback; only that exact conjunction is live.
 Lock, ledger and release errors become fixed credential-free `LedgerStoreError`
-stages and are never returned as success. Unit 10 must catch that non-swallowable error
+stages and are never returned as success. A failure raised by the callback itself is
+not a store failure: it arrives as the separate stage `callback:WORK_FAILED` and carries
+the original error as `cause`, so unit 10's typed aborts stay distinguishable from a
+ledger defect while the message stays closed. Unit 10 must catch that non-swallowable error
 and perform §4's disable-both/page/exit compensation. Unit 9 exposes no host-effect
 ports and does not pretend that compensation happened.
 
@@ -729,30 +732,49 @@ and reported **A=0, B=0, C=0**.
 
 ## Next step
 
-**Review residuals of unit 9 first (external review, 2026-09-15 evening; refute gate
-executed every finding).**
+**Review residuals of unit 9 (external review, 2026-09-15 evening; refute gate
+executed every finding). G3, G4 and G2 were closed on 2026-09-16; G1 is open and is the
+owner's call.**
 
-- **G3 (B):** the transition guard around `session.read()` in `withActivationLedger` has no
-  test; removing it keeps 417/417. The race is reachable in production: a contended tick
-  writes its live-lock note while the holder reads, and the holder then sees `torn`. Add a
-  test that pauses that note's write mid-line and asserts the holder's read stays `intact`.
-- **G1 (B):** an existing but unparseable `ledger.lock` (a 0-byte file after a kill in the
+- **G3 (B, closed 2026-09-16):** the transition guard around `session.read()` now has a
+  test. A contended tick's live-lock note is paused mid-line while the holder reads: the
+  read does not settle during the write and returns `intact`. Mutant LS33 removes the
+  guard and is caught; the store's mutant set is 35/35.
+- **G4 (C, closed 2026-09-16):** `assertRootIdentity` in `withLockTransition` is pinned
+  through release, the one transition that reads no ledger and therefore has no second
+  identity check behind it: a root rebound during the callback fails
+  `read-directory:ROOT_IDENTITY_CHANGED` instead of reading a lock in the new directory
+  (mutant LS34).
+- **G2 (C, closed 2026-09-16):** a failure raised by the `work` callback is no longer
+  `write-ledger:IO_ERROR`. It gets the closed stage `callback` / `WORK_FAILED` and carries
+  the original error as `cause`, so unit 10 can tell its typed aborts from a ledger defect
+  while the message stays credential-free. A store error raised inside the callback keeps
+  its own stage (mutant LS35).
+- **G1 (B, open):** an existing but unparseable `ledger.lock` (a 0-byte file after a kill in the
   ~2–3 ms create window, reproduced with a real process kill) is never taken over; every
   later invocation throws `read-lock:LOCK_INVALID` until a human deletes the file. The
   gate's fix sketch needs a root-scoped lease endpoint plus an `invalid-lock` tombstone
-  and note, which touches codec and fold. Fix it, or declare it a residual with a runbook
-  step — owner's call.
+  and note, which touches codec and fold. **Owner ruling 2026-09-16: declared a residual**,
+  not fixed before the certificate — the sketch would sew a third seam into codec and fold
+  under time pressure. The runbook carries the manual step instead (delete the unreadable
+  `ledger.lock`, then let the next tick run); the fix stays in the backlog without a date.
 - **G2 (C, but part of unit 10's contract):** any non-store error thrown by the `work`
   callback is rethrown as `write-ledger:IO_ERROR`. Give it its own closed stage (for example
   `callback` / `WORK_FAILED`) before unit 10 builds on it; otherwise every typed abort
   pages as a ledger defect.
-- **G4 (C):** `assertRootIdentity` at the top of `withLockTransition` has no test; harmless
-  with one lease per process, cheap to pin.
 
-**Gate condition 4 after the rotation:** the checks are new (`hc:e4f605dd` liveness,
-`hc:94c5f859` readiness, `hc:40a81113` watchdog, all paused). The alert drill on them is
-deferred by owner ruling (DECISIONS, 2026-09-15), so no confirmation exists and step 0
-stays red until `confirm-alerts` runs on a drill of these checks.
+**Gate condition 4 after the rotation: recorded.** The drill ran on the new checks
+(`hc:e4f605dd` liveness, `hc:94c5f859` readiness, `hc:40a81113` watchdog, all paused
+again afterwards) and `confirm-alerts --operator felix` wrote one line to
+`alert-confirmations.jsonl` in the activation state root, cross-check passed. Verified
+again on 2026-09-16: the file carries exactly those three fingerprints. The oldest
+receipt is 2026-09-15T22:08:59+02:00, so the fourteen days expire on
+**2026-09-29 22:08 Europe/Berlin**. Step 0 re-checks that age on *every* attempt
+(spec §5, "Retry on the next trading day"), not only on the first: with the planned
+anchor on 2026-09-22 there is a week of retry room, but if the run slips by one week
+(owner ruling 2026-09-13), the anchor day itself is the last day inside the window and
+a retry on the following trading day would stop at step 0. A slip therefore needs a
+repeated drill and a fresh `confirm-alerts` before the new certificate day.
 
 **Then unit 10; it was not begun in the unit-9 correction session.** The 2026-09-14 Activation/Disarm
 calendar run did not occur: there is no Activation task, no Disarm task and no state

@@ -790,6 +790,31 @@ that keeps a gate finishing at 14:44 from colliding with the anchor. If
 anything is still open at 14:45, including "I am not sure", stop and move the
 anchor.
 
+#### If an activation tick stops with `read-lock:LOCK_INVALID`
+
+A known residual of the activation ledger store, declared rather than fixed
+(DECISIONS 2026-09-16). If the machine is killed inside the roughly two to three
+milliseconds between creating `ledger.lock` and writing the owner into it, the
+file is left unreadable — and because an unreadable lock is never taken over,
+**every** later tick fails the same way instead of one. The activation stands
+still until a human clears it, which is why this paragraph exists.
+
+It is safe to delete, and only in this exact shape: the file is unreadable, so it
+names no owner, so nothing can be holding the lease through it.
+
+```powershell
+# normal shell. <activation root> is the state root the tick was given.
+Get-Content '<activation root>\ledger.lock'
+# expect: empty, or bytes that are not one JSON line with pid and startedAtUtcMs.
+# If it IS a readable owner record, STOP: another invocation holds the lease and
+#   deleting it would let two ticks write the same ledger.
+Remove-Item '<activation root>\ledger.lock'
+```
+
+Then let the next tick run. It creates its own lock and continues; the ledger
+itself is untouched by this, so no history is lost and nothing is repaired by
+hand. Note the deletion in `STATE.md` with its local time.
+
 #### If the gate is not met: moving the anchor
 
 Everything is **derived from the new anchor** through the table in
