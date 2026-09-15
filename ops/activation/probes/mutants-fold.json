@@ -75,5 +75,17 @@
         "note":  "corrections ignored",
         "from":  "if (target !== null) corrections.push(target);",
         "to":  ""
+    },
+    {
+        "id":  "F17",
+        "note":  "fold falls back to the legacy corrects field and loses store damagedSeq corrections",
+        "from":  "return ledgerCorrectionSeq(entry.evidence);",
+        "to":  "const value = entry.evidence[\"corrects\"]; return typeof value === \"number\" && Number.isSafeInteger(value) ? value : null;"
+    },
+    {
+        "id":  "F18",
+        "note":  "store torn state disappears at the explicit snapshot-to-fold boundary",
+        "from":  "torn: snapshot.state === \"torn\" ? \"STORE_TORN\" : null,",
+        "to":  "torn: null,"
     }
 ]

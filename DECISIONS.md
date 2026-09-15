@@ -1,5 +1,45 @@
 # DECISIONS
 
+- **2026-09-15 — Unit 9 derives every filesystem and kernel name from one physical
+  state-root identity.** Before deriving `ledger.jsonl`, `ledger.lock`, recovery
+  names or kernel endpoints, the store applies `path.resolve` and the native
+  filesystem `realpath`. On Windows this collapses an ordinary `C:\...` path and
+  its `\\?\C:\...` spelling (and junction aliases) to the same root. A real two-writer
+  barrier test is the acceptance boundary: both spellings must yield unique
+  sequences, whole lines and an `intact` snapshot.
+- **2026-09-15 — A live activation owner is the conjunction of root, PID, start
+  identity and a kernel-owned endpoint.** The lock file remains the durable
+  pid/start-time record, while the process holds an OS endpoint hashed from all
+  three identity parts for the complete callback. A lock is live only when that
+  exact endpoint accepts a connection; a missing endpoint is provably stale and an
+  indeterminate probe is fail-closed. Production callers must use
+  `currentLedgerLockOwner()`, so a recycled PID cannot inherit an earlier process's
+  lock and an invented start time cannot be published as local ownership.
+- **2026-09-15 — Correction references have one semantic decoder shared by codec
+  and fold.** The closed codec continues to accept `damagedSeq`, `correctedSeq` and
+  the older `corrects` spelling, but `ledgerCorrectionSeq` gives each the same
+  meaning everywhere. Store recovery remains canonical as `damagedSeq`; its actual
+  recovery bytes now survive parse and appear in `fold.corrections`.
+- **2026-09-15 — A held ledger session does not follow a rebound pathname.** The
+  store identity includes the native real path and the directory's device/inode pair.
+  Every transition and read rechecks that identity; renaming the root and putting a
+  different directory at the old name yields `ROOT_IDENTITY_CHANGED`. Appending to the
+  replacement or silently following the moved directory would both misstate which
+  history the lease protects.
+- **2026-09-15 — Ledger snapshots share the append transition guard.** The durable
+  guarantee ends after fsync, so a public or session read may not parse bytes between a
+  partial write and that boundary. `foldLedgerSnapshot` is the explicit pure adapter:
+  store `torn` stays fold `torn`, store corruption stays corruption, and corrections
+  remain evidence rather than repairs.
+- **2026-09-15 — Lock retry and tombstone namespaces are bounded durable state.** A
+  racing exclusive-create retry consumes the caller's timeout budget. A stale takeover
+  scans for the first unused tombstone suffix while holding the transition guard; it
+  never overwrites earlier unrecorded ownership evidence.
+- **2026-09-15 — Store-generated ledger entries inherit the history they describe.**
+  A live-lock, stale-lock or torn-tail factory receives the last entry's attempt and
+  anchor day, and the store rejects a returned draft that changes either. A synthetic
+  `system` attempt in the middle of one real attempt makes the fold interleaved and is
+  therefore invalid.
 - **2026-09-15 — Unit 9 treats every torn tail as immutable evidence and continues
   only in a numbered recovery segment.** The first complete line of each recovery
   segment is a codec-validated `correction` naming the prior segment and damaged

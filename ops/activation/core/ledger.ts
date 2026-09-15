@@ -56,6 +56,13 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** All correction reference spellings accepted by the closed codec have one meaning. */
+export function ledgerCorrectionSeq(evidence: unknown): number | null {
+  if (!isRecord(evidence)) return null;
+  const value = evidence["damagedSeq"] ?? evidence["correctedSeq"] ?? evidence["corrects"];
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
 function isStepId(value: unknown): value is StepId {
   return typeof value === "string" && stepIds().includes(value);
 }
@@ -192,9 +199,8 @@ function validateLedgerEntryUnsafe(value: unknown): ValidatedEntry {
   if (kind === "result" || kind === "intent") {
     if (step === null) return refuse("STEP_REQUIRED");
   }
-  const correctionSeq = isRecord(evidence) ? evidence["damagedSeq"] ?? evidence["correctedSeq"] ?? evidence["corrects"] : null;
-  if (kind === "correction" && (!Number.isSafeInteger(correctionSeq)
-    || (correctionSeq as number) < 1 || (correctionSeq as number) > seq)) {
+  const correctionSeq = ledgerCorrectionSeq(evidence);
+  if (kind === "correction" && (correctionSeq === null || correctionSeq < 1 || correctionSeq > seq)) {
     return refuse("CORRECTION_SEQ_REQUIRED");
   }
 

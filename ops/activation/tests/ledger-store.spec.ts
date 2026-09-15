@@ -2,25 +2,28 @@
 // the codec's promises durable under concurrency and failure. These tests use
 // real files for byte-level and lock behaviour, and narrow fault ports for the
 // failures that cannot be produced safely on the host (disk full and fsync).
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { foldLedgerSnapshot } from "../core/fold.ts";
 import type { LedgerDraft } from "../core/ledger.ts";
-import { planLedgerAppend } from "../core/ledger.ts";
+import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
 import {
   LedgerStoreError,
+  currentLedgerLockOwner,
   ledgerStorePaths,
   nodeLedgerStoreIo,
   readActivationLedger,
   withActivationLedger,
   type LedgerLockOwner,
   type LedgerStoreIo,
+  type LedgerSystemContext,
   type LedgerSystemEvent,
 } from "../store/ledger-store.ts";
 
 const roots: string[] = [];
-const OWNER: LedgerLockOwner = { pid: 4_242, startedAtUtcMs: 1_789_900_000_000 };
+const OWNER = currentLedgerLockOwner();
 
 async function root(): Promise<string> {
   const created = await mkdtemp(path.join(os.tmpdir(), "gbt-activation-ledger-"));
@@ -47,14 +50,19 @@ function draft(index = 0, overrides: Partial<LedgerDraft> = {}): LedgerDraft {
   };
 }
 
-function systemDraft(event: LedgerSystemEvent, tail: { readonly lastAtUtcMs: number | null }): LedgerDraft {
+function systemDraft(
+  event: LedgerSystemEvent,
+  tail: { readonly lastAtUtcMs: number | null },
+  context: LedgerSystemContext | null = null,
+): LedgerDraft {
   const isTorn = event.kind === "torn-tail";
   const atUtcMs = tail.lastAtUtcMs ?? 1_789_997_700_000;
   const at = new Date(atUtcMs + 2 * 60 * 60 * 1_000).toISOString().replace("Z", "+02:00");
   return draft(0, {
     at,
     atUtcMs,
-    attempt: "system",
+    attempt: context?.attempt ?? "system",
+    anchorDay: context?.anchorDay ?? "2026-09-22",
     step: null,
     kind: isTorn ? "correction" : "note",
     evidence: event,
@@ -169,6 +177,146 @@ describe("activation ledger store — bytes and state", () => {
     expect(snapshot.entries.map(entry => entry.seq)).toEqual([1, 2]);
   });
 
+  it.runIf(process.platform === "win32")("serializes a real C:-path and extended-path alias through one physical mutex", async () => {
+    const stateRoot = await root();
+    const extendedRoot = path.toNamespacedPath(stateRoot);
+    const ordinaryPaths = ledgerStorePaths(stateRoot);
+    await writeFile(ordinaryPaths.ledger, Buffer.alloc(0));
+
+    let ledgerReads = 0;
+    let ledgerStats = 0;
+    let releaseReads!: () => void;
+    let releaseStats!: () => void;
+    const bothRead = new Promise<void>(resolve => { releaseReads = resolve; });
+    const bothStatted = new Promise<void>(resolve => { releaseStats = resolve; });
+    const boundedBarrier = async (barrier: Promise<void>): Promise<void> => {
+      await Promise.race([barrier, new Promise<void>(resolve => { setTimeout(resolve, 75); })]);
+    };
+    const io: LedgerStoreIo = {
+      ...nodeLedgerStoreIo,
+      async readFile(file) {
+        const bytes = await nodeLedgerStoreIo.readFile(file);
+        if (path.basename(file) !== "ledger.jsonl") return bytes;
+        ledgerReads += 1;
+        if (ledgerReads === 2) releaseReads();
+        await boundedBarrier(bothRead);
+        return bytes;
+      },
+      async open(file, flags, mode) {
+        const handle = await nodeLedgerStoreIo.open(file, flags, mode);
+        if (path.basename(file) !== "ledger.jsonl") return handle;
+        return {
+          ...handle,
+          async stat() {
+            const value = await handle.stat();
+            ledgerStats += 1;
+            if (ledgerStats === 2) releaseStats();
+            await boundedBarrier(bothStatted);
+            return value;
+          },
+        };
+      },
+      processState() { return Promise.resolve("alive"); },
+    };
+    let firstEntered!: () => void;
+    const entered = new Promise<void>(resolve => { firstEntered = resolve; });
+    const first = withActivationLedger(
+      { root: stateRoot, owner: OWNER, makeSystemDraft: systemDraft, io, contentionTimeoutMs: 2_000, pollIntervalMs: 1 },
+      async session => {
+        firstEntered();
+        await session.append(draft(0, { attempt: "ordinary" }));
+        return "ordinary";
+      },
+    );
+    await entered;
+    const second = withActivationLedger(
+      { root: extendedRoot, owner: { pid: OWNER.pid + 1, startedAtUtcMs: OWNER.startedAtUtcMs + 1 }, makeSystemDraft: systemDraft, io, contentionTimeoutMs: 2_000, pollIntervalMs: 1 },
+      async () => { await Promise.resolve(); throw new Error("a live contender must not run"); },
+    );
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.kind).toBe("completed");
+    expect(secondResult.kind).toBe("contended");
+    expect(stateRoot).not.toBe(extendedRoot);
+    const snapshot = await readActivationLedger(stateRoot);
+    expect(snapshot.state).toBe("intact");
+    expect(snapshot.entries.map(entry => entry.seq)).toEqual([1, 2]);
+    expect(ledgerStorePaths(stateRoot)).toEqual(ledgerStorePaths(extendedRoot));
+  });
+
+  it("keeps a held lease bound to the original directory after its path is rebound", async () => {
+    const stateRoot = await root();
+    const movedRoot = `${stateRoot}-moved`;
+    roots.push(movedRoot);
+    const failure = await expectStoreError(withActivationLedger(
+      { root: stateRoot, owner: OWNER, makeSystemDraft: systemDraft },
+      async session => {
+        await rename(stateRoot, movedRoot);
+        await mkdir(stateRoot);
+        const second = await withActivationLedger(
+          {
+            root: stateRoot,
+            owner: { pid: OWNER.pid + 1, startedAtUtcMs: OWNER.startedAtUtcMs + 1 },
+            makeSystemDraft: systemDraft,
+            io: { ...nodeLedgerStoreIo },
+          },
+          async secondSession => secondSession.append(draft(0, { attempt: "replacement" })),
+        );
+        expect(second.kind).toBe("completed");
+        await session.append(draft(1, { attempt: "original" }));
+        return "done";
+      },
+    ), "read-directory", "ROOT_IDENTITY_CHANGED");
+    expect(failure.reason).toBe("ROOT_IDENTITY_CHANGED");
+    expect((await readActivationLedger(movedRoot)).entries).toEqual([]);
+    expect((await readActivationLedger(stateRoot)).entries.map(entry => entry.attempt)).toEqual(["replacement"]);
+  });
+
+  it("serializes a public read against an in-flight append", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const release = new Promise<void>(resolve => { releaseWrite = resolve; });
+    const started = new Promise<void>(resolve => { writeStarted = resolve; });
+    const io: LedgerStoreIo = {
+      ...nodeLedgerStoreIo,
+      async open(file, flags, mode) {
+        const handle = await nodeLedgerStoreIo.open(file, flags, mode);
+        if (file !== paths.ledger) return handle;
+        return {
+          ...handle,
+          async write(bytes) {
+            const split = Math.floor(bytes.length / 2);
+            const first = await handle.write(bytes.subarray(0, split));
+            writeStarted();
+            await release;
+            const second = await handle.write(bytes.subarray(split));
+            return { bytesWritten: first.bytesWritten + second.bytesWritten };
+          },
+        };
+      },
+    };
+    const invocation = withActivationLedger(
+      { root: stateRoot, owner: OWNER, makeSystemDraft: systemDraft, io },
+      async session => {
+        const appending = session.append(draft());
+        await started;
+        let readSettled = false;
+        const reading = readActivationLedger(stateRoot, io).then(snapshot => { readSettled = true; return snapshot; });
+        await new Promise(resolve => { setTimeout(resolve, 20); });
+        const settledDuringWrite = readSettled;
+        releaseWrite();
+        await appending;
+        const snapshot = await reading;
+        expect(settledDuringWrite).toBe(false);
+        expect(snapshot.state).toBe("intact");
+        return "done";
+      },
+    );
+    expect((await invocation).kind).toBe("completed");
+  });
+
   it("never glues to a torn tail: it preserves the bytes and continues in a recovery segment", async () => {
     const stateRoot = await root();
     await appendActivationLedger({ root: stateRoot, owner: OWNER, draft: draft(), makeSystemDraft: systemDraft });
@@ -200,6 +348,29 @@ describe("activation ledger store — bytes and state", () => {
     expect(await readFile(firstRecovery)).toEqual(damaged);
     expect((await readFile(path.join(stateRoot, "ledger.jsonl.recovery-000002"), "utf8")).split("\n").slice(0, -1)).toHaveLength(2);
     expect((await readActivationLedger(stateRoot)).damage).toHaveLength(2);
+  });
+
+  it("carries an actual recovery through codec and fold without splitting its attempt", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    await appendActivationLedger({ root: stateRoot, owner: OWNER, draft: draft(0, { attempt: "recovered" }), makeSystemDraft: systemDraft });
+    await writeFile(paths.ledger, Buffer.from('{"seq":2', "utf8"), { flag: "a" });
+    await appendActivationLedger({
+      root: stateRoot,
+      owner: OWNER,
+      draft: draft(1, { attempt: "recovered", kind: "result", outcome: "ok" }),
+      makeSystemDraft: systemDraft,
+    });
+
+    const recovery = await readFile(path.join(stateRoot, "ledger.jsonl.recovery-000001"), "utf8");
+    const parsed = parseLedgerText(recovery, { lastSeq: 1, lastAtUtcMs: 1_789_997_700_000 });
+    expect(parsed.corrupt).toEqual([]);
+    expect(parsed.entries[0]?.evidence).toMatchObject({ kind: "torn-tail", segment: 0, damagedSeq: 2 });
+    const snapshot = await readActivationLedger(stateRoot);
+    const folded = foldLedgerSnapshot(snapshot);
+    expect(folded.integrity).toBe("torn");
+    expect(folded.corrections).toEqual([2]);
+    expect(folded.inconsistencies).toEqual([]);
   });
 
   it("preserves a partial first recovery marker and advances again", async () => {
@@ -333,8 +504,37 @@ describe("activation ledger store — lock ownership", () => {
     expect((await first).kind).toBe("completed");
     expect(secondRan).toBe(false);
     const entries = (await readActivationLedger(stateRoot)).entries;
-    expect(entries.map(entry => entry.attempt)).toEqual(["first", "system", "first"]);
+    expect(entries.map(entry => entry.attempt)).toEqual(["first", "first", "first"]);
     expect(entries[1]?.evidence).toMatchObject({ kind: "live-lock", owner: firstOwner });
+  });
+
+  it("treats the same PID with a different recorded start identity as dead", async () => {
+    const stateRoot = await root();
+    const actualOwner = currentLedgerLockOwner();
+    const result = await withActivationLedger(
+      { root: stateRoot, owner: actualOwner, makeSystemDraft: systemDraft },
+      async () => {
+        const paths = ledgerStorePaths(stateRoot);
+        expect(await nodeLedgerStoreIo.processState(actualOwner, paths)).toBe("alive");
+        expect(await nodeLedgerStoreIo.processState({ pid: actualOwner.pid, startedAtUtcMs: 0 }, paths)).toBe("dead");
+        return "checked";
+      },
+    );
+    expect(result.kind).toBe("completed");
+  });
+
+  it("takes over an old same-PID lock instead of suppressing the new invocation", async () => {
+    const stateRoot = await root();
+    const staleOwner: LedgerLockOwner = { pid: process.pid, startedAtUtcMs: 0 };
+    await writeFile(ledgerStorePaths(stateRoot).lock, `${JSON.stringify(staleOwner)}\n`, { flag: "wx" });
+    let workRan = false;
+    const result = await withActivationLedger(
+      { root: stateRoot, owner: currentLedgerLockOwner(), makeSystemDraft: systemDraft },
+      async () => { await Promise.resolve(); workRan = true; return "taken-over"; },
+    );
+    expect(result.kind).toBe("completed");
+    expect(workRan).toBe(true);
+    expect((await readActivationLedger(stateRoot)).entries[0]?.evidence).toMatchObject({ kind: "stale-lock", owner: staleOwner });
   });
 
   it("records a live competitor once, performs no requested action, and exits", async () => {
@@ -373,6 +573,56 @@ describe("activation ledger store — lock ownership", () => {
     expect(result.entries.map(entry => entry.kind)).toEqual(["note", "intent"]);
     expect(result.entries[0]?.evidence).toMatchObject({ kind: "stale-lock", owner: dead });
     expect((await readActivationLedger(stateRoot)).entries.map(entry => entry.seq)).toEqual([1, 2]);
+  });
+
+  it("does not overwrite an older unrecorded tombstone when the same process takes over again", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    const firstDead = { pid: 99_991, startedAtUtcMs: 1_700_000_000_001 };
+    const secondDead = { pid: 99_992, startedAtUtcMs: 1_700_000_000_002 };
+    const firstTombstone = `${paths.lock}.stale-${String(OWNER.pid)}-${String(OWNER.startedAtUtcMs)}-1`;
+    await writeFile(firstTombstone, `${JSON.stringify(firstDead)}\n`, { flag: "wx" });
+    await writeFile(paths.lock, `${JSON.stringify(secondDead)}\n`, { flag: "wx" });
+    await appendActivationLedger({
+      root: stateRoot,
+      owner: OWNER,
+      draft: draft(),
+      makeSystemDraft: systemDraft,
+      io: { ...nodeLedgerStoreIo, processState() { return Promise.resolve("dead"); } },
+    });
+    const staleOwners = (await readActivationLedger(stateRoot)).entries
+      .filter(entry => entry.evidence["kind"] === "stale-lock")
+      .map(entry => entry.evidence["owner"]);
+    expect(staleOwners).toEqual([firstDead, secondDead]);
+  });
+
+  it("charges racing create retries to the bounded acquire budget", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    let createAttempts = 0;
+    const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+    const exists = Object.assign(new Error("exists"), { code: "EEXIST" });
+    const denied = Object.assign(new Error("denied"), { code: "EACCES" });
+    const io: LedgerStoreIo = {
+      ...nodeLedgerStoreIo,
+      async readFile(file) {
+        if (file === paths.lock) throw missing;
+        return nodeLedgerStoreIo.readFile(file);
+      },
+      async open(file, flags, mode) {
+        if (file === paths.lock) {
+          createAttempts += 1;
+          throw createAttempts <= 3 ? exists : denied;
+        }
+        return nodeLedgerStoreIo.open(file, flags, mode);
+      },
+    };
+    await expectStoreError(
+      appendActivationLedger({ root: stateRoot, owner: OWNER, draft: draft(), makeSystemDraft: systemDraft, io, contentionTimeoutMs: 0 }),
+      "acquire-lock",
+      "LOCK_ACQUIRE_TIMEOUT",
+    );
+    expect(createAttempts).toBe(1);
   });
 
   it("serializes a stalled stale-takeover note against a direct live-contender note", async () => {
@@ -572,7 +822,7 @@ describe("activation ledger store — lock ownership", () => {
       draft: draft(),
       makeSystemDraft: systemDraft,
       io,
-      contentionTimeoutMs: 0,
+      contentionTimeoutMs: 2,
     });
     expect(result.kind).toBe("contended");
   });

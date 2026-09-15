@@ -5,8 +5,9 @@
 // the damaged bytes stay at their original path and the aggregate history stays
 // visibly `torn` forever. Terminated corruption is never continued.
 import { open as openFile, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { realpathSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import type { Server } from "node:net";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -17,6 +18,11 @@ import type { LedgerEntry } from "../core/types.ts";
 export interface LedgerLockOwner {
   readonly pid: number;
   readonly startedAtUtcMs: number;
+}
+
+/** The exact identity a production invocation must place in its lock record. */
+export function currentLedgerLockOwner(): LedgerLockOwner {
+  return { pid: process.pid, startedAtUtcMs: Math.trunc(performance.timeOrigin) };
 }
 
 export type LedgerSystemEvent =
@@ -37,7 +43,7 @@ export interface LedgerStoreIo {
   readonly open: (file: string, flags: string, mode?: number) => Promise<LedgerStoreHandle>;
   readonly rename: (from: string, to: string) => Promise<void>;
   readonly unlink: (file: string) => Promise<void>;
-  readonly processState: (owner: LedgerLockOwner) => Promise<"alive" | "dead" | "unknown">;
+  readonly processState: (owner: LedgerLockOwner, paths: LedgerStorePaths) => Promise<"alive" | "dead" | "unknown">;
   readonly sleep: (milliseconds: number) => Promise<void>;
 }
 
@@ -58,16 +64,7 @@ export const nodeLedgerStoreIo: LedgerStoreIo = {
   },
   async rename(from, to) { await rename(from, to); },
   async unlink(file) { await unlink(file); },
-  processState(owner) {
-    try {
-      process.kill(owner.pid, 0);
-      return Promise.resolve("alive" as const);
-    } catch (error) {
-      const code = errorCode(error);
-      if (code === "ESRCH") return Promise.resolve("dead" as const);
-      return Promise.resolve("unknown" as const);
-    }
-  },
+  processState(owner, paths) { return probeOwnerIdentity(paths, owner); },
   async sleep(milliseconds) { await new Promise(resolve => { setTimeout(resolve, milliseconds); }); },
 };
 
@@ -92,11 +89,30 @@ export interface LedgerStorePaths {
   readonly root: string;
   readonly ledger: string;
   readonly lock: string;
+  readonly identity: string;
 }
 
 export function ledgerStorePaths(root: string): LedgerStorePaths {
-  const canonicalRoot = path.resolve(root);
-  return { root: canonicalRoot, ledger: path.join(canonicalRoot, "ledger.jsonl"), lock: path.join(canonicalRoot, "ledger.lock") };
+  let canonicalRoot: string;
+  let device: bigint;
+  let inode: bigint;
+  try {
+    canonicalRoot = realpathSync.native(path.resolve(root));
+    const stats = statSync(canonicalRoot, { bigint: true });
+    device = stats.dev;
+    inode = stats.ino;
+  } catch (error) {
+    fail("read-directory", closedReason(error));
+  }
+  const rootIdentity = process.platform === "win32" ? canonicalRoot.toLowerCase() : canonicalRoot;
+  const identity = `${rootIdentity}\0${String(device)}\0${String(inode)}`;
+  return { root: canonicalRoot, ledger: path.join(canonicalRoot, "ledger.jsonl"), lock: path.join(canonicalRoot, "ledger.lock"), identity };
+}
+
+function assertRootIdentity(paths: LedgerStorePaths): void {
+  let current: LedgerStorePaths;
+  try { current = ledgerStorePaths(paths.root); } catch { fail("read-directory", "ROOT_IDENTITY_CHANGED"); }
+  if (current.identity !== paths.identity) fail("read-directory", "ROOT_IDENTITY_CHANGED");
 }
 
 export interface LedgerDamage {
@@ -216,11 +232,11 @@ async function readSegment(io: LedgerStoreIo, file: string, segment: number, ini
   return { segment, file, exists: true, size: read.bytes.length, state: "intact", entries: parsed.entries, tornBytes: null, corrupt: [], tail };
 }
 
-async function readInternal(root: string, io: LedgerStoreIo): Promise<InternalSnapshot> {
-  const paths = ledgerStorePaths(root);
+async function readInternalAt(paths: LedgerStorePaths, io: LedgerStoreIo): Promise<InternalSnapshot> {
+  assertRootIdentity(paths);
   let names: readonly string[];
   try {
-    names = await io.readDirectory(root);
+    names = await io.readDirectory(paths.root);
   } catch (error) {
     fail("read-directory", closedReason(error));
   }
@@ -266,7 +282,8 @@ async function readInternal(root: string, io: LedgerStoreIo): Promise<InternalSn
 }
 
 export async function readActivationLedger(root: string, io: LedgerStoreIo = nodeLedgerStoreIo): Promise<ActivationLedgerSnapshot> {
-  const snapshot = await readInternal(root, io);
+  const paths = ledgerStorePaths(root);
+  const snapshot = await withLockTransition(paths, io, 5_000, 10, () => readInternalAt(paths, io));
   return { state: snapshot.state, entries: snapshot.entries, damage: snapshot.damage, corrupt: snapshot.corrupt };
 }
 
@@ -322,14 +339,51 @@ interface LockAcquisition {
   readonly liveOwner: LedgerLockOwner | null;
   readonly staleOwners: readonly LedgerLockOwner[];
   readonly tombstones: readonly string[];
+  readonly ownerServer: Server | null;
 }
 
-function transitionEndpoint(root: string): string {
-  const identity = process.platform === "win32" ? root.toLowerCase() : root;
-  const digest = createHash("sha256").update(identity, "utf8").digest("hex");
+function transitionEndpoint(paths: LedgerStorePaths): string {
+  const digest = createHash("sha256").update(paths.identity, "utf8").digest("hex");
   if (process.platform === "win32") return `\\\\.\\pipe\\glass-box-activation-ledger-${digest}`;
   if (process.platform === "linux") return `\0glass-box-activation-ledger-${digest}`;
   fail("acquire-lock", "PLATFORM_UNSUPPORTED");
+}
+
+function ownerEndpoint(paths: LedgerStorePaths, owner: LedgerLockOwner): string {
+  const digest = createHash("sha256")
+    .update(paths.identity, "utf8")
+    .update("\0", "utf8")
+    .update(String(owner.pid), "utf8")
+    .update("\0", "utf8")
+    .update(String(owner.startedAtUtcMs), "utf8")
+    .digest("hex");
+  if (process.platform === "win32") return `\\\\.\\pipe\\glass-box-activation-owner-${digest}`;
+  if (process.platform === "linux") return `\0glass-box-activation-owner-${digest}`;
+  fail("read-lock", "PLATFORM_UNSUPPORTED");
+}
+
+function probeOwnerIdentity(paths: LedgerStorePaths, owner: LedgerLockOwner): Promise<"alive" | "dead" | "unknown"> {
+  const endpoint = ownerEndpoint(paths, owner);
+  return new Promise(resolve => {
+    const socket = createConnection(endpoint);
+    let settled = false;
+    const finish = (state: "alive" | "dead" | "unknown"): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(state);
+    };
+    socket.once("connect", () => { finish("alive"); });
+    socket.once("error", error => {
+      const code = errorCode(error);
+      finish(code === "ENOENT" || code === "ECONNREFUSED" ? "dead" : "unknown");
+    });
+    socket.setTimeout(1_000, () => { finish("unknown"); });
+  });
+}
+
+async function holdOwnerIdentity(paths: LedgerStorePaths, owner: LedgerLockOwner): Promise<Server> {
+  try { return await listenTransition(ownerEndpoint(paths, owner)); } catch (error) { fail("acquire-lock", closedReason(error)); }
 }
 
 function listenTransition(endpoint: string): Promise<Server> {
@@ -362,7 +416,8 @@ async function withLockTransition<T>(
   pollMs: number,
   work: () => Promise<T>,
 ): Promise<T> {
-  const endpoint = transitionEndpoint(paths.root);
+  assertRootIdentity(paths);
+  const endpoint = transitionEndpoint(paths);
   let waited = 0;
   let server: Server;
   for (;;) {
@@ -387,6 +442,34 @@ async function withLockTransition<T>(
   return value as T;
 }
 
+async function createHeldLock(
+  paths: LedgerStorePaths,
+  owner: LedgerLockOwner,
+  io: LedgerStoreIo,
+): Promise<{ readonly kind: "created"; readonly ownerServer: Server } | { readonly kind: "exists" }> {
+  if (await createLock(paths, owner, io) === "exists") return { kind: "exists" };
+  try {
+    return { kind: "created", ownerServer: await holdOwnerIdentity(paths, owner) };
+  } catch (error) {
+    try { await io.unlink(paths.lock); } catch { /* an ownerless lock remains visibly stale */ }
+    throw error;
+  }
+}
+
+function knownProcessState(state: "alive" | "dead" | "unknown"): "alive" | "dead" {
+  if (state === "unknown") fail("read-lock", "LOCK_OWNER_UNKNOWN");
+  return state;
+}
+
+async function nextTombstonePath(paths: LedgerStorePaths, owner: LedgerLockOwner, io: LedgerStoreIo): Promise<string> {
+  let names: readonly string[];
+  try { names = await io.readDirectory(paths.root); } catch (error) { fail("read-directory", closedReason(error)); }
+  const prefix = `${path.basename(paths.lock)}.stale-${String(owner.pid)}-${String(owner.startedAtUtcMs)}-`;
+  let suffix = 1;
+  while (names.includes(`${prefix}${String(suffix)}`)) suffix += 1;
+  return path.join(paths.root, `${prefix}${String(suffix)}`);
+}
+
 async function acquireLock(
   paths: LedgerStorePaths,
   owner: LedgerLockOwner,
@@ -398,7 +481,6 @@ async function acquireLock(
   const tombstones: string[] = [];
   let liveOwner: LedgerLockOwner | null = null;
   let waited = 0;
-  let takeoverNumber = 0;
   for (;;) {
     let observedBytes: Buffer | null = null;
     try { observedBytes = await io.readFile(paths.lock); } catch (error) {
@@ -413,16 +495,16 @@ async function acquireLock(
       if (code !== "ENOENT") fail("read-lock", closedReason(error));
     }
     const decision = observedBytes === null
-      ? await withLockTransition(paths, io, timeoutMs, pollMs, async () => (
-        await createLock(paths, owner, io) === "created" ? { kind: "created" } as const : { kind: "retry" } as const
-      ))
+      ? await withLockTransition(paths, io, timeoutMs, pollMs, async () => {
+        const created = await createHeldLock(paths, owner, io);
+        return created.kind === "created" ? created : { kind: "retry" } as const;
+      })
       : await (async () => {
         const current = parseLock(observedBytes);
         if (current === null) return { kind: "invalid" } as const;
         let state: "alive" | "dead" | "unknown";
-        try { state = await io.processState(current); } catch (error) { fail("read-lock", closedReason(error)); }
-        if (state === "unknown") fail("read-lock", "LOCK_OWNER_UNKNOWN");
-        if (state === "alive") return { kind: "live", owner: current } as const;
+        try { state = await io.processState(current, paths); } catch (error) { fail("read-lock", closedReason(error)); }
+        if (knownProcessState(state) === "alive") return { kind: "live", owner: current } as const;
         return withLockTransition(paths, io, timeoutMs, pollMs, async () => {
           let currentBytes: Buffer;
           try { currentBytes = await io.readFile(paths.lock); } catch (error) {
@@ -430,23 +512,32 @@ async function acquireLock(
             fail("read-lock", closedReason(error));
           }
           if (!currentBytes.equals(observedBytes)) return { kind: "retry" } as const;
-          takeoverNumber += 1;
-          const tombstone = `${paths.lock}.stale-${String(owner.pid)}-${String(owner.startedAtUtcMs)}-${String(takeoverNumber)}`;
+          let currentState: "alive" | "dead" | "unknown";
+          try { currentState = await io.processState(current, paths); } catch (error) { fail("read-lock", closedReason(error)); }
+          if (knownProcessState(currentState) === "alive") return { kind: "live", owner: current } as const;
+          const tombstone = await nextTombstonePath(paths, owner, io);
           try { await io.rename(paths.lock, tombstone); } catch (error) {
             if (errorCode(error) === "ENOENT") return { kind: "retry" } as const;
             fail("takeover-lock", closedReason(error));
           }
-          if (await createLock(paths, owner, io) !== "created") fail("takeover-lock", "SUCCESSOR_EXISTS");
-          return { kind: "taken-over", owner: current, tombstone } as const;
+          const created = await createHeldLock(paths, owner, io);
+          if (created.kind !== "created") fail("takeover-lock", "SUCCESSOR_EXISTS");
+          return { kind: "taken-over", owner: current, tombstone, ownerServer: created.ownerServer } as const;
         });
       })();
-    if (decision.kind === "created") return { held: true, liveOwner, staleOwners, tombstones };
+    if (decision.kind === "created") return { held: true, liveOwner, staleOwners, tombstones, ownerServer: decision.ownerServer };
     if (decision.kind === "taken-over") {
       staleOwners.push(decision.owner);
       tombstones.push(decision.tombstone);
-      return { held: true, liveOwner, staleOwners, tombstones };
+      return { held: true, liveOwner, staleOwners, tombstones, ownerServer: decision.ownerServer };
     }
-    if (decision.kind === "retry") continue;
+    if (decision.kind === "retry") {
+      if (waited >= timeoutMs) fail("acquire-lock", "LOCK_ACQUIRE_TIMEOUT");
+      const pause = Math.min(pollMs, timeoutMs - waited);
+      try { await io.sleep(pause); } catch (error) { fail("acquire-lock", closedReason(error)); }
+      waited += pause;
+      continue;
+    }
     const current = decision.kind === "live" ? decision.owner : null;
     if (current === null) {
       if (waited >= timeoutMs) fail("read-lock", "LOCK_INVALID");
@@ -456,7 +547,7 @@ async function acquireLock(
       continue;
     }
     liveOwner = current;
-    return { held: false, liveOwner, staleOwners, tombstones };
+    return { held: false, liveOwner, staleOwners, tombstones, ownerServer: null };
   }
 }
 
@@ -507,13 +598,14 @@ async function appendLines(
   return planned.map(item => item.entry);
 }
 
-async function releaseLock(paths: LedgerStorePaths, owner: LedgerLockOwner, io: LedgerStoreIo): Promise<void> {
+async function releaseLock(paths: LedgerStorePaths, owner: LedgerLockOwner, ownerServer: Server, io: LedgerStoreIo): Promise<void> {
   await withLockTransition(paths, io, 5_000, 10, async () => {
     let current: Buffer;
     try { current = await io.readFile(paths.lock); } catch (error) { fail("release-lock", closedReason(error)); }
     const parsed = parseLock(current);
     if (parsed === null || parsed.pid !== owner.pid || parsed.startedAtUtcMs !== owner.startedAtUtcMs) fail("release-lock", "LOCK_OWNERSHIP_CHANGED");
     try { await io.unlink(paths.lock); } catch (error) { fail("release-lock", closedReason(error)); }
+    try { await closeTransition(ownerServer); } catch (error) { fail("release-lock", closedReason(error)); }
   });
 }
 
@@ -521,10 +613,15 @@ export interface AppendActivationLedgerInput {
   readonly root: string;
   readonly owner: LedgerLockOwner;
   /** Called only after the lock is held; the supplied tail lets the caller stamp a monotonic append-time observation. */
-  readonly makeSystemDraft: (event: LedgerSystemEvent, tail: LedgerTail) => LedgerDraft;
+  readonly makeSystemDraft: (event: LedgerSystemEvent, tail: LedgerTail, context: LedgerSystemContext | null) => LedgerDraft;
   readonly io?: LedgerStoreIo;
   readonly contentionTimeoutMs?: number;
   readonly pollIntervalMs?: number;
+}
+
+export interface LedgerSystemContext {
+  readonly attempt: string;
+  readonly anchorDay: string;
 }
 
 export interface ActivationLedgerSession {
@@ -543,14 +640,13 @@ function tailOf(snapshot: InternalSnapshot): LedgerTail {
 }
 
 async function appendUnderLock(
-  root: string,
+  paths: LedgerStorePaths,
   io: LedgerStoreIo,
   makeSystemDraft: AppendActivationLedgerInput["makeSystemDraft"],
   systemEvents: readonly LedgerSystemEvent[],
   draft: LedgerDraft | null,
 ): Promise<readonly LedgerEntry[]> {
-  const paths = ledgerStorePaths(root);
-  const snapshot = await readInternal(root, io);
+  const snapshot = await readInternalAt(paths, io);
   if (snapshot.state === "corrupt") fail("read-ledger", "HISTORY_CORRUPT");
 
   const tail = tailOf(snapshot);
@@ -584,10 +680,17 @@ async function appendUnderLock(
   orderedEvents.push(...systemEvents.filter(event => event.kind === "torn-tail"
     || !snapshot.entries.some(entry => eventCovered(entry, event))));
 
+  const prior = snapshot.entries.at(-1);
+  const context: LedgerSystemContext | null = prior === undefined
+    ? (draft === null ? null : { attempt: draft.attempt, anchorDay: draft.anchorDay })
+    : { attempt: prior.attempt, anchorDay: prior.anchorDay };
   const systemDrafts = orderedEvents.map(event => {
     try {
-      const value = makeSystemDraft(event, tail);
-      if (!eventCovered(value, event)) fail("encode-ledger", "SYSTEM_DRAFT_INVALID");
+      const value = makeSystemDraft(event, tail, context);
+      if (!eventCovered(value, event)
+        || (context !== null && (value.attempt !== context.attempt || value.anchorDay !== context.anchorDay))) {
+        fail("encode-ledger", "SYSTEM_DRAFT_INVALID");
+      }
       return value;
     } catch (error) {
       if (error instanceof LedgerStoreError) throw error;
@@ -640,6 +743,10 @@ export async function withActivationLedger<T>(
   if (!Number.isSafeInteger(input.owner.pid) || input.owner.pid <= 0 || !Number.isSafeInteger(input.owner.startedAtUtcMs) || input.owner.startedAtUtcMs < 0) {
     fail("acquire-lock", "OWNER_INVALID");
   }
+  const processOwner = currentLedgerLockOwner();
+  if (io === nodeLedgerStoreIo && (input.owner.pid !== processOwner.pid || input.owner.startedAtUtcMs !== processOwner.startedAtUtcMs)) {
+    fail("acquire-lock", "OWNER_PROCESS_MISMATCH");
+  }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || !Number.isSafeInteger(pollMs) || pollMs < 1) fail("acquire-lock", "WAIT_INVALID");
 
   const acquisition = await acquireLock(paths, input.owner, io, timeoutMs, pollMs);
@@ -647,7 +754,7 @@ export async function withActivationLedger<T>(
     if (acquisition.liveOwner === null) fail("acquire-lock", "LIVE_OWNER_MISSING");
     const claimId = `live-${String(input.owner.pid)}-${String(input.owner.startedAtUtcMs)}`;
     const entries = await withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(
-      input.root,
+      paths,
       io,
       input.makeSystemDraft,
       [{ kind: "live-lock", owner: acquisition.liveOwner as LedgerLockOwner, contender: input.owner, claimId }],
@@ -655,6 +762,7 @@ export async function withActivationLedger<T>(
     ));
     return { kind: "contended", entries };
   }
+  if (acquisition.ownerServer === null) fail("acquire-lock", "OWNER_IDENTITY_MISSING");
   let result: WithActivationLedgerResult<T> | null = null;
   let workFailure: unknown = null;
   try {
@@ -662,7 +770,7 @@ export async function withActivationLedger<T>(
     const staleOwners = discovered.map(item => item.owner);
     const tombstones = [...new Set([...acquisition.tombstones, ...discovered.map(item => item.file)])];
     const staleEntries = await withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(
-      input.root,
+      paths,
       io,
       input.makeSystemDraft,
       staleOwners.map(owner => ({ kind: "stale-lock", owner })),
@@ -673,9 +781,12 @@ export async function withActivationLedger<T>(
       result = { kind: "contended", entries: staleEntries };
     } else {
       const session: ActivationLedgerSession = {
-        async read() { return readActivationLedger(input.root, io); },
+        async read() {
+          const snapshot = await withLockTransition(paths, io, timeoutMs, pollMs, () => readInternalAt(paths, io));
+          return { state: snapshot.state, entries: snapshot.entries, damage: snapshot.damage, corrupt: snapshot.corrupt };
+        },
         async append(draft) {
-          return withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(input.root, io, input.makeSystemDraft, [], draft));
+          return withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(paths, io, input.makeSystemDraft, [], draft));
         },
       };
       const value = await work(session);
@@ -686,7 +797,10 @@ export async function withActivationLedger<T>(
   }
 
   let releaseFailure: unknown = null;
-  try { await releaseLock(paths, input.owner, io); } catch (error) { releaseFailure = error; }
+  try { await releaseLock(paths, input.owner, acquisition.ownerServer, io); } catch (error) {
+    releaseFailure = error;
+    try { await closeTransition(acquisition.ownerServer); } catch { /* release already failed closed */ }
+  }
   if (workFailure !== null) rethrowClosed(workFailure, "write-ledger");
   if (releaseFailure !== null) rethrowClosed(releaseFailure, "release-lock");
   if (result === null) fail("write-ledger", "NO_RESULT");

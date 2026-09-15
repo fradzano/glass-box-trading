@@ -17,11 +17,11 @@
   { "id": "L16", "note": "credential field name accepted", "from": "if (secretShaped(key) || credentialField(key)) return \"secret\";", "to": "if (secretShaped(key)) return \"secret\";" },
   { "id": "L17", "note": "impossible civil date accepted", "from": "|| day > (monthLengths[month - 1] ?? 0)", "to": "|| false" },
   { "id": "L18", "note": "at and atUtcMs may name different moments", "from": "if (isoAtUtcMs(at) !== atUtcMs) return refuse(\"AT_UTC_MS_MISMATCH\");", "to": "" },
-  { "id": "L19", "note": "unreferenced correction accepted", "from": "if (kind === \"correction\" && (!Number.isSafeInteger(correctionSeq)", "to": "if (false && (!Number.isSafeInteger(correctionSeq)" },
+  { "id": "L19", "note": "unreferenced correction accepted", "from": "if (kind === \"correction\" && (correctionSeq === null || correctionSeq < 1 || correctionSeq > seq)) {", "to": "if (false) {" },
   { "id": "L20", "note": "non-canonical or duplicate-key line accepted", "from": "if (JSON.stringify(validated.entry) !== segment) {", "to": "if (false) {" },
   { "id": "L21", "note": "non-JSON evidence accepted", "from": "if (evidenceInspection === \"invalid\") return refuse(\"EVIDENCE_NOT_JSON\");", "to": "" },
   { "id": "L22", "note": "impossible anchor day accepted", "from": "|| isoAtUtcMs(`${anchorDay}T00:00:00+00:00`) === null", "to": "" },
   { "id": "L23", "note": "nested authorization field accepted", "from": "|| normalized.includes(\"authorization\");", "to": ";" },
-  { "id": "L24", "note": "correction may point beyond itself", "from": "|| (correctionSeq as number) < 1 || (correctionSeq as number) > seq", "to": "" },
+  { "id": "L24", "note": "correction may point beyond itself", "from": " || correctionSeq > seq", "to": "" },
   { "id": "L25", "note": "accessor error escapes credential-free validation", "from": "} catch {\n    return refuse(\"ENTRY_ACCESS_FAILED\");\n  }", "to": "} catch (error) {\n    throw error;\n  }" }
 ]

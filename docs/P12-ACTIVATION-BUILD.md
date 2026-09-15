@@ -60,7 +60,7 @@ always named at the bottom.
 | 6 | Core tests against recorded worlds, including the retry and abort paths | **done** — `ops/activation/tests/simulator.ts` and `sequences.spec.ts`, 14 sequences (172 tests in the activation suite); decide probe 82/82, the sequences alone 21/82 (a measure, see decisions) | unit 6 commit |
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — absolute schedule deadline restored beside the five-second lease; real step-10 14:55:01 counterexample and D119–D122 close the boundary | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da`, `fa0fbe7`, this commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
-| 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — invocation lease plus append guard, stale tombstones, immutable numbered torn recovery, closed failures | this commit |
+| 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — external blockers reproduced red; physical path/process identities, fold wiring and six real delta seams closed; independent fix-gate A=0/B=0/C=0 | `bdcac95` is superseded; closed in this commit |
 | 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
 | 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
 | 12 | Adversarial review of the code against the catalogue | open | |
@@ -648,6 +648,13 @@ fixture, dashboard, sandbox and implementation-phase gate.
 
 ## Unit 9 — durable ledger store — 2026-09-15
 
+**Closed again at 12:48 CEST after external execution.** The `bdcac95` close claim was
+superseded. Against that tree, the real Windows ordinary/extended path pair reached a
+corrupt duplicate sequence under a two-writer barrier; a same-PID/different-start lock
+read live; and an actual store recovery line was codec-valid but contributed no fold
+correction. All three failed before their fixes. The resulting tests execute the old
+failure moments rather than compare path strings or isolated fields.
+
 `ops/activation/store/ledger-store.ts` is the imperative persistence boundary around
 the closed ledger codec. `withActivationLedger` owns a canonical-root pid/start-time
 lease for the whole invocation callback, not one append. A separate bounded,
@@ -658,10 +665,19 @@ size changes, and fsync every line before return. A live second invocation takes
 that short guard, writes exactly one note, returns `contended`, and never runs its host
 callback. Unknown liveness and malformed ownership data fail closed.
 
+A physical root is the native real path plus its filesystem device and inode. This makes
+`C:\...` and `\\?\C:\...` share ledger, lock and endpoint names, and it makes a pathname
+rebound to a new directory fail with `ROOT_IDENTITY_CHANGED` instead of redirecting a
+held session. Public and session snapshots take the same transition guard as appends,
+so a reader cannot classify a half-written line before its fsync.
+
 A lock whose owner is provably dead is renamed to a tombstone under the same guard.
 The tombstone remains until its stale-lock note is durable, so an ENOSPC or crash cannot
 erase the takeover. Replay detects an already recorded owner and does not double-count
-it. Lock, ledger and release errors become fixed credential-free `LedgerStoreError`
+it; a repeated takeover chooses the first unused tombstone suffix. Exclusive-create
+races consume the bounded acquisition budget. The lock's PID and start time also name
+a kernel-owned endpoint held for the callback; only that exact conjunction is live.
+Lock, ledger and release errors become fixed credential-free `LedgerStoreError`
 stages and are never returned as success. Unit 10 must catch that non-swallowable error
 and perform §4's disable-both/page/exit compensation. Unit 9 exposes no host-effect
 ports and does not pretend that compensation happened.
@@ -678,6 +694,12 @@ intact. Complete noncanonical lines (BOM, CRLF, duplicate-key or reordered JSON)
 invalid UTF-8, impossible or divergent timestamps, sequence gaps and terminated bad
 JSON are corrupt and are never continued.
 
+Recovery uses `damagedSeq` as its canonical reference. `ledgerCorrectionSeq` gives all
+three codec-accepted spellings one meaning, and `foldLedgerSnapshot` carries aggregate
+store integrity into the fold. Store-generated notes and corrections inherit the last
+entry's attempt and anchor day; the store rejects a factory that changes either. Thus a
+correction appears in `fold.corrections` without making the damaged aggregate intact.
+
 Red-first counterexamples cover 24 processes and parallel same-session appends; a
 second invocation while the first sleeps; direct live-lock notes; Windows `wx`
 collision; ordinary, crashed and replayed stale takeover; torn primary, empty and
@@ -685,21 +707,29 @@ partial recovery markers, and repeatedly torn recovery; forged recovery chains;
 partial write; concurrent size change; EACCES, EPERM and ENOSPC; ledger, lock and live
 note fsync; ledger/lock close and release failure; noncanonical bytes; timestamp and
 anchor mismatch; hostile accessors; correction references; and credential-shaped
-values and field names. The final activation suite passes **409/409**. Targeted
-mutation runs catch **25/25 store mutants** and **25/25 ledger-codec mutants**; both
-targets are restored byte-identically, bringing the full inventory from 350 to
-**386/386**. The final repository gate is `npm run verify` at 48 files / 670 tests.
+values and field names. The external blockers add a real Windows alias barrier, a
+same-PID/different-start takeover and an actual Store→codec→fold recovery. The delta
+cold read added executable paths for root rebinding, repeated `EEXIST`, tombstone
+collision, a read during a split write, the snapshot/fold boundary and attempt-preserving
+system evidence. The final activation suite passes **417/417**. Targeted mutation runs
+catch **32/32 store**, **19/19 fold** and **25/25 ledger-codec mutants**. Together with
+the unchanged targets rerun in this session, the complete inventory is **395/395**; each
+runner reports byte-identical restoration. The final repository gate is `npm run verify`
+at 48 files / 670 tests, followed by every architecture, fixture, dashboard, sandbox and
+implementation-phase gate.
 
 The formal `bis-0` store was degraded before this unit: its shared checkout held
 unrelated uncommitted evidence from older runs. This session did not mutate or clean
-that foreign state and therefore does not claim a formal archived loop. Two independent
-cold readers instead executed concurrency, recovery, integrity and failure probes
-against successive frozen trees; their last real findings were closed before the final
-gate.
+that foreign state and therefore does not claim a formal archived loop. Repository cold
+reads supplied the fallback gate. The final independent delta reader first reported
+seven B findings: six executable defects and one incorrect expectation that recovery
+should hide torn history. After the fixes, its read-only fix-gate ran 74 focused tests,
+resolved the six defects, refuted that expectation against the immutable-damage rule,
+and reported **A=0, B=0, C=0**.
 
 ## Next step
 
-**Unit 10 only; it was not begun in the unit-9 session.** The 2026-09-14 Activation/Disarm
+**Unit 10 only; it was not begun in the unit-9 correction session.** The 2026-09-14 Activation/Disarm
 calendar run did not occur: there is no Activation task, no Disarm task and no state
 root, so nothing is planned retroactively. The next plausible supervised block is the
 certificate and drills on 2026-09-21 with the anchor on 2026-09-22. Before that run,

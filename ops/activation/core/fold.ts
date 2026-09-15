@@ -18,7 +18,7 @@
 //
 // Pure: the ledger is already parsed, and nothing here reads a clock.
 import type { ParsedLedger } from "./ledger.ts";
-import { ledgerIntegrity } from "./ledger.ts";
+import { ledgerCorrectionSeq, ledgerIntegrity } from "./ledger.ts";
 import type { LedgerEntry, Outcome, StepId } from "./types.ts";
 
 export interface StepState {
@@ -64,14 +64,33 @@ export interface LedgerFold {
   readonly previousPreflight: StepState | null;
 }
 
+export interface LedgerSnapshotForFold {
+  readonly state: "absent" | "empty" | "intact" | "torn" | "corrupt";
+  readonly entries: readonly LedgerEntry[];
+  readonly corrupt: readonly { readonly line: number | null; readonly reason: string }[];
+}
+
+/** The explicit pure adapter from the store's aggregate snapshot into the fold. */
+export function foldLedgerSnapshot(snapshot: LedgerSnapshotForFold): LedgerFold {
+  const corrupt = snapshot.state === "corrupt"
+    ? (snapshot.corrupt.length > 0
+        ? snapshot.corrupt.map((finding, index) => ({ line: finding.line ?? index + 1, reason: finding.reason }))
+        : [{ line: 1, reason: "STORE_CORRUPT" }])
+    : [];
+  return foldLedger({
+    entries: snapshot.entries,
+    torn: snapshot.state === "torn" ? "STORE_TORN" : null,
+    corrupt,
+  });
+}
+
 /** The steps whose results are facts about the artefact rather than about now or one day. */
 export function carriesOver(step: StepId): boolean {
   return step === "1-install" || step === "2-certificate";
 }
 
 function correctedSeq(entry: LedgerEntry): number | null {
-  const value = entry.evidence["corrects"];
-  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+  return ledgerCorrectionSeq(entry.evidence);
 }
 
 function withIntent(previous: StepState | undefined, entry: LedgerEntry, step: StepId): StepState {

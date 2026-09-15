@@ -8,27 +8,22 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-15 04:15 CEST. **P12 activation unit 9 is complete; unit 10
-has not started. Nothing was activated or changed on the host.** The ledger store holds
-one pid/start-time lease over the complete invocation callback and a short kernel-owned
-write guard over every append. It writes only canonical UTF-8 LF-terminated codec
-lines, fsyncs before success, serializes parallel processes and same-session appends,
-and exposes failures as non-swallowable credential-free `LedgerStoreError`s. A live
-competitor writes exactly one note under the write guard and never enters the protected
-callback. Proven-dead locks remain tombstones until their takeover note is durable.
-Torn bytes, including empty or partial recovery markers, are never changed:
-continuation uses the next numbered recovery segment, begins with a correction, and
-aggregate state remains `torn`; terminated corruption is not continued. Absent, empty,
-intact, torn and corrupt remain distinct. The activation suite passes 409/409; the
-complete mutation inventory is 386/386, including store 25/25 and ledger codec 25/25,
-with byte-identical restoration. Final `npm run verify` evidence is in the unit-9 build
-log. The managed `bis-0` archive could not start because its shared verification
-checkout contains unrelated dirty runs; no foreign evidence was changed, and two
-independent repository cold reads supplied the fallback gate. The 2026-09-14
-Activation/Disarm run did not happen; no Activation task, Disarm task or state root was
-created. `confirm-alerts` remains unexecuted. Next plausible block: certificate/drills
-2026-09-21, anchor 2026-09-22, only after the controlled mail confirmation. **Next code
-unit: unit 10.**
+**Last updated:** 2026-09-15 12:48 CEST. **P12 activation unit 9 is closed again;
+unit 10 has not started. Nothing was activated or changed on the host.** The three
+external blockers against `bdcac95` were reproduced red and fixed: ordinary and
+extended Windows spellings share one physical-root identity and kernel mutex; PID
+liveness requires the recorded start identity; and the store's canonical
+`evidence.damagedSeq` reaches `fold.corrections`. The follow-on delta cold read found
+six more real B paths. Root rebinding, unbounded create races, tombstone collisions,
+half-write reads, the missing snapshot/fold adapter and system-entry attempt splitting
+are closed; its seventh finding was refuted because torn history must remain visibly
+`torn` after a correction. The independent fix-gate reports A=0, B=0, C=0 with 74/74
+focused tests. The activation suite passes 417/417; changed mutation targets pass store
+32/32, fold 19/19 and ledger 25/25, and the complete inventory is 395/395 with every
+target restored byte-identically. `npm run verify` passes 48 files / 670 tests and all
+following gates. The 2026-09-14 Activation/Disarm run still did not happen; no
+Activation task, Disarm task or state root was created. `confirm-alerts` remains
+unexecuted. **Next code unit: unit 10.**
 
 ## Historical cursors (not current state)
 
