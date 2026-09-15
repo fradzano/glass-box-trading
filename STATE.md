@@ -8,7 +8,18 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-15 21:50 CEST. **Update 21:50 — checks rotated after an
+**Last updated:** 2026-09-16 00:55 CEST. **Update 00:55 — gate condition 4 recorded
+for the rotated checks.** The alert drill ran against the new `hc:e4f605dd` /
+`hc:94c5f859` / `hc:40a81113` fingerprints: three separate down alerts confirmed on
+the operator's device at 2026-09-15T22:08:59+02:00, the hourly reminder (naming
+liveness, readiness, watchdog) confirmed at 2026-09-15T23:51:59+02:00 (Ongoing
+reminders had been re-enabled after the 2026-09-11 lapse). `confirm-alerts --operator
+felix` recorded the receipt to `alert-confirmations.jsonl` at
+`C:\Users\felix\glass-box-state\activation-1`, cross-check passed; gate condition 4 is
+valid through 2026-09-29 22:08 Europe/Berlin. All three checks were resolved and
+re-paused immediately after. The earlier 21:50 cursor follows unchanged.
+
+**Update 21:50 — checks rotated after an
 external review of unit 9.** The review confirmed unit 9's claims (activation suite
 417/417, mutation store 32/32, fold 19/19, ledger 25/25 rerun, red-first reproduced for
 all nine fixes) but found the live readiness UUID as a bare literal in two public test
