@@ -1,5 +1,18 @@
 # DECISIONS
 
+- **2026-09-15 — The three healthchecks were rotated; the alert drill on the new checks
+  is deferred by owner ruling.** An external review of unit 9 found the live readiness
+  check's UUID (its ping credential) as a bare string literal in two test fixtures of
+  this public repository (`ledger.spec.ts`, since `ba30ed2`; `ledger-store.spec.ts`,
+  since `bdcac95`). `tools/scan-secrets.ps1` cannot see a bare UUID, and the URL+UUID
+  count did not either. All three checks were deleted and recreated through
+  `healthchecks-provision.mjs --rotate --apply` (same schedules and graces, paused):
+  liveness `hc:e4f605dd`, readiness `hc:94c5f859`, watchdog `hc:40a81113`. The old UUIDs
+  are dead, so history is not rewritten. Both fixtures now use a synthetic UUID. Owner
+  ruling: no alert-path drill now — it worked once and is not repeated today.
+  Consequence, stated rather than hidden: no `alert-confirmations.jsonl` can exist for
+  the new fingerprints until `confirm-alerts` runs on a drill of these checks, so step 0
+  stays red until then or until the owner rules gate condition 4 differently.
 - **2026-09-15 — Unit 9 derives every filesystem and kernel name from one physical
   state-root identity.** Before deriving `ledger.jsonl`, `ledger.lock`, recovery
   names or kernel endpoints, the store applies `path.resolve` and the native

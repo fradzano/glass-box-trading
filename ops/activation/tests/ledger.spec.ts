@@ -138,7 +138,7 @@ describe("activation ledger — the closed schema", () => {
   });
 
   it("refuses evidence that carries a check UUID or a ping URL, and accepts a fingerprint", () => {
-    expect(validateLedgerEntry({ ...valid, evidence: { check: "31a4eae7-f576-4e4a-8d49-a97c64ad5b58" } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
+    expect(validateLedgerEntry({ ...valid, evidence: { check: "00000000-0000-4000-8000-000000000000" } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
     expect(validateLedgerEntry({ ...valid, evidence: { pings: ["ok", "https://hc-ping.com/abc"] } })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
     expect(validateLedgerEntry({ ...valid, kind: "abort", nextOwnerAction: "resume via https://healthchecks.io/api/v3/checks" })).toEqual({ ok: false, reason: "SECRET_SHAPED_VALUE" });
     expect(validateLedgerEntry({ ...valid, evidence: { readiness: "hc:c4ad5b69", status: "up" } }).ok).toBe(true);

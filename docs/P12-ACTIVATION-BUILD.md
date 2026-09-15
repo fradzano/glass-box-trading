@@ -729,7 +729,32 @@ and reported **A=0, B=0, C=0**.
 
 ## Next step
 
-**Unit 10 only; it was not begun in the unit-9 correction session.** The 2026-09-14 Activation/Disarm
+**Review residuals of unit 9 first (external review, 2026-09-15 evening; refute gate
+executed every finding).**
+
+- **G3 (B):** the transition guard around `session.read()` in `withActivationLedger` has no
+  test; removing it keeps 417/417. The race is reachable in production: a contended tick
+  writes its live-lock note while the holder reads, and the holder then sees `torn`. Add a
+  test that pauses that note's write mid-line and asserts the holder's read stays `intact`.
+- **G1 (B):** an existing but unparseable `ledger.lock` (a 0-byte file after a kill in the
+  ~2–3 ms create window, reproduced with a real process kill) is never taken over; every
+  later invocation throws `read-lock:LOCK_INVALID` until a human deletes the file. The
+  gate's fix sketch needs a root-scoped lease endpoint plus an `invalid-lock` tombstone
+  and note, which touches codec and fold. Fix it, or declare it a residual with a runbook
+  step — owner's call.
+- **G2 (C, but part of unit 10's contract):** any non-store error thrown by the `work`
+  callback is rethrown as `write-ledger:IO_ERROR`. Give it its own closed stage (for example
+  `callback` / `WORK_FAILED`) before unit 10 builds on it; otherwise every typed abort
+  pages as a ledger defect.
+- **G4 (C):** `assertRootIdentity` at the top of `withLockTransition` has no test; harmless
+  with one lease per process, cheap to pin.
+
+**Gate condition 4 after the rotation:** the checks are new (`hc:e4f605dd` liveness,
+`hc:94c5f859` readiness, `hc:40a81113` watchdog, all paused). The alert drill on them is
+deferred by owner ruling (DECISIONS, 2026-09-15), so no confirmation exists and step 0
+stays red until `confirm-alerts` runs on a drill of these checks.
+
+**Then unit 10; it was not begun in the unit-9 correction session.** The 2026-09-14 Activation/Disarm
 calendar run did not occur: there is no Activation task, no Disarm task and no state
 root, so nothing is planned retroactively. The next plausible supervised block is the
 certificate and drills on 2026-09-21 with the anchor on 2026-09-22. Before that run,

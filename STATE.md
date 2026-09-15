@@ -8,7 +8,18 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-15 12:48 CEST. **P12 activation unit 9 is closed again;
+**Last updated:** 2026-09-15 21:50 CEST. **Update 21:50 — checks rotated after an
+external review of unit 9.** The review confirmed unit 9's claims (activation suite
+417/417, mutation store 32/32, fold 19/19, ledger 25/25 rerun, red-first reproduced for
+all nine fixes) but found the live readiness UUID as a bare literal in two public test
+fixtures. All three healthchecks were rotated (new `hc:e4f605dd` / `hc:94c5f859` /
+`hc:40a81113`, paused) and the fixtures now use a synthetic UUID (DECISIONS). By owner
+ruling the alert drill on the new checks is deferred, so gate condition 4 has no
+recordable confirmation yet. Four review residuals (G1–G4) are listed under "Next step" in
+[`docs/P12-ACTIVATION-BUILD.md`](docs/P12-ACTIVATION-BUILD.md); G2 and G3 come before unit 10.
+The earlier 12:48 cursor follows unchanged.
+
+**P12 activation unit 9 is closed again;
 unit 10 has not started. Nothing was activated or changed on the host.** The three
 external blockers against `bdcac95` were reproduced red and fixed: ordinary and
 extended Windows spellings share one physical-root identity and kernel mutex; PID

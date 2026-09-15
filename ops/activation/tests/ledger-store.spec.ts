@@ -996,7 +996,7 @@ describe("activation ledger store — failures are never success", () => {
       "PA349COOGKZ1",
       "sk-ant-api03-super-secret",
       "Bearer super-secret",
-      "31a4eae7-f576-4e4a-8d49-a97c64ad5b58",
+      "00000000-0000-4000-8000-000000000000",
       "https://hc-ping.com/super-secret",
     ];
     for (const credential of credentials) {
