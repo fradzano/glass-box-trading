@@ -317,6 +317,81 @@ describe("activation ledger store — bytes and state", () => {
     expect((await invocation).kind).toBe("completed");
   });
 
+  // Review residual G3: a contended tick writes its live-lock note while the holder reads.
+  it("serializes the holder's session read against a contended tick's live-lock note", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    const holder = { pid: 91_001, startedAtUtcMs: 1_700_000_000_001 };
+    const contender = { pid: 91_002, startedAtUtcMs: 1_700_000_000_002 };
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const release = new Promise<void>(resolve => { releaseWrite = resolve; });
+    const started = new Promise<void>(resolve => { writeStarted = resolve; });
+    const holderIo: LedgerStoreIo = {
+      ...nodeLedgerStoreIo,
+      processState(owner) { return Promise.resolve(owner.pid === holder.pid ? "alive" : "dead"); },
+    };
+    const contenderIo: LedgerStoreIo = {
+      ...holderIo,
+      async open(file, flags, mode) {
+        const handle = await nodeLedgerStoreIo.open(file, flags, mode);
+        if (file !== paths.ledger) return handle;
+        return {
+          ...handle,
+          async write(bytes) {
+            const split = Math.floor(bytes.length / 2);
+            const first = await handle.write(bytes.subarray(0, split));
+            writeStarted();
+            await release;
+            const second = await handle.write(bytes.subarray(split));
+            return { bytesWritten: first.bytesWritten + second.bytesWritten };
+          },
+        };
+      },
+    };
+    let contenderRan = false;
+    const invocation = withActivationLedger(
+      { root: stateRoot, owner: holder, makeSystemDraft: systemDraft, io: holderIo },
+      async session => {
+        const contended = withActivationLedger(
+          { root: stateRoot, owner: contender, makeSystemDraft: systemDraft, io: contenderIo, contentionTimeoutMs: 2_000, pollIntervalMs: 1 },
+          async () => { await Promise.resolve(); contenderRan = true; return "must-not-run"; },
+        );
+        await started;
+        let readSettled = false;
+        const reading = session.read().then(snapshot => { readSettled = true; return snapshot; });
+        await new Promise(resolve => { setTimeout(resolve, 20); });
+        const settledDuringWrite = readSettled;
+        releaseWrite();
+        expect((await contended).kind).toBe("contended");
+        const snapshot = await reading;
+        expect(settledDuringWrite).toBe(false);
+        expect(snapshot.state).toBe("intact");
+        expect(snapshot.entries.map(entry => entry.evidence["kind"])).toEqual(["live-lock"]);
+        return "done";
+      },
+    );
+    expect((await invocation).kind).toBe("completed");
+    expect(contenderRan).toBe(false);
+  });
+
+  // Review residual G4: release is the one transition that reads no ledger, so only
+  // withLockTransition's own identity check stops it at a rebound root.
+  it("refuses to release a held lease through a rebound root path", async () => {
+    const stateRoot = await root();
+    const movedRoot = `${stateRoot}-moved`;
+    roots.push(movedRoot);
+    await expectStoreError(withActivationLedger(
+      { root: stateRoot, owner: OWNER, makeSystemDraft: systemDraft },
+      async () => {
+        await rename(stateRoot, movedRoot);
+        await mkdir(stateRoot);
+        return "rebound";
+      },
+    ), "read-directory", "ROOT_IDENTITY_CHANGED");
+    expect(await readFile(path.join(movedRoot, "ledger.lock"), "utf8")).toBe(`${JSON.stringify(OWNER)}\n`);
+  });
+
   it("never glues to a torn tail: it preserves the bytes and continues in a recovery segment", async () => {
     const stateRoot = await root();
     await appendActivationLedger({ root: stateRoot, owner: OWNER, draft: draft(), makeSystemDraft: systemDraft });
@@ -987,6 +1062,24 @@ describe("activation ledger store — failures are never success", () => {
       "ACCESS_DENIED",
     );
     expect((await readFile(paths.ledger, "utf8")).endsWith("\n")).toBe(true);
+  });
+
+  // Review residual G2: unit 10's typed aborts must not page as a ledger write defect.
+  it("reports a callback's own failure under its own closed stage and still releases the lease", async () => {
+    const stateRoot = await root();
+    const paths = ledgerStorePaths(stateRoot);
+    const typedAbort = new Error("typed abort carrying Bearer do-not-print");
+    const error = await expectStoreError(
+      withActivationLedger(
+        { root: stateRoot, owner: OWNER, makeSystemDraft: systemDraft },
+        async () => { await Promise.resolve(); throw typedAbort; },
+      ),
+      "callback",
+      "WORK_FAILED",
+    );
+    expect(error.message).not.toContain("do-not-print");
+    expect(error.cause).toBe(typedAbort);
+    await expect(readFile(paths.lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not expose credential-shaped draft data in ledger bytes or errors", async () => {

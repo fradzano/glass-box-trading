@@ -71,14 +71,14 @@ export const nodeLedgerStoreIo: LedgerStoreIo = {
 export type LedgerStoreStage =
   | "read-directory" | "read-ledger" | "acquire-lock" | "read-lock" | "write-lock" | "sync-lock"
   | "close-lock" | "takeover-lock" | "open-ledger" | "write-ledger" | "sync-ledger" | "close-ledger"
-  | "release-lock" | "encode-ledger";
+  | "release-lock" | "encode-ledger" | "callback";
 
 export class LedgerStoreError extends Error {
   readonly stage: LedgerStoreStage;
   readonly reason: string;
 
-  constructor(stage: LedgerStoreStage, reason: string) {
-    super(`LEDGER_APPEND_FAILED:${stage}:${reason}`);
+  constructor(stage: LedgerStoreStage, reason: string, options?: ErrorOptions) {
+    super(`LEDGER_APPEND_FAILED:${stage}:${reason}`, options);
     this.name = "LedgerStoreError";
     this.stage = stage;
     this.reason = reason;
@@ -789,7 +789,15 @@ export async function withActivationLedger<T>(
           return withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(paths, io, input.makeSystemDraft, [], draft));
         },
       };
-      const value = await work(session);
+      // The callback's own failures are unit 10's, not the store's: they keep their
+      // own stage so a typed abort never pages as a ledger defect. The original
+      // error travels as `cause`; the message stays closed.
+      let value: T;
+      try {
+        value = await work(session);
+      } catch (error) {
+        throw error instanceof LedgerStoreError ? error : new LedgerStoreError("callback", "WORK_FAILED", { cause: error });
+      }
       result = { kind: "completed", value, systemEntries: staleEntries };
     }
   } catch (error) {
