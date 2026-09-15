@@ -61,7 +61,7 @@ always named at the bottom.
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — absolute schedule deadline restored beside the five-second lease; real step-10 14:55:01 counterexample and D119–D122 close the boundary | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da`, `fa0fbe7`, this commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — external blockers reproduced red; physical path/process identities, fold wiring and six real delta seams closed; independent fix-gate A=0/B=0/C=0 | `bdcac95` is superseded; closed in this commit |
-| 10 | CLI: `status`, `run`, `abort --confirm`, `--dry-run` | open | |
+| 10 | CLI: `status`, `run`, `abort --confirm`, `disarm`, `--dry-run` | open — brief below; `disarm` added by owner ruling 2026-09-16 | |
 | 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
 | 12 | Adversarial review of the code against the catalogue | open | |
 | 13 | Elevated registration command and dry-run rehearsal on the host | open | |
@@ -813,6 +813,145 @@ competition identity read, the dev account read, the preflight and the probe por
 local readers were run read-only on 2026-09-14 (see unit 7).
 
 After unit 9: unit 10 (CLI), then units 11–13. Unit 10 has not started.
+
+## Unit 10 brief — the CLI
+
+Written 2026-09-16, before the first line of unit 10. Owner ruling of the same day:
+**`disarm` is in scope.** The unit table listed only `status`, `run`, `abort --confirm`
+and `--dry-run`, but `disarmFindings` (`core/decide.ts:249-250`) already pins the disarm
+task's argument vector to
+
+```
+<repoRoot>\ops\activation\cli.ts  disarm  --state-root <root>  --anchor-day <day>
+```
+
+and spec §6 judges that task by value. Leaving `disarm` to unit 13 would mean the core
+compares the world against a command that does not exist, and every phase from step 4 to
+the gate would be red by construction — discovered, at the earliest, during the Sunday
+rehearsal. The unit table row is corrected accordingly.
+
+### What unit 10 is
+
+The single entry point `ops/activation/cli.ts`, plus the pure module(s) it calls. The
+shape follows `confirm-alerts.ts`: the decision lives in a pure module with its own
+tests, the entry file is thin I/O. Nothing in unit 10 decides an activation step — that
+is `decide()`. Unit 10 decides *which invocation this is*, what it may read, what it
+writes to the ledger, and how it exits.
+
+### Command surface
+
+| Command | Lock | Reads | Writes |
+|---|---|---|---|
+| `status` | no lock; read-only snapshot | ledger only, plus the derived phase | nothing |
+| `run` | full lease | observations per plan | `intent` / `result` / `abort` / `note` |
+| `abort --confirm` | disable **first**, then bounded-wait lease | ledger | terminal `abort` entry |
+| `disarm` | full lease | ledger | `result` or `note` |
+
+Global options: `--state-root <path>` (required), `--anchor-day <YYYY-MM-DD>` (required
+for `run` and `disarm`), `--dry-run`, `--operator <name>` (required for
+`abort --confirm`).
+
+**`status`** is the one command that never takes the lease and never appends. It prints
+the fold: current attempt, anchor day, per-step outcome, whether the attempt is ended,
+the next step and its window, and the integrity state of the ledger. It is the command
+the owner types at 22:00 without perturbing a running invocation.
+
+**`run`** is what the `GlassBoxTrading-Activation` task invokes every five minutes. It
+takes the lease through `withActivationLedger`, reads the ledger inside it, folds it,
+derives the observation plan from the phase, reads the world, calls `decide()`, and
+executes the answer per the contract documented on `Decision` in `core/types.ts`:
+`act` writes an `intent`, applies actions in order, stops at the first failure, writes
+a `result`; `record` writes one `result`; `wait` records nothing unless the reason is
+new; `abort` writes the `abort` entry, tears down when `teardown` is true, and pages;
+`ended` does nothing at all; `done` reports completion. A `restart` action reports
+`await-post-boot` and must **not** get a result appended in the same invocation.
+
+**`abort --confirm`** follows spec §5 ("The owner's own abort") and is the one place
+where the store's rule that everything happens inside the lease is deliberately broken:
+it disables both tasks, removes the certificate line, deletes the disarm one-shot and
+sends one success ping per endpoint *before* it takes the lease, because those steps are
+idempotent and safe under a race, and only then takes the lease with a bounded wait to
+write the terminal entry. If the entry cannot be written it says so loudly and exits
+non-zero — an owner who typed the abort and got a shrug would go to bed believing the
+run was stopped.
+
+**`disarm`** is the 15:05 one-shot of spec §6. It reads the ledger and disables both
+tasks unless the ledger shows a green gate for this anchor day. **It fails safe, not
+closed-with-an-error:** an unreadable, torn, corrupt or lock-blocked ledger disables both
+tasks. This is the one command for which residual G1 (`read-lock:LOCK_INVALID`) must not
+become an abort — a disarm that refuses to run because of an unreadable lock is exactly
+the failure the disarm exists to prevent.
+
+### The pure / shell split
+
+Pure (own module, own tests, no I/O, no clock, no env):
+
+- argv → typed invocation, or a typed usage refusal. One vocabulary for all four
+  commands; unknown flags, missing values and duplicated options are refusals, never
+  defaults.
+- `--anchor-day` + configuration → `Schedule` (`certificateDay`, `drillNightDay`,
+  `gateNotAfterUtcMs` and the rest). No `Schedule` is constructed anywhere in the
+  repository today except in tests; this is the first production derivation and every
+  field gets a pinning test. The local-to-UTC conversion of the 14:55 deadline is a
+  parameter, not a call.
+- `Decision` + applied-action results → the ledger drafts to append, in order, with
+  their `kind`, `outcome`, `evidence` and `nextOwnerAction`.
+- The `makeSystemDraft` factory the store requires for `live-lock`, `stale-lock` and
+  `torn-tail` events.
+- Error classification: `LedgerStoreError` with stage `callback` / reason `WORK_FAILED`
+  is **this CLI's own typed abort**, surfaced with its `cause`; every other stage is a
+  ledger defect and triggers the §4 compensation (disable both tasks, page, exit).
+  Mixing the two up is the defect G2 was closed to prevent.
+- Decision → exit code, and the rendering of every human-readable line.
+
+Shell (`cli.ts`): process argv and clock, `createHostPorts`, `withActivationLedger`,
+`readObservations`, `applyAction`, stdout/stderr, `process.exitCode`.
+
+### Exit codes
+
+Following `confirm-alerts.ts` (0 ok, 1 refusal, 2 usage):
+
+- `0` — acted, waited, recorded, finished, or yielded to a live competitor after writing
+  its one note.
+- `1` — an `abort` entry was written: the attempt is over, the teardown ran, the owner is
+  paged. A green run never returns 1.
+- `2` — usage or configuration refusal. Nothing was read, nothing was written.
+- `3` — ledger defect: the §4 compensation ran, or could not run. This is the code that
+  means "the record itself is unreliable", and it is the only one that must never be
+  produced by a typed abort of the CLI.
+
+### `--dry-run`
+
+Spec §9: performs every read, prints every intended action, touches nothing — the mode
+that runs end to end against the real host on the Sunday before the certificate, with
+the ledger in a scratch root. In dry-run, `applyAction` is never called; the intended
+actions are rendered instead, and no ledger line is appended.
+
+### Open decisions this brief surfaces
+
+- **D-10.1 — how the activation pages.** The spec says "page" in five places (§4, §5,
+  the catalogue's invariant 4) and nowhere says through what. There is no fourth
+  healthchecks check, no mail port and no `page` member in `ActionPorts`. Recommendation:
+  a deliberate *fail* ping on a dedicated fourth check, because it reuses the alert path
+  the owner has already drilled and confirmed, and it keeps the three existing checks'
+  meanings intact — but a fourth check is owner work in the healthchecks account, so it
+  is a decision, not an implementation detail. Until it is answered, unit 10 renders the
+  page as a loud, credential-free line on stderr and records `next_owner_action`.
+- **D-10.2 — `ActionPorts` have no host binding.** Unit 8 deliberately left the concrete
+  bindings to unit 13 (DECISIONS, 2026-09-14): only fakes exist. Unit 10 therefore takes
+  the ports as an argument, ships `status`, `--dry-run` and the whole read path working
+  against the real host, and fails closed with a typed refusal when a live action is
+  requested without bindings. Unit 13 supplies them; no behaviour of unit 10 changes then.
+
+### Acceptance
+
+- The pure modules ship with their tests; the activation suite stays green
+  (`npx vitest run --config ops/vitest.config.ts` — `npm run verify` does not contain it).
+- A mutation probe over the new pure modules, with the mutant set restored
+  byte-identically.
+- The adversarial loop runs on unit 10: it has real surface (exit codes, the compensation
+  path, argument parsing, the disarm fail-safe).
+- `ops` typecheck and lint green.
 
 ## Unit 7 brief, as it was given
 

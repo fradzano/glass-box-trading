@@ -1,5 +1,22 @@
 # DECISIONS
 
+- **2026-09-16 — Unit 10 carries `disarm`; the CLI's brief is written before its first
+  line.** The unit table scoped unit 10 to `status`, `run`, `abort --confirm` and
+  `--dry-run`, but `disarmFindings` (`core/decide.ts:249-250`) already pins the disarm
+  one-shot's argument vector to `ops\activation\cli.ts disarm --state-root <root>
+  --anchor-day <day>`, and spec §6 judges that task by value. Deferring `disarm` to unit
+  13 would leave the core comparing the world against a command that does not exist and
+  every phase from step 4 to the gate red by construction — visible at the earliest during
+  the Sunday rehearsal, the most expensive moment to find it. Owner ruling: build it in
+  unit 10. Two questions the brief surfaces stay open: **D-10.1**, through which channel
+  the activation pages (the spec says "page" and never says how; there is no fourth
+  healthchecks check and no `page` member in `ActionPorts`) — until it is answered the CLI
+  pages as a loud credential-free stderr line plus `next_owner_action`; and **D-10.2**,
+  that `ActionPorts` still have no host binding (unit 8 left them to unit 13), so unit 10
+  takes the ports as an argument, ships the whole read path and `--dry-run` against the
+  real host, and fails closed with a typed refusal when a live action is requested without
+  bindings.
+
 - **2026-09-16 — Unit 9's review residuals: G2, G3 and G4 are closed; G1 is a declared
   residual with a runbook step.** The external review of 2026-09-15 left four findings.
   Three are fixed and pinned: the transition guard around `session.read()` now has a test
