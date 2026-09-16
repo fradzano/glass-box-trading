@@ -1,0 +1,16 @@
+{
+  "longRunAccountMasked": "PA0000…000",
+  "coverageThroughDate": "2026-12-16",
+  "minFreeDiskBytes": 10000000000,
+  "expectedHostPreconditions": {
+    "SleepAcSeconds": "0",
+    "HibernateAcSeconds": "0",
+    "HiberbootEnabled": "0",
+    "ActiveHoursStart": "9",
+    "ActiveHoursEnd": "3",
+    "AutoAdminLogon": "0",
+    "DisableAutomaticRestartSignOn": "1",
+    "ShutdownPrivilege": "present",
+    "AdministratorsMember": "yes"
+  }
+}

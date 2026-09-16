@@ -61,7 +61,7 @@ always named at the bottom.
 | 7 | Shell readers: tasks, checks API, `.env`, logs, boot time, sessions | **done** — absolute schedule deadline restored beside the five-second lease; real step-10 14:55:01 counterexample and D119–D122 close the boundary | `c996333`, `75e6b56`, `3fbd239`, `0e606d8`, `bfdb4da`, `fa0fbe7`, this commit |
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — external blockers reproduced red; physical path/process identities, fold wiring and six real delta seams closed; independent fix-gate A=0/B=0/C=0 | `bdcac95` is superseded; closed in this commit |
-| 10 | CLI: `status`, `run`, `abort --confirm`, `disarm`, `--dry-run` | open — brief below; `disarm` added by owner ruling 2026-09-16 | |
+| 10 | CLI: `status`, `run`, `open`, `abort --confirm`, `disarm`, `--dry-run` | **done** — `ops/activation/cli.ts` plus six modules, 543 in the activation suite, probes 74/74 | this commit |
 | 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
 | 12 | Adversarial review of the code against the catalogue | open | |
 | 13 | Elevated registration command and dry-run rehearsal on the host | open | |
@@ -812,7 +812,99 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-After unit 9: unit 10 (CLI), then units 11–13. Unit 10 has not started.
+After unit 10: units 11 (digest batch and the core's second architecture-gate root), 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). Two questions stay open for the owner: **D-10.1**, the channel a page goes through, and **D-10.2**, which unit 13 answers by binding the action ports.
+
+## Unit 10 — the CLI — 2026-09-16
+
+Built against the brief above. Where it deviates from the brief, the reason is here; the
+brief itself is left as it was written, because it is the measure this unit was judged by.
+
+**What exists.** `ops/activation/cli.ts` is the entry point, and the work is in five
+modules that take their clock, their zone, their ports and their identity as parameters:
+
+| Module | What it owns |
+|---|---|
+| `cli/args.ts` | argv → a typed invocation, or a refusal that names the argument |
+| `cli/schedule.ts` | anchor day → `Schedule`; local wall clock → UTC instant; the ledger's `at` format |
+| `cli/plan.ts` | observation plan, every ledger draft, the exit codes, the store-failure classification |
+| `cli/deployment.ts` | the deployment file, by value |
+| `cli/report.ts` | the status page and the one-line outcome the owner reads |
+| `cli/invoke.ts` | the orchestration: lease, reads, decision, actions, appends |
+
+**Five commands, not four.** The brief named `status`, `run`, `abort --confirm` and
+`disarm`. Writing the orchestration surfaced a hole: `decide()` never opens an attempt —
+on an empty ledger it aborts with `LEDGER_EMPTY` and tells the owner to open one — and an
+`abort` ends an attempt for good. Without a fifth command there was therefore no way back
+after any abort, and the retry of spec §5 could not be executed at all. So:
+
+- `run` opens an attempt itself in exactly two cases: the ledger is absent or empty (spec
+  §4, which prescribes disable-both, page, and a first entry recording what was found),
+  or the last attempt **ended and was for an earlier anchor day** — a new anchor day
+  resets steps 4 and 7 to 11 anyway.
+- `open --anchor-day <day> --operator <name>` is the owner's same-day retry. A tick must
+  not undo an abort: without this split, an abort at 22:30 would be reopened by the tick
+  at 22:35. It refuses while an attempt is still running.
+
+**A dry run appends nothing.** Spec §9 says the rehearsal "performs every read, prints
+every intended action and touches nothing", with the ledger in a scratch root. It would
+have been defensible to write the ledger and only withhold the host actions; this build
+withholds both. A rehearsal that half-executed an attempt would leave the scratch ledger
+in a phase the next rehearsal reads as real, and the value of the rehearsal is that it can
+be repeated. The lease and any system entries are still written, because the store owns
+those.
+
+**Exit codes: five, not four.** `0` nothing wrong, `1` the attempt ended, `2` the
+invocation refused to start, `3` the ledger itself is unreliable, `4` the invocation
+failed part way through. The brief had four; `4` was split off `3` because review residual
+G2 exists precisely so that the CLI's own typed failure is not read as a ledger defect,
+and two failures that must not be confused may not share a number in a task history that
+shows nothing else for months.
+
+**Two action contracts, made explicit.** An `act` stops at the first failed action,
+because everything after it was decided against a world that no longer holds. A teardown
+does **all** of its parts: the owner typed a stop, and a disable that failed is a reason
+to keep going, not to stop halfway. `applyAll(..., stopAtFirstFailure)` carries the
+difference; it used to be hidden in how the call sites were arranged, where a mutant found
+it.
+
+**`disarm` fails safe, not closed.** A ledger it cannot read — residual G1's 0-byte
+`ledger.lock` among other causes — disables both tasks and says so, rather than aborting.
+Its lease wait is 2 s rather than the store's 5: the one-shot fires at 15:05 and owes its
+answer in seconds, and whatever it cannot resolve in that time it resolves by disabling.
+A test reproduces exactly G1's 0-byte lock.
+
+**`ActionPorts` are still unbound** (D-10.2). `cli.ts` passes `null`, the whole read path
+and `--dry-run` work against the real host, and an unbound action is never recorded as
+applied — it is reported as refused with `NO_HOST_BINDINGS`. Unit 13 supplies the ports;
+nothing else about unit 10 changes then. **D-10.1 is still open:** the page is a loud,
+credential-free line on stderr plus the ledger's `next_owner_action`.
+
+**The deployment file.** `Schedule` needs facts no anchor day derives: the host
+preconditions of spec §3, the long-run account's masked id, the coverage date, the disk
+minimum. They are measurements, so they are read from `ops/activation/deployment.json`
+(with `deployment.example.json` committed as its shape) rather than invented in source. A
+missing or half-filled file is a refusal that names the field.
+
+**Evidence.**
+
+- Activation suite **543/543** (was 420 before this unit); `ops` typecheck and lint clean.
+- Mutation probes, all restored byte-identically:
+  `args 15/15`, `schedule 12/12`, `plan 18/18`, `deployment 7/7`, `invoke 13/13`,
+  `report 9/9` — **74 of 74 caught**.
+- Six mutants survived their first run and each one was a real gap, not an equivalent:
+  a result that counted fewer reports than actions as complete; a restart that swallowed a
+  later action's failure; a coverage date matched by its first four digits; a dry run that
+  printed only its first intended action; a teardown that stopped at its first failure;
+  and a `−05:00` offset written with a plus sign. Five were closed with tests, one by
+  making the two action contracts explicit in the code.
+- The end-to-end tests run against the **real** ledger store on real files, with the
+  unit-6 simulator supplying the world: the lease, the live-lock note, the torn-tail
+  recovery and G1's unreadable lock are all exercised, not faked.
+
+**Not covered, and stated rather than implied.** No test drives `run` through a full `act`
+against bound ports — the `act` path's own contract is pinned in `cli-actions.spec.ts` and
+in the plan's drafts, but the first end-to-end `act` with real host effects is unit 13's
+rehearsal. The page channel is undecided (D-10.1), so nothing pages anywhere yet.
 
 ## Unit 10 brief — the CLI
 

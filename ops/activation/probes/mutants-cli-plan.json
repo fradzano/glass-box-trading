@@ -1,0 +1,20 @@
+[
+  { "id": "P1", "note": "the preflight stops being taken once the certificate is recorded", "from": "|| stepDone(fold, \"2-certificate\");", "to": ";" },
+  { "id": "P2", "note": "the live-token probe never spent at the gate", "from": "const analystProbe = preflight && (step === \"0-preflight\" || step === \"10-gate\");", "to": "const analystProbe = preflight && step === \"0-preflight\";" },
+  { "id": "P3", "note": "the dev account's book never read", "from": "devAccount: step === \"3-flat\"", "to": "devAccount: false" },
+  { "id": "P4", "note": "a step closed ok when any single action applied", "from": "reports.every(report => report.applied);", "to": "reports.some(report => report.applied);" },
+  { "id": "P5", "note": "a restart writes its own result, from a machine that is going down", "from": "if (allApplied && reports.some(report => report.completion === \"await-post-boot\")) return null;", "to": "if (false) return null;" },
+  { "id": "P6", "note": "a failed restart silently writes no result either", "from": "if (allApplied && reports.some(report => report.completion === \"await-post-boot\")) return null;", "to": "if (reports.some(report => report.completion === \"await-post-boot\")) return null;" },
+  { "id": "P7", "note": "a run that stopped at the first failure counted as complete", "from": "const allApplied = reports.length === decision.actions.length && reports.every", "to": "const allApplied = reports.every" },
+  { "id": "P8", "note": "every wait silenced, including the first time a reason appears", "from": "if (last !== null && last.kind === \"note\" && last.evidence[\"waiting\"] === reason) return null;", "to": "if (last !== null && last.kind === \"note\") return null;" },
+  { "id": "P9", "note": "every wait written, so five-minute ticks bury the evidence", "from": "if (last !== null && last.kind === \"note\" && last.evidence[\"waiting\"] === reason) return null;", "to": "if (false) return null;" },
+  { "id": "P10", "note": "a stamp behind the tail written as it is, which the codec refuses", "from": "if (tail.lastAtUtcMs === null || stamp.atUtcMs >= tail.lastAtUtcMs) return stamp;", "to": "if (tail.lastAtUtcMs === null || stamp.atUtcMs <= tail.lastAtUtcMs) return stamp;" },
+  { "id": "P11", "note": "an abort exits 0, so the task history reads as a normal tick", "from": "    case \"aborted\":\n      return 1;", "to": "    case \"aborted\":\n      return 0;" },
+  { "id": "P12", "note": "a ledger defect and the CLI's own failure share an exit code", "from": "    case \"ledger-defect\":\n      return 3;", "to": "    case \"ledger-defect\":\n      return 4;" },
+  { "id": "P13", "note": "every callback-stage failure read as the CLI's own (residual G2)", "from": "if (stage === \"callback\" && reason === \"WORK_FAILED\") {", "to": "if (stage === \"callback\") {" },
+  { "id": "P14", "note": "the CLI's own failure no longer pages", "from": "|| outcome.kind === \"work-failed\";", "to": ";" },
+  { "id": "P15", "note": "a torn tail written as a note instead of a correction", "from": "        kind: \"correction\",", "to": "        kind: \"note\"," },
+  { "id": "P16", "note": "attempts of every anchor day counted into this day's numbering", "from": "if (entry.anchorDay === anchorDay && !seen.includes(entry.attempt))", "to": "if (!seen.includes(entry.attempt))" },
+  { "id": "P17", "note": "a system draft takes its own attempt over the store's", "from": "const attempt = context?.attempt ?? options.attempt;", "to": "const attempt = options.attempt;" },
+  { "id": "P18", "note": "an abort's own reason left out of its evidence", "from": "evidence: { ...decision.evidence, reason: decision.reason, teardown: decision.teardown },", "to": "evidence: { ...decision.evidence, teardown: decision.teardown }," }
+]

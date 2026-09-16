@@ -8,6 +8,24 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-16 02:40 CEST. **Update 02:40 — unit 10, the CLI, is built.**
+`ops/activation/cli.ts` plus `cli/args`, `cli/schedule`, `cli/plan`, `cli/deployment`,
+`cli/report` and `cli/invoke`. Five commands: `status` (no lease, appends nothing), `run`
+(what the scheduled task invokes), `open` (the owner's retry), `abort --confirm` (disables
+before it waits for the lease) and `disarm` (the 15:05 one-shot, which fails **safe** — a
+ledger it cannot read disables both tasks, residual G1 included, and a test reproduces
+G1's 0-byte lock). `disarm` was added to the unit's scope by owner ruling; `open` and three
+smaller decisions were taken while building and are written up in DECISIONS. Evidence:
+activation suite **543/543**, `ops` typecheck and lint clean, six mutation probes
+**74/74** caught and restored byte-identically; six mutants survived their first run and
+every one of them was a real gap, closed with tests or, once, by making the two action
+contracts explicit. **Still open and deliberately so:** D-10.1, the channel a page goes
+through (today a loud stderr line plus the ledger's `next_owner_action`), and D-10.2, the
+`ActionPorts` host bindings, which are unit 13's — until then an unbound action is
+reported as refused, never as applied. **Next code unit: 11 (digest batch, the core's
+second architecture-gate root), then 12 and 13.** The earlier 01:10 cursor follows
+unchanged.
+
 **Last updated:** 2026-09-16 01:10 CEST. **Update 01:10 — three of unit 9's four review
 residuals are closed; G1 is a declared residual.** G3 (the transition guard around
 `session.read()`) and G4 (`assertRootIdentity` in `withLockTransition`, pinned through

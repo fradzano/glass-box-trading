@@ -1,0 +1,80 @@
+[
+  {
+    "id": "V1",
+    "note": "an unbound or dry-run action reported as applied",
+    "from": "reports.push({ kind: action.kind, applied: false, detail: null, reason, completion: null });",
+    "to": "reports.push({ kind: action.kind, applied: true, detail: {}, reason: null, completion: \"record-result\" });"
+  },
+  {
+    "id": "V2",
+    "note": "a dry run stops after the first intended action instead of printing them all",
+    "from": "      reports.push({ kind: action.kind, applied: false, detail: null, reason, completion: null });",
+    "to": "      reports.push({ kind: action.kind, applied: false, detail: null, reason, completion: null });\n      break;"
+  },
+  {
+    "id": "V3",
+    "note": "an attempt is never opened, so a fresh ledger can never start",
+    "from": "      if (fold.currentAttempt === null || (ended && otherDay)) {",
+    "to": "      if (false) {"
+  },
+  {
+    "id": "V4",
+    "note": "a dry run writes the opening entry after all",
+    "from": "        if (!invocation.dryRun) {\n          await append(session, openingDraft(",
+    "to": "        if (true) {\n          await append(session, openingDraft("
+  },
+  {
+    "id": "V6",
+    "note": "the disarm accepts a gate from another anchor day",
+    "from": "          && attempt.anchorDay === schedule.anchorDay",
+    "to": "          && true"
+  },
+  {
+    "id": "V7",
+    "note": "the owner's abort leaves both tasks enabled",
+    "from": "[{ kind: \"disable-tasks\", tasks: BOTH_TASKS }, { kind: \"remove-certificate-line\" }, { kind: \"delete-disarm\" }, { kind: \"clear-checks\" }],",
+    "to": "[{ kind: \"remove-certificate-line\" }, { kind: \"delete-disarm\" }, { kind: \"clear-checks\" }],"
+  },
+  {
+    "id": "V8",
+    "note": "an already ended attempt is aborted a second time",
+    "from": "      if (fold.attemptEnded !== null) {\n        return { kind: \"ended\", seq: fold.attemptEnded.seq, reason: `attempt ${attempt.id} was already ended",
+    "to": "      if (false) {\n        return { kind: \"ended\", seq: fold.attemptEnded?.seq ?? 0, reason: `attempt ${attempt.id} was already ended"
+  },
+  {
+    "id": "V9",
+    "note": "a torn or corrupt ledger silently opens a new attempt instead of pausing",
+    "from": "        if (fold.currentAttempt === null && snapshot.state !== \"absent\" && snapshot.state !== \"empty\") {",
+    "to": "        if (false) {"
+  },
+  {
+    "id": "V10",
+    "note": "the teardown stops at its first failure instead of doing all four parts",
+    "from": "    if (stopAtFirstFailure) break;",
+    "to": "    break;"
+  },
+  {
+    "id": "V11",
+    "note": "an act keeps applying actions after one failed, against a world that moved",
+    "from": "    if (stopAtFirstFailure) break;",
+    "to": "    if (false) break;"
+  },
+  {
+    "id": "V12",
+    "note": "a tick reopens the anchor day the owner just aborted",
+    "from": "      if (fold.currentAttempt === null || (ended && otherDay)) {",
+    "to": "      if (fold.currentAttempt === null || ended) {"
+  },
+  {
+    "id": "V13",
+    "note": "a new anchor day never gets an attempt, so a retry can never start",
+    "from": "      if (fold.currentAttempt === null || (ended && otherDay)) {",
+    "to": "      if (fold.currentAttempt === null) {"
+  },
+  {
+    "id": "V14",
+    "note": "the owner's open adds a second attempt beside a running one",
+    "from": "      if (fold.currentAttempt !== null && fold.attemptEnded === null) {",
+    "to": "      if (false) {"
+  }
+]

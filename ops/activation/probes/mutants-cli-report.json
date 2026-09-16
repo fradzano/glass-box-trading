@@ -1,0 +1,11 @@
+[
+  { "id": "R1", "note": "an ended attempt no longer announced, so a dead run reads as a running one", "from": "  if (fold.attemptEnded !== null) {", "to": "  if (false) {" },
+  { "id": "R2", "note": "a step with no result silently left off the page", "from": "    if (state === undefined) continue;", "to": "    if (state === undefined || state.resultSeq === null) continue;" },
+  { "id": "R3", "note": "a step without a result printed as unknown rather than as open", "from": "const outcome = state.outcome ?? (state.resultSeq === null ? \"no result yet\" : \"unknown\");", "to": "const outcome = state.outcome ?? \"unknown\";" },
+  { "id": "R4", "note": "an interrupted step no longer named", "from": "  if (fold.interrupted !== null) {", "to": "  if (false) {" },
+  { "id": "R5", "note": "the next step's deadline printed as its opening time", "from": "until ${localText(window.notValidAfter)}", "to": "until ${localText(window.opens ?? window.notValidAfter)}" },
+  { "id": "R6", "note": "a teardown that did not happen reported as if it had", "from": "outcome.teardown ? \"both tasks are disabled and the certificate line is unset\"", "to": "true ? \"both tasks are disabled and the certificate line is unset\"" },
+  { "id": "R7", "note": "an abort's next owner action dropped from the report", "from": "        `next owner action: ${outcome.nextOwnerAction}`,", "to": "        ``," },
+  { "id": "R8", "note": "a deferred restart result reported as a closed step", "from": "${outcome.deferred ? \"; its result is left for the first invocation after the boot\" : \"\"}", "to": "${\"\"}" },
+  { "id": "R9", "note": "an empty ledger reported as a populated one", "from": "${fold.empty ? \" (empty)\" : \"\"}", "to": "${\"\"}" }
+]

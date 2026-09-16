@@ -1,5 +1,24 @@
 # DECISIONS
 
+- **2026-09-16 — Unit 10's four decisions, taken while building and reported here rather
+  than asked.** (1) **A fifth command, `open`.** `decide()` never opens an attempt and an
+  `abort` ends one for good, so without it there was no way back from any abort and the
+  retry of spec §5 could not be executed at all. `run` opens by itself only where spec §4
+  prescribes it (an absent or empty ledger) and for an ended attempt of an *earlier* anchor
+  day; a same-day retry needs `open --anchor-day <day> --operator <name>`, because
+  otherwise an abort typed at 22:30 would be undone by the tick at 22:35. (2) **A dry run
+  appends nothing.** Spec §9 allows reading it either way; a rehearsal that half-executed
+  an attempt would leave the scratch ledger in a phase the next rehearsal reads as real,
+  and repeatability is the whole point of the rehearsal. (3) **Five exit codes, not four**
+  — `4` (the invocation failed part way through) is split off `3` (the ledger is
+  unreliable) because residual G2 exists so these two are never confused, and a task
+  history that shows nothing but a number for months cannot afford to merge them.
+  (4) **The deployment facts are read from a file**, `ops/activation/deployment.json`
+  (shape committed as `deployment.example.json`): the host preconditions of spec §3 and the
+  long-run account's masked id are measurements, and inventing them in source would produce
+  a gate that never turns green, or one that turns green against the wrong account. All
+  four are reversible and none changes the spec.
+
 - **2026-09-16 — Unit 10 carries `disarm`; the CLI's brief is written before its first
   line.** The unit table scoped unit 10 to `status`, `run`, `abort --confirm` and
   `--dry-run`, but `disarmFindings` (`core/decide.ts:249-250`) already pins the disarm

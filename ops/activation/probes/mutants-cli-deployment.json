@@ -1,0 +1,9 @@
+[
+  { "id": "DP1", "note": "an empty precondition set accepted, so step 0 compares against nothing", "from": "if (Object.keys(preconditions).length === 0) return refuse(", "to": "if (false) return refuse(" },
+  { "id": "DP2", "note": "an account id of blank space accepted", "from": "if (typeof account !== \"string\" || account.trim().length === 0) return refuse(", "to": "if (typeof account !== \"string\") return refuse(" },
+  { "id": "DP3", "note": "any string accepted as the coverage date", "from": "!/^\\d{4}-\\d{2}-\\d{2}$/.test(coverage)", "to": "!/^\\d{4}/.test(coverage)" },
+  { "id": "DP4", "note": "a fractional or zero disk minimum accepted", "from": "if (typeof disk !== \"number\" || !Number.isSafeInteger(disk) || disk <= 0) return refuse(", "to": "if (typeof disk !== \"number\") return refuse(" },
+  { "id": "DP5", "note": "a numeric precondition accepted although the reader returns text", "from": "if (typeof item !== \"string\") return null;", "to": "if (false) return null;" },
+  { "id": "DP6", "note": "a JSON array accepted as a deployment file", "from": "function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {\n  return typeof value === \"object\" && value !== null && !Array.isArray(value);", "to": "function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {\n  return typeof value === \"object\" && value !== null;" },
+  { "id": "DP7", "note": "a byte-order mark left in front of the JSON", "from": "text.replace(/^\\uFEFF/, \"\")", "to": "text" }
+]

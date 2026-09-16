@@ -2,6 +2,13 @@
 
 - `ops/activation/tests/actions.spec.ts`
 - `ops/activation/tests/analyst-probe.spec.ts`
+- `ops/activation/tests/cli-actions.spec.ts`
+- `ops/activation/tests/cli-args.spec.ts`
+- `ops/activation/tests/cli-deployment.spec.ts`
+- `ops/activation/tests/cli-invoke.spec.ts`
+- `ops/activation/tests/cli-plan.spec.ts`
+- `ops/activation/tests/cli-report.spec.ts`
+- `ops/activation/tests/cli-schedule.spec.ts`
 - `ops/activation/tests/confirm-record.spec.ts`
 - `ops/activation/tests/confirmation.spec.ts`
 - `ops/activation/tests/decide.spec.ts`

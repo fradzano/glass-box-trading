@@ -1,0 +1,74 @@
+[
+  {
+    "id": "S1",
+    "note": "the day before the anchor is the anchor itself",
+    "from": "if (civil.day > 1) return dateOf({ ...civil, day: civil.day - 1 });",
+    "to": "if (civil.day > 1) return dateOf({ ...civil, day: civil.day });"
+  },
+  {
+    "id": "S2",
+    "note": "every previous month given 31 days at a month boundary",
+    "from": "day: daysInMonth(civil.year, civil.month - 1) });",
+    "to": "day: 31 });"
+  },
+  {
+    "id": "S3",
+    "note": "the gate deadline moved ten minutes earlier",
+    "from": "export const GATE_DEADLINE_MINUTE = 14 * 60 + 55;",
+    "to": "export const GATE_DEADLINE_MINUTE = 14 * 60 + 45;"
+  },
+  {
+    "id": "S4",
+    "note": "only the summer offset tried, so winter has no instant",
+    "from": "for (const offsetMinutes of [0, 60, 120, 180]) {",
+    "to": "for (const offsetMinutes of [120]) {"
+  },
+  {
+    "id": "S5",
+    "note": "an ambiguous local hour resolved to the first of the two instants",
+    "from": "if (matches.length > 1) return { ok: false, reason: \"LOCAL_TIME_IS_AMBIGUOUS\" };",
+    "to": "if (false) return { ok: false, reason: \"LOCAL_TIME_IS_AMBIGUOUS\" };"
+  },
+  {
+    "id": "S6",
+    "note": "a local time inside the spring gap accepted",
+    "from": "if (matches.length === 0) return { ok: false, reason: \"LOCAL_TIME_DOES_NOT_EXIST\" };",
+    "to": "if (false) return { ok: false, reason: \"LOCAL_TIME_DOES_NOT_EXIST\" };"
+  },
+  {
+    "id": "S7",
+    "note": "the certificate run put on the anchor day itself",
+    "from": "const certificateDay = previousDay(anchorDay);",
+    "to": "const certificateDay = anchorDay;"
+  },
+  {
+    "id": "S8",
+    "note": "the drill night put on the certificate day instead of the anchor day",
+    "from": "      drillNightDay: anchorDay,",
+    "to": "      drillNightDay: certificateDay,"
+  },
+  {
+    "id": "S9",
+    "note": "seconds and milliseconds of a stamp taken from the wrong base",
+    "from": "const flooredUtcMs = Math.floor(utcMs / 60_000) * 60_000;",
+    "to": "const flooredUtcMs = utcMs;"
+  },
+  {
+    "id": "S10",
+    "note": "a stamp's milliseconds dropped, so `at` and `atUtcMs` disagree",
+    "from": "${pad(withinMinute % 1_000, 3)}",
+    "to": "${pad(0, 3)}"
+  },
+  {
+    "id": "S11",
+    "note": "a negative offset written with a plus sign",
+    "from": "const sign = offsetMinutes < 0 ? \"-\" : \"+\";",
+    "to": "const sign = \"+\";"
+  },
+  {
+    "id": "S12",
+    "note": "the gate deadline not checked for being a single instant",
+    "from": "  if (!gate.ok) {",
+    "to": "  if (false as boolean && !gate.ok) {"
+  }
+]

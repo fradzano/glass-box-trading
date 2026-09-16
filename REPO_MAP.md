@@ -38,6 +38,13 @@
 - `LICENSE`
 - `ops/activation/actions/apply.ts` — Unit 8: the activation effect shell. Decisions arrive as closed WorldAction
 - `ops/activation/actions/env.ts` — Pure `.env` rewriting for activation actions. The shell replaces the whole file;
+- `ops/activation/cli/args.ts` — The command line of `ops/activation/cli.ts` (unit 10 brief, docs/P12-ACTIVATION-BUILD.md).
+- `ops/activation/cli/deployment.ts` — The deployment facts an attempt does not derive (unit 10).
+- `ops/activation/cli/invoke.ts` — One invocation of the activation CLI, from the command line to the exit code (unit 10).
+- `ops/activation/cli/plan.ts` — What one invocation of the activation CLI writes, and how it ends (unit 10).
+- `ops/activation/cli/report.ts` — What the owner reads (unit 10). Pure string building: the caller decides where the
+- `ops/activation/cli/schedule.ts` — The `Schedule` of one attempt, derived from the anchor day (unit 10).
+- `ops/activation/cli.ts` — `activation` — the CLI of the activation script (unit 10).
 - `ops/activation/confirm/record.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14).
 - `ops/activation/confirm-alerts.ts` — `activation confirm-alerts` — records the owner's confirmation of gate condition 4
 - `ops/activation/core/confirmation.ts` — The cross-check behind `activation confirm-alerts` (owner ruling 2026-09-14,
@@ -46,9 +53,16 @@
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
+- `ops/activation/deployment.example.json`
 - `ops/activation/probes/mutants-action-env.json`
 - `ops/activation/probes/mutants-actions.json`
 - `ops/activation/probes/mutants-analyst-claude.json`
+- `ops/activation/probes/mutants-cli-args.json`
+- `ops/activation/probes/mutants-cli-deployment.json`
+- `ops/activation/probes/mutants-cli-invoke.json`
+- `ops/activation/probes/mutants-cli-plan.json`
+- `ops/activation/probes/mutants-cli-report.json`
+- `ops/activation/probes/mutants-cli-schedule.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
 - `ops/activation/probes/mutants-fold.json`
@@ -83,6 +97,13 @@
 - `ops/activation/store/ledger-store.ts` — Unit 9: the durable shell around the closed ledger codec.
 - `ops/activation/tests/actions.spec.ts` — Unit 8: every effect is exercised only through fakes. These tests never spawn a
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
+- `ops/activation/tests/cli-actions.spec.ts` — The two action contracts of unit 10, which are not the same and must not converge:
+- `ops/activation/tests/cli-args.spec.ts` — The activation CLI's command line (unit 10). The interesting cases are not the happy
+- `ops/activation/tests/cli-deployment.spec.ts` — The deployment file (unit 10). It carries measurements — the host preconditions of
+- `ops/activation/tests/cli-invoke.spec.ts` — One invocation end to end (unit 10), against the real ledger store on real files and
+- `ops/activation/tests/cli-plan.spec.ts` — What one invocation writes, and how it ends (unit 10). Three properties carry the
+- `ops/activation/tests/cli-report.spec.ts` — What the owner reads (unit 10). This is the only part of the activation that talks to
+- `ops/activation/tests/cli-schedule.spec.ts` — The attempt's schedule, derived from the anchor day (unit 10). The core only compares
 - `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
 - `ops/activation/tests/confirmation.spec.ts` — The cross-check of gate condition 4 (owner ruling and review, 2026-09-14). The
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a

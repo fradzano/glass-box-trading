@@ -1,0 +1,92 @@
+[
+  {
+    "id": "A1",
+    "note": "a flag belonging to another command silently accepted",
+    "from": "if (!accepted.includes(flag)) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A2",
+    "note": "a repeated flag accepted, last one winning",
+    "from": "if (present.includes(flag)) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A3",
+    "note": "a flag whose value is the next flag accepted",
+    "from": "if (value === undefined || value.startsWith(\"--\"))",
+    "to": "if (value === undefined)"
+  },
+  {
+    "id": "A4",
+    "note": "an anchor day that is not a calendar day accepted",
+    "from": "if (!isCalendarDay(given)) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A5",
+    "note": "the century rule of leap years dropped",
+    "from": "const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;",
+    "to": "const leap = year % 4 === 0;"
+  },
+  {
+    "id": "A6",
+    "note": "every month given 31 days",
+    "from": "return day >= 1 && day <= daysInMonth(year, month);",
+    "to": "return day >= 1 && day <= 31;"
+  },
+  {
+    "id": "A7",
+    "note": "an abort accepted without --confirm",
+    "from": "if (!present.includes(\"--confirm\")) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A8",
+    "note": "a blank operator accepted for the owner's retry",
+    "from": "const given = (values[\"--operator\"] ?? \"\").trim();",
+    "to": "const given = values[\"--operator\"] ?? \"\";"
+  },
+  {
+    "id": "A9",
+    "note": "a missing --state-root accepted",
+    "from": "if (stateRoot.length === 0) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A10",
+    "note": "a flag typed where the command belongs read as a command",
+    "from": "if (first.startsWith(\"--\")) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A11",
+    "note": "a bare word after a complete command line ignored",
+    "from": "if (!flag.startsWith(\"--\")) return refuse(",
+    "to": "if (false) return refuse("
+  },
+  {
+    "id": "A12",
+    "note": "an anchor day required for status too",
+    "from": "if (command === \"run\" || command === \"disarm\" || command === \"open\") {",
+    "to": "if (command === \"run\" || command === \"disarm\" || command === \"open\" || command === \"status\") {"
+  },
+  {
+    "id": "A13",
+    "note": "--dry-run read as a flag that takes a value",
+    "from": "return flag === \"--dry-run\" || flag === \"--confirm\";",
+    "to": "return flag === \"--confirm\";"
+  },
+  {
+    "id": "A14",
+    "note": "an open accepted without an operator, so a retry has no name on it",
+    "from": "if (given.length === 0) return refuse(\"--operator is required for open",
+    "to": "if (false) return refuse(\"--operator is required for open"
+  },
+  {
+    "id": "A15",
+    "note": "a blank operator accepted for the owner's abort",
+    "from": "    if (!present.includes(\"--confirm\")) return refuse(\"abort needs --confirm: it disables both tasks and ends the attempt\");\n    const given = (values[\"--operator\"] ?? \"\").trim();",
+    "to": "    if (!present.includes(\"--confirm\")) return refuse(\"abort needs --confirm: it disables both tasks and ends the attempt\");\n    const given = values[\"--operator\"] ?? \"\";"
+  }
+]
