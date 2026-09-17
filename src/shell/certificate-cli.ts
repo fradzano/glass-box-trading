@@ -4,19 +4,15 @@
 // and outside market hours. The certificate lands under evidence/pre-arm/.
 import { buildRuntime } from "./agent-runtime.js";
 import { runCertificate } from "./certificate-run.js";
-import { admitCertificateCommand, CERTIFICATE_RUN_LIMITS } from "./certificate-command-guard.js";
+import { admitCertificateInvocation } from "./certificate-admission.js";
+import { CERTIFICATE_RUN_LIMITS } from "./certificate-command-guard.js";
 import { certificateCliExitCode } from "./cli-exit-codes.js";
-import { loadEnvironment } from "./runtime-config.js";
 import { createInterface } from "node:readline/promises";
 
 const args = process.argv.slice(2);
 const preflight = args.includes("--preflight");
 const smokeCycle = args.includes("--smoke-cycle");
-const commandAdmission = admitCertificateCommand({
-  profile: loadEnvironment(process.cwd(), process.env)["ALPACA_PROFILE"],
-  ownerGo: args.includes("--owner-go"),
-  preflight,
-});
+const commandAdmission = admitCertificateInvocation({ repoRoot: process.cwd(), processEnv: process.env, args, platform: process.platform });
 if (!commandAdmission.ok) {
   process.stderr.write(`refusing: ${commandAdmission.reason}\n`);
   process.exit(certificateCliExitCode({ kind: "command_refused" }));

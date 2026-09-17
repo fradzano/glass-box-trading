@@ -57,6 +57,9 @@
 - `ops/activation/probes/mutants-action-env.json`
 - `ops/activation/probes/mutants-actions.json`
 - `ops/activation/probes/mutants-analyst-claude.json`
+- `ops/activation/probes/mutants-architecture-gate.json`
+- `ops/activation/probes/mutants-certificate-admission.json`
+- `ops/activation/probes/mutants-certificate-guard.json`
 - `ops/activation/probes/mutants-cli-args.json`
 - `ops/activation/probes/mutants-cli-deployment.json`
 - `ops/activation/probes/mutants-cli-invoke.json`
@@ -149,6 +152,7 @@
 - `src/shell/arming-gate.ts` — The competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10). Startup
 - `src/shell/broker-errors.ts` — The one error shape broker adapters (real or fake) use to carry an HTTP
 - `src/shell/broker-ports.ts` — The broker port contracts shared by every broker adapter (P3 fake, P7
+- `src/shell/certificate-admission.ts` — Shell half of the certificate command admission: reads `.env` and the
 - `src/shell/certificate-cli.ts` — The S-ARM-01 entry point: `node dist/shell/certificate-cli.js --owner-go`.
 - `src/shell/certificate-command-guard.ts` — Pure admission rule for the externally stateful certificate CLI. Runtime
 - `src/shell/certificate-run.ts` — The supervised dev live-test driver (P7, S-ARM-01). It runs the exact
@@ -243,6 +247,7 @@
 - `tests/journal-fixtures.ts`
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
 - `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
+- `tests/p12-certificate-state-dir.spec.ts` — P12 unit 11 (docs/P12-ACTIVATION-BUILD.md, "Unit 11 brief", part 2): a
 - `tests/p12-qualification-decoupling.spec.ts` — P12: a long paper run keeps the competition profile's protections — the
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
@@ -261,7 +266,7 @@
 - `tests/x7-close-outcomes-resolve.spec.ts` — Live finding six (2026-09-02): the entry-lifecycle terminality resolver
 - `tests/x7-x8-window-and-refusals.spec.ts` — S-X-07 the cycle's market observation covers the book, and S-X-08 a
 - `tools/check-alert-path.ps1`
-- `tools/check-core-architecture.mjs` — Architecture gate for src/core/** — an allow-list over symbol provenance.
+- `tools/check-core-architecture.mjs` — Architecture gate for the declared core roots (CORE_ROOTS below: src/core/**
 - `tools/check-implementation-phases.mjs` — Verify that implementation phases partition the runtime SPEC cases. Kept in
 - `tools/check-schedule-coverage.mjs` — S-G14-06 / scenario #80: does the registered trigger window actually contain
 - `tools/check_implementation_phases.py` — Verify that implementation phases partition the runtime SPEC cases.

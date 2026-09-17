@@ -1,0 +1,56 @@
+[
+  {
+    "id": "CA1",
+    "note": "alias spellings are not resolved to the physical directory (junction, extended path)",
+    "from": "physical = realpathSync.native(resolved);",
+    "to": "physical = resolved;"
+  },
+  {
+    "id": "CA2",
+    "note": "case is not folded on Windows for a directory that does not exist yet",
+    "from": "return platform === \"win32\" ? physical.toLowerCase() : physical;",
+    "to": "return physical;"
+  },
+  {
+    "id": "CA3",
+    "note": "a relative STATE_DIR is resolved against the working directory instead of being unusable",
+    "from": "|| !path.isAbsolute(raw)) return null;",
+    "to": ") return null;"
+  },
+  {
+    "id": "CA4",
+    "note": "the profile that must be dev is taken from .env alone, ignoring the process override",
+    "from": "profile: effective[\"ALPACA_PROFILE\"],",
+    "to": "profile: dotEnv[\"ALPACA_PROFILE\"],"
+  },
+  {
+    "id": "CA5",
+    "note": "the owner's go is assumed",
+    "from": "ownerGo: input.args.includes(\"--owner-go\"),",
+    "to": "ownerGo: true,"
+  },
+  {
+    "id": "CA6",
+    "note": "--preflight is not recognised",
+    "from": "preflight: input.args.includes(\"--preflight\"),",
+    "to": "preflight: false,"
+  },
+  {
+    "id": "CA7",
+    "note": "the .env profile is read from the merged environment, where the dev override hides it",
+    "from": "dotEnvProfile: dotEnv[\"ALPACA_PROFILE\"],",
+    "to": "dotEnvProfile: effective[\"ALPACA_PROFILE\"],"
+  },
+  {
+    "id": "CA8",
+    "note": "the protected directory is read from the merged environment, so it always equals the effective one",
+    "from": "dotEnvStateDirKey: stateDirKey(dotEnv[\"STATE_DIR\"], input.platform),",
+    "to": "dotEnvStateDirKey: stateDirKey(effective[\"STATE_DIR\"], input.platform),"
+  },
+  {
+    "id": "CA9",
+    "note": "the effective directory ignores the .env fallback when no override is set",
+    "from": "effectiveStateDirKey: stateDirKey(effective[\"STATE_DIR\"], input.platform),",
+    "to": "effectiveStateDirKey: stateDirKey(input.processEnv[\"STATE_DIR\"], input.platform),"
+  }
+]

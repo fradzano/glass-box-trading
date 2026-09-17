@@ -1,7 +1,8 @@
-// Architecture gate for src/core/** — an allow-list over symbol provenance.
+// Architecture gate for the declared core roots (CORE_ROOTS below: src/core/**
+// and ops/activation/core/**) — an allow-list over symbol provenance.
 //
-// Model: every value-position identifier in the core must resolve, through the
-// TypeScript checker, either to a declaration inside src/core/** or to one of
+// Model: every value-position identifier in a core must resolve, through the
+// TypeScript checker, either to a declaration inside its own root or to one of
 // the reviewed ECMAScript standard-library names below. Anything that resolves
 // to nothing (Node globals such as `process`, `global`, `require`, timers), to
 // a non-core, non-standard declaration, or to an unlisted standard name
@@ -11,8 +12,9 @@
 // APIs, computed member access on `any`/function-typed operands, calls through
 // computed members, `declare` (except unique-symbol brands), async code,
 // dynamic import, import.meta, module-scope mutable state, classes, and any
-// module specifier that leaves src/core. Every file under src/core must be a
-// `.ts` file so nothing escapes the program.
+// module specifier that leaves the root. Every file under a root must be a
+// `.ts` file so nothing escapes the program, and a root that is missing or
+// holds no `.ts` file fails, so a vanished root cannot pass over nothing.
 //
 // Declared limit (see DECISIONS.md): this is a static analysis of source
 // text. It rejects every impurity and laundering class enumerated in its
@@ -27,7 +29,32 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 
-const CORE_ROOT = path.resolve("src/core");
+// The declared cores. Each root is its own program with its own compiler
+// options. The activation core (docs/P12-ACTIVATION-SPEC.md §9) is run by
+// Node 24 without a build, so its imports carry `.ts` extensions.
+//
+// Exceptions live here, inside digest material, never in a file beside the
+// gate (tools/*.json is not hashed). Each one binds a file, an exact message
+// and the exact number of raw occurrences: a further use of the same member
+// changes the count and fails the gate. Reasons: DECISIONS.md.
+const CORE_ROOTS = [
+  { root: "src/core", compilerOptions: {}, exceptions: [] },
+  {
+    root: "ops/activation/core",
+    compilerOptions: { allowImportingTsExtensions: true },
+    exceptions: [
+      // D-11.1 (DECISIONS.md, 2026-09-17): inspectLedgerValue refuses accessors,
+      // class instances and foreign prototypes without invoking them.
+      { file: "ledger.ts", message: "forbidden reflective or impure member 'Object.getPrototypeOf'", count: 1 },
+      { file: "ledger.ts", message: "forbidden reflective member 'Object.getPrototypeOf'", count: 1 },
+      { file: "ledger.ts", message: "forbidden reflective or impure member 'Object.prototype'", count: 1 },
+      { file: "ledger.ts", message: "forbidden reflective member 'Object.prototype'", count: 1 },
+      { file: "ledger.ts", message: "forbidden reflective or impure member 'Object.getOwnPropertyDescriptors'", count: 1 },
+      { file: "ledger.ts", message: "forbidden reflective member 'Object.getOwnPropertyDescriptors'", count: 1 },
+      { file: "ledger.ts", message: "standard-library value 'value' is not on the core allow-list", count: 1 },
+    ],
+  },
+];
 
 const ALLOWED_LIB_VALUES = new Set([
   "Array", "ArrayBuffer", "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView",
@@ -63,7 +90,7 @@ const ASSIGNMENT_OPERATORS = new Set([
   ts.SyntaxKind.AmpersandAmpersandEqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
 
-function compilerOptions() {
+function compilerOptions(extra) {
   return {
     target: ts.ScriptTarget.ES2024,
     module: ts.ModuleKind.NodeNext,
@@ -74,6 +101,7 @@ function compilerOptions() {
     noEmit: true,
     skipLibCheck: true,
     verbatimModuleSyntax: true,
+    ...extra,
   };
 }
 
@@ -98,19 +126,56 @@ function isPartOfType(node) {
   return false;
 }
 
-export function inspectCoreDirectory(coreRoot) {
+function rootPath(root, fileName) {
+  return path.relative(root, path.resolve(fileName)).split(path.sep).join("/");
+}
+
+/**
+ * Applies a root's exceptions to its raw violations. An exception suppresses
+ * its message in its file only when the raw count matches exactly; any other
+ * count, including zero, is itself a violation, so a stale or outgrown
+ * exception cannot stay silent.
+ */
+function applyExceptions(raw, exceptions) {
+  const remaining = [];
+  const matched = new Map();
+  for (const violation of raw) {
+    const exception = exceptions.find(candidate => candidate.file === violation.file && candidate.message === violation.message);
+    if (exception === undefined) remaining.push(violation);
+    else matched.set(exception, (matched.get(exception) ?? 0) + 1);
+  }
+  for (const exception of exceptions) {
+    const seen = matched.get(exception) ?? 0;
+    if (seen !== exception.count) {
+      remaining.push(...raw.filter(violation => violation.file === exception.file && violation.message === exception.message));
+      remaining.push({ file: exception.file, message: `declared exception '${exception.message}' expects ${String(exception.count)} occurrence(s), found ${String(seen)}` });
+    }
+  }
+  return remaining;
+}
+
+export function inspectCoreDirectory(coreRoot, { compilerOptions: extraOptions = {}, exceptions = [] } = {}) {
   const root = path.resolve(coreRoot);
-  const files = listCoreFiles(root);
-  const violations = [];
-  const report = (fileName, message) => violations.push(`${path.relative(process.cwd(), fileName)}: ${message}`);
+  const raw = [];
+  const report = (fileName, message) => raw.push({ file: rootPath(root, fileName), message });
+  const format = () => [...new Set(applyExceptions(raw, exceptions)
+    .map(({ file, message }) => `${path.relative(process.cwd(), path.join(root, file))}: ${message}`))];
+
+  let files;
+  try {
+    files = listCoreFiles(root);
+  } catch {
+    return [`${path.relative(process.cwd(), root)}: core root does not exist or cannot be read`];
+  }
 
   const sourceFiles = [];
   for (const fileName of files) {
     if (fileName.endsWith(".ts") && !fileName.endsWith(".d.ts")) sourceFiles.push(fileName);
     else report(fileName, "only .ts source files may live in the core");
   }
+  if (sourceFiles.length === 0) report(root, "core root holds no .ts source file");
 
-  const program = ts.createProgram(sourceFiles, compilerOptions());
+  const program = ts.createProgram(sourceFiles, compilerOptions(extraOptions));
   const checker = program.getTypeChecker();
   for (const diagnostic of ts.getPreEmitDiagnostics(program)) {
     const file = diagnostic.file;
@@ -192,7 +257,7 @@ export function inspectCoreDirectory(coreRoot) {
       const specifier = moduleSpecifier.text;
       if (!specifier.startsWith("./") && !specifier.startsWith("../")) { report(fileName, `external or platform ${kind} '${specifier}'`); return; }
       const importedPath = path.resolve(path.dirname(fileName), specifier);
-      if (!isInside(root, importedPath)) report(fileName, `relative ${kind} escapes src/core '${specifier}'`);
+      if (!isInside(root, importedPath)) report(fileName, `relative ${kind} escapes the core root '${specifier}'`);
     }
 
     for (const statement of sourceFile.statements) {
@@ -320,7 +385,7 @@ export function inspectCoreDirectory(coreRoot) {
   for (const sourceFile of program.getSourceFiles()) {
     if (isInside(root, sourceFile.fileName)) inspectSourceFile(sourceFile);
   }
-  return [...new Set(violations)];
+  return format();
 }
 
 function isPrimitiveConstant(node) {
@@ -333,14 +398,15 @@ function isPrimitiveConstant(node) {
     || (ts.isPrefixUnaryExpression(node) && (ts.isNumericLiteral(node.operand) || ts.isBigIntLiteral(node.operand)));
 }
 
-export function inspectInlineCore(files) {
+export function inspectInlineCore(files, declared = CORE_ROOTS[0]) {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "core-architecture-"));
   try {
-    const core = path.join(temporary, "src", "core");
+    const core = path.join(temporary, ...declared.root.split("/"));
     mkdirSync(core, { recursive: true });
     writeFileSync(path.join(temporary, "package.json"), JSON.stringify({ type: "module" }), "utf8");
     for (const [name, source] of Object.entries(files)) writeFileSync(path.join(core, name), source, "utf8");
-    return inspectCoreDirectory(core).map(violation => violation.replace(/^.*?src[\\/]core[\\/]/u, ""));
+    const prefix = `${path.relative(process.cwd(), core)}${path.sep}`;
+    return inspectCoreDirectory(core, declared).map(violation => violation.startsWith(prefix) ? violation.slice(prefix.length) : violation);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -426,6 +492,7 @@ function runSelfTest() {
       throw new Error(`architecture self-test failed to catch: ${source}\n  found: ${found.join("; ") || "(nothing)"}`);
     }
   }
+  runSecondRootSelfTest();
   const nonTypeScript = inspectInlineCore({ "pure.ts": "export const one = 1;", "leak.js": "module.exports = require('node:fs');" });
   if (!nonTypeScript.some(violation => violation.includes("only .ts source files"))) throw new Error("architecture self-test failed to catch a non-TypeScript core file");
 
@@ -455,11 +522,62 @@ function runSelfTest() {
   if (pure.length > 0) throw new Error(`architecture self-test rejected pure source: ${pure.join("; ")}`);
 }
 
+// The second root must be inspected for real: an impurity under it is caught,
+// its `.ts` imports pass there and fail under src/core, a vanished or empty root
+// fails, and every exception is bound to its exact count.
+function runSecondRootSelfTest() {
+  const activation = CORE_ROOTS.find(declared => declared.root === "ops/activation/core");
+  if (activation === undefined) throw new Error("architecture self-test: the ops/activation/core root is not declared");
+  const bare = { ...activation, exceptions: [] };
+  const expectCaught = (label, found, expected) => {
+    if (!found.some(violation => violation.includes(expected))) throw new Error(`architecture self-test (${label}) failed to catch '${expected}'\n  found: ${found.join("; ") || "(nothing)"}`);
+  };
+  expectCaught("impurity under the second root", inspectInlineCore({ "clock.ts": "export function now() { return Date.now(); }" }, bare), "not on the core allow-list");
+  const withExtensions = {
+    "a.ts": "export function one(): number { return 1; }",
+    "b.ts": "import { one } from './a.ts'; export function two(): number { return one() + one(); }",
+  };
+  const underSecond = inspectInlineCore(withExtensions, bare);
+  if (underSecond.length > 0) throw new Error(`architecture self-test rejected .ts imports under the second root: ${underSecond.join("; ")}`);
+  expectCaught(".ts imports under src/core", inspectInlineCore(withExtensions), "allowImportingTsExtensions");
+  expectCaught("empty root", inspectInlineCore({}, bare), "holds no .ts source file");
+  expectCaught("missing root", inspectCoreDirectory(path.join(os.tmpdir(), "core-architecture-root-that-does-not-exist"), bare), "does not exist");
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "core-architecture-roots-"));
+  try {
+    const clean = path.join(temporary, "clean");
+    const impure = path.join(temporary, "impure");
+    for (const [directory, source] of [[clean, "export const one = 1;"], [impure, "export function now() { return Date.now(); }"]]) {
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(path.join(directory, "file.ts"), source, "utf8");
+    }
+    expectCaught("every declared root, not only the first", inspectDeclaredRoots([{ root: clean }, { root: impure }]), "not on the core allow-list");
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+  const declaredNames = CORE_ROOTS.map(declared => declared.root).join(",");
+  if (declaredNames !== "src/core,ops/activation/core") throw new Error(`architecture self-test: the declared roots changed to '${declaredNames}' (docs/P12-ACTIVATION-SPEC.md §9)`);
+  const reflective = "export function plain(value: object): boolean { return Object.getPrototypeOf(value) === null; }";
+  const exception = { file: "plain.ts", message: "forbidden reflective or impure member 'Object.getPrototypeOf'", count: 1 };
+  const excepted = inspectInlineCore({ "plain.ts": reflective }, { ...bare, exceptions: [exception] });
+  if (excepted.includes(`plain.ts: ${exception.message}`)) throw new Error(`architecture self-test: a matching exception did not suppress its message: ${excepted.join("; ")}`);
+  expectCaught("the exception's neighbours", excepted, "forbidden reflective member 'Object.getPrototypeOf'");
+  const twice = `${reflective} export function other(value: object): boolean { return Object.getPrototypeOf(value) !== null; }`;
+  expectCaught("an outgrown exception", inspectInlineCore({ "plain.ts": twice }, { ...bare, exceptions: [exception] }), "expects 1 occurrence(s), found 2");
+  expectCaught("a stale exception", inspectInlineCore({ "plain.ts": "export const one = 1;" }, { ...bare, exceptions: [exception] }), "expects 1 occurrence(s), found 0");
+}
+
+/** Every declared root, each with its own options and exceptions. */
+export function inspectDeclaredRoots(declaredRoots) {
+  return declaredRoots.flatMap(declared => inspectCoreDirectory(declared.root, declared));
+}
+
 if (process.argv.includes("--self-test")) runSelfTest();
-const violations = inspectCoreDirectory(CORE_ROOT);
+const violations = inspectDeclaredRoots(CORE_ROOTS);
 if (violations.length > 0) {
   process.stderr.write(`${violations.join("\n")}\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write(`Architecture gate passed: ${CORE_ROOT} references only core code and the reviewed standard-library allow-list.\n`);
+  const roots = CORE_ROOTS.map(declared => path.resolve(declared.root)).join(", ");
+  const excepted = CORE_ROOTS.reduce((total, declared) => total + declared.exceptions.length, 0);
+  process.stdout.write(`Architecture gate passed: ${roots} reference only core code and the reviewed standard-library allow-list (${String(excepted)} declared exception(s), DECISIONS.md).\n`);
 }

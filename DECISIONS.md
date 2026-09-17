@@ -1,5 +1,32 @@
 # DECISIONS
 
+- **2026-09-17 — Unit 11, the digest batch: the architecture gate gets its second root with
+  seven exceptions bound by count (D-11.1), and the certificate guard refuses the
+  competition `STATE_DIR`.** Measured before the change, the gate reported 12 findings in
+  `ops/activation/core` in four causes (`docs/P12-ACTIVATION-BUILD.md`, unit 11 brief). Three
+  were mechanical: the `.ts` import extensions Node 24 needs (the second root gets
+  `allowImportingTsExtensions`), a parameter named `stack` and a `.map(Number)` in
+  `ledger.ts` (renamed and inlined, ledger mutants 25/25 unchanged). The fourth is the
+  accessor-free plain-data check in `inspectLedgerValue`, which refuses getters, class
+  instances and foreign prototypes **without invoking them** — impossible without
+  `Object.getPrototypeOf`, `Object.prototype` and `Object.getOwnPropertyDescriptors`, and a
+  `JSON` round trip would call the very accessors it guards against. **Owner ruling D-11.1:
+  a narrow exception rather than moving the check into the shell.** The reads are pure; the
+  gate forbids them as laundering routes into intrinsics, and here they refuse foreign code
+  before it runs. Moving the check (option B) would sew a third seam into codec and store
+  two days before the certificate — the same trade that kept G1 a residual. The exceptions
+  sit inside `tools/check-core-architecture.mjs`, which is digest material (a `tools/*.json`
+  is not), and each binds file, exact message and raw count, so a second use or a removed use
+  fails the gate. Option B stays in the backlog for after the competition. **The guard:**
+  a certificate command refuses when `.env` names the competition profile and the effective
+  `STATE_DIR` is the same physical directory as `.env`'s (DECISIONS 2026-09-14, P12
+  revision). The comparison key uses `realpathSync.native`, the identity `resolveStateDir`
+  uses, and the check creates nothing, because `resolveStateDir` would create `quarantine/`
+  in the directory it is meant to protect. **`npm run verify` now runs the activation
+  typecheck and suite**, so the one command the runbook calls gate condition 1 covers the
+  whole repository. This commit changes the runtime digest deliberately and is the last
+  planned digest change before the certificate run on 2026-09-21.
+
 - **2026-09-17 — D-10.1 is decided: the activation pages through a fourth healthchecks.io
   check, and the adversarial loop runs once, in unit 12.** Owner ruling. The check
   `gbt-activation` was created through the management API on 2026-09-17 (`hc:32b59017`,

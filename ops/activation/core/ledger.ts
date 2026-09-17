@@ -99,20 +99,20 @@ function credentialField(key: string): boolean {
     || normalized.includes("authorization");
 }
 
-function inspectLedgerValue(value: unknown, stack: WeakSet<object>): "secret" | "invalid" | null {
+function inspectLedgerValue(value: unknown, seen: WeakSet<object>): "secret" | "invalid" | null {
   if (value === null || typeof value === "boolean") return null;
   if (typeof value === "string") return secretShaped(value) ? "secret" : null;
   if (typeof value === "number") return Number.isFinite(value) ? null : "invalid";
   if (typeof value !== "object") return "invalid";
-  if (stack.has(value)) return "invalid";
-  stack.add(value);
+  if (seen.has(value)) return "invalid";
+  seen.add(value);
   if (Array.isArray(value)) {
     const items: readonly unknown[] = value;
     for (const item of items) {
-      const hit = inspectLedgerValue(item, stack);
+      const hit = inspectLedgerValue(item, seen);
       if (hit !== null) return hit;
     }
-    stack.delete(value);
+    seen.delete(value);
     return null;
   }
   if (isRecord(value)) {
@@ -122,10 +122,10 @@ function inspectLedgerValue(value: unknown, stack: WeakSet<object>): "secret" | 
     for (const [key, descriptor] of Object.entries(descriptors)) {
       if (secretShaped(key) || credentialField(key)) return "secret";
       if (!("value" in descriptor)) return "invalid";
-      const hit = inspectLedgerValue(descriptor.value, stack);
+      const hit = inspectLedgerValue(descriptor.value, seen);
       if (hit !== null) return hit;
     }
-    stack.delete(value);
+    seen.delete(value);
     return null;
   }
   return "invalid";
@@ -151,7 +151,7 @@ function isoAtUtcMs(at: string): number | null {
   if (match === null) return null;
   const [year, month, day, hour, minute, second, millisecond, offsetHour, offsetMinute] = [
     match[1], match[2], match[3], match[4], match[5], match[6], (match[7] ?? "0").padEnd(3, "0"), match[9], match[10],
-  ].map(Number);
+  ].map(part => Number(part));
   if (year === undefined || month === undefined || day === undefined || hour === undefined || minute === undefined
     || second === undefined || millisecond === undefined || offsetHour === undefined || offsetMinute === undefined) return null;
   const monthLengths = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;

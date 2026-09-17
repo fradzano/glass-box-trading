@@ -29,13 +29,15 @@ const BINDING = { profile: "dev", tradingOrigin: ORIGIN, accountId: EXPECTED } a
 const CERTIFICATE_TEST_CONFIG = { scheduling: { cycleWalltimeBudgetMs: 100, lockTakeoverBoundMs: 1_000 } } as const;
 const temporaryDirectories: string[] = [];
 
+const NO_COUPLING = { dotEnvProfile: "dev", dotEnvStateDirKey: null, effectiveStateDirKey: null } as const;
+
 describe("certificate command admission", () => {
   it("refuses every non-dev command before runtime construction and requires owner-go for smoke/live commands", () => {
-    expect(admitCertificateCommand({ profile: "competition", ownerGo: true, preflight: true })).toMatchObject({ ok: false });
-    expect(admitCertificateCommand({ profile: "competition", ownerGo: true, preflight: false })).toMatchObject({ ok: false });
-    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: false })).toMatchObject({ ok: false });
-    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true })).toEqual({ ok: true });
-    expect(admitCertificateCommand({ profile: "dev", ownerGo: true, preflight: false })).toEqual({ ok: true });
+    expect(admitCertificateCommand({ profile: "competition", ownerGo: true, preflight: true, stateDirs: NO_COUPLING })).toMatchObject({ ok: false });
+    expect(admitCertificateCommand({ profile: "competition", ownerGo: true, preflight: false, stateDirs: NO_COUPLING })).toMatchObject({ ok: false });
+    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: false, stateDirs: NO_COUPLING })).toMatchObject({ ok: false });
+    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: NO_COUPLING })).toEqual({ ok: true });
+    expect(admitCertificateCommand({ profile: "dev", ownerGo: true, preflight: false, stateDirs: NO_COUPLING })).toEqual({ ok: true });
     expect(CERTIFICATE_RUN_LIMITS).toEqual({ maxEntryCycles: 8, entryIntervalMs: 180_000, patienceCycles: 3, maxFlattenCycles: 20, flattenIntervalMs: 60_000 });
     expect(Object.values(CERTIFICATE_RUN_LIMITS).every(value => Number.isSafeInteger(value) && value > 0)).toBe(true);
   });

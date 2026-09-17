@@ -26,7 +26,8 @@ export function parseDotEnv(text: string): Readonly<Record<string, string>> {
   return out;
 }
 
-function readDotEnv(repoRoot: string): Readonly<Record<string, string>> {
+/** The `.env` file alone, without process variables; an absent or unreadable file reads as empty. */
+export function readDotEnv(repoRoot: string): Readonly<Record<string, string>> {
   try {
     return parseDotEnv(readFileSync(path.join(repoRoot, ".env"), "utf8"));
   } catch {

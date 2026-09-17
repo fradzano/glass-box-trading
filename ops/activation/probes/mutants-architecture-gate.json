@@ -1,0 +1,56 @@
+[
+  {
+    "id": "AG1",
+    "note": "the second root loses allowImportingTsExtensions",
+    "from": "compilerOptions: { allowImportingTsExtensions: true },",
+    "to": "compilerOptions: {},"
+  },
+  {
+    "id": "AG2",
+    "note": "only the first declared root is inspected",
+    "from": "return declaredRoots.flatMap(",
+    "to": "return declaredRoots.slice(0, 1).flatMap("
+  },
+  {
+    "id": "AG3",
+    "note": "a root that holds no .ts file passes",
+    "from": "if (sourceFiles.length === 0) report(root,",
+    "to": "if (false) report(root,"
+  },
+  {
+    "id": "AG4",
+    "note": "a missing root is read as an empty one",
+    "from": "return [`${path.relative(process.cwd(), root)}: core root does not exist or cannot be read`];",
+    "to": "files = [];"
+  },
+  {
+    "id": "AG5",
+    "note": "an exception ignores its count",
+    "from": "if (seen !== exception.count) {",
+    "to": "if (false) {"
+  },
+  {
+    "id": "AG6",
+    "note": "an exception matches every message in its file",
+    "from": "candidate.file === violation.file && candidate.message === violation.message);",
+    "to": "candidate.file === violation.file);"
+  },
+  {
+    "id": "AG7",
+    "note": "the main run drops each root's options and exceptions",
+    "from": "declaredRoots.flatMap(declared => inspectCoreDirectory(declared.root, declared));",
+    "to": "declaredRoots.flatMap(declared => inspectCoreDirectory(declared.root));"
+  },
+  {
+    "id": "AG8",
+    "note": "the second root is removed from the declaration",
+    "from": "root: \"ops/activation/core\",",
+    "to": "root: \"src/core\","
+  },
+  {
+    "id": "AG9",
+    "note": "a stale exception (count 0) is silently dropped",
+    "from": "const seen = matched.get(exception) ?? 0;",
+    "to": "const seen = matched.get(exception) ?? exception.count;"
+  }
+]

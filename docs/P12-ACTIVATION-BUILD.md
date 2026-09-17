@@ -62,7 +62,7 @@ always named at the bottom.
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — external blockers reproduced red; physical path/process identities, fold wiring and six real delta seams closed; independent fix-gate A=0/B=0/C=0 | `bdcac95` is superseded; closed in this commit |
 | 10 | CLI: `status`, `run`, `open`, `abort --confirm`, `disarm`, `--dry-run` | **done** — `ops/activation/cli.ts` plus six modules, 543 in the activation suite, probes 74/74 | this commit |
-| 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | **brief written** 2026-09-17 (below); D-11.1 ruled A | |
+| 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | **done** — the gate covers `ops/activation/core` (7 exceptions bound by count, D-11.1), the certificate guard refuses the competition `STATE_DIR`, `verify` runs the activation typecheck and suite; root suite 680, activation suite 543, probes 48/48 (+ ledger 25/25 re-run) | this commit |
 | 12 | Adversarial review of the code against the catalogue | open | |
 | 13 | Elevated registration command and dry-run rehearsal on the host | open | |
 
@@ -108,8 +108,9 @@ always named at the bottom.
 - **Closing the reboot's result is bound by `7-rearm`'s window, not by `8-reboot`'s.**
   The first invocation after the boot writes that result, which can be later than
   13:45; it must still come before 13:59.
-- **Not yet applied to `ops/`: the architecture gate.** It hardcodes `src/core` and
-  gets its second root in unit 11. Until then the core is written to its rules by
+- **Not yet applied to `ops/`: the architecture gate** (closed in unit 11, 2026-09-17:
+  the gate now has `ops/activation/core` as its second root). It hardcoded `src/core` and
+  got its second root in unit 11. Until then the core is written to its rules by
   hand, and the mutation probes carry the evidence that the tests bite.
 
 ### Unit 5 — `decide`
@@ -285,7 +286,14 @@ Mutation probes, one set per core unit, live in `ops/activation/probes/`:
 node ops/activation/probes/mutate-activation.mjs ops/activation/core/ledger.ts ops/activation/probes/mutants-ledger.json
 node ops/activation/probes/mutate-activation.mjs ops/activation/core/fold.ts   ops/activation/probes/mutants-fold.json
 node ops/activation/probes/mutate-activation.mjs ops/activation/core/steps.ts  ops/activation/probes/mutants-steps.json
+node ops/activation/probes/mutate-activation.mjs src/shell/certificate-command-guard.ts ops/activation/probes/mutants-certificate-guard.json tests/p12-certificate-state-dir.spec.ts
+node ops/activation/probes/mutate-activation.mjs src/shell/certificate-admission.ts ops/activation/probes/mutants-certificate-admission.json tests/p12-certificate-state-dir.spec.ts
+node ops/activation/probes/mutate-activation.mjs tools/check-core-architecture.mjs ops/activation/probes/mutants-architecture-gate.json --architecture
 ```
+
+Since unit 11, `npm run verify` includes the activation typecheck and suite
+(`activation:typecheck`, `activation:test`); the three commands above remain the quick
+loop while working under `ops/`.
 
 Never add or edit a `*.spec.ts` while a probe runs.
 
@@ -812,7 +820,71 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-After unit 10: units 11 (digest batch and the core's second architecture-gate root), 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
+**Unit 11 is done (2026-09-17, see below).** Remaining: units 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
+
+## Unit 11 — the digest batch — 2026-09-17
+
+Built against the unit 11 brief below, on the day it was written. **This commit changes
+the runtime digest on purpose; from here to the certificate run on 2026-09-21 no further
+commit may touch digest material** (`src/`, `tools/*.mjs`, `package.json`, the lockfile,
+the root `tsconfig`s, `config/`, `assets/`, `dist/`) unless a new certificate is accepted
+as the price.
+
+**Part 1 — the gate.** `tools/check-core-architecture.mjs` declares `CORE_ROOTS`:
+`src/core` unchanged, `ops/activation/core` with `allowImportingTsExtensions`. Measured
+before the change, the activation core had 12 findings in four causes (brief, table F1–F4).
+F1 went away with the compiler option. F2 and F3 were fixed in `ledger.ts` without
+changing behaviour (`stack` → `seen`, `.map(Number)` → `.map(part => Number(part))`);
+the ledger's mutant set, re-run afterwards, is 25/25, restored byte-identically. F4 is
+**D-11.1, ruled A**: seven exceptions for `inspectLedgerValue`, each bound to its file,
+its exact message and a raw count of 1. A missing or empty root fails the gate, and so
+does an exception whose count no longer matches — whether the member is used a second
+time or the use is removed. The self-test proves the second root is inspected, that its
+`.ts` imports pass there and fail under `src/core`, that every declared root is inspected
+(`inspectDeclaredRoots`), and that the declared list is exactly the two roots.
+
+**Part 2 — the guard.** `admitCertificateCommand` (pure) has a required `stateDirs`
+input and refuses when `.env` says `competition` and the effective `STATE_DIR` has the
+same key as `.env`'s. The new shell module `src/shell/certificate-admission.ts` reads
+`.env` (now exported from `runtime-config.ts` as `readDotEnv`), derives the keys with
+`realpathSync.native` (case-folded on Windows) and creates nothing; `certificate-cli.ts`
+calls it instead of assembling the admission itself. **One deviation from the brief:**
+case 3 listed a "relative spelling" among the aliases. `resolveStateDir` refuses a
+relative `STATE_DIR` outright, so the key of a relative path is `null` and the guard
+admits it for runtime construction to refuse. The alias that case 3 meant — an absolute
+path through `..` (`<competition>\..\longrun-1`) — is pinned, built by hand because
+`path.join` would have normalised it away (the first version of the test did exactly
+that and tested nothing; found while writing this log). Tests:
+`tests/p12-certificate-state-dir.spec.ts`, ten cases. Red first: before the rule existed,
+cases 2, 3, 6, 7 and 8 failed and 1, 4 and 5 passed, as they should.
+
+**Part 3 — scripts.** `activation:typecheck` and `activation:test` exist and `verify`
+runs both. The activation suite was run four times before the change (543/543 each time,
+about 5 s), so it adds no measurable flakiness to the command the runbook uses as gate
+condition 1.
+
+**Evidence.**
+
+- `npm run verify` exit 0: root suite 679/679 at that point, activation suite 543/543,
+  architecture gate over both roots, sandbox gate, phase check. After the last test
+  (case 1b) the root suite is 680/680; typecheck, `ops` typecheck, lint and the gate were
+  re-run green.
+- Mutation probes, all restored byte-identically: `certificate-guard 5/5`,
+  `certificate-admission 9/9`, `architecture-gate 9/9` (new `--architecture` mode of
+  `mutate-activation.mjs`), `ledger 25/25` re-run — **48 of 48 new mutants caught on the
+  first run.** Because nothing survived, the instrument was checked: one
+  behaviour-neutral control mutant each against the gate and the guard **survived**, as it
+  must.
+
+**Declared limits.**
+
+- The self-test cannot catch a deliberate edit of the call site in the gate's last lines
+  (`inspectDeclaredRoots(CORE_ROOTS)` → a shortened list); it pins the function and the
+  declared list, and the call site is one visible line in the digest diff.
+- `tools/run-core-sandboxed.mjs`, the runtime-purity sandbox, still covers `src/core`
+  only (out of scope in the brief).
+- The exceptions admit exactly today's four reflective reads in `ledger.ts`; moving that
+  check into the shell (option B) is in the backlog for after the competition.
 
 ## Unit 11 brief — the digest batch
 

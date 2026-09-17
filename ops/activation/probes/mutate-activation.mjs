@@ -23,8 +23,11 @@ if (!target || !mutantsFile) {
   process.stderr.write("usage: node ops/activation/probes/mutate-activation.mjs <core file> <mutants json> [spec file]\n");
   process.exit(2);
 }
-if (onlySpec !== undefined && !/^[\w./-]+\.spec\.ts$/.test(onlySpec)) {
-  process.stderr.write("the spec filter must be a plain relative *.spec.ts path\n");
+// `--architecture` instead of a spec runs the architecture gate with its self-test, for
+// mutants in tools/check-core-architecture.mjs (unit 11).
+const ARCHITECTURE = "--architecture";
+if (onlySpec !== undefined && onlySpec !== ARCHITECTURE && !/^[\w./-]+\.spec\.ts$/.test(onlySpec)) {
+  process.stderr.write("the spec filter must be a plain relative *.spec.ts path or --architecture\n");
   process.exit(2);
 }
 
@@ -44,6 +47,7 @@ try {
     // One command string with shell: true — Windows cannot spawn npx.cmd without a shell.
     // A spec under tests/ is a runtime test (a mutant in src/): it runs under the root configuration, which compiles src/ first.
     const command = onlySpec === undefined ? "npx.cmd vitest run --config ops/vitest.config.ts"
+      : onlySpec === ARCHITECTURE ? "node tools/check-core-architecture.mjs --self-test"
       : onlySpec.startsWith("tests/") ? `npx.cmd vitest run ${onlySpec}`
         : `npx.cmd vitest run --config ops/vitest.config.ts ${onlySpec}`;
     const run = spawnSync(command, { encoding: "utf8", shell: true });
