@@ -62,7 +62,7 @@ always named at the bottom.
 | 8 | Shell actions: enable/disable, disarm task, reboot, `.env` write, pings | **done** — fake-only effect shell, deadline-linearized certificate CAS, pre/post digest validation, bounded abortable ports, compensating teardown | this commit |
 | 9 | Ledger store: append with fsync, lock file, append failure as abort | **done** — external blockers reproduced red; physical path/process identities, fold wiring and six real delta seams closed; independent fix-gate A=0/B=0/C=0 | `bdcac95` is superseded; closed in this commit |
 | 10 | CLI: `status`, `run`, `open`, `abort --confirm`, `disarm`, `--dry-run` | **done** — `ops/activation/cli.ts` plus six modules, 543 in the activation suite, probes 74/74 | this commit |
-| 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | open | |
+| 11 | Digest batch: gate second root, guard `STATE_DIR` coupling, scripts | **brief written** 2026-09-17 (below); D-11.1 ruled A | |
 | 12 | Adversarial review of the code against the catalogue | open | |
 | 13 | Elevated registration command and dry-run rehearsal on the host | open | |
 
@@ -814,9 +814,173 @@ local readers were run read-only on 2026-09-14 (see unit 7).
 
 After unit 10: units 11 (digest batch and the core's second architecture-gate root), 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
 
+## Unit 11 brief — the digest batch
+
+Written 2026-09-17, before the first line of unit 11. The unit table's row ("gate second
+root, guard `STATE_DIR` coupling, scripts") names three changes; this brief turns them
+into something that can be built and judged.
+
+### Why this unit is on a clock
+
+Every file unit 11 touches is **runtime-digest material**: `enumerateRuntimeFiles`
+(`src/shell/digests.ts:56-67`) hashes `src/**/*.ts`, `tools/*.mjs`, `package.json`,
+`package-lock.json` and both root `tsconfig`s. The certificate run on 2026-09-21 binds
+the digest of that moment, and the arming gate refuses any later digest. So unit 11 must
+be committed **before** the certificate run, and **no commit to digest material may
+follow it** until the competition is armed; a fix found afterwards costs a new
+certificate. Internal deadline: unit 11 committed by the end of 2026-09-19, because
+unit 13 needs 2026-09-20. If that deadline slips, the owner hears it at once — and a slip
+of the certificate run by a week also needs a repeated alert drill and a fresh
+`confirm-alerts` beforehand, because gate condition 4 expires 2026-09-29 22:08
+Europe/Berlin.
+
+### Part 1 — the architecture gate gets its second root
+
+Spec §9: the pure core in `ops/activation/core/` is covered by
+`tools/check-core-architecture.mjs`, which today hardcodes `CORE_ROOT = src/core`.
+
+**Measured before building** (2026-09-17, `inspectCoreDirectory("ops/activation/core")`
+called from a scratch script against `814a459`, gate unchanged): `src/core` passes; the
+activation core has **12 findings in four causes**. `confirmation.ts` and `types.ts` are
+clean.
+
+| # | Cause | Where | Findings | Proposed resolution | Touches behaviour? |
+|---|---|---|---|---|---|
+| F1 | value imports end in `.ts`; the gate type-checks without `allowImportingTsExtensions`, Node 24 needs the extensions (unit 5 left this to unit 11) | `decide.ts`, `fold.ts`, `steps.ts` | 3 | the second root gets `allowImportingTsExtensions: true` in its own compiler options; `src/core` keeps its options unchanged | no |
+| F2 | a parameter named `stack` (a forbidden member name) | `ledger.ts:102` `inspectLedgerValue` | 1 | rename to `seen` | no |
+| F3 | `.map(Number)` passes a standard-library object as a value | `ledger.ts:154` `isoAtUtcMs` | 1 | `.map(part => Number(part))` | no |
+| F4 | the accessor-free plain-data check uses `Object.getPrototypeOf`, `Object.prototype`, `Object.getOwnPropertyDescriptors` and `descriptor.value` | `ledger.ts:119-125` `inspectLedgerValue` | 7 (4 distinct members, some reported twice) | **owner decision D-11.1**, below | depends |
+
+F1–F3 are mechanical and behaviour-neutral; the ledger's mutation set is re-run after
+them to show it. F4 is not mechanical: the check exists so that a ledger value with a
+getter, a class instance or a foreign prototype is refused **without invoking the
+accessor** (pinned by `ledger.spec.ts:163`, "rejects nested credential-like field names
+without invoking accessors"). No gate-clean formulation can detect an accessor without
+reading descriptors, and a `JSON.stringify` round trip invokes getters and `toJSON`, so
+it would break exactly the pinned property.
+
+The gate's shape after the change:
+
+- A list of roots, each with its own compiler options: `src/core` (as today) and
+  `ops/activation/core` (plus `allowImportingTsExtensions`). Each root is its own
+  program; a module specifier escaping *its* root is a violation, so the activation core
+  may not import from `src/core` and vice versa.
+- A root that does not exist or contains no `.ts` file fails the gate. A second root that
+  silently vanished would leave the gate green over nothing.
+- Messages that say "src/core" name the root being inspected.
+- The self-test grows: a mutant placed under an `ops/activation/core`-shaped root is
+  caught; a `.ts`-extension import passes there and fails under `src/core`; a missing
+  root fails.
+- The success line names both roots.
+
+Out of scope, stated rather than implied: `tools/run-core-sandboxed.mjs` (the runtime
+purity sandbox) stays on `src/core` only. Spec §9 asks for the static gate; the sandbox
+would need the activation suite's executed paths and is a separate piece of work.
+
+### Part 2 — the certificate command guard refuses the competition `STATE_DIR`
+
+DECISIONS 2026-09-14 (P12 revision): "the certificate command guard should refuse when
+the resolved `STATE_DIR` is the one `.env` names for the competition profile. Today only
+the profile is enforced, and `--preflight` with the dev profile but a forgotten
+`STATE_DIR` would seed `longrun-1` twenty minutes before the anchor."
+
+How the situation arises: `.env` on this host says `ALPACA_PROFILE=competition` and names
+`longrun-1` as `STATE_DIR`. Every certificate command is dev-only, so it runs with
+`ALPACA_PROFILE=dev` from the process environment — which wins over `.env`
+(`loadEnvironment`, `src/shell/runtime-config.ts:37-39`). The activation's step 2 also
+overrides `STATE_DIR` (`readers/host-ports.ts:221-223`); a human who forgets that
+override builds a dev runtime on the competition directory, and `buildRuntime` writes
+`pings.log`, `analyst/` and an epoch binding into it.
+
+**The rule.** Refuse, before runtime construction, when `.env` (the file, not the merged
+environment) says `ALPACA_PROFILE=competition` **and** the effective `STATE_DIR` (the
+merged environment) denotes the same directory as `.env`'s `STATE_DIR`.
+
+Pure / shell split, following the existing `admitCertificateCommand`:
+
+- **Pure** (`src/shell/certificate-command-guard.ts`, which already holds the pure
+  admission rule): `admitCertificateCommand` takes, in addition to today's input, the
+  file's profile, the file's `STATE_DIR` key and the effective `STATE_DIR` key, and
+  decides. Paths arrive as comparison keys; the function does no path arithmetic.
+- **Shell** (`src/shell/certificate-cli.ts`): reads `.env` once, derives each key by
+  resolving the path against the repository root and, where the directory exists,
+  `realpathSync.native` — the same identity `resolveStateDir` uses
+  (`src/shell/state-dir.ts:75`), so that the extended-path and case aliases DECISIONS
+  2026-09-01 (R11) closed cannot reopen here. It **creates nothing**: `resolveStateDir`
+  creates `quarantine/` on any read, so the guard must not call it.
+
+Cases the tests pin (red first where the behaviour is new):
+
+1. `.env` competition, effective `STATE_DIR` a different directory → admitted.
+2. `.env` competition, no override → refused, for `--preflight`, `--owner-go` and
+   `--smoke-cycle` alike.
+3. `.env` competition, override that is an alias of the same directory — different
+   case, trailing separator, relative spelling, `\\?\` prefix, a junction → refused.
+4. `.env` says `dev` → the coupling does not apply; today's rules decide.
+5. `.env` competition with `STATE_DIR` empty or absent → nothing to protect; the rule
+   admits and runtime construction refuses the missing directory as it does today.
+6. A refusal leaves the competition directory byte-for-byte unchanged: no `quarantine/`,
+   no file (a shell test on a temporary directory).
+7. The refusal reason is credential-free and names the rule, not the path.
+8. The existing profile rules and `CERTIFICATE_RUN_LIMITS` are unchanged
+   (`tests/p7-launch-hardening.spec.ts:32-42`).
+
+### Part 3 — scripts
+
+`npm run verify` does not run the activation suite or its typecheck, which has caught
+out more than one session. Proposed:
+
+- `"activation:typecheck": "tsc --noEmit -p ops/tsconfig.json"`
+- `"activation:test": "vitest run --config ops/vitest.config.ts"`
+- both appended to `verify`, so that one command is the green gate for the whole
+  repository. `architecture` needs no change: the tool itself learns the second root.
+
+No script runs the activation CLI. The scheduled task invokes
+`node ops\activation\cli.ts` directly, and `disarmFindings` pins that argument vector.
+
+### Open decision this brief surfaces
+
+- **D-11.1 — the accessor-free check in `ledger.ts` versus the gate.** Options:
+  **(A)** a narrow, exact exception in the gate's configuration for
+  `ops/activation/core/ledger.ts` and exactly those four members, with its reason in
+  DECISIONS; the ledger is untouched and the exception is one visible line in the digest.
+  Declared limit: the exception is by file and member, so a *second* use of the same
+  members in `ledger.ts` would also pass. **(B)** move the plain-data check into the
+  shell (the store copies each draft into a plain object after refusing accessors, and
+  the core validates only plain data); the core is then gate-clean without exceptions,
+  but the change crosses into the codec and the store — the two places unit 9 sewed
+  twice and that the owner kept closed for G1 — and it moves the accessor test and two
+  mutant sets. **(C)** a `JSON` round trip in the core: rejected, it invokes the
+  accessors the check exists to avoid. Recommendation: **A**. The four reflective reads
+  are pure (no I/O, no clock, no randomness); the gate forbids them because they are
+  laundering routes into intrinsics, and here they do the opposite — they refuse a value
+  before any of its code runs. B is the cleaner end state and belongs in the backlog
+  after the competition, not in a digest batch two days before the certificate.
+  **Owner ruling 2026-09-17: A.** Built tighter than written above: the exception binds
+  the file, each exact message and its exact number of raw occurrences, so a second use of
+  the same members in `ledger.ts` changes the count and fails the gate. It lives in
+  `tools/check-core-architecture.mjs` itself rather than in a JSON file beside it, because
+  `tools/*.json` is not digest material and an exception list outside the digest could
+  change after the certificate unnoticed.
+
+### Acceptance
+
+- `npm run architecture` passes over both roots, and its self-test proves the second
+  root is inspected (a mutant under it is caught; a missing root fails).
+- The guard's cases 1–8 are tests; the behaviour-changing ones were red before the fix.
+- Mutation probes: a new set over the guard's decision; a set over the gate's root
+  handling (drop the second root, drop its compiler option, let a missing root pass —
+  each must fail `npm run architecture`); the existing ledger set re-run after F2/F3 and
+  restored byte-identically.
+- `npm run verify` green, now including the activation typecheck and suite; `ops` lint
+  green.
+- Committed and pushed by the end of 2026-09-19; the build log and `STATE.md` updated.
+- The "bis 0" loop does not run here: unit 12 runs it once over units 1–11 (owner ruling
+  2026-09-17).
+
 ## Unit 10 — the CLI — 2026-09-16
 
-Built against the brief above. Where it deviates from the brief, the reason is here; the
+Built against the unit 10 brief below. Where it deviates from the brief, the reason is here; the
 brief itself is left as it was written, because it is the measure this unit was judged by.
 
 **What exists.** `ops/activation/cli.ts` is the entry point, and the work is in five
