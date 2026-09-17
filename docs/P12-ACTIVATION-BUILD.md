@@ -812,7 +812,7 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-After unit 10: units 11 (digest batch and the core's second architecture-gate root), 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). Two questions stay open for the owner: **D-10.1**, the channel a page goes through, and **D-10.2**, which unit 13 answers by binding the action ports.
+After unit 10: units 11 (digest batch and the core's second architecture-gate root), 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
 
 ## Unit 10 — the CLI — 2026-09-16
 

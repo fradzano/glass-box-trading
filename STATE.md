@@ -8,6 +8,8 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-17 CEST. **Update 2026-09-17 — session boundary after unit 10; D-10.1 decided.** The activation pages through a fourth healthchecks.io check, `gbt-activation` (`hc:32b59017`, created via the API, URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`); the CLI's page port and one proving page are unit 13's. The "bis 0" loop runs once over units 1–11 as unit 12 (owner ruling). **Open, in order:** unit 11 (digest batch: the core's second architecture-gate root, the `STATE_DIR` guard, scripts — changes the digest, so before the certificate run), unit 12 (the loop), unit 13 (elevated registration, `ActionPorts` host bindings = D-10.2, page port, `ops/activation/deployment.json` filled from this host, end-to-end `--dry-run`). Target unchanged: certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4 expires 2026-09-29 22:08 Europe/Berlin. Units 11–13 continue in fresh sessions. The 02:40 cursor follows unchanged.
+
 **Last updated:** 2026-09-16 02:40 CEST. **Update 02:40 — unit 10, the CLI, is built.**
 `ops/activation/cli.ts` plus `cli/args`, `cli/schedule`, `cli/plan`, `cli/deployment`,
 `cli/report` and `cli/invoke`. Five commands: `status` (no lease, appends nothing), `run`

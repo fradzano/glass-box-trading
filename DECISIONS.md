@@ -1,5 +1,20 @@
 # DECISIONS
 
+- **2026-09-17 — D-10.1 is decided: the activation pages through a fourth healthchecks.io
+  check, and the adversarial loop runs once, in unit 12.** Owner ruling. The check
+  `gbt-activation` was created through the management API on 2026-09-17 (`hc:32b59017`,
+  status `new`, every notification channel of the project, timeout 365 days, grace 60 min)
+  and its ping URL written to `.env` as `HEALTHCHECK_ACTIVATION_URL`, re-read and matched.
+  A page is a `/fail` ping; a success ping clears it. It reuses the alert path the owner has
+  already drilled instead of inventing a second one, and it leaves the meaning of the three
+  existing checks untouched; `parseCheckList` ignores checks outside the three, so step 0
+  and gate condition 4 are unaffected. Not yet done, and unit 13's: a page port in the CLI
+  that sends the `/fail`, and one deliberate page through it to prove the mail arrives.
+  **The verification loop "bis 0" runs once over units 1 to 11, as unit 12**, rather than
+  per unit: units 10 and 11 were built with red-first tests and calibrated mutation probes,
+  and one loop over the whole activation finds seams between units that per-unit loops
+  cannot see.
+
 - **2026-09-16 — Unit 10's four decisions, taken while building and reported here rather
   than asked.** (1) **A fifth command, `open`.** `decide()` never opens an attempt and an
   `abort` ends one for good, so without it there was no way back from any abort and the
