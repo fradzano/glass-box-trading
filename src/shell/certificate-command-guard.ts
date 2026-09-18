@@ -23,6 +23,15 @@ export type StateDirIdentity =
  * construction refuses that on its own.
  */
 export interface CertificateStateDirs {
+  /**
+   * The identity of the long run's state directory as the deployment declares
+   * it, independent of anything `.env` says. This is the directory the rule
+   * actually defends: `.env` can have the key commented out, renamed, absent or
+   * pointing elsewhere, and the activation rewrites that file during its own
+   * run, so a guard that learns the fact from there protects only a well-formed
+   * file rather than a directory.
+   */
+  readonly declaredLongRun: StateDirIdentity;
   /** Whether `.env` could be read at all — an unreadable file is not an absent one. */
   readonly dotEnvRead: "parsed" | "absent" | "unreadable";
   /** Keys `.env` assigns more than once, so that what it names is not a matter of line order. */
@@ -52,12 +61,21 @@ export const CERTIFICATE_RUN_LIMITS = Object.freeze({
 
 export function admitCertificateCommand(input: { readonly profile: string | undefined; readonly ownerGo: boolean; readonly preflight: boolean; readonly stateDirs: CertificateStateDirs }): CertificateCommandAdmission {
   if (input.profile !== "dev") return { ok: false, reason: "every certificate command, including preflight, uses the dev account only" };
-  const { dotEnvRead, duplicateKeys, dotEnvProfile, dotEnvStateDir, effectiveStateDir } = input.stateDirs;
+  const { declaredLongRun, dotEnvRead, duplicateKeys, dotEnvProfile, dotEnvStateDir, effectiveStateDir } = input.stateDirs;
+  // The declared directory first, because this is the rule that holds whatever
+  // shape `.env` is in — including no `.env` at all.
+  if (declaredLongRun.kind === "unknown" || effectiveStateDir.kind === "unknown") {
+    return { ok: false, reason: "the state directory's physical identity could not be established, so it cannot be told apart from the long run's" };
+  }
+  if (declaredLongRun.kind === "key" && effectiveStateDir.kind === "key" && effectiveStateDir.value === declaredLongRun.value) {
+    return { ok: false, reason: "STATE_DIR resolves to the long-run state directory this deployment declares; set the dev STATE_DIR for this command" };
+  }
   if (dotEnvRead === "unreadable") return { ok: false, reason: ".env exists but could not be read, so the competition state directory cannot be ruled out; retry once the file is readable" };
   const ambiguous = DECIDING_KEYS.filter(key => duplicateKeys.includes(key));
   if (ambiguous.length > 0) return { ok: false, reason: `.env assigns ${ambiguous.join(" and ")} on more than one line; what it names must not depend on line order` };
   if (dotEnvProfile === "competition") {
-    if (dotEnvStateDir.kind === "unknown" || effectiveStateDir.kind === "unknown") return { ok: false, reason: "the state directory's physical identity could not be established, so it cannot be told apart from the competition one" };
+    // `effectiveStateDir` was settled above, against the declared directory.
+    if (dotEnvStateDir.kind === "unknown") return { ok: false, reason: "the state directory's physical identity could not be established, so it cannot be told apart from the competition one" };
     if (dotEnvStateDir.kind === "key" && effectiveStateDir.kind === "key" && effectiveStateDir.value === dotEnvStateDir.value) {
       return { ok: false, reason: "STATE_DIR resolves to the competition state directory that .env names; set the dev STATE_DIR for this command" };
     }

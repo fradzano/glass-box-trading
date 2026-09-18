@@ -1,0 +1,6 @@
+{
+  "_comment": "Where this deployment's state lives. Declared, not derived: the activation used to climb from the repository's own location to the state tree, which put it one directory beside the truth on every invocation and made step 2's contamination assertion pass over a directory that does not exist. A path to data is a fact about the host, not a function of where the code happens to sit. This file is runtime-digest material, so the certificate binds which directories the deployment defends and they cannot change unnoticed afterwards.",
+  "longRunStateDir": "C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22",
+  "devStateDir": "C:\\Users\\felix\\glass-box-state\\dev",
+  "devDiagnosticSink": "C:\\Users\\felix\\glass-box-state\\dev\\diagnostics"
+}

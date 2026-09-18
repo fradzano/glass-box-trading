@@ -12,6 +12,7 @@
 - `ops/activation/tests/confirm-record.spec.ts`
 - `ops/activation/tests/confirmation.spec.ts`
 - `ops/activation/tests/decide.spec.ts`
+- `ops/activation/tests/deployment-state.spec.ts`
 - `ops/activation/tests/fold.spec.ts`
 - `ops/activation/tests/healthchecks-io.spec.ts`
 - `ops/activation/tests/ledger-store.spec.ts`
@@ -57,6 +58,7 @@
 - `tests/j9-projection.spec.ts`
 - `tests/p10-deadline-runtime.spec.ts`
 - `tests/p12-certificate-state-dir.spec.ts`
+- `tests/p12-deployment-state.spec.ts`
 - `tests/p12-qualification-decoupling.spec.ts`
 - `tests/p12-shell-decisions.spec.ts`
 - `tests/p7-launch-hardening.spec.ts`

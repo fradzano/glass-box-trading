@@ -30,12 +30,21 @@ import { readObservations } from "./readers/observe.ts";
 import type { ObservationPlan } from "./readers/observe.ts";
 import { berlinLocal } from "./readers/parse.ts";
 import { currentLedgerLockOwner, readActivationLedger } from "./store/ledger-store.ts";
+import { readDeploymentStateDirs } from "./readers/deployment-state.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const DEPLOYMENT_FILE = path.join(REPO_ROOT, "ops", "activation", "deployment.json");
 const TASK_PATH = "\\GlassBoxTrading\\";
 const CANONICAL_TRADING_ORIGIN = "https://paper-api.alpaca.markets";
-const LONG_RUN_STATE_DIR = path.join(path.dirname(path.dirname(REPO_ROOT)), "glass-box-state", "longrun-1");
+// Read, not derived. This used to climb from the repository's own location to
+// the state tree with two `dirname` calls where three were needed, so every
+// long-run read landed one directory beside the truth — and because the host
+// ports map a missing directory to a *known empty* listing rather than to
+// unknown, step 2's contamination assertion passed over a directory that does
+// not exist while step 9 waited forever for a firing it read from nowhere. The
+// suite could not catch it: the fixtures supply the correct path themselves.
+const DEPLOYMENT_STATE = readDeploymentStateDirs(REPO_ROOT);
+const LONG_RUN_STATE_DIR = DEPLOYMENT_STATE.longRunStateDir;
 
 async function main(): Promise<number> {
   const parsed = parseInvocation(process.argv.slice(2));
@@ -65,8 +74,8 @@ async function main(): Promise<number> {
       activationRoot,
       taskPath: TASK_PATH,
       canonicalTradingOrigin: CANONICAL_TRADING_ORIGIN,
-      devStateDir: path.join(path.dirname(LONG_RUN_STATE_DIR), "dev"),
-      devDiagnosticSink: path.join(path.dirname(LONG_RUN_STATE_DIR), "dev", "diagnostics"),
+      devStateDir: DEPLOYMENT_STATE.devStateDir,
+      devDiagnosticSink: DEPLOYMENT_STATE.devDiagnosticSink,
     });
     return readObservations(ports, {
       repoRoot: REPO_ROOT,

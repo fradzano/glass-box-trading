@@ -1,5 +1,48 @@
 # DECISIONS
 
+- **2026-09-18 — Unit 12, round 1: the deployment's state directories are declared in
+  `config/deployment.json`, the long run moves to `longrun-2026-09-22`, and the
+  certificate guard defends a directory instead of a text.** Owner decision, taken after
+  the loop found an A that would have stopped the activation dead. **What was broken.**
+  `ops/activation/cli.ts` derived the long run's state directory by climbing from the
+  repository's own location — `dirname(dirname(REPO_ROOT))/glass-box-state/longrun-1` —
+  which for a checkout under `~/source/repos/` names `C:\Users\felix\source\glass-box-state\longrun-1`,
+  one level beside the truth and non-existent. Executed against the real readers and the
+  real `decide()`: the host ports map `ENOENT` to a **known empty** listing rather than
+  to unknown, so step 2's required assertion that the long run holds no `journal.jsonl`,
+  `epoch.json`, `analyst/` or `pings.log` passed over a directory that does not exist,
+  and the wrapper-log reads behind gate condition "step 9 satisfied" returned `wait`
+  forever — step 10 would never write the certificate line and the long run would never
+  arm. The same arithmetic aimed `devStateDir` and `devDiagnosticSink`, so today the
+  failure was loud (the preflight cannot resolve its `STATE_DIR` and the activation
+  aborts at step 0); it would have turned silent the moment anyone created that
+  directory in response to the error message. No test could catch it: the fixtures
+  supply the correct path themselves, and a missing directory and an empty one read
+  identically through the ports. **What replaces it.** `config/deployment.json` declares
+  `longRunStateDir`, `devStateDir` and `devDiagnosticSink` outright. A path to data is a
+  fact about the host, not a function of where the code sits; deriving it is what let
+  the two disagree unnoticed. `config/*.json` is runtime-digest material, so the
+  certificate of 2026-09-21 binds which directories this deployment defends and they
+  cannot change afterwards unnoticed — the same argument that put D-11.1's exception
+  list inside the architecture gate. Both sides read that file: `src/shell/deployment.ts`
+  for the certificate guard, `ops/activation/readers/deployment-state.ts` for the
+  activation, two readers rather than a shared import because `ops/` never imports from
+  `src/` and that boundary is worth more than the four lines it costs. Both refuse a
+  relative path, an empty or missing field, a non-drive-rooted path, and a declaration
+  whose long run and dev sandbox are the same directory. **The long run moves to
+  `C:\Users\felix\glass-box-state\longrun-2026-09-22`**, created empty. The name is
+  deliberately not one character from `longrun-1`: a stale path that looks almost right
+  is the failure class this whole round has been about. The date records when the
+  directory was set up, not a promise about the anchor. **R1-09 falls out with it.** The
+  guard used to learn which directory is the competition one from `.env` — the file the
+  activation rewrites during its own run — so a commented-out, renamed or absent line
+  left the backstop inert, and four such shapes each wrote `epoch.json`, `journal.jsonl`
+  and `pings.log` into a stand-in long run. It now compares the command's target against
+  the declared directory, whatever `.env` says or fails to say, and refuses when either
+  identity cannot be established. **Operator step, not done here:** `.env`'s `STATE_DIR`
+  still names `longrun-1`. Changing it is the owner's, because that file holds secrets
+  this session does not touch.
+
 - **2026-09-18 — Unit 12, round 1: `STATE_DIR` must resolve to a drive-rooted local
   path, and environment keys are canonicalised on Windows.** Two deployment-contract
   changes, both forced by measurement rather than by taste, and both narrowing what the

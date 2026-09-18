@@ -1,0 +1,20 @@
+[
+  {
+    "id": "DR1",
+    "note": "unit 12 R1-21: the collapse guard goes, so a declaration naming one directory twice is accepted",
+    "from": "if (path.resolve(longRun).toLowerCase() === path.resolve(dev).toLowerCase()) {",
+    "to": "if (false) {"
+  },
+  {
+    "id": "DR2",
+    "note": "unit 12 R1-21: a relative path is accepted, so the directory depends on the working directory again",
+    "from": "if (!path.isAbsolute(value)) throw new Error(`config/deployment.json: ${key} must be an absolute path literal`);",
+    "to": "if (false) throw new Error(`config/deployment.json: ${key} must be an absolute path literal`);"
+  },
+  {
+    "id": "DR3",
+    "note": "unit 12 R1-21: a missing field reads as empty instead of refusing",
+    "from": "if (typeof value !== \"string\" || value.trim().length === 0) throw new Error(`config/deployment.json: ${key} must be a non-empty string`);",
+    "to": "if (typeof value !== \"string\") throw new Error(`config/deployment.json: ${key} must be a non-empty string`);"
+  }
+]

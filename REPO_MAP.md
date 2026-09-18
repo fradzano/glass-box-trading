@@ -13,6 +13,7 @@
 - `CONCEPT.md` — Glass Box Trading — Concept
 - `config/analyst-mcp-readonly.json`
 - `config/analyst-runtime-lock.json`
+- `config/deployment.json`
 - `config/implementation-phases.json`
 - `config/policy.json`
 - `DECISIONS.md` — DECISIONS
@@ -68,6 +69,8 @@
 - `ops/activation/probes/mutants-cli-schedule.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
+- `ops/activation/probes/mutants-deployment-reader.json`
+- `ops/activation/probes/mutants-deployment-state.json`
 - `ops/activation/probes/mutants-fence-unhalt.json`
 - `ops/activation/probes/mutants-fold.json`
 - `ops/activation/probes/mutants-healthchecks-io.json`
@@ -92,11 +95,13 @@
 - `ops/activation/probes/mutants-unit12-controls-guard.json`
 - `ops/activation/probes/mutants-unit12-controls.json`
 - `ops/activation/probes/mutants-unit12-finalcycle.json`
+- `ops/activation/probes/mutants-unit12-guard-declared.json`
 - `ops/activation/probes/mutants-unit12-holiday.json`
 - `ops/activation/probes/mutants-unit12-merge.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
+- `ops/activation/readers/deployment-state.ts` — The activation's reader for `config/deployment.json`, the one place that says
 - `ops/activation/readers/healthchecks-io.ts` — The healthchecks.io management API, read (build log, unit 7). This is the one place the
 - `ops/activation/readers/host/read-boot.ps1`
 - `ops/activation/readers/host/read-environment.ps1`
@@ -121,6 +126,7 @@
 - `ops/activation/tests/confirm-record.spec.ts` — The pure half of `activation confirm-alerts` (owner ruling and review, 2026-09-14): the
 - `ops/activation/tests/confirmation.spec.ts` — The cross-check of gate condition 4 (owner ruling and review, 2026-09-14). The
 - `ops/activation/tests/decide.spec.ts` — Spec §5–§7, revision 6: the decision one invocation takes. Every test builds a
+- `ops/activation/tests/deployment-state.spec.ts` — P12 unit 12: the activation's reader for the one place that says where this
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/healthchecks-io.spec.ts` — Unit 7, the healthchecks.io read. The fake API below answers the way the management API does,
 - `ops/activation/tests/ledger-store.spec.ts` — Unit 9, red first: the activation record is useful only if the store makes
@@ -176,6 +182,7 @@
 - `src/shell/deadline-cli.ts` — The S-G11-03/04 entry point — the two Friday entries as their own one-shot
 - `src/shell/deadline-runtime.ts` — The composition root for one Friday deadline entry (S-G11-03/04). It builds
 - `src/shell/deadline.ts` — S-G11-03/04: the dedicated Friday entries. `runDeadlineReconciliation`
+- `src/shell/deployment.ts` — Where this deployment's state directories are, read from one declared place.
 - `src/shell/diagnostic-sink.ts` — BOOTSTRAP_DIAGNOSTIC_SINK (§0, S-CYC-11): a pre-armed diagnostic channel
 - `src/shell/digests.ts` — Digest material for S-ARM-01 (P7): the shell enumerates and hashes the
 - `src/shell/epoch-store.ts` — Persisted epoch store, writer holder record, and the short-lived OS mutex
@@ -262,6 +269,7 @@
 - `tests/lifecycle-fixtures.ts` — Shared harness for the P5 suites: the real cycle runner over the real P2
 - `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
 - `tests/p12-certificate-state-dir.spec.ts` — P12 unit 11 (docs/P12-ACTIVATION-BUILD.md, "Unit 11 brief", part 2): a
+- `tests/p12-deployment-state.spec.ts` — P12 unit 12: the deployment's state directories are declared in one place and
 - `tests/p12-qualification-decoupling.spec.ts` — P12: a long paper run keeps the competition profile's protections — the
 - `tests/p12-shell-decisions.spec.ts` — P12 unit 12 (the adversarial loop over units 1-11): the two decisions the
 - `tests/p7-launch-hardening.spec.ts`

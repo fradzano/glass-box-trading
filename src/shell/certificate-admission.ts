@@ -11,6 +11,8 @@ import path from "node:path";
 import { admitCertificateCommand } from "./certificate-command-guard.js";
 import type { CertificateCommandAdmission, StateDirIdentity } from "./certificate-command-guard.js";
 import { isCanonicalLocalRoot } from "./physical-path.js";
+import { loadDeployment } from "./deployment.js";
+import type { DeploymentStateDirs } from "./deployment.js";
 import { ambiguousDotEnvKeys, mergeEnvironment, readDotEnvStrict } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
 
@@ -50,7 +52,8 @@ export interface CertificateInvocationAdmission {
   readonly environment: EnvRecord;
 }
 
-export function admitCertificateInvocation(input: { readonly repoRoot: string; readonly processEnv: EnvRecord; readonly args: readonly string[]; readonly platform: NodeJS.Platform }): CertificateInvocationAdmission {
+export function admitCertificateInvocation(input: { readonly repoRoot: string; readonly processEnv: EnvRecord; readonly args: readonly string[]; readonly platform: NodeJS.Platform; readonly deployment?: DeploymentStateDirs }): CertificateInvocationAdmission {
+  const deployment = input.deployment ?? loadDeployment(input.repoRoot, input.platform);
   const dotEnv = readDotEnvStrict(input.repoRoot);
   const entries = dotEnv.kind === "parsed" ? dotEnv.entries : { values: {}, duplicateKeys: [] };
   // The guard reads the file through the same canonicalisation the runtime will
@@ -64,6 +67,7 @@ export function admitCertificateInvocation(input: { readonly repoRoot: string; r
     ownerGo: input.args.includes("--owner-go"),
     preflight: input.args.includes("--preflight"),
     stateDirs: {
+      declaredLongRun: stateDirIdentity(deployment.longRunStateDir, input.platform),
       dotEnvRead: dotEnv.kind,
       duplicateKeys: ambiguousDotEnvKeys(entries, input.platform),
       dotEnvProfile: dotEnvValues["ALPACA_PROFILE"],

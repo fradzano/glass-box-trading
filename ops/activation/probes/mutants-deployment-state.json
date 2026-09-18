@@ -1,0 +1,20 @@
+[
+  {
+    "id": "DS1",
+    "note": "unit 12 R1-21: the activation goes back to deriving the long run from the repository's location",
+    "from": "const LONG_RUN_STATE_DIR = DEPLOYMENT_STATE.longRunStateDir;",
+    "to": "const LONG_RUN_STATE_DIR = path.join(path.dirname(path.dirname(REPO_ROOT)), \"glass-box-state\", \"longrun-1\");"
+  },
+  {
+    "id": "DS2",
+    "note": "unit 12 R1-21: the dev directory is derived from the long run's parent again, which is the second half of the same arithmetic",
+    "from": "devStateDir: DEPLOYMENT_STATE.devStateDir,",
+    "to": "devStateDir: path.join(path.dirname(LONG_RUN_STATE_DIR), \"dev\"),"
+  },
+  {
+    "id": "DS3",
+    "note": "unit 12 R1-21: the long run and the dev sandbox are read from the same field, so a certificate run would seed the long run",
+    "from": "longRunStateDir: LONG_RUN_STATE_DIR,",
+    "to": "longRunStateDir: DEPLOYMENT_STATE.devStateDir,"
+  }
+]

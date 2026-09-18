@@ -31,13 +31,18 @@ function host(profile = "competition"): { readonly repoRoot: string; readonly co
   const repoRoot = path.join(base, "repo");
   const competition = path.join(base, "glass-box-state", "longrun-1");
   const dev = path.join(base, "glass-box-state", "dev");
-  for (const directory of [repoRoot, competition, dev]) mkdirSync(directory, { recursive: true });
+  for (const directory of [repoRoot, competition, dev, path.join(repoRoot, "config")]) mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(repoRoot, "config", "deployment.json"), JSON.stringify({
+    longRunStateDir: competition,
+    devStateDir: dev,
+    devDiagnosticSink: path.join(dev, "diagnostics"),
+  }), "utf8");
   writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=${profile}\nSTATE_DIR=${competition}\nALPACA_DEV_KEY_ID=PKTEST\n`, "utf8");
   return { repoRoot, competition, dev };
 }
 
 const COMMANDS = [["--preflight"], ["--owner-go"], ["--smoke-cycle", "--owner-go"]] as const;
-const REFUSAL = /competition state directory/u;
+const REFUSAL = /(competition|long-run) state directory/u;
 
 describe("P12 unit 11 — the certificate command refuses the competition STATE_DIR", () => {
   it("(1) admits a dev command whose STATE_DIR is a different directory", () => {
@@ -92,9 +97,17 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
       .toEqual({ ok: false, reason: "every certificate command, including preflight, uses the dev account only" });
   });
 
-  it("(4) does not couple when .env itself names the dev profile", () => {
-    const { repoRoot } = host("dev");
-    expect(admitCertificateInvocation({ repoRoot, processEnv: {}, args: ["--preflight"], platform: process.platform }).admission).toEqual({ ok: true });
+  it("(4) does not couple when .env itself names the dev profile — but the declared long run is defended anyway", () => {
+    const { repoRoot, competition, dev } = host("dev");
+    // The coupling rule keys off `.env` saying competition, and it does not.
+    expect(admitCertificateInvocation({ repoRoot, processEnv: { STATE_DIR: dev }, args: ["--preflight"], platform: process.platform }).admission).toEqual({ ok: true });
+    // The deployment's declaration does not key off `.env` at all: a command
+    // aimed at the long run is refused whatever the file says, which is the
+    // whole reason the directory is declared somewhere the activation does not
+    // rewrite mid-run.
+    const admission = admitCertificateInvocation({ repoRoot, processEnv: { STATE_DIR: competition }, args: ["--preflight"], platform: process.platform }).admission;
+    expect(admission.ok).toBe(false);
+    expect(admission.ok ? "" : admission.reason).toMatch(/long-run state directory this deployment declares/u);
   });
 
   it("(5) has nothing to protect when .env names no usable STATE_DIR; runtime construction refuses that itself", () => {
@@ -124,7 +137,7 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
   });
 
   it("(8) the pure rule: the profile rule still comes first, and the coupling needs all three facts", () => {
-    const same = { dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition", dotEnvStateDir: { kind: "key", value: "k" }, effectiveStateDir: { kind: "key", value: "k" } } as const;
+    const same = { declaredLongRun: { kind: "key", value: "declared-long-run" }, dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition", dotEnvStateDir: { kind: "key", value: "k" }, effectiveStateDir: { kind: "key", value: "k" } } as const;
     expect(admitCertificateCommand({ profile: "competition", ownerGo: true, preflight: true, stateDirs: same })).toEqual({ ok: false, reason: "every certificate command, including preflight, uses the dev account only" });
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: same })).toMatchObject({ ok: false, reason: expect.stringMatching(REFUSAL) as string });
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...same, dotEnvProfile: "dev" } })).toEqual({ ok: true });
@@ -138,12 +151,12 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
   // facts used to degrade quietly, each of which admitted a command that the
   // same host refuses when everything is readable.
   it("(9) refuses when .env exists but cannot be read, instead of reading it as absent", () => {
-    const { repoRoot, competition } = host();
+    const { repoRoot, competition, dev } = host();
     // A directory in its place is an EISDIR rather than an ENOENT: the file is
     // there in the sense that matters, and its contents are unavailable.
     rmSync(path.join(repoRoot, ".env"));
     mkdirSync(path.join(repoRoot, ".env"));
-    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--preflight"], platform: process.platform });
+    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: dev }, args: ["--preflight"], platform: process.platform });
     expect(admission.ok).toBe(false);
     const reason = admission.ok ? "" : admission.reason;
     expect(reason).toMatch(/could not be read/u);
@@ -164,7 +177,7 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
     // first, another absolute path last, and the command aimed at the former.
     const { repoRoot, competition, dev } = host();
     writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=competition\nSTATE_DIR=${competition}\nSTATE_DIR=${dev}\n`, "utf8");
-    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--preflight"], platform: process.platform });
+    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: dev }, args: ["--preflight"], platform: process.platform });
     expect(admission.ok).toBe(false);
     expect(admission.ok ? "" : admission.reason).toMatch(/more than one line/u);
   });
@@ -183,13 +196,18 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
 
     const unknown = { kind: "unknown", code: "EPERM" } as const;
     const key = { kind: "key", value: "k" } as const;
-    const base = { dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition" } as const;
+    const base = { declaredLongRun: { kind: "key", value: "declared-long-run" }, dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition" } as const;
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...base, dotEnvStateDir: key, effectiveStateDir: unknown } }))
       .toMatchObject({ ok: false, reason: expect.stringMatching(/identity could not be established/u) as string });
     expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...base, dotEnvStateDir: unknown, effectiveStateDir: key } }))
       .toMatchObject({ ok: false, reason: expect.stringMatching(/identity could not be established/u) as string });
-    // A dev .env has no coupling to protect, so an unreadable identity decides nothing.
-    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...base, dotEnvProfile: "dev", dotEnvStateDir: key, effectiveStateDir: unknown } })).toEqual({ ok: true });
+    // Even with a dev `.env`, an identity that could not be established refuses:
+    // the deployment declares a long run, and an unreadable identity cannot be
+    // told apart from it. Only a directory that resolves cleanly and differs is
+    // admitted.
+    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...base, dotEnvProfile: "dev", dotEnvStateDir: key, effectiveStateDir: unknown } }))
+      .toMatchObject({ ok: false, reason: expect.stringMatching(/identity could not be established/u) as string });
+    expect(admitCertificateCommand({ profile: "dev", ownerGo: false, preflight: true, stateDirs: { ...base, dotEnvProfile: "dev", dotEnvStateDir: key, effectiveStateDir: { kind: "key", value: "somewhere-else" } } })).toEqual({ ok: true });
   });
 
   it("(12) the runtime is built from the environment the guard admitted, not from a second read", () => {
@@ -225,7 +243,7 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
     // The guard sees it as an identity it could not establish, so the rule refuses.
     const unc = "\\\\localhost\\C$\\glass-box-state\\longrun-1";
     expect(stateDirIdentity(unc, "win32", () => unc)).toEqual({ kind: "unknown", code: "NOT_DRIVE_ROOTED" });
-    const base = { dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition" } as const;
+    const base = { declaredLongRun: { kind: "key", value: "declared-long-run" }, dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition" } as const;
     expect(admitCertificateCommand({
       profile: "dev", ownerGo: true, preflight: false,
       stateDirs: { ...base, dotEnvStateDir: { kind: "key", value: "k" }, effectiveStateDir: { kind: "unknown", code: "NOT_DRIVE_ROOTED" } },
@@ -296,12 +314,50 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
     // exactly what the duplicate rule refuses to resolve.
     const { repoRoot, competition, dev } = host();
     writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=competition\nSTATE_DIR=${dev}\nState_Dir=${competition}\n`, "utf8");
-    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--owner-go"], platform: "win32" });
+    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: dev }, args: ["--owner-go"], platform: "win32" });
     expect(admission.ok).toBe(false);
     expect(admission.ok ? "" : admission.reason).toMatch(/more than one line/u);
     // Elsewhere the two really are different variables and nothing is ambiguous.
     expect(ambiguousDotEnvKeys({ values: { STATE_DIR: "a", State_Dir: "b" }, duplicateKeys: [] }, "linux")).toEqual([]);
     expect(ambiguousDotEnvKeys({ values: { STATE_DIR: "a", State_Dir: "b" }, duplicateKeys: [] }, "win32")).toEqual(["STATE_DIR"]);
+  });
+
+
+  it("(18) defends the declared long run through every .env shape that used to disarm it", () => {
+    // The four shapes a gate executed against the old guard, each of which left
+    // `epoch.json`, `journal.jsonl` and `pings.log` in a stand-in long-run
+    // directory: the key commented out, the key renamed, the key absent, and the
+    // profile line commented out while STATE_DIR stayed correct. None of them is
+    // exotic — the activation rewrites `.env` during its own run, so the file is
+    // not a fixture during the window this guard covers.
+    const shapes = (competition: string): readonly (readonly [string, string])[] => [
+      ["key commented out", `ALPACA_PROFILE=competition\n# STATE_DIR=${competition}\n`],
+      ["key renamed", `ALPACA_PROFILE=competition\nLONGRUN_STATE_DIR=${competition}\n`],
+      ["key absent", "ALPACA_PROFILE=competition\n"],
+      ["profile commented out", `# ALPACA_PROFILE=competition\nSTATE_DIR=${competition}\n`],
+      ["no .env content at all", ""],
+    ];
+    for (const [label, contents] of shapes("")) {
+      const { repoRoot, competition } = host();
+      writeFileSync(path.join(repoRoot, ".env"), contents.replace("${competition}", competition), "utf8");
+      for (const args of COMMANDS) {
+        const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args, platform: process.platform });
+        expect(admission.ok, `${label} / ${args.join(" ")}`).toBe(false);
+        expect(admission.ok ? "" : admission.reason).toMatch(/long-run state directory this deployment declares/u);
+      }
+      // And the refusal still leaves the directory exactly as it found it.
+      expect(readdirSync(competition), label).toEqual([]);
+    }
+  });
+
+  it("(19) still admits the dev sandbox under every one of those shapes", () => {
+    // A rule that refused everything would pass case (18) and be useless.
+    for (const contents of ["ALPACA_PROFILE=competition\n", "", "# ALPACA_PROFILE=competition\n"]) {
+      const { repoRoot, dev } = host();
+      writeFileSync(path.join(repoRoot, ".env"), contents, "utf8");
+      expect(admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: dev }, args: ["--preflight"], platform: process.platform }).admission)
+        .toEqual({ ok: true });
+    }
   });
 
 });

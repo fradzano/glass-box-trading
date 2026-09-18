@@ -1,0 +1,20 @@
+[
+  {
+    "id": "GD1",
+    "note": "unit 12 R1-09: the declared long run stops being defended, so the guard is back to believing whatever .env says",
+    "from": "if (declaredLongRun.kind === \"key\" && effectiveStateDir.kind === \"key\" && effectiveStateDir.value === declaredLongRun.value) {",
+    "to": "if (false) {"
+  },
+  {
+    "id": "GD2",
+    "note": "unit 12 R1-09: an identity that could not be established passes the declared check",
+    "from": "if (declaredLongRun.kind === \"unknown\" || effectiveStateDir.kind === \"unknown\") {",
+    "to": "if (false) {"
+  },
+  {
+    "id": "GD3",
+    "note": "unit 12 R1-09: the declared directory is compared against itself instead of against the command's target",
+    "from": "effectiveStateDir.value === declaredLongRun.value) {",
+    "to": "declaredLongRun.value === declaredLongRun.value) {"
+  }
+]
