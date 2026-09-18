@@ -375,11 +375,16 @@ function apply(world: SimWorld, decision: Decision): void {
       return;
     case "abort":
       write({ step: decision.step, kind: "abort", outcome: null, evidence: { reason: decision.reason, ...decision.evidence }, nextOwnerAction: decision.nextOwnerAction });
-      if (decision.teardown) {
-        world.tasks.cycle.enabled = false;
-        world.tasks.watchdog.enabled = false;
-        world.certificateLine = null;
-      }
+      // The oracle applies the decision's own teardown list through the same applier the
+      // shell uses. It used to implement the teardown by hand — clearing both tasks and
+      // the certificate line — which is what spec §5 says, while the shell issued only
+      // the disable. So `sequences.spec.ts`'s assertion that an abort leaves both tasks
+      // disabled and no certificate line was satisfied by this function and never asked
+      // the code under test. A mutation probe measured it: making this loop behave like
+      // the shell turned the suite red, and adding the missing action to the shell turned
+      // it red too, because two green assertions about one invariant disagreed and
+      // nothing compared them.
+      for (const action of decision.teardown) applyAction(world, action);
       return;
     case "wait":
     case "ended":

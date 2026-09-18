@@ -24,6 +24,8 @@ import { readActivationLedger } from "../store/ledger-store.ts";
 import { ACCOUNT, HOST, freshWorld, localOf, observe, utcOf } from "./simulator.ts";
 import type { SimWorld } from "./simulator.ts";
 
+
+
 const ANCHOR = "2026-09-22";
 const CERTIFICATE_DAY = "2026-09-21";
 const roots: string[] = [];
@@ -106,9 +108,9 @@ describe("run, on a ledger that holds no attempt", () => {
     const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
     const result = await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), deps);
 
-    expect(result.applied).toEqual([{ kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }]);
+    expect(result.applied).toEqual([{ kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "remove-certificate-line", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }]);
     const teardown = (await entries(stateRoot))[0]?.evidence["teardown"];
-    expect(teardown).toEqual([{ kind: "disable-tasks", applied: false, reason: "NO_HOST_BINDINGS" }]);
+    expect(teardown).toEqual([{ kind: "disable-tasks", applied: false, reason: "NO_HOST_BINDINGS" }, { kind: "remove-certificate-line", applied: false, reason: "NO_HOST_BINDINGS" }]);
   });
 
   it("writes nothing at all in a dry run, and says what it would have done", async () => {
@@ -332,7 +334,7 @@ describe("the owner's own abort", () => {
       kind: "aborted",
       step: null,
       reason: "OWNER_ABORT",
-      teardown: true,
+      teardown: [{ kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "remove-certificate-line", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "delete-disarm", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "clear-checks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }],
       nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue.",
     });
     expect(printed).toEqual(["would disable-tasks cycle, watchdog", "would remove-certificate-line", "would delete-disarm", "would clear-checks"]);
@@ -416,7 +418,7 @@ describe("the disarm one-shot", () => {
     expect(result.outcome.kind).toBe("aborted");
     if (result.outcome.kind === "aborted") {
       expect(result.outcome.reason).toContain("DISARMED_LEDGER_UNREADABLE");
-      expect(result.outcome.teardown).toBe(true);
+      expect(result.outcome.teardown.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
     }
     expect(printed).toContain("would disable-tasks cycle, watchdog");
   }, 15_000);

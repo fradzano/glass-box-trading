@@ -329,10 +329,15 @@ export type WorldAction =
  *   the phase the result puts the ledger in.
  * - `record`: nothing to change; write one `result` with this outcome.
  * - `wait`: nothing is due yet; record nothing unless the reason is new.
- * - `abort`: write an `abort` entry, which ends the attempt, and page. `teardown`
- *   says whether to disable both tasks and leave the certificate line unset: true for
- *   every abort up to and including the gate, false once the gate has armed the run,
- *   whose teardown is the owner's decision (spec §5).
+ * - `abort`: write an `abort` entry, which ends the attempt, and page. `teardown` is
+ *   **the action list the abort owes the world**, not a flag that it owes one: spec §5
+ *   says every abort up to and including the gate "disables both tasks, leaves
+ *   `PRE_ARM_CERTIFICATE` unset and pages", and that is two actions, not one. It is
+ *   empty once the gate has armed the run, whose teardown is the owner's decision.
+ *   It carries the list rather than a boolean because a boolean has to be turned back
+ *   into actions by whoever reads it, and four call sites each did that differently —
+ *   one of them by omitting the certificate line entirely, which left the arming
+ *   credential on disk after an abort that reported success.
  * - `ended`: the attempt was ended by an earlier abort; do nothing at all.
  * - `done`: the activation is complete for this anchor day.
  */
@@ -340,6 +345,6 @@ export type Decision =
   | { readonly kind: "act"; readonly step: StepId; readonly actions: readonly WorldAction[]; readonly evidence: Readonly<Record<string, unknown>> }
   | { readonly kind: "record"; readonly step: StepId; readonly outcome: Outcome; readonly evidence: Readonly<Record<string, unknown>> }
   | { readonly kind: "wait"; readonly reason: string }
-  | { readonly kind: "abort"; readonly step: StepId | null; readonly reason: string; readonly teardown: boolean; readonly nextOwnerAction: string; readonly evidence: Readonly<Record<string, unknown>> }
+  | { readonly kind: "abort"; readonly step: StepId | null; readonly reason: string; readonly teardown: readonly WorldAction[]; readonly nextOwnerAction: string; readonly evidence: Readonly<Record<string, unknown>> }
   | { readonly kind: "ended"; readonly seq: number; readonly reason: string }
   | { readonly kind: "done"; readonly reason: string };

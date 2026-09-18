@@ -312,9 +312,47 @@ function wait(reason: string): Decision {
   return { kind: "wait", reason };
 }
 
+/**
+ * What an abort owes the world, as a list rather than as a flag.
+ *
+ * Spec §5: "Every abort up to and including step 10 disables both tasks, leaves
+ * `PRE_ARM_CERTIFICATE` unset and pages." Both halves of that sentence are actions and
+ * both belong here. This used to return a boolean, and each of the four places that
+ * consumed it turned the boolean back into actions on its own — the automatic paths
+ * produced only the disable, so an abort after step 10's certificate write reported a
+ * completed teardown while the arming credential stayed on disk. One definition, used
+ * everywhere, is the whole point.
+ *
+ * It takes a fold that may be `null` because the disarm one-shot has to answer this
+ * question on a ledger it could not read at all — spec §6 — and "I do not know whether
+ * the gate is green" is not "the gate is green". An unknown fold owes the full teardown.
+ */
+export function abortTeardown(fold: LedgerFold | null): readonly WorldAction[] {
+  if (fold !== null && stepDone(fold, "10-gate")) return [];
+  return fullTeardown();
+}
+
+/**
+ * The same two actions, owed unconditionally. Two callers need this and neither may ask
+ * `abortTeardown`, because both have already established that the fold's own answer about
+ * the gate must not decide:
+ *
+ * - **The record itself is in doubt** — a torn or inconsistent ledger, an empty one, a
+ *   schedule for another attempt. A ledger with a torn tail may still *look* as though
+ *   the gate was recorded, and ACT-39 says in its own title that an armed state which can
+ *   no longer be shown is torn down rather than believed. Reading `stepDone` off a record
+ *   whose integrity has just failed would be trusting the thing that failed.
+ * - **The disarm one-shot found no green gate for *this* anchor day** (spec §6). A gate
+ *   recorded green for an earlier day is not this day's permission, so `stepDone` alone
+ *   would let the wrong attempt's success disarm the disarm.
+ */
+export function fullTeardown(): readonly WorldAction[] {
+  return [{ kind: "disable-tasks", tasks: taskNames() }, { kind: "remove-certificate-line" }];
+}
+
 /** An abort tears down everything up to and including the gate; after the gate has armed the run it only pages (spec §5). */
 function abortAt(fold: LedgerFold, step: StepId | null, reason: string, nextOwnerAction: string, evidence: Readonly<Record<string, unknown>> = {}): Decision {
-  return { kind: "abort", step, reason, teardown: !stepDone(fold, "10-gate"), nextOwnerAction, evidence };
+  return { kind: "abort", step, reason, teardown: abortTeardown(fold), nextOwnerAction, evidence };
 }
 
 function unreadable<T>(reading: Reading<T>): string | null {
@@ -885,17 +923,17 @@ function decideStep(step: StepId, fold: LedgerFold, observations: Observations, 
 export function decide(fold: LedgerFold, observations: Observations, schedule: Schedule): Decision {
   if (fold.integrity !== "intact" || fold.inconsistencies.length > 0) {
     const reason = fold.integrity === "intact" ? "LEDGER_INCONSISTENT" : `LEDGER_${fold.integrity.toUpperCase()}`;
-    return { kind: "abort", step: null, reason, teardown: true, nextOwnerAction: "The ledger cannot be trusted as it stands. Read the world, record a correction naming the damaged line, and open a new attempt.", evidence: { integrity: fold.integrity, inconsistencies: fold.inconsistencies, corrections: fold.corrections } };
+    return { kind: "abort", step: null, reason, teardown: fullTeardown(), nextOwnerAction: "The ledger cannot be trusted as it stands. Read the world, record a correction naming the damaged line, and open a new attempt.", evidence: { integrity: fold.integrity, inconsistencies: fold.inconsistencies, corrections: fold.corrections } };
   }
   const attempt = fold.currentAttempt;
   if (attempt === null) {
-    return { kind: "abort", step: null, reason: "LEDGER_EMPTY", teardown: true, nextOwnerAction: "No attempt is open. Open one for the intended anchor day.", evidence: {} };
+    return { kind: "abort", step: null, reason: "LEDGER_EMPTY", teardown: fullTeardown(), nextOwnerAction: "No attempt is open. Open one for the intended anchor day.", evidence: {} };
   }
   if (fold.attemptEnded !== null) {
     return { kind: "ended", seq: fold.attemptEnded.seq, reason: `attempt ${attempt.id} ended at seq ${String(fold.attemptEnded.seq)}${fold.attemptEnded.byOwner ? " by the owner" : ""}` };
   }
   if (attempt.anchorDay !== schedule.anchorDay) {
-    return { kind: "abort", step: null, reason: "SCHEDULE_NOT_FOR_THIS_ATTEMPT", teardown: true, nextOwnerAction: "The invocation was given a schedule for another anchor day than the open attempt's. Check the activation task's arguments.", evidence: { attemptAnchorDay: attempt.anchorDay, scheduleAnchorDay: schedule.anchorDay } };
+    return { kind: "abort", step: null, reason: "SCHEDULE_NOT_FOR_THIS_ATTEMPT", teardown: fullTeardown(), nextOwnerAction: "The invocation was given a schedule for another anchor day than the open attempt's. Check the activation task's arguments.", evidence: { attemptAnchorDay: attempt.anchorDay, scheduleAnchorDay: schedule.anchorDay } };
   }
 
   // A certificate is an append-only fact about one deployment, not a permanent

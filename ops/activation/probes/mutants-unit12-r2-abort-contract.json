@@ -1,0 +1,26 @@
+[
+  {
+    "id": "G4-01",
+    "from": "  return fullTeardown();\n}\n\n/**\n * The same two actions, owed unconditionally.",
+    "to": "  return [{ kind: \"disable-tasks\", tasks: taskNames() }];\n}\n\n/**\n * The same two actions, owed unconditionally.",
+    "note": "abortTeardown drops remove-certificate-line - exactly the defect R2-09 reported, reintroduced at the one place that now defines it"
+  },
+  {
+    "id": "G4-02",
+    "from": "  if (fold !== null && stepDone(fold, \"10-gate\")) return [];\n  return fullTeardown();",
+    "to": "  if (fold !== null && stepDone(fold, \"10-gate\")) return [];\n  return [];",
+    "note": "abortTeardown owes nothing at all before the gate"
+  },
+  {
+    "id": "G4-03",
+    "from": "  return [{ kind: \"disable-tasks\", tasks: taskNames() }, { kind: \"remove-certificate-line\" }];",
+    "to": "  return [{ kind: \"remove-certificate-line\" }];",
+    "note": "the unconditional teardown stops disabling the tasks - the half the old code did do"
+  },
+  {
+    "id": "G4-04-control",
+    "from": "export function fullTeardown(): readonly WorldAction[] {",
+    "to": "export function fullTeardown(): ReadonlyArray<WorldAction> {",
+    "note": "control - the same type spelled the other way. It must SURVIVE."
+  }
+]

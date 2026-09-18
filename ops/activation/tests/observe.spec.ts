@@ -21,6 +21,9 @@ import type { CommandResult, FileRead, HostScript, ObservationConfig, Observatio
 import { ALERT_CONFIRMATIONS, SESSION_SAMPLE_LOG, readObservations } from "../readers/observe.ts";
 import { sessionSampleLine } from "../readers/parse-host.ts";
 
+/** What spec §5 says an abort before the gate owes: both halves, not just the disable. */
+const OWED_TEARDOWN = [{ kind: "disable-tasks", tasks: ["cycle", "watchdog"] }, { kind: "remove-certificate-line" }];
+
 const REPO = "C:\\Users\\felix\\source\\repos\\glass-box-trading";
 const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
 const LONG_RUN = "C:\\Users\\felix\\glass-box-state\\longrun-1";
@@ -195,7 +198,7 @@ describe("observe — a complete snapshot from the readers", () => {
     const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", gateNotAfterUtcMs: Date.UTC(2026, 8, 22, 12, 55), longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
     const decision = decide(foldLedger(parseLedgerText(opened.line)), snapshot, schedule);
     // ARSO is still on (spec §3: the elevated step must switch it off), and gate condition 4 has not been recorded. Nothing else.
-    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true, evidence: { unknown: [], red: ["host.DisableAutomaticRestartSignOn", "alert-confirmation.absent"] } });
+    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: OWED_TEARDOWN, evidence: { unknown: [], red: ["host.DisableAutomaticRestartSignOn", "alert-confirmation.absent"] } });
   });
 });
 

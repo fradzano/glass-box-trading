@@ -16,7 +16,7 @@
 //     turn the one command whose job is to disable into the one command that cannot.
 import { applyAction } from "../actions/apply.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
-import { decide } from "../core/decide.ts";
+import { abortTeardown, decide, fullTeardown } from "../core/decide.ts";
 import { foldLedgerSnapshot, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
 import { LedgerStoreError, withActivationLedger } from "../store/ledger-store.ts";
@@ -126,9 +126,18 @@ export async function applyAll(
   return reports;
 }
 
-/** The teardown every abort up to the gate owes the world: both tasks off (spec §5). */
-async function disableBoth(ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<readonly ActionReport[]> {
-  return applyAll([{ kind: "disable-tasks", tasks: BOTH_TASKS }], ports, context, dryRun, print, false);
+/**
+ * Applies the teardown a decision owes the world.
+ *
+ * The list comes from the core — `abortTeardown` in `core/decide.ts` — and is not
+ * rebuilt here. It used to be: the core returned a boolean and this file turned it back
+ * into `[{ disable-tasks }]`, one action where spec §5 names two, so every automatic
+ * abort left `PRE_ARM_CERTIFICATE` in `.env` while reporting a completed teardown. The
+ * shell's job is to apply what it is handed, and `stopAtFirstFailure: false` because a
+ * disable that failed is no reason to leave the certificate line in place.
+ */
+export async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<readonly ActionReport[]> {
+  return applyAll(teardown, ports, context, dryRun, print, false);
 }
 
 function contextFor(deps: InvocationDeps, schedule: Schedule, observations: Observations | null): ActionContext | null {
@@ -218,7 +227,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
         if (fold.currentAttempt === null && snapshot.state !== "absent" && snapshot.state !== "empty") {
           return { kind: "ledger-defect", stage: "read-ledger", reason: found };
         }
-        applied = await disableBoth(deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);
+        applied = await applyTeardown(abortTeardown(fold), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);
         const attempt = nextAttemptId(snapshot.entries, anchorDay);
         if (!invocation.dryRun) {
           await append(session, openingDraft(found, attempt, anchorDay, stamp, { teardown: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }));
@@ -245,9 +254,9 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
           return { kind: "recorded", step: decision.step, outcome: decision.outcome };
         }
         case "abort": {
-          if (decision.teardown) applied = await disableBoth(deps.actions, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule), invocation.dryRun, deps.print);
+          applied = await applyTeardown(decision.teardown, deps.actions, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule), invocation.dryRun, deps.print);
           if (!invocation.dryRun) await append(session, abortDraft(decision, attempt, anchorDay, stamp));
-          return { kind: "aborted", step: decision.step, reason: decision.reason, teardown: decision.teardown, nextOwnerAction: decision.nextOwnerAction };
+          return { kind: "aborted", step: decision.step, reason: decision.reason, teardown: applied, nextOwnerAction: decision.nextOwnerAction };
         }
         case "act": {
           const context = contextFor(deps, schedule, observations);
@@ -258,7 +267,28 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
           applied = await applyAll(decision.actions, deps.actions, context, invocation.dryRun, deps.print, true);
           const closing = monotonicStamp(deps.stampAt(deps.now()), { lastSeq: tail.lastSeq + 1, lastAtUtcMs: stamp.atUtcMs }, deps.stampAt);
           const drafted = resultDraft(decision, applied, attempt, anchorDay, closing);
-          if (drafted !== null && !invocation.dryRun) await append(session, drafted);
+          if (drafted !== null && !invocation.dryRun) {
+            // Axiom A4: "an append that fails is itself an abort — disable both tasks,
+            // page, exit" (ACT-44, ACT-60). This is the one place where that matters
+            // most and where it was not done: the actions above have already landed on
+            // the host, so at step 10 the certificate line is durably written, and an
+            // append that throws here used to escape to the outermost catch — which
+            // applies no teardown at all. The invocation that armed the deployment tore
+            // nothing down, and the abort on the next tick, deciding from a ledger that
+            // shows an intent and no result, owes only what `abortTeardown` gives it.
+            //
+            // The teardown runs here, inside the session, because that is where the
+            // lease is still held and the action context is still in scope. The store
+            // failure is then reported as it was, with what the teardown managed in the
+            // outcome rather than a claim that it ran.
+            try {
+              await append(session, drafted);
+            } catch (error) {
+              const teardown = await applyTeardown(abortTeardown(fold), deps.actions, context, invocation.dryRun, deps.print);
+              applied = [...applied, ...teardown];
+              throw error;
+            }
+          }
           const outcome = drafted === null ? "ok" : (drafted.outcome ?? "unknown");
           return { kind: "acted", step: decision.step, outcome, deferred: drafted === null };
         }
@@ -317,7 +347,7 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
       const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
       const evidence = { actions: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) };
       if (!invocation.dryRun) await append(session, ownerAbortDraft(invocation.operator ?? "", attempt.id, attempt.anchorDay, stamp, evidence));
-      return { kind: "aborted", step: null, reason: "OWNER_ABORT", teardown: true, nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue." };
+      return { kind: "aborted", step: null, reason: "OWNER_ABORT", teardown: applied, nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue." };
     },
   );
 
@@ -370,28 +400,28 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, sc
           }
           return { kind: "recorded", step: "10-gate", outcome: "already_in_target_state" };
         }
-        const reports = await disableBoth(deps.actions, context, invocation.dryRun, deps.print);
+        const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
         if (!invocation.dryRun) {
           await append(session, { at: stamp.at, atUtcMs: stamp.atUtcMs, attempt: id, anchorDay: day, step: null, kind: "note", outcome: null, evidence: { disarm: "NO_GREEN_GATE", actions: reports.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }, nextOwnerAction: null });
         }
-        return { kind: "aborted", step: null, reason: "DISARMED", teardown: true, nextOwnerAction: "The disarm one-shot found no green gate and disabled both tasks. Read the ledger before the next attempt." };
+        return { kind: "aborted", step: null, reason: "DISARMED", teardown: reports, nextOwnerAction: "The disarm one-shot found no green gate and disabled both tasks. Read the ledger before the next attempt." };
       },
     );
     if (result.kind === "contended") {
       // A live invocation may be mid-gate. The one-shot still owes the world its
       // disable: the gate either wrote its result before 15:05 or it did not.
-      const reports = await disableBoth(deps.actions, context, invocation.dryRun, deps.print);
-      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: true, nextOwnerAction: "The disarm ran while another invocation held the lease; both tasks were disabled. Read the ledger." }, applied: reports, fold, schedule };
+      const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
+      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: "The disarm ran while another invocation held the lease; both tasks were disabled. Read the ledger." }, applied: reports, fold, schedule };
     }
     return { outcome: result.value, applied: [], fold, schedule };
   } catch (error) {
     // Fail safe, not closed: a ledger that cannot be read is exactly the case the
     // disarm exists for (spec §6; residual G1, an unparseable `ledger.lock`).
-    const reports = await disableBoth(deps.actions, context, invocation.dryRun, deps.print);
+    const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
     const failure = storeFailure(error);
     const detail = failure.kind === "ledger-defect" ? `${failure.stage}:${failure.reason}` : failure.kind;
     return {
-      outcome: { kind: "aborted", step: null, reason: `DISARMED_LEDGER_UNREADABLE (${detail})`, teardown: true, nextOwnerAction: "The disarm could not read the ledger and disabled both tasks. Read the activation state root by hand before anything else." },
+      outcome: { kind: "aborted", step: null, reason: `DISARMED_LEDGER_UNREADABLE (${detail})`, teardown: reports, nextOwnerAction: "The disarm could not read the ledger and disabled both tasks. Read the activation state root by hand before anything else." },
       applied: reports,
       fold,
       schedule,

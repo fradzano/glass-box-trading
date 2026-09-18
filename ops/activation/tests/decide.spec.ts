@@ -13,6 +13,15 @@ import type { LedgerDraft } from "../core/ledger.ts";
 import { executionOrder, expectedCertificateLine, expectedTasks } from "../core/steps.ts";
 import type { AlertConfirmation, CheckObservation, Decision, DisarmObservation, LocalInstant, LogLine, Observations, Outcome, Reading, Schedule, SessionSample, StepId, TaskObservation } from "../core/types.ts";
 
+/**
+ * What spec §5 says every abort up to and including the gate owes the world, as the core
+ * now hands it over: both halves of "disables both tasks, leaves `PRE_ARM_CERTIFICATE`
+ * unset". These assertions used to read `teardown: true`, which said that something was
+ * owed without saying what — and the shell quietly owed only the first half.
+ */
+const OWED_TEARDOWN = [{ kind: "disable-tasks", tasks: ["cycle", "watchdog"] }, { kind: "remove-certificate-line" }];
+
+
 const MON = "2026-09-21";
 const TUE = "2026-09-22";
 const NEXT_MON = "2026-09-28";
@@ -297,17 +306,17 @@ describe("decide — integrity and the attempt", () => {
   it("aborts with teardown on a torn ledger, even after the gate: the phase cannot be shown to be armed", () => {
     const fold = foldLedger(parseLedgerText(`${ledgerText(linesThrough("10-gate"))}{"seq":`));
     const decision = decide(fold, worldFor(fold, [TUE, 15, 20]), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", step: null, reason: "LEDGER_TORN", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", step: null, reason: "LEDGER_TORN", teardown: OWED_TEARDOWN });
   });
 
   it("aborts on an attempt whose anchor day changed", () => {
     const fold = foldOf([opened(), { at: [MON, 15, 1], step: null, kind: "note", anchorDay: NEXT_TUE }]);
-    expect(decide(fold, worldFor(fold, [MON, 15, 5]), SCHEDULE)).toMatchObject({ kind: "abort", reason: "LEDGER_INCONSISTENT", teardown: true });
+    expect(decide(fold, worldFor(fold, [MON, 15, 5]), SCHEDULE)).toMatchObject({ kind: "abort", reason: "LEDGER_INCONSISTENT", teardown: OWED_TEARDOWN });
   });
 
   it("aborts with teardown when no attempt is open", () => {
     const fold = foldLedger(parseLedgerText(""));
-    expect(decide(fold, worldFor(fold, [MON, 15, 30]), SCHEDULE)).toMatchObject({ kind: "abort", step: null, reason: "LEDGER_EMPTY", teardown: true });
+    expect(decide(fold, worldFor(fold, [MON, 15, 30]), SCHEDULE)).toMatchObject({ kind: "abort", step: null, reason: "LEDGER_EMPTY", teardown: OWED_TEARDOWN });
   });
 
   it("does nothing at all in an ended attempt, although the world would allow the enable (round 5, A3)", () => {
@@ -337,7 +346,7 @@ describe("decide — 0-resume judges the world against the phase", () => {
   it("aborts when a task is enabled before step 4 (ACT-26)", () => {
     const fold = before("4-enable");
     const decision = decide(fold, worldFor(fold, [MON, 22, 6], { tasks: known({ cycle: task("Ready", CYCLE_ARGS), watchdog: task("Disabled", WATCHDOG_ARGS) }) }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["red"]).toContain("tasks.cycle.expected-disabled:observed-Ready");
   });
 
@@ -354,7 +363,7 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts on an unreadable task list (A1)", () => {
     const fold = before("2-certificate");
-    expect(decide(fold, worldFor(fold, [MON, 16, 0], { tasks: unknown("access denied") }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "WORLD_UNKNOWN", teardown: true });
+    expect(decide(fold, worldFor(fold, [MON, 16, 0], { tasks: unknown("access denied") }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "WORLD_UNKNOWN", teardown: OWED_TEARDOWN });
   });
 
   it("aborts when the certificate line is back after step 0 removed it", () => {
@@ -378,7 +387,7 @@ describe("decide — 0-resume judges the world against the phase", () => {
   it("aborts when a certificate path or profile is set outside .env, which the runtime would prefer (owner ruling 2026-09-14)", () => {
     const fold = before("4-enable");
     const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE"] }) }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["red"]).toContain("env.shadowed-outside-dotenv:PRE_ARM_CERTIFICATE");
   });
 
@@ -426,13 +435,13 @@ describe("decide — 0-resume judges the world against the phase", () => {
   it("after the gate, pages without teardown when the certificate line names another file", () => {
     const fold = before("11-anchor");
     const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { env: known({ certificatePath: "C:\\other.json", profile: "competition", hash: "e3", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: false });
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: [] });
   });
 
   it("after the gate, pages without teardown when the disarm one-shot is still registered", () => {
     const fold = before("11-anchor");
     const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { disarm: known(disarmFor(TUE)) }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: false });
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: [] });
     expect(evidenceOf(decision)["red"]).toContain("disarm.expected-deleted-after-gate");
   });
 
@@ -603,7 +612,7 @@ describe("decide — step 0, preflight", () => {
   for (const [name, overrides, finding] of red) {
     it(`refuses ${name}`, () => {
       const decision = decide(fold, worldFor(fold, at, overrides), SCHEDULE);
-      expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true });
+      expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: OWED_TEARDOWN });
       expect(evidenceOf(decision)["red"]).toContain(finding);
     });
   }
@@ -659,7 +668,7 @@ describe("decide — step 2, certificate", () => {
   it("aborts on a certificate the runtime's validator rejected, and carries its violations into the evidence (review 2026-09-14, point 1)", () => {
     const rejected = known({ path: CERT_PATH, verdict: "REJECTED", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: ["certificate schema mismatch: unexpected or missing fields"] });
     const decision = decide(fold, worldFor(fold, [MON, 16, 10], { certificate: rejected }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", step: "2-certificate", reason: "CERTIFICATE_NOT_PASS", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", step: "2-certificate", reason: "CERTIFICATE_NOT_PASS", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["violations"]).toEqual(["certificate schema mismatch: unexpected or missing fields"]);
   });
 
@@ -691,7 +700,7 @@ describe("decide — step 3, flat", () => {
 
   it("aborts on a leftover order or position, and never acts on the account (ACT-14, ACT-56)", () => {
     const order = decide(fold, worldFor(fold, [MON, 16, 15], { devAccount: known({ positions: 0, nonTerminalOrders: 1 }) }), SCHEDULE);
-    expect(order).toMatchObject({ kind: "abort", reason: "DEV_ACCOUNT_NOT_FLAT", teardown: true });
+    expect(order).toMatchObject({ kind: "abort", reason: "DEV_ACCOUNT_NOT_FLAT", teardown: OWED_TEARDOWN });
     expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 15], { devAccount: known({ positions: 2, nonTerminalOrders: 0 }) }), SCHEDULE))).toBe("DEV_ACCOUNT_NOT_FLAT");
     expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 15], { devAccount: unknown() }), SCHEDULE))).toBe("DEV_ACCOUNT_UNKNOWN");
   });
@@ -714,7 +723,7 @@ describe("decide — step 4, enable", () => {
 
   it("waits before 22:05 and aborts after 22:20", () => {
     expect(decide(fold, worldFor(fold, [MON, 22, 4]), SCHEDULE).kind).toBe("wait");
-    expect(decide(fold, worldFor(fold, [MON, 22, 21]), SCHEDULE)).toMatchObject({ kind: "abort", step: "4-enable", reason: "STEP_DEADLINE_MISSED", teardown: true });
+    expect(decide(fold, worldFor(fold, [MON, 22, 21]), SCHEDULE)).toMatchObject({ kind: "abort", step: "4-enable", reason: "STEP_DEADLINE_MISSED", teardown: OWED_TEARDOWN });
   });
 
   it("aborts when a check is neither up nor paused", () => {
@@ -766,14 +775,14 @@ describe("decide — a new attempt inherits no confirmation age and no flat chec
     const LATE_TUE = "2026-10-06";
     const fold = foldOf([...firstAttempt, opened([LATE_MON, 15, 0], "a2", LATE_TUE)]);
     const decision = decide(fold, worldFor(fold, [LATE_MON, 22, 6]), scheduleFor(LATE_MON, LATE_TUE));
-    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["red"]).toContain("alert-confirmation.stale");
   });
 
   it("stops a retry whose dev account is no longer flat at step 3, before step 4 can enable anything", () => {
     const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE), ...preflightOf("a2", NEXT_TUE, NEXT_MON)]);
     const decision = decide(fold, worldFor(fold, [NEXT_MON, 22, 6], { devAccount: known({ positions: 1, nonTerminalOrders: 0 }) }), scheduleFor(NEXT_MON, NEXT_TUE));
-    expect(decision).toMatchObject({ kind: "abort", step: "3-flat", reason: "DEV_ACCOUNT_NOT_FLAT", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", step: "3-flat", reason: "DEV_ACCOUNT_NOT_FLAT", teardown: OWED_TEARDOWN });
   });
 
   it("runs step 0 again in the new attempt, and its evidence is this attempt's", () => {
@@ -880,7 +889,7 @@ describe("decide — step 5, the watchdog drill", () => {
     const fold = before("5b-watchdog-down");
     const checks = checksWith(now5b, { watchdog: check(FINGERPRINTS.watchdog, "down", null, [{ utcMs: utc([MON, 22, 10]), up: false }]) });
     const decision = decide(fold, worldFor(fold, at5b, { checks }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", reason: "DRILL_INVALID", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", reason: "DRILL_INVALID", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["drill"]).toBe("invalid");
   });
 
@@ -944,7 +953,7 @@ describe("decide — step 6, the silence drill", () => {
     expect(abortReason(decide(fold, worldFor(fold, at6b, { checks: allDown, cycleLog: justAfter }), SCHEDULE))).toBe("DRILL_INVALID");
     const outage = known([logLine("watchdog-run.log", [MON, 23, 15], "run")]);
     const decision = decide(fold, worldFor(fold, [MON, 23, 20], { watchdogLog: outage }), SCHEDULE);
-    expect(decision).toMatchObject({ kind: "abort", step: "6b-silence-down", reason: "DRILL_INVALID", teardown: true });
+    expect(decision).toMatchObject({ kind: "abort", step: "6b-silence-down", reason: "DRILL_INVALID", teardown: OWED_TEARDOWN });
   });
 
   it("6b calls the drill invalid when the independent API read fails once all are down", () => {
@@ -1001,7 +1010,7 @@ describe("decide — step 8, the reboot, and closing it after the boot", () => {
   it("closes it failed when the boot is not later than the intent, and the next invocation aborts", () => {
     expect(decide(interrupted, worldFor(interrupted, [TUE, 13, 40], { bootUtcMs: known(utc([TUE, 13, 30])) }), SCHEDULE)).toMatchObject({ kind: "record", step: "8-reboot", outcome: "failed" });
     const closedFailed = foldOf([...linesThrough("6c-silence-clear"), { at: [TUE, 13, 30], step: "8-reboot", kind: "intent" }, { at: [TUE, 13, 40], step: "8-reboot", kind: "result", outcome: "failed" }]);
-    expect(decide(closedFailed, worldFor(closedFailed, [TUE, 13, 45]), SCHEDULE)).toMatchObject({ kind: "abort", step: "8-reboot", reason: "STEP_FAILED", teardown: true });
+    expect(decide(closedFailed, worldFor(closedFailed, [TUE, 13, 45]), SCHEDULE)).toMatchObject({ kind: "abort", step: "8-reboot", reason: "STEP_FAILED", teardown: OWED_TEARDOWN });
   });
 
   it("may close after the reboot's own deadline, but not after the re-arm's", () => {
@@ -1015,7 +1024,7 @@ describe("decide — step 8, the reboot, and closing it after the boot", () => {
 
   it("aborts on any other interrupted step", () => {
     const fold = foldOf([...linesThrough("3-flat"), { at: [MON, 22, 5], step: "4-enable", kind: "intent" }]);
-    expect(decide(fold, worldFor(fold, [MON, 22, 10]), SCHEDULE)).toMatchObject({ kind: "abort", step: "4-enable", reason: "STEP_INTERRUPTED", teardown: true });
+    expect(decide(fold, worldFor(fold, [MON, 22, 10]), SCHEDULE)).toMatchObject({ kind: "abort", step: "4-enable", reason: "STEP_INTERRUPTED", teardown: OWED_TEARDOWN });
   });
 
   it("does not let a retry inherit the previous attempt's reboot: after its own preflight and flat check, the new attempt starts again at the enable (round 5, A2)", () => {
@@ -1161,7 +1170,7 @@ describe("decide — step 10, the gate", () => {
   ];
   for (const [name, overrides] of red) {
     it(`is red on ${name}, and tears down`, () => {
-      expect(decide(fold, worldFor(fold, at, overrides), SCHEDULE)).toMatchObject({ kind: "abort", step: "10-gate", reason: "GATE_RED", teardown: true });
+      expect(decide(fold, worldFor(fold, at, overrides), SCHEDULE)).toMatchObject({ kind: "abort", step: "10-gate", reason: "GATE_RED", teardown: OWED_TEARDOWN });
     });
   }
 
@@ -1201,11 +1210,11 @@ describe("decide — step 11, the anchor", () => {
     expect(decide(fold, worldFor(fold, [TUE, 15, 20], { cycleLog: skip, bootstrapEntry: bootstrap }), SCHEDULE).kind).toBe("wait");
     const catchUp = known([logLine("cycle-run.log", [TUE, 15, 31], "run")]);
     expect(decide(fold, worldFor(fold, [TUE, 15, 35], { cycleLog: catchUp, bootstrapEntry: bootstrap }), SCHEDULE).kind).toBe("wait");
-    expect(decide(fold, worldFor(fold, [TUE, 16, 1], { cycleLog: catchUp, bootstrapEntry: bootstrap }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "STEP_DEADLINE_MISSED", teardown: false });
+    expect(decide(fold, worldFor(fold, [TUE, 16, 1], { cycleLog: catchUp, bootstrapEntry: bootstrap }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "STEP_DEADLINE_MISSED", teardown: [] });
   });
 
   it("waits for the BOOTSTRAP entry, and pages without teardown when the log cannot be read", () => {
     expect(decide(fold, worldFor(fold, [TUE, 15, 20], { cycleLog: known([logLine("cycle-run.log", [TUE, 15, 15], "run")]) }), SCHEDULE).kind).toBe("wait");
-    expect(decide(fold, worldFor(fold, [TUE, 15, 20], { cycleLog: unknown() }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "CYCLE_LOG_UNREADABLE", teardown: false });
+    expect(decide(fold, worldFor(fold, [TUE, 15, 20], { cycleLog: unknown() }), SCHEDULE)).toMatchObject({ kind: "abort", reason: "CYCLE_LOG_UNREADABLE", teardown: [] });
   });
 });

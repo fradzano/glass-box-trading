@@ -24,7 +24,19 @@ import type { ActionReport, InvocationOutcome, Stamp } from "../cli/plan.ts";
 import { foldLedger, foldLedgerSnapshot } from "../core/fold.ts";
 import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
 import type { LedgerDraft, LedgerTail } from "../core/ledger.ts";
-import type { Decision, LedgerEntry, StepId } from "../core/types.ts";
+import type { Decision, LedgerEntry, StepId, WorldAction } from "../core/types.ts";
+
+/**
+ * What spec §5 says every abort up to and including the gate owes the world, as the core
+ * now hands it over: both halves of "disables both tasks, leaves `PRE_ARM_CERTIFICATE`
+ * unset". These assertions used to read `teardown: true`, which said that something was
+ * owed without saying what — and the shell quietly owed only the first half.
+ */
+/** The same teardown as an InvocationOutcome carries it: one report per action, applied. */
+const APPLIED_TEARDOWN: readonly ActionReport[] = [{ kind: "disable-tasks", applied: true, detail: null, reason: null, completion: null }, { kind: "remove-certificate-line", applied: true, detail: null, reason: null, completion: null }];
+
+const OWED_TEARDOWN: readonly WorldAction[] = [{ kind: "disable-tasks", tasks: ["cycle", "watchdog"] }, { kind: "remove-certificate-line" }];
+
 
 const ANCHOR = "2026-09-22";
 const ATTEMPT = "2026-09-22.1";
@@ -187,11 +199,11 @@ describe("the other decisions", () => {
   });
 
   it("ends the attempt with an abort that always names the owner's next action", () => {
-    const entry = accepted(abortDraft({ kind: "abort", step: "10-gate", reason: "WORLD_MISMATCH", teardown: true, nextOwnerAction: "Read the gate evidence.", evidence: { red: ["tasks.cycle"] } }, ATTEMPT, ANCHOR, STAMP));
+    const entry = accepted(abortDraft({ kind: "abort", step: "10-gate", reason: "WORLD_MISMATCH", teardown: OWED_TEARDOWN, nextOwnerAction: "Read the gate evidence.", evidence: { red: ["tasks.cycle"] } }, ATTEMPT, ANCHOR, STAMP));
     expect(entry.kind).toBe("abort");
     expect(entry.nextOwnerAction).toBe("Read the gate evidence.");
     expect(entry.evidence["reason"]).toBe("WORLD_MISMATCH");
-    expect(entry.evidence["teardown"]).toBe(true);
+    expect(entry.evidence["teardown"]).toEqual(["disable-tasks", "remove-certificate-line"]);
   });
 
   it("writes the owner's own abort as a deliberate stop, not as a crash", () => {
@@ -325,7 +337,7 @@ describe("how an invocation ends", () => {
     { outcome: { kind: "done", reason: "complete" }, code: 0, pages: false },
     { outcome: { kind: "yielded", reason: "a live invocation holds the lease" }, code: 0, pages: false },
     { outcome: { kind: "reported" }, code: 0, pages: false },
-    { outcome: { kind: "aborted", step: "10-gate", reason: "WORLD_MISMATCH", teardown: true, nextOwnerAction: "Read it." }, code: 1, pages: true },
+    { outcome: { kind: "aborted", step: "10-gate", reason: "WORLD_MISMATCH", teardown: APPLIED_TEARDOWN, nextOwnerAction: "Read it." }, code: 1, pages: true },
     { outcome: { kind: "refused", reason: "--state-root is required" }, code: 2, pages: false },
     { outcome: { kind: "ledger-defect", stage: "write-ledger", reason: "NO_SPACE" }, code: 3, pages: true },
     { outcome: { kind: "work-failed", reason: "the invocation failed inside the ledger lease" }, code: 4, pages: true },

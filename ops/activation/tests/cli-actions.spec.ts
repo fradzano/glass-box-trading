@@ -8,7 +8,7 @@
 // These need bound ports to show at all — with `actions: null` nothing ever reaches the
 // failure branch — so this file fakes the ports rather than the store.
 import { describe, expect, it } from "vitest";
-import { applyAll } from "../cli/invoke.ts";
+import { applyAll, applyTeardown } from "../cli/invoke.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
 import type { WorldAction } from "../core/types.ts";
 
@@ -59,6 +59,21 @@ describe("applying what was decided", () => {
     expect(reports).toHaveLength(1);
     expect(reports[0]?.applied).toBe(false);
     expect(reports[0]?.reason).toBe("DISABLE_TASKS:cycle:PORT_REFUSED,watchdog:PORT_REFUSED");
+  });
+
+  // The wiring, not the primitive. `applyAll` is tested above with `false` passed by
+  // hand; nothing pinned that the teardown path *chooses* `false`, and a mutation probe
+  // found it — flipping `applyTeardown`'s argument to `true` left the whole suite green.
+  // That is the same shape as the defect this fix exists for: the contract was right and
+  // nothing held the caller to it.
+  it("the teardown path itself asks for every part, not only up to the first failure", async () => {
+    const reports = await applyTeardown([DISABLE, DELETE, CLEAR], ports({ disableFails: true }), CONTEXT, false, () => undefined);
+
+    expect(reports.map(report => ({ kind: report.kind, applied: report.applied }))).toEqual([
+      { kind: "disable-tasks", applied: false },
+      { kind: "delete-disarm", applied: true },
+      { kind: "clear-checks", applied: true },
+    ]);
   });
 
   it("does every part of a teardown, although the first one failed", async () => {

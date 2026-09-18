@@ -15,6 +15,8 @@ import type { Decision, StepId } from "../core/types.ts";
 import { CERT_PATH, foldOfWorld, freshWorld, openAttempt, ownerAbort, ownerPausesChecks, runUntil, scheduleFor, utcOf } from "./simulator.ts";
 import type { SimWorld, Trace } from "./simulator.ts";
 
+
+
 const MON = "2026-09-21";
 const TUE = "2026-09-22";
 const NEXT_MON = "2026-09-28";
@@ -66,7 +68,9 @@ function expectSafe(trace: readonly Trace[]): void {
     const decision = entry.decision;
     if (entry.attempt !== null && ended.has(entry.attempt)) expect(decision.kind, `attempt ${entry.attempt} acted after its abort at ${clock(entry)}`).toBe("ended");
     if (entry.certificateLine !== null && entry.cycleEnabled) expect(entry.gateDone, `cycle enabled beside a certificate line without a gate at ${clock(entry)}`).toBe(true);
-    if (decision.kind === "abort" && decision.teardown) expect([entry.cycleEnabled, entry.watchdogEnabled, entry.certificateLine], `teardown incomplete at ${clock(entry)}`).toEqual([false, false, null]);
+    // `teardown` is a list now, and an empty list is truthy in JavaScript: guarding on
+    // the value alone made this fire on every abort after the gate, which owes nothing.
+    if (decision.kind === "abort" && decision.teardown.length > 0) expect([entry.cycleEnabled, entry.watchdogEnabled, entry.certificateLine], `teardown incomplete at ${clock(entry)}`).toEqual([false, false, null]);
     // An abort for a ledger that cannot be appended to writes no entry, so it cannot end the attempt (unit 9).
     if (decision.kind === "abort" && entry.attempt !== null && !decision.reason.startsWith("LEDGER_")) ended.add(entry.attempt);
   }
@@ -300,7 +304,7 @@ describe("activation sequences — degraded paths", () => {
       if (now.date === TUE && now.minute === 15 * 60 + 14) w.cycleStalled = true;
     });
     const { entry } = onlyAbort(trace);
-    expect(entry.decision).toMatchObject({ kind: "abort", step: "11-anchor", reason: "STEP_DEADLINE_MISSED", teardown: false });
+    expect(entry.decision).toMatchObject({ kind: "abort", step: "11-anchor", reason: "STEP_DEADLINE_MISSED", teardown: [] });
     expect(clock(entry)).toBe("2026-09-22 16:05");
     expect([world.tasks.cycle.enabled, world.tasks.watchdog.enabled, world.certificateLine]).toEqual([true, true, CERT_PATH]);
     expectSafe(trace);

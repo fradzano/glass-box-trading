@@ -38,7 +38,15 @@ export type InvocationOutcome =
   | { readonly kind: "recorded"; readonly step: StepId; readonly outcome: Outcome }
   | { readonly kind: "waited"; readonly reason: string; readonly noted: boolean }
   | { readonly kind: "opened"; readonly attempt: string; readonly found: string }
-  | { readonly kind: "aborted"; readonly step: StepId | null; readonly reason: string; readonly teardown: boolean; readonly nextOwnerAction: string }
+  /**
+   * `teardown` is what the teardown **did**, one report per action, not what it owed.
+   * It used to be the core's boolean, and `report.ts` turned that boolean into the
+   * sentence "both tasks are disabled and the certificate line is unset" — which the
+   * CLI printed on a run where nothing had been applied at all, because no host
+   * bindings existed. The owner reads that sentence at 15:06 and acts on it; it now
+   * says what happened.
+   */
+  | { readonly kind: "aborted"; readonly step: StepId | null; readonly reason: string; readonly teardown: readonly ActionReport[]; readonly nextOwnerAction: string }
   | { readonly kind: "ended"; readonly seq: number; readonly reason: string }
   | { readonly kind: "done"; readonly reason: string }
   | { readonly kind: "yielded"; readonly reason: string }
@@ -180,7 +188,11 @@ export function abortDraft(decision: Extract<Decision, { kind: "abort" }>, attem
     step: decision.step,
     kind: "abort",
     outcome: null,
-    evidence: { ...decision.evidence, reason: decision.reason, teardown: decision.teardown },
+    // The kinds, not the whole actions: the record says what the abort owed the world,
+    // in two words a reader can check against the world a week later. It used to be a
+    // boolean, which said that something was owed without saying what — and the shell
+    // owed less than the boolean implied.
+    evidence: { ...decision.evidence, reason: decision.reason, teardown: decision.teardown.map(action => action.kind) },
     nextOwnerAction: decision.nextOwnerAction,
   });
 }

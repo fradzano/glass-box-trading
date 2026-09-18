@@ -1,0 +1,20 @@
+[
+  {
+    "id": "G4-05",
+    "from": "  return applyAll(teardown, ports, context, dryRun, print, false);",
+    "to": "  return applyAll(teardown.slice(0, 1), ports, context, dryRun, print, false);",
+    "note": "the SHELL applies only the first action of the teardown it was handed - the exact shape of the old defect, now on the other side of the boundary. This is the decisive mutant: before the oracle was re-pointed, the invariant assertion in sequences.spec.ts was satisfied by the simulator and could not see this."
+  },
+  {
+    "id": "G4-06",
+    "from": "  return applyAll(teardown, ports, context, dryRun, print, false);",
+    "to": "  return applyAll(teardown, ports, context, dryRun, print, true);",
+    "note": "the teardown stops at its first failure, against applyAll's own stated contract that a disable which failed is no reason to leave the certificate line in place"
+  },
+  {
+    "id": "G4-07-control",
+    "from": "async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<readonly ActionReport[]> {",
+    "to": "async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<ReadonlyArray<ActionReport>> {",
+    "note": "control - the same return type spelled the other way. It must SURVIVE."
+  }
+]

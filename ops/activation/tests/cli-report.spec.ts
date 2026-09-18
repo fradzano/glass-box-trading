@@ -10,6 +10,8 @@ import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
 import type { LedgerDraft, LedgerTail } from "../core/ledger.ts";
 import type { Schedule } from "../core/types.ts";
 
+
+
 const ANCHOR = "2026-09-22";
 const ATTEMPT = "2026-09-22.1";
 const BASE_MS = 1_790_000_000_000;
@@ -107,16 +109,16 @@ describe("the status page", () => {
 
 describe("what one invocation reports", () => {
   it("gives an abort its reason, its teardown and the owner's next action, in that order", () => {
-    const outcome: InvocationOutcome = { kind: "aborted", step: "10-gate", reason: "WORLD_MISMATCH", teardown: true, nextOwnerAction: "Read the gate evidence." };
+    const outcome: InvocationOutcome = { kind: "aborted", step: "10-gate", reason: "WORLD_MISMATCH", teardown: [{ kind: "disable-tasks", applied: true, detail: null, reason: null, completion: null }, { kind: "remove-certificate-line", applied: true, detail: null, reason: null, completion: null }], nextOwnerAction: "Read the gate evidence." };
     expect(outcomeLines(outcome)).toEqual([
       "ABORTED at 10-gate: WORLD_MISMATCH",
-      "both tasks are disabled and the certificate line is unset",
+      "the teardown ran: disable-tasks, remove-certificate-line",
       "next owner action: Read the gate evidence.",
     ]);
   });
 
   it("says when an armed run was deliberately left standing", () => {
-    const outcome: InvocationOutcome = { kind: "aborted", step: "11-anchor", reason: "ANCHOR_MISSING", teardown: false, nextOwnerAction: "Decide whether to tear down." };
+    const outcome: InvocationOutcome = { kind: "aborted", step: "11-anchor", reason: "ANCHOR_MISSING", teardown: [], nextOwnerAction: "Decide whether to tear down." };
     expect(outcomeLines(outcome)[1]).toBe("the armed run was left as it is; tearing it down is the owner's decision");
   });
 
