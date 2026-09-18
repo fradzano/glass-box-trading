@@ -98,6 +98,8 @@
 - `ops/activation/probes/mutants-unit12-guard-declared.json`
 - `ops/activation/probes/mutants-unit12-holiday.json`
 - `ops/activation/probes/mutants-unit12-merge.json`
+- `ops/activation/probes/mutants-unit12-r2-oracle.json`
+- `ops/activation/probes/mutants-unit12-r2-teardown.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "R2-M5",
+    "from": "        world.certificateLine = null;",
+    "to": "        // R2-M5: the oracle no longer clears the certificate line on an abort teardown",
+    "note": "the simulator's abort teardown stops clearing the certificate line, so it does what the shell actually does. If sequences.spec.ts goes red, that assertion is measuring the oracle and not the shell — which is the whole claim of R2-17."
+  },
+  {
+    "id": "R2-M6",
+    "from": "        world.tasks.watchdog.enabled = false;",
+    "to": "        // R2-M6: the oracle no longer disables the watchdog on an abort teardown",
+    "note": "control of the same shape on a part the shell does implement, to show M5's result is about the certificate line specifically and not about touching the oracle at all."
+  },
+  {
+    "id": "R2-M7-control",
+    "from": "      if (decision.teardown) {",
+    "to": "      if (decision.teardown === true) {",
+    "note": "control — `teardown` is a boolean, so this is behaviour-neutral. It must SURVIVE."
+  }
+]

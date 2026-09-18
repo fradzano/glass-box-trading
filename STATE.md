@@ -8,6 +8,84 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-18 CEST. **Update — round 2 of the "bis 0" loop is done as a
+finding round; the loop is paused after it, not finished, and no code was changed.** The
+run is `p12-units-1-11`, round counter at 2; its ledger, registers, round protocols and
+every call's archived prompt and return live in
+`~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo. Round 2
+covered `ops/` units 1–10, the ~6,400 lines no finder had seen: five blind cold-read
+finders over one lens each, eight gates, the two outstanding fix counter-verifications
+from round 1, and eleven tool probes. **24 findings — seven A, eleven B, seven C** — and
+**no fix was built**, because single fixes are locked: the round named five generators
+(G-3 … G-7 in the ledger) and found round 1's G-1 recurring unfixed in `ops/`.
+
+**The two round-1 fixes that were still unverified split.** `41e65b3` is **RESOLVED** for
+both its findings, with the strongest evidence of the run: 65 spellings of the state
+directory driven through the real compiled CLI with zero divergence between what the guard
+admits and where the run would write, and 60,996 evaluations of `isFinalCycleOfSession`
+against a real NYSE calendar — holidays, half days, a DST Sunday, every minute at three
+intervals plus the boundary instants — with zero mismatches. `6789ca1` is **PATCHED, not
+RESOLVED**: R1-21 and R1-09 cannot be reported unchanged, and their cause moved rather
+than went.
+
+**What blocks the anchor day, in order of urgency.**
+
+1. **R2-18 (A), and it bites today.** `config/deployment.json` declares
+   `longrun-2026-09-22`; `.env` still names `longrun-1`. Both directories exist and both
+   are empty, so nothing complains. The wrappers write their logs where `.env` points and
+   the activation reads where the declaration points: step 2's contamination assertion
+   passes over a directory the long run never touches, step 9 waits forever, step 10 never
+   writes the certificate line. That is R1-21's consequence by a new route, and silent
+   where the old one was loud. **The owner's pending `.env` edit removes it today and does
+   not prevent it returning** — nothing in code, configuration or either suite compares the
+   two sources, and a mutant pointing `longRunStateDir` at a different existing directory
+   survives both suites.
+2. **R2-19 (A).** A directory that does not exist still reads as *known empty* rather than
+   *unknown* (`ops/activation/readers/host-ports.ts`, `readers/observe.ts:267`). That is
+   the mechanism that made R1-21 silent; R1-21's fix did not touch it, and no test drives
+   the branch. It is round 1's G-1 shape living on in `ops/`, where G-1's class fix never
+   reached.
+3. **R2-08 (A) and R2-06 (A).** Four of the five activation commands are held hostage by a
+   file they never read: `disarm` and `abort --confirm` refuse with exit 2 when
+   `ops/activation/deployment.json` is missing or malformed, and `config/deployment.json`
+   is read at module scope, above `main()`, so a missing or broken one kills every
+   subcommand with a raw stack trace and **exit 1 — the code this CLI reserves for "the
+   attempt ended"**. Measured, not assumed: `config/deployment.json` exists in exactly one
+   commit on exactly this branch, and **`main` does not carry it at all**.
+4. **R2-09 (A) and R2-03 (B), the abort seam.** No automatic abort removes
+   `PRE_ARM_CERTIFICATE` from `.env`; any failing second action at step 10 is enough to
+   leave the arming credential on disk with the disarm one-shot already deleted. And the
+   owner's abort applies its teardown before the lease by design, so a concurrent `run` can
+   re-enable what it just disabled. **Both are latent at this commit** (`actions: null`)
+   and **unit 13 is what arms them** — which makes fixing them a precondition of unit 13
+   rather than an optional extra.
+5. **R2-17 (A), and the calibration behind it.** The suite asserts exactly the invariant
+   R2-09 breaks and passes because it measures the simulator. The round-2 mutation probe
+   (two runs, 5 of 7 caught, both controls surviving, archived in the run store) showed the
+   sharper form: making the oracle behave like the shell turns the suite **red**, and so
+   does adding the missing action to the shell — the suite holds two contradictory green
+   assertions about one invariant and **will resist the repair**.
+
+**Decisions that are the owner's, not the loop's.** (a) `certificate-admission-facts`
+carries a fourth finding (R2-23, the ENOENT branch admitting extended-length and device
+prefixes of a not-yet-existing directory); the mechanism register's declared line says a
+fourth is not patched but declared as a residual or redesigned from outside. (b) G-5 —
+all eight `src/shell/*-cli.ts` terminate with `process.exit()` while network I/O is still
+closing, the failure this project already diagnosed on 2026-09-11 and never carried to the
+class — is digest material and therefore a certificate question. (c) How much of the
+`ops/` redesign happens before 2026-09-21. (d) `.env` to `longrun-2026-09-22`.
+
+**Operational residue from this round's own probes:** the healthchecks check
+`gbt-readiness` was left `down` (it had been paused; a real fail ping resumed it), because
+the documented manual certificate invocation carries the real ping URL from `.env`. The
+activation's own host port silences this and the manual command does not.
+`gbt-liveness` and `gbt-watchdog` are untouched.
+
+Target unchanged: certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4
+expires 2026-09-29 22:08 Europe/Berlin. **Next:** the owner's decision on the fix scope,
+then round 3. The earlier cursor follows unchanged.
+
+
 **Last updated:** 2026-09-18 CEST. **Update — unit 12, round 1 of the "bis 0" loop
 over units 1–11, is done; the loop is paused after that round, not finished.** The run
 is `p12-units-1-11`; its ledger, registers, round protocols and every call's archived

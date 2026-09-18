@@ -1,0 +1,26 @@
+[
+  {
+    "id": "R2-M1",
+    "from": "  return applyAll([{ kind: \"disable-tasks\", tasks: BOTH_TASKS }], ports, context, dryRun, print, false);",
+    "to": "  return applyAll([{ kind: \"disable-tasks\", tasks: [\"cycle\"] }], ports, context, dryRun, print, false);",
+    "note": "the automatic teardown disables only the cycle task and leaves the watchdog enabled — does any test notice which tasks the teardown names?"
+  },
+  {
+    "id": "R2-M2",
+    "from": "  return applyAll([{ kind: \"disable-tasks\", tasks: BOTH_TASKS }], ports, context, dryRun, print, false);",
+    "to": "  return applyAll([], ports, context, dryRun, print, false);",
+    "note": "the automatic teardown applies nothing at all — the strongest possible break of the abort contract in the shell"
+  },
+  {
+    "id": "R2-M3-fix-direction",
+    "from": "  return applyAll([{ kind: \"disable-tasks\", tasks: BOTH_TASKS }], ports, context, dryRun, print, false);",
+    "to": "  return applyAll([{ kind: \"disable-tasks\", tasks: BOTH_TASKS }, { kind: \"remove-certificate-line\" }], ports, context, dryRun, print, false);",
+    "note": "NOT a defect — this is the direction of the fix for R2-09. Run deliberately to measure whether the suite encodes today's narrower teardown as expected behaviour, i.e. whether it would resist the repair. A CAUGHT here is a statement about the tests, not about this change."
+  },
+  {
+    "id": "R2-M4-control",
+    "from": "  const reports: ActionReport[] = [];",
+    "to": "  const reports: Array<ActionReport> = [];",
+    "note": "control — a behaviour-neutral spelling change. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

@@ -822,6 +822,84 @@ local readers were run read-only on 2026-09-14 (see unit 7).
 
 **Unit 11 is done (2026-09-17, see below).** Remaining: units 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
 
+## Unit 12 — round 2 of the loop — 2026-09-18
+
+Round 2 ran over `ops/` units 1–10, the part of the artefact no finder had seen. Same run,
+`p12-units-1-11`, counter at 2; the ledger, registers, round protocol and every archived
+prompt and return stay outside this repository under
+`~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`. **The loop is paused after
+round 2, not finished, and round 2 changed no code** — single fixes are locked while five
+named generators are untreated. `STATE.md` carries the run state and the findings that
+block the anchor day. What follows is what belongs in the repository: the seams, and what
+the test instrument is now known to measure.
+
+### The seams, after round 2
+
+`certificate-admission-facts` stands at three repairs and now carries a **fourth**
+finding: while the declared long-run directory does not yet exist, `stateDirIdentity`
+falls back to `path.resolve`, which does not canonicalise Windows extended-length or
+device prefixes, so four spellings of one directory are admitted and the run lands there
+once the directory appears. The line drawn after the third seam applies: a fourth finding
+here is not patched. It is declared as a residual with its countersignatures, or the
+mechanism is redesigned from outside. **That is the owner's call and the loop does not
+take it.**
+
+`shell-written-decisions` is unchanged at two, and its second seam's counter-verification
+came back RESOLVED for both findings.
+
+`deployment-state-declaration` — named in round 2 for a repair round 1 made without
+registering it — stands at one and carries three findings, all saying the same thing:
+replacing a derivation with a declaration moved where the fact comes from without giving
+anything the job of holding the declaration to the world. From here the default is
+declaration or redesign, not the next patch.
+
+### What the suite is now known *not* to measure
+
+Round 1 recorded what the digest surface's tests miss. Round 2 measured the activation
+suite on the seam its own A findings live on, with two mutation runs, 5 of 7 caught and
+both controls surviving (`ops/activation/probes/mutants-unit12-r2-teardown.json` and
+`…-r2-oracle.json`; the full booking is archived in the run store).
+
+The result is not a survivor, it is a contradiction, and it is the most useful thing this
+round produced:
+
+- Making the **oracle** behave the way the **shell** actually does — the simulator's abort
+  teardown stops clearing the certificate line — turns the suite **red**. So
+  `ops/activation/tests/sequences.spec.ts:69`, which asserts that an abort with teardown
+  leaves both tasks disabled and no certificate line, is satisfied by the simulator. The
+  shell is never asked.
+- Adding the missing action to the **shell** — the repair the same assertion describes —
+  also turns the suite **red**, because `ops/activation/tests/cli-invoke.spec.ts` pins the
+  exact lines a dry run prints.
+
+Two green assertions about one invariant, contradicting each other, staying green because
+nothing puts them side by side. **The repair of the abort contract will turn this suite
+red, and that is a fact about the tests rather than about the repair.** Whoever builds it
+re-points the oracle in the same change: `simulator.ts` should apply the decision's own
+teardown list rather than implement the spec a second time by hand.
+
+Three further blind spots, each established by execution rather than by reading:
+
+- **`ops/activation/cli.ts` is crossed by no test at all.** Every `cli-*.spec.ts` covers a
+  module *under* `cli/`. The prologue — the module-scope state read, the argv call, the
+  deployment read and its refusal — is where two of round 2's A findings live, and no
+  mutant placed there could be caught for any reason.
+- **The suites check that a declared directory exists, never which one is named.** A
+  mutant pointing `longRunStateDir` at a different existing directory survives both
+  suites, and so does one pointing `devDiagnosticSink` into the long run.
+- **The `.env` canonicalisation repaired in round 1 is unmeasured.** Two mutants restoring
+  the pre-repair behaviour survive all 709 root tests; the test named for that property
+  observes a refusal that comes from a different rule. The repair itself is sound — 65
+  spellings driven through the real compiled CLI with zero divergence — but nothing in the
+  suite would notice if it were undone.
+- **A test that supplies what production derives cannot see a defect in the derivation.**
+  This pattern has now hidden three separate findings across two rounds:
+  `observe.spec.ts` supplying the correct long-run path, `p12-certificate-state-dir.spec.ts`
+  constructing the agreement between `config/deployment.json` and `.env` that diverges on
+  the real host, and the simulator implementing the teardown. It is worth treating as a
+  review question in its own right rather than as three coincidences.
+
+
 ## Unit 12 — round 1 of the loop — 2026-09-18
 
 The run is `p12-units-1-11`; its ledger, registers, round protocols and every call's
