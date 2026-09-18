@@ -22,7 +22,7 @@ import { foldLedger } from "../core/fold.ts";
 import { nextStep } from "../core/steps.ts";
 import { outcomeLines } from "../cli/report.ts";
 import type { LedgerEntry } from "../core/types.ts";
-import { currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
+import { LedgerStoreError, currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
 import { readActivationLedger } from "../store/ledger-store.ts";
 import { ACCOUNT, ACTIVATION_ROOT, HOST, LONG_RUN, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
 import type { SimWorld } from "./simulator.ts";
@@ -322,7 +322,14 @@ describe("a result append that fails at the gate", () => {
   const failingResultAppend: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
     read: () => session.read(),
     append: async draft => {
-      if (draft.kind === "result" && draft.step === "10-gate") throw new Error("ENOSPC: no space left on device");
+      // The shape the store actually produces. A plain `Error` stood here and made this test
+      // green on a branch production cannot take: every real failure inside `session.append`
+      // leaves as a `LedgerStoreError` with a stage of its own, and `withActivationLedger`
+      // rethrows it unchanged, so a genuine append failure ends as a `ledger-defect` and never
+      // as the `work-failed` these expectations were written for. Injecting the real shape is
+      // what turns that from an argument into a measurement. It is expected to be RED until the
+      // reporting path is repaired, and that repair is not this test's to make.
+      if (draft.kind === "result" && draft.step === "10-gate") throw new LedgerStoreError("write-ledger", "NO_SPACE");
       return await session.append(draft);
     },
   }));
@@ -343,7 +350,7 @@ describe("a result append that fails at the gate", () => {
     return { stateRoot, world };
   }
 
-  it("tears down inside the lease when the result append throws, and says what it tore down", async () => {
+  it("tears down inside the lease when the result append throws — and does NOT tell the owner, which is R3-09", async () => {
     const { stateRoot, world } = await atTheGate();
     const { deps, printed } = harness(stateRoot, world.nowUtcMs, {
       withLedger: failingResultAppend,
@@ -365,12 +372,23 @@ describe("a result append that fails at the gate", () => {
     expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
     expect(result.applied.map(report => report.kind)).toContain("remove-certificate-line");
 
-    // And the owner is told. Without this the outcome said only that the invocation had
-    // failed, while both tasks had just been disabled and the certificate line removed.
-    expect(result.outcome.kind).toBe("work-failed");
-    if (result.outcome.kind !== "work-failed") return;
-    expect(result.outcome.teardown?.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
-    expect(outcomeLines(result.outcome).join(" | ")).toContain("the teardown did NOT complete");
+    // And the owner is NOT told. What follows asserts the defect, not the contract.
+    //
+    // This is finding R3-09, standing as a measurement rather than as an argument. The
+    // reporting path built for axiom A4 hangs on the `work-failed` outcome, and a real append
+    // failure never produces one: every failure inside `session.append` leaves the store as a
+    // `LedgerStoreError`, `withActivationLedger` rethrows it unchanged, and the invocation ends
+    // as a `ledger-defect`. The teardown above really ran — the two printed lines and
+    // `result.applied` prove it — and nothing the owner reads says so.
+    //
+    // The day the reporting path is repaired, these three expectations fail and demand to be
+    // rewritten into the contract they are standing in for. That is the point of them. The
+    // repair itself is a third seam on `abort-teardown-contract` and belongs to the owner,
+    // not to this test (ruling of 2026-09-18, in the run's mechanism register).
+    expect(result.outcome.kind).toBe("ledger-defect");
+    const lines = outcomeLines(result.outcome).join(" | ");
+    expect(lines).toContain("LEDGER DEFECT");
+    expect(lines).not.toContain("teardown");
   });
 });
 

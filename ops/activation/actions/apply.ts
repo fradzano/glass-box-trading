@@ -78,6 +78,12 @@ export interface ActionContext {
   readonly nodePath: string;
   readonly taskUserId: string;
   readonly taskUserSid: string;
+  /**
+   * Which platform's rules decide whether two spellings of an environment key are one
+   * variable. It is a parameter rather than a read of `process.platform`, so the rule the
+   * runtime applies on Windows can be stated and tested rather than inherited.
+   */
+  readonly platform: NodeJS.Platform;
 }
 
 export interface ActionPorts {
@@ -171,7 +177,7 @@ async function compensateUnverifiedCertificateWrite(ports: ActionPorts, context:
   if (!current.ok || sha256(current.value.text) !== current.value.sha256) {
     failures.push("env:STATE_UNKNOWN");
   } else {
-    const cleaned = rewriteCertificateEnv(current.value.text, null);
+    const cleaned = rewriteCertificateEnv(current.value.text, null, context.platform);
     if (!cleaned.ok) {
       failures.push(`env:${cleaned.reason}`);
     } else {
@@ -204,7 +210,7 @@ async function replaceCertificate(action: Extract<WorldAction, { readonly kind: 
   if (!before.ok) return failed(`READ_ENV:${before.reason}`);
   if (sha256(before.value.text) !== before.value.sha256) return failed("READ_ENV:DIGEST_MISMATCH");
   const certificatePath = action.kind === "write-certificate-line" ? action.path : null;
-  const rewritten = rewriteCertificateEnv(before.value.text, certificatePath);
+  const rewritten = rewriteCertificateEnv(before.value.text, certificatePath, context.platform);
   if (!rewritten.ok) return failed(rewritten.reason);
 
   let guard: CertificateWriteGuard | null = null;
@@ -236,7 +242,7 @@ async function replaceCertificate(action: Extract<WorldAction, { readonly kind: 
     const compensation = await compensateUnverifiedCertificateWrite(ports, context);
     return failed(`REREAD_ENV:${after.reason}:${compensation}`);
   }
-  const inspection = inspectCertificateEnv(after.value.text);
+  const inspection = inspectCertificateEnv(after.value.text, context.platform);
   const valueMatches = certificatePath === null ? inspection.occurrences === 0 : inspection.occurrences === 1 && inspection.value === certificatePath;
   if (after.value.sha256 !== expectedHash || sha256(after.value.text) !== expectedHash || !valueMatches) {
     const compensation = await compensateUnverifiedCertificateWrite(ports, context);

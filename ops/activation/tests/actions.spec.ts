@@ -44,6 +44,7 @@ const CONTEXT: ActionContext = {
   anchorDay: "2026-09-22",
   nodePath: "C:\\Program Files\\nodejs\\node.exe",
   taskUserId: "DESKTOP-V6EGFDV\\felix",
+  platform: "win32",
   taskUserSid: "S-1-5-21-1000",
 };
 
@@ -127,16 +128,16 @@ function fake(options: FakeOptions = {}): { readonly ports: ActionPorts; readonl
 describe("unit 8 — certificate environment rewrite", () => {
   it("preserves unrelated CRLF bytes while replacing or removing the one certificate line", () => {
     const original = "A=1\r\nPRE_ARM_CERTIFICATE=old\r\n# keep me\r\n";
-    const written = rewriteCertificateEnv(original, CERTIFICATE);
+    const written = rewriteCertificateEnv(original, CERTIFICATE, "win32");
     expect(written).toEqual({ ok: true, text: `A=1\r\n# keep me\r\nPRE_ARM_CERTIFICATE="${CERTIFICATE}"\r\n` });
     if (!written.ok) throw new Error(written.reason);
-    expect(inspectCertificateEnv(written.text)).toEqual({ occurrences: 1, value: CERTIFICATE });
-    expect(rewriteCertificateEnv(written.text, null)).toEqual({ ok: true, text: "A=1\r\n# keep me\r\n" });
+    expect(inspectCertificateEnv(written.text, "win32")).toEqual({ occurrences: 1, value: CERTIFICATE });
+    expect(rewriteCertificateEnv(written.text, null, "win32")).toEqual({ ok: true, text: "A=1\r\n# keep me\r\n" });
   });
 
   it("refuses duplicate keys and paths that could inject another line", () => {
-    expect(rewriteCertificateEnv("PRE_ARM_CERTIFICATE=a\nPRE_ARM_CERTIFICATE=b\n", CERTIFICATE)).toEqual({ ok: false, reason: "CERTIFICATE_KEY_DUPLICATE" });
-    expect(rewriteCertificateEnv("A=1\n", "safe\nALPACA_PROFILE=dev")).toEqual({ ok: false, reason: "CERTIFICATE_PATH_INVALID" });
+    expect(rewriteCertificateEnv("PRE_ARM_CERTIFICATE=a\nPRE_ARM_CERTIFICATE=b\n", CERTIFICATE, "win32")).toEqual({ ok: false, reason: "CERTIFICATE_KEY_DUPLICATE" });
+    expect(rewriteCertificateEnv("A=1\n", "safe\nALPACA_PROFILE=dev", "win32")).toEqual({ ok: false, reason: "CERTIFICATE_PATH_INVALID" });
   });
 });
 
@@ -146,7 +147,7 @@ describe("unit 8 — certificate action", () => {
     const result = await applyAction(writeAction(), host.ports, CONTEXT);
     expect(result).toMatchObject({ ok: true, value: { kind: "write-certificate-line" } });
     expect(host.calls).toEqual([`read-env:${ENV_FILE}`, "validate-certificate", "read-deployment-digests", "read-checks", "now", `replace-env:${ENV_FILE}`, `read-env:${ENV_FILE}`, "validate-certificate", "read-deployment-digests"]);
-    expect(inspectCertificateEnv(host.env)).toEqual({ occurrences: 1, value: CERTIFICATE });
+    expect(inspectCertificateEnv(host.env, "win32")).toEqual({ occurrences: 1, value: CERTIFICATE });
   });
 
   it.each([
@@ -157,7 +158,7 @@ describe("unit 8 — certificate action", () => {
     const host = fake({ now, checks });
     expect(await applyAction(writeAction(actionOverrides), host.ports, CONTEXT)).toEqual({ ok: false, reason });
     expect(host.calls).not.toContain(`replace-env:${ENV_FILE}`);
-    expect(inspectCertificateEnv(host.env).occurrences).toBe(0);
+    expect(inspectCertificateEnv(host.env, "win32").occurrences).toBe(0);
   });
 
   it("allows equality at each upper boundary and refuses the millisecond after it", async () => {
@@ -177,10 +178,10 @@ describe("unit 8 — certificate action", () => {
   it("binds authorization to write linearisation and validates both digests before and after it", async () => {
     const late = fake({ now: SCHEDULE_DEADLINE, commitNow: SCHEDULE_DEADLINE + 1 });
     expect((await applyAction(writeAction(), late.ports, CONTEXT)).ok).toBe(false);
-    expect(inspectCertificateEnv(late.env).occurrences).toBe(0);
+    expect(inspectCertificateEnv(late.env, "win32").occurrences).toBe(0);
     const changed = fake({ postWriteCertificateDigests: { ...DIGESTS, runtimeDigest: "changed" } });
     expect((await applyAction(writeAction(), changed.ports, CONTEXT)).ok).toBe(false);
-    expect(inspectCertificateEnv(changed.env).occurrences).toBe(0);
+    expect(inspectCertificateEnv(changed.env, "win32").occurrences).toBe(0);
   });
 
   it("fails closed when the clock throws or a replace reports failure after mutation", async () => {
@@ -188,7 +189,7 @@ describe("unit 8 — certificate action", () => {
     expect(await applyAction(writeAction(), clock.ports, CONTEXT)).toEqual({ ok: false, reason: "ACTION_CLOCK_THREW" });
     const uncertain = fake({ failReplaceAfterWrite: true });
     expect((await applyAction(writeAction(), uncertain.ports, CONTEXT)).ok).toBe(false);
-    expect(inspectCertificateEnv(uncertain.env).occurrences).toBe(0);
+    expect(inspectCertificateEnv(uncertain.env, "win32").occurrences).toBe(0);
     expect(uncertain.calls).toContain("disable:cycle");
     expect(uncertain.calls).toContain("disable:watchdog");
   });
@@ -200,7 +201,7 @@ describe("unit 8 — certificate action", () => {
       const pending = applyAction(writeAction(), host.ports, CONTEXT);
       await vi.advanceTimersByTimeAsync(30_001);
       expect((await pending).ok).toBe(false);
-      expect(inspectCertificateEnv(host.env).occurrences).toBe(0);
+      expect(inspectCertificateEnv(host.env, "win32").occurrences).toBe(0);
       expect(host.calls).toContain("disable:cycle");
       expect(host.calls).toContain("disable:watchdog");
     } finally {
@@ -220,7 +221,7 @@ describe("unit 8 — certificate action", () => {
   it("removes the certificate line without reading Healthchecks", async () => {
     const host = fake({ env: `A=1\nPRE_ARM_CERTIFICATE="${CERTIFICATE}"\nPRE_ARM_CERTIFICATE=stale\n` });
     expect((await applyAction({ kind: "remove-certificate-line" }, host.ports, CONTEXT)).ok).toBe(true);
-    expect(inspectCertificateEnv(host.env).occurrences).toBe(0);
+    expect(inspectCertificateEnv(host.env, "win32").occurrences).toBe(0);
     expect(host.calls).not.toContain("read-checks");
   });
 

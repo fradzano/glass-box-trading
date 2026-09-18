@@ -33,6 +33,7 @@ const CONFIG: ObservationConfig = {
   longRunStateDir: LONG_RUN,
   taskNames: { cycle: "GlassBoxTrading-AgentCycle", watchdog: "GlassBoxTrading-Watchdog", disarm: "GlassBoxTrading-Disarm" },
   canonicalTradingOrigin: ORIGIN,
+  platform: "win32",
 };
 const ALL: ObservationPlan = { preflight: true, analystProbe: true, devAccount: true };
 const NODE = "C:\\Program Files\\nodejs\\node.exe";

@@ -126,6 +126,7 @@ async function main(): Promise<number> {
       longRunStateDir: LONG_RUN_STATE_DIR,
       taskNames: { cycle: "GlassBoxTrading-AgentCycle", watchdog: "GlassBoxTrading-Watchdog", disarm: "GlassBoxTrading-Disarm" },
       canonicalTradingOrigin: CANONICAL_TRADING_ORIGIN,
+      platform: process.platform,
     }, plan);
   };
 

@@ -19,6 +19,7 @@ const CONTEXT: ActionContext = {
   anchorDay: "2026-09-22",
   nodePath: "C:\\Program Files\\nodejs\\node.exe",
   taskUserId: "felix",
+  platform: "win32",
   taskUserSid: "S-1-5-21-1",
 };
 

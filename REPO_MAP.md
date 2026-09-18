@@ -104,7 +104,9 @@
 - `ops/activation/probes/mutants-unit12-r2-oracle.json`
 - `ops/activation/probes/mutants-unit12-r2-teardown-shell.json`
 - `ops/activation/probes/mutants-unit12-r2-teardown.json`
+- `ops/activation/probes/mutants-unit12-r3-certificate-key.json`
 - `ops/activation/probes/mutants-unit12-r3-child-stderr.json`
+- `ops/activation/probes/mutants-unit12-r3-env-key-identity.json`
 - `ops/activation/probes/mutants-unit12-r3-observe.json`
 - `ops/activation/probes/mutants-unit12-r3-owner-abort-record.json`
 - `ops/activation/probes/mutants-unit12-r3-source-comparison.json`

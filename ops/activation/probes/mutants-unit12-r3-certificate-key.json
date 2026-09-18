@@ -1,0 +1,14 @@
+[
+  {
+    "id": "R3-M24",
+    "from": "  return platform === \"win32\" ? key.toUpperCase() === CERTIFICATE_KEY : key === CERTIFICATE_KEY;",
+    "to": "  return key === CERTIFICATE_KEY;",
+    "note": "the cleanup goes back to matching the key by exact equality, so step 0 walks past a miscased certificate line and leaves it in `.env` while reporting the line removed. This is the acting half of the finding, expressed as one line."
+  },
+  {
+    "id": "R3-M25-control",
+    "from": "function isCertificateKey(key: string | null, platform: NodeJS.Platform): boolean {",
+    "to": "function isCertificateKey(key: string | null, platform: NodeJS.Platform): boolean { /* control */",
+    "note": "control — a comment in the body's first line, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

@@ -172,6 +172,7 @@ function contextFor(deps: InvocationDeps, schedule: Schedule, observations: Obse
     nodePath: boundary.value.nodePath,
     taskUserId: boundary.value.taskUserId,
     taskUserSid: boundary.value.taskUserSid,
+    platform: process.platform,
   };
 }
 
@@ -182,7 +183,7 @@ function contextFor(deps: InvocationDeps, schedule: Schedule, observations: Obse
  * certificate write without them, which is the safe direction.
  */
 function teardownContext(deps: InvocationDeps, anchorDay: string): ActionContext {
-  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay, nodePath: "", taskUserId: "", taskUserSid: "" };
+  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay, nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform };
 }
 
 /**
@@ -193,7 +194,7 @@ function teardownContext(deps: InvocationDeps, anchorDay: string): ActionContext
  * without it, which is the safe direction.
  */
 function ownerContext(deps: InvocationDeps): ActionContext {
-  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay: "", nodePath: "", taskUserId: "", taskUserSid: "" };
+  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay: "", nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform };
 }
 
 async function append(session: ActivationLedgerSession, draft: LedgerDraft): Promise<void> {

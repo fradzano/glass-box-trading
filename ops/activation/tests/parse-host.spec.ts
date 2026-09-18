@@ -37,7 +37,7 @@ describe("parse-host — the environment outside .env", () => {
     const shadow = parseEnvironmentShadow("{\"user\":{\"PRE_ARM_CERTIFICATE\":\"C:\\\\old.json\"},\"machine\":{\"ALPACA_PROFILE\":\"dev\"}}");
     expect(shadow.known).toBe(true);
     if (!shadow.known) return;
-    expect(parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: shadow.value.user, machineEnvironment: shadow.value.machine })).toMatchObject({ certificatePath: "C:\\old.json", profile: "dev", shadowedKeys: ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE"] });
+    expect(parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: shadow.value.user, machineEnvironment: shadow.value.machine, platform: "win32" })).toMatchObject({ certificatePath: "C:\\old.json", profile: "dev", shadowedKeys: ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE"] });
   });
 
   it("refuses a key it did not ask for without repeating its value, a missing scope and a value that is not text", () => {

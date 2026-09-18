@@ -1,0 +1,20 @@
+[
+  {
+    "id": "R3-M21",
+    "from": "function canonicalEnvKey(key: string, platform: NodeJS.Platform): string {\n  return platform === \"win32\" ? key.toUpperCase() : key;\n}",
+    "to": "function canonicalEnvKey(key: string, platform: NodeJS.Platform): string {\n  return platform === \"win32\" ? key : key;\n}",
+    "note": "the reader goes back to comparing keys by exact equality — the state in which a line the runtime obeys was invisible to the activation and the latch of spec section 6 was unobserved. This is the finding itself, expressed as one line."
+  },
+  {
+    "id": "R3-M22",
+    "from": "  const allDuplicates = [...new Set([...duplicateKeys.map(key => canonicalEnvKey(key, platform)), ...collisions])].sort();",
+    "to": "  const allDuplicates = [...duplicateKeys].sort();",
+    "note": "two spellings of one key stop being reported as a duplicate, so the core never reds them and a reader silently keeps whichever the insertion order gave it."
+  },
+  {
+    "id": "R3-M23-control",
+    "from": "function canonicalised(record: Readonly<Record<string, string>>, platform: NodeJS.Platform): Readonly<Record<string, string>> {",
+    "to": "function canonicalised(record: Readonly<Record<string, string>>, platform: NodeJS.Platform): Readonly<Record<string, string>> { /* control */",
+    "note": "control — a comment in the body's first line, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

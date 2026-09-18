@@ -86,6 +86,12 @@ export interface ObservationConfig {
   readonly longRunStateDir: string;
   readonly taskNames: TaskNames;
   readonly canonicalTradingOrigin: string;
+  /**
+   * Which platform's rules decide whether two spellings of an environment key are one
+   * variable — Windows folds them, and the runtime's own environment merge folds with it.
+   * A parameter rather than an ambient read, so the parsers stay pure.
+   */
+  readonly platform: NodeJS.Platform;
 }
 
 export interface ObservationPlan {
@@ -140,7 +146,7 @@ async function readEnv(ports: ObservationPorts, config: ObservationConfig): Prom
   const output = commandOutput(await ports.runHostScript("environment"), "environment reader");
   const shadow = output.known ? parseEnvironmentShadow(output.value) : output;
   if (!shadow.known) return unknown(`environment: ${shadow.reason}`);
-  return known(parseEnv({ dotEnvText: dotEnv.text, sha256: dotEnv.sha256, userEnvironment: shadow.value.user, machineEnvironment: shadow.value.machine }));
+  return known(parseEnv({ dotEnvText: dotEnv.text, sha256: dotEnv.sha256, userEnvironment: shadow.value.user, machineEnvironment: shadow.value.machine, platform: config.platform }));
 }
 
 async function readCertificate(ports: ObservationPorts, config: ObservationConfig, digests: Reading<DigestPair>): Promise<Reading<CertificateObservation | null>> {

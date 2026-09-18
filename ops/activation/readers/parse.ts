@@ -334,6 +334,27 @@ function shadowableKeys(): readonly string[] {
   return ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE", "STATE_DIR"];
 }
 
+/**
+ * One key, in the spelling the runtime files it under.
+ *
+ * `mergeEnvironment` in `src/shell/runtime-config.ts` upper-cases every key on Windows,
+ * "because the platform itself treats the spellings as one name" — and this reader did not,
+ * so a line spelled `Pre_Arm_Certificate=…` was **invisible here and live to the runtime**.
+ * The latch of spec §6 rests on this comparison: step 0 clears the certificate line and
+ * steps 0 and 4 assert it absent, all three by key. A reader that cannot see a key the
+ * runtime obeys does not observe the latch, it only appears to.
+ */
+function canonicalEnvKey(key: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? key.toUpperCase() : key;
+}
+
+/** A record re-filed under canonical keys, later entries winning, exactly as `mergeEnvironment` builds it. */
+function canonicalised(record: Readonly<Record<string, string>>, platform: NodeJS.Platform): Readonly<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) result[canonicalEnvKey(key, platform)] = value;
+  return result;
+}
+
 /** The environment reading is exactly the core's observation; `shadowedKeys` became part of it with the owner ruling of 2026-09-14. */
 export type EnvReading = EnvObservation;
 
@@ -342,11 +363,27 @@ export type EnvReading = EnvObservation;
  * value is the one the runtime would see: user over machine over `.env`. An empty
  * value is a present value — `PRE_ARM_CERTIFICATE=` is not an absent line.
  */
-export function parseEnv(input: { readonly dotEnvText: string; readonly sha256: string; readonly userEnvironment: Readonly<Record<string, string>>; readonly machineEnvironment: Readonly<Record<string, string>> }): EnvReading {
+export function parseEnv(input: { readonly dotEnvText: string; readonly sha256: string; readonly userEnvironment: Readonly<Record<string, string>>; readonly machineEnvironment: Readonly<Record<string, string>>; readonly platform: NodeJS.Platform }): EnvReading {
   const { values, duplicateKeys } = parseDotEnvAsRuntime(input.dotEnvText);
-  const effective = (key: string): string | null => input.userEnvironment[key] ?? input.machineEnvironment[key] ?? values[key] ?? null;
-  const shadowedKeys = shadowableKeys().filter(key => Object.hasOwn(input.userEnvironment, key) || Object.hasOwn(input.machineEnvironment, key));
-  return { certificatePath: effective("PRE_ARM_CERTIFICATE"), profile: effective("ALPACA_PROFILE"), stateDir: effective("STATE_DIR"), hash: input.sha256, duplicateKeys, shadowedKeys };
+  const platform = input.platform;
+  const file = canonicalised(values, platform);
+  const user = canonicalised(input.userEnvironment, platform);
+  const machine = canonicalised(input.machineEnvironment, platform);
+  const effective = (key: string): string | null => user[key] ?? machine[key] ?? file[key] ?? null;
+  const shadowedKeys = shadowableKeys().filter(key => Object.hasOwn(user, key) || Object.hasOwn(machine, key));
+  // Two lines whose keys differ only in case are one variable to Windows, so which of them a
+  // reader ends up with depends on insertion order rather than on the file — the runtime's
+  // own `ambiguousDotEnvKeys` says so in those words. They are reported as duplicates here,
+  // where `decide` already reds a duplicate, rather than being silently collapsed.
+  const collisions = new Set<string>();
+  const seen = new Set<string>();
+  for (const key of Object.keys(values)) {
+    const canonical = canonicalEnvKey(key, platform);
+    if (seen.has(canonical)) collisions.add(canonical);
+    seen.add(canonical);
+  }
+  const allDuplicates = [...new Set([...duplicateKeys.map(key => canonicalEnvKey(key, platform)), ...collisions])].sort();
+  return { certificatePath: effective("PRE_ARM_CERTIFICATE"), profile: effective("ALPACA_PROFILE"), stateDir: effective("STATE_DIR"), hash: input.sha256, duplicateKeys: allDuplicates, shadowedKeys };
 }
 
 // ---------------------------------------------------------------------------

@@ -6,9 +6,10 @@
 // what the runtime reads, not what this module believes it reads.
 import { describe, expect, it } from "vitest";
 import { buildCertificate, validateArmingCertificate } from "../../../src/core/certificate.ts";
-import { parseDotEnv } from "../../../src/shell/runtime-config.ts";
+import { mergeEnvironment, parseDotEnv } from "../../../src/shell/runtime-config.ts";
 import { inputs, ORIGIN } from "../../../tests/arm01-fixtures.ts";
 import { definitionFindings } from "../core/decide.ts";
+import { inspectCertificateEnv, rewriteCertificateEnv } from "../actions/env.ts";
 import { berlinLocal, childRefusal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "../readers/parse.ts";
 
 const NAMES = { cycle: "GlassBoxTrading-AgentCycle", watchdog: "GlassBoxTrading-Watchdog", disarm: "GlassBoxTrading-Disarm" };
@@ -258,32 +259,32 @@ describe("parse — .env as the runtime reads it", () => {
   });
 
   it("does not read an exported line as the certificate, but does read one behind a byte-order mark — exactly as the runtime does", () => {
-    expect(parseEnv({ dotEnvText: corpus[2] ?? "", sha256: "h", userEnvironment: {}, machineEnvironment: {} }).certificatePath).toBeNull();
+    expect(parseEnv({ dotEnvText: corpus[2] ?? "", sha256: "h", userEnvironment: {}, machineEnvironment: {}, platform: "win32" }).certificatePath).toBeNull();
     // String.prototype.trim removes U+FEFF, so the runtime sees this key; an earlier draft claimed the opposite and this test refuted it.
-    expect(parseEnv({ dotEnvText: corpus[4] ?? "", sha256: "h", userEnvironment: {}, machineEnvironment: {} }).certificatePath).toBe("hidden-by-bom");
+    expect(parseEnv({ dotEnvText: corpus[4] ?? "", sha256: "h", userEnvironment: {}, machineEnvironment: {}, platform: "win32" }).certificatePath).toBe("hidden-by-bom");
   });
 
   it("treats an empty value as present", () => {
-    expect(parseEnv({ dotEnvText: "PRE_ARM_CERTIFICATE=\n", sha256: "h", userEnvironment: {}, machineEnvironment: {} }).certificatePath).toBe("");
+    expect(parseEnv({ dotEnvText: "PRE_ARM_CERTIFICATE=\n", sha256: "h", userEnvironment: {}, machineEnvironment: {}, platform: "win32" }).certificatePath).toBe("");
   });
 
   it("sees a certificate path or profile set outside .env, which the runtime would prefer, and names it", () => {
-    const reading = parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: { PRE_ARM_CERTIFICATE: "C:\\old.json" }, machineEnvironment: { ALPACA_PROFILE: "dev" } });
+    const reading = parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: { PRE_ARM_CERTIFICATE: "C:\\old.json" }, machineEnvironment: { ALPACA_PROFILE: "dev" }, platform: "win32" });
     expect(reading).toEqual({ certificatePath: "C:\\old.json", profile: "dev", stateDir: null, hash: "h", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE"] });
-    expect(parseEnv({ dotEnvText: "", sha256: "h", userEnvironment: { ALPACA_PROFILE: "competition" }, machineEnvironment: { ALPACA_PROFILE: "dev" } }).profile).toBe("competition");
+    expect(parseEnv({ dotEnvText: "", sha256: "h", userEnvironment: { ALPACA_PROFILE: "competition" }, machineEnvironment: { ALPACA_PROFILE: "dev" }, platform: "win32" }).profile).toBe("competition");
   });
 
   // The second statement of a fact the deployment also declares. It is read with the same
   // precedence as the other two, because the core compares it against the declaration and a
   // comparison against a value the runtime would not use proves nothing (G-7 / R2-18).
   it("reads STATE_DIR as the runtime would see it, from .env or from whatever shadows it", () => {
-    const fromFile = parseEnv({ dotEnvText: "STATE_DIR=C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22\n", sha256: "h", userEnvironment: {}, machineEnvironment: {} });
+    const fromFile = parseEnv({ dotEnvText: "STATE_DIR=C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22\n", sha256: "h", userEnvironment: {}, machineEnvironment: {}, platform: "win32" });
     expect(fromFile.stateDir).toBe("C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22");
     expect(fromFile.shadowedKeys).toEqual([]);
-    const shadowed = parseEnv({ dotEnvText: "STATE_DIR=C:\\declared\n", sha256: "h", userEnvironment: { STATE_DIR: "C:\\elsewhere" }, machineEnvironment: {} });
+    const shadowed = parseEnv({ dotEnvText: "STATE_DIR=C:\\declared\n", sha256: "h", userEnvironment: { STATE_DIR: "C:\\elsewhere" }, machineEnvironment: {}, platform: "win32" });
     expect(shadowed.stateDir).toBe("C:\\elsewhere");
     expect(shadowed.shadowedKeys).toEqual(["STATE_DIR"]);
-    expect(parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: {}, machineEnvironment: {} }).stateDir).toBeNull();
+    expect(parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: {}, machineEnvironment: {}, platform: "win32" }).stateDir).toBeNull();
   });
 });
 
@@ -336,6 +337,65 @@ describe("parse — certificate and preflight", () => {
     expect(parsePreflightOutput(report({ profile: "competition" })).known).toBe(false);
     expect(parsePreflightOutput(report({ mcpTools: 0 })).known).toBe(false);
     expect(parsePreflightOutput("refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set\n")).toEqual({ known: false, reason: "preflight printed no report" });
+  });
+});
+
+// R3-18. The latch of spec §6 rests on a key comparison, and this reader made it by exact
+// equality while the runtime folds case on Windows — so a line the runtime obeys was invisible
+// here. These tests are the parity the file's own header claims and did not have: they compare
+// against `mergeEnvironment`, which is what the runtime actually calls, not only against
+// `parseDotEnv`, which is the file-only half.
+describe("parse — .env keys, as the runtime files them", () => {
+  const shadow = { userEnvironment: {}, machineEnvironment: {} };
+
+  it("sees a certificate line the runtime would obey, whatever case it is spelled in", () => {
+    const miscased = "ALPACA_PROFILE=competition\nPre_Arm_Certificate=C:\\stale\\cert.json\n";
+    const reading = parseEnv({ dotEnvText: miscased, sha256: "h", ...shadow, platform: "win32" });
+    expect(reading.certificatePath).toBe("C:\\stale\\cert.json");
+    // …and the runtime agrees, which is the whole point of the comparison.
+    expect(mergeEnvironment(parseDotEnv(miscased), {}, "win32")["PRE_ARM_CERTIFICATE"]).toBe("C:\\stale\\cert.json");
+  });
+
+  it("holds the effective value against the runtime's own merge for every source and spelling", () => {
+    const text = "Pre_Arm_Certificate=C:\\from-file.json\nstate_dir=C:\\from-file\n";
+    const processEnv = { State_Dir: "C:\\from-process" };
+    const reading = parseEnv({ dotEnvText: text, sha256: "h", userEnvironment: processEnv, machineEnvironment: {}, platform: "win32" });
+    const runtime = mergeEnvironment(parseDotEnv(text), processEnv, "win32");
+    expect(reading.certificatePath).toBe(runtime["PRE_ARM_CERTIFICATE"] ?? null);
+    expect(reading.stateDir).toBe(runtime["STATE_DIR"] ?? null);
+    expect(reading.stateDir).toBe("C:\\from-process");
+    expect(reading.shadowedKeys).toEqual(["STATE_DIR"]);
+  });
+
+  it("reports two spellings of one key as a duplicate rather than silently keeping one", () => {
+    // The runtime's own `ambiguousDotEnvKeys` says which of them a reader ends up with
+    // depends on insertion order rather than on the file; `decide` reds a duplicate.
+    const reading = parseEnv({ dotEnvText: "STATE_DIR=a\nState_Dir=b\n", sha256: "h", ...shadow, platform: "win32" });
+    expect(reading.duplicateKeys).toEqual(["STATE_DIR"]);
+  });
+
+  it("leaves the spellings apart where the platform does", () => {
+    const reading = parseEnv({ dotEnvText: "Pre_Arm_Certificate=C:\\x.json\n", sha256: "h", ...shadow, platform: "linux" });
+    expect(reading.certificatePath).toBeNull();
+    expect(mergeEnvironment(parseDotEnv("Pre_Arm_Certificate=C:\\x.json\n"), {}, "linux")["PRE_ARM_CERTIFICATE"]).toBeUndefined();
+  });
+});
+
+// The same rule on the acting side: a cleanup that cannot see the key does not clear the latch.
+describe("actions — the certificate line, by the key the runtime obeys", () => {
+  it("removes and counts a miscased certificate line on Windows", () => {
+    const text = "A=1\r\nPre_Arm_Certificate=\"C:\\stale.json\"\r\n";
+    expect(inspectCertificateEnv(text, "win32")).toEqual({ occurrences: 1, value: "C:\\stale.json" });
+    expect(rewriteCertificateEnv(text, null, "win32")).toEqual({ ok: true, text: "A=1\r\n" });
+    // Two spellings of the key are two occurrences, so the rewrite refuses rather than
+    // guessing which one the runtime would have read.
+    expect(rewriteCertificateEnv("PRE_ARM_CERTIFICATE=a\nPre_Arm_Certificate=b\n", "C:\\new.json", "win32")).toEqual({ ok: false, reason: "CERTIFICATE_KEY_DUPLICATE" });
+  });
+
+  it("leaves the spellings apart where the platform does", () => {
+    const text = "Pre_Arm_Certificate=\"C:\\stale.json\"\n";
+    expect(inspectCertificateEnv(text, "linux").occurrences).toBe(0);
+    expect(rewriteCertificateEnv(text, null, "linux")).toEqual({ ok: true, text });
   });
 });
 
