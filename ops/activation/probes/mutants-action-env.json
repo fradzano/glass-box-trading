@@ -1,6 +1,26 @@
 [
-  { "id": "E1", "note": "duplicate certificate keys are rewritten instead of refused", "from": "if (certificatePath !== null && occurrences > 1) return { ok: false, reason: \"CERTIFICATE_KEY_DUPLICATE\" };", "to": "if (false) return { ok: false, reason: \"CERTIFICATE_KEY_DUPLICATE\" };" },
-  { "id": "E2", "note": "a certificate path can inject another environment line", "from": "|| /[\\r\\n\"']/u.test(certificatePath)", "to": "|| false" },
-  { "id": "E3", "note": "removing the certificate line removes no matching line", "from": "const without = lines.filter(line => keyOf(line) !== CERTIFICATE_KEY).join(\"\");", "to": "const without = lines.join(\"\");" },
-  { "id": "E4", "note": "the written certificate line loses its quoting contract", "from": "${CERTIFICATE_KEY}=\"${certificatePath}\"${newline}", "to": "${CERTIFICATE_KEY}=${certificatePath}${newline}" }
+  {
+    "id": "E1",
+    "note": "duplicate certificate keys are rewritten instead of refused",
+    "from": "if (certificatePath !== null && occurrences > 1) return { ok: false, reason: \"CERTIFICATE_KEY_DUPLICATE\" };",
+    "to": "if (false) return { ok: false, reason: \"CERTIFICATE_KEY_DUPLICATE\" };"
+  },
+  {
+    "id": "E2",
+    "note": "a certificate path can inject another environment line",
+    "from": "|| /[\\r\\n\"']/u.test(certificatePath)",
+    "to": "|| false"
+  },
+  {
+    "id": "E3",
+    "note": "the rewrite stops removing the certificate line, so a cleanup reports success over a file it did not change. Re-anchored after the key-identity repair (R3-C20).",
+    "from": "  const without = lines.filter(line => !isCertificateKey(keyOf(line), platform)).join(\"\");",
+    "to": "  const without = lines.join(\"\");"
+  },
+  {
+    "id": "E4",
+    "note": "the written certificate line loses its quoting contract",
+    "from": "${CERTIFICATE_KEY}=\"${certificatePath}\"${newline}",
+    "to": "${CERTIFICATE_KEY}=${certificatePath}${newline}"
+  }
 ]

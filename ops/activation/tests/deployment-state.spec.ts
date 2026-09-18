@@ -69,4 +69,22 @@ describe("the activation reads its state directories instead of deriving them", 
     // No `path.dirname` climb may reappear anywhere near these directories.
     expect(source).not.toMatch(/path\.dirname\(path\.dirname\(/u);
   });
+
+  // R3-23, by the same method and for the same reason. The rule that decides whether two
+  // spellings of an environment key are one variable takes the platform as a parameter, and
+  // the four sites that supply it are reached by no test: `cli.ts` is imported by no spec and
+  // the three context builders are module-private. A one-word edit at any of them — `"linux"`
+  // is a valid `NodeJS.Platform`, so even the typecheck stays green — re-enters a class-A
+  // finding through the wiring instead of through the rule, with the §6 latch as the stake.
+  // This pins the text. It does not pin the behaviour, and a change whose text still matches
+  // these shapes passes; the counter-verification that raised R3-23 measured all four by
+  // mutation and is where that limit is written down.
+  it("takes the platform from the host at every site that decides environment-key identity", () => {
+    const cli = readFileSync(path.join(REPO_ROOT, "ops", "activation", "cli.ts"), "utf8");
+    expect(cli).toMatch(/platform:\s*process\.platform,/u);
+    const invoke = readFileSync(path.join(REPO_ROOT, "ops", "activation", "cli", "invoke.ts"), "utf8");
+    expect(invoke.match(/platform:\s*process\.platform/gu) ?? []).toHaveLength(3);
+    // And nowhere in the activation may a platform be asserted as a literal instead of read.
+    for (const source of [cli, invoke]) expect(source).not.toMatch(/platform:\s*"(?:win32|linux|darwin)"/u);
+  });
 });
