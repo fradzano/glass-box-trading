@@ -41,3 +41,26 @@ export function parseDeploymentStateDirs(raw: unknown): DeploymentStateDirs {
 export function readDeploymentStateDirs(repoRoot: string): DeploymentStateDirs {
   return parseDeploymentStateDirs(JSON.parse(readFileSync(path.join(repoRoot, "config", "deployment.json"), "utf8")) as unknown);
 }
+
+export type DeploymentStateRead =
+  | { readonly ok: true; readonly dirs: DeploymentStateDirs }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * The same read, as a value instead of a throw.
+ *
+ * `readDeploymentStateDirs` keeps throwing, because `parseDeploymentStateDirs` is tested
+ * through it and a thrown message is the clearest thing to assert. But the CLI cannot use
+ * a throw: it ran at module scope, above `main`'s reach, so a missing or malformed file
+ * ended the process with a raw stack trace and **exit 1** — the code this CLI reserves for
+ * "the attempt is over, teardown ran, the ledger says why", none of which had happened.
+ * The caller needs to decide per command whether the fact is even required, and it cannot
+ * decide anything about an exception that has already left the building.
+ */
+export function readDeploymentState(repoRoot: string): DeploymentStateRead {
+  try {
+    return { ok: true, dirs: readDeploymentStateDirs(repoRoot) };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message.replace(/^config\/deployment\.json: /u, "") : "could not be read" };
+  }
+}

@@ -51,7 +51,26 @@ export interface InvocationDeps {
   readonly stampAt: StampAt;
   readonly toLocal: ToLocal;
   readonly owner: LedgerLockOwner;
-  readonly facts: DeploymentFacts;
+  /**
+   * The two paths every command knows without reading anything: the checkout the
+   * compiled entry point lives in, and the `--state-root` it was given. They used to be
+   * reached through `facts`, which meant a command that needs no measured fact still
+   * could not run without the file that carries them.
+   */
+  readonly repoRoot: string;
+  readonly activationRoot: string;
+  /**
+   * What had to be **measured off this host** — the masked long-run account, the coverage
+   * date, the disk floor, the expected preconditions. `null` when
+   * `ops/activation/deployment.json` is absent or unreadable.
+   *
+   * It is nullable because three commands consume none of it and must not be held
+   * hostage by it: `status` reads the ledger, `abort` is the owner's typed stop, and
+   * `disarm` is the 15:05 one-shot whose entire purpose is to make the deployment safe.
+   * A missing host file used to refuse all five commands alike, so the two that exist to
+   * end a run could be stopped by the file that describes it.
+   */
+  readonly facts: DeploymentFacts | null;
   /** The `.env` the certificate line lives in. */
   readonly envFile: string;
   /** Unit 7's observation path, already bound to this host and the activation root. */
@@ -160,8 +179,8 @@ function contextFor(deps: InvocationDeps, schedule: Schedule, observations: Obse
  * only matter to the certificate write are empty on purpose: `applyAction` refuses a
  * certificate write without them, which is the safe direction.
  */
-function teardownContext(deps: InvocationDeps, schedule: Schedule): ActionContext {
-  return { envFile: deps.envFile, repoRoot: schedule.repoRoot, activationRoot: schedule.activationRoot, anchorDay: schedule.anchorDay, nodePath: "", taskUserId: "", taskUserSid: "" };
+function teardownContext(deps: InvocationDeps, anchorDay: string): ActionContext {
+  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay, nodePath: "", taskUserId: "", taskUserSid: "" };
 }
 
 /**
@@ -172,7 +191,7 @@ function teardownContext(deps: InvocationDeps, schedule: Schedule): ActionContex
  * without it, which is the safe direction.
  */
 function ownerContext(deps: InvocationDeps): ActionContext {
-  return { envFile: deps.envFile, repoRoot: deps.facts.repoRoot, activationRoot: deps.facts.activationRoot, anchorDay: "", nodePath: "", taskUserId: "", taskUserSid: "" };
+  return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay: "", nodePath: "", taskUserId: "", taskUserSid: "" };
 }
 
 async function append(session: ActivationLedgerSession, draft: LedgerDraft): Promise<void> {
@@ -186,7 +205,10 @@ async function status(invocation: ActivationInvocation, deps: InvocationDeps): P
   const snapshot = await read(invocation.stateRoot);
   const fold = foldLedgerSnapshot(snapshot);
   const anchorDay = fold.currentAttempt?.anchorDay ?? null;
-  const built = anchorDay === null ? null : buildSchedule(anchorDay, deps.facts, deps.toLocal);
+  // The schedule is only a projection for the reader. Without the measured facts there
+  // is nothing to project and the ledger still reports in full.
+  const facts = deps.facts;
+  const built = anchorDay === null || facts === null ? null : buildSchedule(anchorDay, facts, deps.toLocal);
   return { outcome: { kind: "reported" }, applied: [], fold, schedule: built !== null && built.ok ? built.schedule : null };
 }
 
@@ -234,7 +256,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
         // true, so `abortTeardown` would owe **nothing** — and a new anchor day would
         // start on top of the old day's enabled tasks and certificate line. A new day
         // begins clean or it does not begin.
-        applied = await applyTeardown(fullTeardown(), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);
+        applied = await applyTeardown(fullTeardown(), deps.actions, teardownContext(deps, schedule.anchorDay), invocation.dryRun, deps.print);
         const attempt = nextAttemptId(snapshot.entries, anchorDay);
         if (!invocation.dryRun) {
           await append(session, openingDraft(found, attempt, anchorDay, stamp, { teardown: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }));
@@ -261,7 +283,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
           return { kind: "recorded", step: decision.step, outcome: decision.outcome };
         }
         case "abort": {
-          applied = await applyTeardown(decision.teardown, deps.actions, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule), invocation.dryRun, deps.print);
+          applied = await applyTeardown(decision.teardown, deps.actions, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule.anchorDay), invocation.dryRun, deps.print);
           if (!invocation.dryRun) await append(session, abortDraft(decision, attempt, anchorDay, stamp));
           return { kind: "aborted", step: decision.step, reason: decision.reason, teardown: applied, nextOwnerAction: decision.nextOwnerAction };
         }
@@ -369,9 +391,9 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
  * unless the ledger shows a green gate for this anchor day, and disable them when the
  * ledger cannot be read at all.
  */
-async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule): Promise<InvocationResult> {
+async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, anchorDay: string): Promise<InvocationResult> {
   const withLedger = deps.withLedger ?? withActivationLedger;
-  const context = teardownContext(deps, schedule);
+  const context = teardownContext(deps, anchorDay);
   let fold: LedgerFold | null = null;
 
   try {
@@ -379,7 +401,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, sc
       {
         root: invocation.stateRoot,
         owner: deps.owner,
-        makeSystemDraft: systemDraftFactory({ nowUtcMs: deps.now(), stampAt: deps.stampAt, attempt: nextAttemptId([], schedule.anchorDay), anchorDay: schedule.anchorDay }),
+        makeSystemDraft: systemDraftFactory({ nowUtcMs: deps.now(), stampAt: deps.stampAt, attempt: nextAttemptId([], anchorDay), anchorDay: anchorDay }),
         // The one-shot fires at 15:05 and owes its answer in seconds, not in the store's
         // default five. Whatever it cannot resolve in that time it resolves by disabling,
         // which is the direction this command exists for.
@@ -393,13 +415,13 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, sc
         // uses it rather than inventing a stricter second one: a gate recorded as
         // `already_in_target_state` met the same conjunction as one recorded `ok`.
         const green = attempt !== null
-          && attempt.anchorDay === schedule.anchorDay
+          && attempt.anchorDay === anchorDay
           && fold.attemptEnded === null
           && stepDone(fold, "10-gate");
         const tail = { lastSeq: snapshot.entries.at(-1)?.seq ?? 0, lastAtUtcMs: snapshot.entries.at(-1)?.atUtcMs ?? null };
         const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
-        const id = attempt?.id ?? nextAttemptId(snapshot.entries, schedule.anchorDay);
-        const day = attempt?.anchorDay ?? schedule.anchorDay;
+        const id = attempt?.id ?? nextAttemptId(snapshot.entries, anchorDay);
+        const day = attempt?.anchorDay ?? anchorDay;
 
         if (green) {
           if (!invocation.dryRun) {
@@ -418,9 +440,9 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, sc
       // A live invocation may be mid-gate. The one-shot still owes the world its
       // disable: the gate either wrote its result before 15:05 or it did not.
       const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
-      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: "The disarm ran while another invocation held the lease; both tasks were disabled. Read the ledger." }, applied: reports, fold, schedule };
+      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: "The disarm ran while another invocation held the lease; both tasks were disabled. Read the ledger." }, applied: reports, fold, schedule: null };
     }
-    return { outcome: result.value, applied: [], fold, schedule };
+    return { outcome: result.value, applied: [], fold, schedule: null };
   } catch (error) {
     // Fail safe, not closed: a ledger that cannot be read is exactly the case the
     // disarm exists for (spec §6; residual G1, an unparseable `ledger.lock`).
@@ -431,7 +453,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, sc
       outcome: { kind: "aborted", step: null, reason: `DISARMED_LEDGER_UNREADABLE (${detail})`, teardown: reports, nextOwnerAction: "The disarm could not read the ledger and disabled both tasks. Read the activation state root by hand before anything else." },
       applied: reports,
       fold,
-      schedule,
+      schedule: null,
     };
   }
 }
@@ -503,14 +525,30 @@ export async function invoke(invocation: ActivationInvocation, deps: InvocationD
   // `run`, `open` and `disarm` all carry an anchor day; the parser refuses them without one.
   const anchorDay = invocation.anchorDay;
   if (anchorDay === null) return refuse(`${invocation.command} needs an anchor day`);
-  const built = buildSchedule(anchorDay, deps.facts, deps.toLocal);
+
+  // The disarm is dispatched before the schedule is built, because it needs no measured
+  // fact — only the day on its own command line and the two paths every command knows.
+  // It used to share the schedule build with `run` and `open`, which meant the one
+  // command whose whole purpose is to make the deployment safe could be stopped by a
+  // missing or malformed host file. The 15:05 one-shot must not have a prerequisite it
+  // does not consume.
+  if (invocation.command === "disarm") {
+    try {
+      return await disarm(invocation, deps, anchorDay);
+    } catch (error) {
+      return { outcome: storeFailure(error), applied: [], fold: null, schedule: null };
+    }
+  }
+
+  const facts = deps.facts;
+  if (facts === null) return refuse("ops/activation/deployment.json could not be read, and this command needs the facts it carries");
+  const built = buildSchedule(anchorDay, facts, deps.toLocal);
   if (!built.ok) return refuse(built.reason);
   const schedule = built.schedule;
 
   try {
     if (invocation.command === "run") return await run(invocation, deps, schedule);
-    if (invocation.command === "open") return await open(invocation, deps, schedule);
-    return await disarm(invocation, deps, schedule);
+    return await open(invocation, deps, schedule);
   } catch (error) {
     return { outcome: storeFailure(error), applied: [], fold: null, schedule };
   }

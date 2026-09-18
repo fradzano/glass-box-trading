@@ -65,6 +65,8 @@ function harness(stateRoot: string, nowUtcMs: number, overrides: Partial<Invocat
     stampAt: stampFactory(localOf),
     toLocal: localOf,
     owner: currentLedgerLockOwner(),
+    repoRoot: "C:\\Users\\felix\\source\\repos\\glass-box-trading",
+    activationRoot: stateRoot,
     facts: factsFor(stateRoot),
     envFile: path.join(stateRoot, ".env"),
     observe: async () => Promise.resolve(observe(world)),
@@ -253,6 +255,54 @@ describe("run, with an attempt open", () => {
     const written = await entries(stateRoot);
     expect(written).toHaveLength(before + 1);
     expect(written.at(-1)?.evidence["kind"]).toBe("live-lock");
+  });
+});
+
+describe("a safety command carries no prerequisite it does not consume", () => {
+  // G-3. Both deployment files used to be read in a common prologue, one of them at
+  // module scope above `main`'s reach, so a file that `status`, `abort` and `disarm`
+  // consume nothing of could refuse all five commands alike — and a broken
+  // `config/deployment.json` killed even `status` with a raw stack trace and exit 1, the
+  // code this CLI reserves for "the attempt is over, teardown ran, the ledger says why".
+  // `facts: null` here is exactly what the CLI passes when the host file is missing.
+  it("status reports the ledger although the measured facts are missing, and projects no schedule", async () => {
+    const stateRoot = await root();
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    const result = await invoke(command(["status", "--state-root", stateRoot]), { ...deps, facts: null });
+
+    expect(result.outcome).toEqual({ kind: "reported" });
+    expect(result.fold).not.toBeNull();
+    expect(result.schedule).toBeNull();
+  });
+
+  it("the owner's abort still tears down and ends the attempt without the measured facts", async () => {
+    const stateRoot = await root();
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), deps);
+
+    const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), { ...deps, facts: null });
+
+    expect(result.outcome.kind).toBe("aborted");
+    expect(result.applied.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line", "delete-disarm", "clear-checks"]);
+  });
+
+  it("the 15:05 disarm still disables without the measured facts, which is the whole point of it", async () => {
+    const stateRoot = await root();
+    const { deps, printed } = harness(stateRoot, utcOf(ANCHOR, 15, 5));
+    const result = await invoke(command(["disarm", "--state-root", stateRoot, "--anchor-day", ANCHOR]), { ...deps, facts: null });
+
+    expect(result.outcome.kind).toBe("aborted");
+    expect(printed).toContain("would disable-tasks cycle, watchdog");
+  });
+
+  it("run and open do refuse without them, because they are what those two consume", async () => {
+    const stateRoot = await root();
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+
+    for (const argv of [["run", "--state-root", stateRoot, "--anchor-day", ANCHOR], ["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]]) {
+      const result = await invoke(command(argv), { ...deps, facts: null });
+      expect(result.outcome.kind).toBe("refused");
+    }
   });
 });
 
