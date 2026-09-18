@@ -15,7 +15,7 @@ every call's archived prompt and return live in
 `~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo. Round 2
 covered `ops/` units 1–10, the ~6,400 lines no finder had seen: five blind cold-read
 finders over one lens each, eight gates, the two outstanding fix counter-verifications
-from round 1, and eleven tool probes. **24 findings — seven A, eleven B, seven C** — and
+from round 1, and eleven tool probes. **38 findings — six A, seventeen B, thirteen C, two still unclassified** (counted against the run's findings list on 2026-09-18; an earlier figure of 24 in this entry was written before the two counter-verifications returned and is corrected here) — and
 **no fix was built**, because single fixes are locked: the round named five generators
 (G-3 … G-7 in the ledger) and found round 1's G-1 recurring unfixed in `ops/`.
 
