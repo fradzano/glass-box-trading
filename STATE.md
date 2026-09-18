@@ -8,6 +8,66 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-18 CEST. **Update — round 3 is running: the fix counter-verification
+is through, and it closed seven findings, re-opened three and found twenty-five more.** The run
+is `p12-units-1-11`, round counter at **3**; its ledger, registers, round protocols and every
+call's archived prompt and return live in
+`~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo.
+
+**What round 3 has done so far, in order.**
+
+1. **The three preconditions the previous session named were built and pushed (`1c5f16a`).**
+   The activation now compares the two statements of one fact — `config/deployment.json`'s
+   declared long-run directory against the `STATE_DIR` the runtime would actually see — and
+   reds a disagreement with both values in the evidence (G-7 / R2-18). A directory that does
+   not exist reads as *unknown* rather than as known-empty, so step 2 refuses to assert over
+   nothing (R2-19). And a child process's stderr survives: the port carries both streams out,
+   and a tested pure reducer keeps the credential promise while letting an operator tell a
+   credential rejection from a missing MCP inventory (R2-16). Calibrated before it was
+   believed: nine real mutants, nine caught, three controls surviving, and two predicted
+   survivors at the host binding that no suite crosses.
+2. **Four blind gate calls counter-verified everything round 2 built.** Seven reports
+   `RESOLVED`, three `PATCHED`, one `UNADDRESSED`, twenty-five new findings, two class A.
+   Details per finding in the run's `FINDINGS.md`.
+3. **The first of the two class fixes is built and pushed (`31a9ce2`).**
+
+**What the counter-verification changed about the record, and it is not cosmetic.**
+
+- **R2-14 came back `PATCHED`.** Round 2 repaired the console line and left the same cause in
+  the append-only `next_owner_action`, in three refusal strings and in the disarm's own line.
+  That surviving half is **R3-01, class A**: an entry that can never be withdrawn asserted a
+  completed teardown two fields away from four `applied: false`.
+- **R2-34 was booked `RESOLVED` by this coordinator and came back `PATCHED`.** Only the fix
+  counter-verification may assign `RESOLVED`. The correction stands in the findings row with
+  the original booking left visible.
+- **R1-14 behaved exactly as declared.** The gate verified the new closure table against the
+  NYSE calendar, found it correct, and then drove 2028-01-17 — a real closure past the table's
+  coverage — and got the full reported consequence back. The stop-gap holds for the dates
+  someone enumerated, which is what `DECISIONS.md` says it is.
+- **A new class-A finding in the wrapper layer (R3-03):** `Write-RunLog` swallows write
+  failures, so a *successful* firing whose log is locked or read-only exits 0 having written
+  nothing — forging the "no line in the two wrapper logs" signature that step `6-drill-silence`
+  uses to tell a disabled task from a failed network, with a green ping beside it.
+
+**Built since:** `31a9ce2`, the class fix for `abort-teardown-contract` at its second seam.
+Every sentence about a teardown now comes from one builder and from the reports: the
+append-only entry, the refusal strings, the disarm's lines, a failure that tore something down
+on its way out, and the branch that used to apply a teardown and append nothing at all. The A4
+teardown is measured for the first time — the mutant that deletes it used to leave all 578
+tests green and is now caught. `npm run verify` exits 0.
+
+**Next, in order.** (a) The second class fix, `wrapper-run-logging`, is **an owner decision and
+is put to Felix rather than built**: it rewrites the logging and pre-log failure paths of
+`tools/cycle-run.ps1` and `tools/watchdog-run.ps1`, the two files the live tasks execute every
+five minutes, three days before the certificate run — and the last change to those files
+produced a regression this run had to book. (b) The counter-verification of `31a9ce2` itself,
+which is not yet done and without which R3-01 stays open. (c) Then round 3's finders, over the
+new state of `ops/`, with the public paths re-driven at the current commit first.
+
+**Unchanged and open for the owner, not for the loop:** certificate run 2026-09-21, anchor
+2026-09-22; both scheduled tasks stand Disabled; the activation has never run against the real
+host, so step 9 and the whole observation chain remain unmeasured.
+
 **Last updated:** 2026-09-18 CEST. **Update — Round-2 fix phase: G-4 and G-3 implemented and verified; G-7 and R2-16 open before round 3.** The
 run is `p12-units-1-11`, round counter at 2; its ledger, registers, round protocols and
 every call's archived prompt and return live in
