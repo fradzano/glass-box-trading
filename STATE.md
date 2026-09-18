@@ -30,16 +30,26 @@ than went.
 
 **What blocks the anchor day, in order of urgency.**
 
-1. **R2-18 (A), and it bites today.** `config/deployment.json` declares
-   `longrun-2026-09-22`; `.env` still names `longrun-1`. Both directories exist and both
-   are empty, so nothing complains. The wrappers write their logs where `.env` points and
+1. **R2-18 (A) — the owner removed its trigger on 2026-09-18; the defect stands.**
+   `config/deployment.json` declares `longrun-2026-09-22`, and `.env` named `longrun-1`
+   until the owner changed `STATE_DIR` and `BOOTSTRAP_DIAGNOSTIC_SINK` that evening. Both
+   directories existed and both were empty, so nothing complained. The wrappers write their logs where `.env` points and
    the activation reads where the declaration points: step 2's contamination assertion
    passes over a directory the long run never touches, step 9 waits forever, step 10 never
-   writes the certificate line. That is R1-21's consequence by a new route, and silent
-   where the old one was loud. **The owner's pending `.env` edit removes it today and does
-   not prevent it returning** — nothing in code, configuration or either suite compares the
-   two sources, and a mutant pointing `longRunStateDir` at a different existing directory
-   survives both suites.
+   writes the certificate line. That was R1-21's consequence by a new route, and silent
+   where the old one was loud. **Measured after the change:** the two sources now name one
+   directory, string-identical and physically identical, and the activation's own reader
+   lands where the wrappers write. **The finding stays open at A, because the edit removed
+   the value and not the mechanism** — nothing in code, configuration or either suite
+   compares the two sources, a mutant pointing `longRunStateDir` at a different existing
+   directory survives both suites, and the next directory change reproduces the
+   divergence. A coordinator does not lower a class because the world became convenient;
+   closing it needs the comparison built or a gate-countersigned downgrade. The same
+   change also closed the reachable half of R1-09's residue: with `.env` naming the
+   declared directory, the certificate guard refuses through the `declaredLongRun` rule,
+   which reads the deployment rather than `.env`, so no shape of the `ALPACA_PROFILE` line
+   disarms it any more — putting `STATE_DIR` back on `longrun-1` reopens the hole in the
+   same run, which is what shows the closure is due to the data.
 2. **R2-19 (A).** A directory that does not exist still reads as *known empty* rather than
    *unknown* (`ops/activation/readers/host-ports.ts`, `readers/observe.ts:267`). That is
    the mechanism that made R1-21 silent; R1-21's fix did not touch it, and no test drives
@@ -73,7 +83,7 @@ fourth is not patched but declared as a residual or redesigned from outside. (b)
 all eight `src/shell/*-cli.ts` terminate with `process.exit()` while network I/O is still
 closing, the failure this project already diagnosed on 2026-09-11 and never carried to the
 class — is digest material and therefore a certificate question. (c) How much of the
-`ops/` redesign happens before 2026-09-21. (d) `.env` to `longrun-2026-09-22`.
+`ops/` redesign happens before 2026-09-21. (d) `.env` to `longrun-2026-09-22` — **done 2026-09-18 and verified**, see item 1.
 
 **Operational residue from this round's own probes:** the healthchecks check
 `gbt-readiness` was left `down` (it had been paused; a real fail ping resumed it), because
