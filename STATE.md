@@ -8,25 +8,33 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-18 CEST. **Update — round 2 of the "bis 0" loop is done as a
-finding round; the loop is paused after it, not finished, and no code was changed.** The
+**Last updated:** 2026-09-18 CEST. **Update — Round-2 fix phase: G-4 and G-3 implemented and verified; G-7 and R2-16 open before round 3.** The
 run is `p12-units-1-11`, round counter at 2; its ledger, registers, round protocols and
 every call's archived prompt and return live in
 `~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo. Round 2
-covered `ops/` units 1–10, the ~6,400 lines no finder had seen: five blind cold-read
-finders over one lens each, eight gates, the two outstanding fix counter-verifications
-from round 1, and eleven tool probes. **38 findings — six A, seventeen B, thirteen C, two still unclassified** (counted against the run's findings list on 2026-09-18; an earlier figure of 24 in this entry was written before the two counter-verifications returned and is corrected here) — and
-**no fix was built**, because single fixes are locked: the round named five generators
-(G-3 … G-7 in the ledger) and found round 1's G-1 recurring unfixed in `ops/`.
+covered `ops/` units 1–10 (~6,400 lines): 38 findings — six A, seventeen B, thirteen C,
+two unclassified. Following round 2, single fixes were locked in favor of class generators.
+Two major class generators have now been implemented, calibrated, and pushed:
+
+1. **G-4 — Abort contract & oracle re-pointing (`a0aaad5`, `e7ff97c`):**
+   - `Decision.abort.teardown` carries the exact action list (`readonly WorldAction[]`) built centrally in `core/decide.ts`, removing `disableBoth` from the shell.
+   - All three `disarm` paths unified to `fullTeardown()`.
+   - A4 append failure leak closed: a failing result append in `act` triggers teardown inside the session under the held lease and with `context` in scope.
+   - `report.ts` reports actual applied teardown actions (`ActionReport[]`) rather than unconditional assertions (closes R2-14).
+   - Test oracle `simulator.ts` re-pointed: `apply()` now executes `decision.teardown` through the same list as the shell, curing the oracle blind spot (closes R2-17).
+   - Edge case / Randnaht at `invoke.ts:230` resolved (`e7ff97c`): opening a new attempt for a new anchor day unconditionally uses `fullTeardown()`, preventing inheritance of an old day's `stepDone(fold, "10-gate")`. Pinned with tests and mutant `G4-08`.
+   - Calibrated via mutation probes `mutants-unit12-r2-abort-contract.json` (3/4 caught) and `mutants-unit12-r2-teardown-shell.json` (2/3 caught, including `G4-05`), controls surviving.
+
+2. **G-3 — Prologue & module-scope isolation (`240832a`):**
+   - Both deployment files (`config/deployment.json` and `ops/activation/deployment.json`) are read inside `main()`, after CLI argument parsing (closes R2-06, R2-08).
+   - `repoRoot` and `activationRoot` moved to `InvocationDeps`; `facts` is now nullable.
+   - Safety subcommands (`status`, `abort`, `disarm`) no longer depend on deployment state and cannot be held hostage with exit 1 or raw stack traces.
+   - Process-level verification matrix confirms expected exit codes on missing deployment files (`status`: 0; `abort`: 1; `disarm`: 1; `run`/`open`: 2).
+   - Verbatim identifier spellings preserved (`DEPLOYMENT_STATE.devStateDir`, `DEPLOYMENT_STATE.devDiagnosticSink`, `LONG_RUN_STATE_DIR`), unreadable state cleanly named (`UNREADABLE_STATE_DIRS`).
 
 **The two round-1 fixes that were still unverified split.** `41e65b3` is **RESOLVED** for
-both its findings, with the strongest evidence of the run: 65 spellings of the state
-directory driven through the real compiled CLI with zero divergence between what the guard
-admits and where the run would write, and 60,996 evaluations of `isFinalCycleOfSession`
-against a real NYSE calendar — holidays, half days, a DST Sunday, every minute at three
-intervals plus the boundary instants — with zero mismatches. `6789ca1` is **PATCHED, not
-RESOLVED**: R1-21 and R1-09 cannot be reported unchanged, and their cause moved rather
-than went.
+both its findings (65 state dir spellings + 60,996 evaluations of `isFinalCycleOfSession`).
+`6789ca1` is **PATCHED, not RESOLVED**: R1-21 and R1-09 cause moved rather than went.
 
 **What blocks the anchor day, in order of urgency.**
 
@@ -55,34 +63,19 @@ than went.
    the mechanism that made R1-21 silent; R1-21's fix did not touch it, and no test drives
    the branch. It is round 1's G-1 shape living on in `ops/`, where G-1's class fix never
    reached.
-3. **R2-08 (A) and R2-06 (A).** Four of the five activation commands are held hostage by a
-   file they never read: `disarm` and `abort --confirm` refuse with exit 2 when
-   `ops/activation/deployment.json` is missing or malformed, and `config/deployment.json`
-   is read at module scope, above `main()`, so a missing or broken one kills every
-   subcommand with a raw stack trace and **exit 1 — the code this CLI reserves for "the
-   attempt ended"**. Measured, not assumed: `config/deployment.json` exists in exactly one
-   commit on exactly this branch, and **`main` does not carry it at all**.
-4. **R2-09 (A) and R2-03 (B), the abort seam.** No automatic abort removes
-   `PRE_ARM_CERTIFICATE` from `.env`; any failing second action at step 10 is enough to
-   leave the arming credential on disk with the disarm one-shot already deleted. And the
-   owner's abort applies its teardown before the lease by design, so a concurrent `run` can
-   re-enable what it just disabled. **Both are latent at this commit** (`actions: null`)
-   and **unit 13 is what arms them** — which makes fixing them a precondition of unit 13
-   rather than an optional extra.
-5. **R2-17 (A), and the calibration behind it.** The suite asserts exactly the invariant
-   R2-09 breaks and passes because it measures the simulator. The round-2 mutation probe
-   (two runs, 5 of 7 caught, both controls surviving, archived in the run store) showed the
-   sharper form: making the oracle behave like the shell turns the suite **red**, and so
-   does adding the missing action to the shell — the suite holds two contradictory green
-   assertions about one invariant and **will resist the repair**.
+3. **R2-16 (B).** Child process stderr is discarded in `ops/activation/readers/host-ports.ts`,
+   preventing diagnostic capture when external host commands fail.
+4. **Resolved in this fix phase:**
+   - **R2-08 (A) & R2-06 (A):** Closed by G-3 (`240832a`).
+   - **R2-09 (A), R2-17 (A), R2-14 (B):** Closed by G-4 (`a0aaad5`, `e7ff97c`).
+   - **R2-26 (A -> C):** Refuted as Class A by executed probe (no shared writer mutex or journal); kept as Class C.
+   - **R2-03 (B):** Abort pre-lease teardown race remains latent until unit 13 (`actions: null`).
 
 **Decisions that are the owner's, not the loop's.** (a) `certificate-admission-facts`
 carries a fourth finding (R2-23, the ENOENT branch admitting extended-length and device
-prefixes of a not-yet-existing directory); the mechanism register's declared line says a
-fourth is not patched but declared as a residual or redesigned from outside. (b) G-5 —
+prefixes of a not-yet-existing directory); declared as a residual in `DECISIONS.md`. (b) G-5 —
 all eight `src/shell/*-cli.ts` terminate with `process.exit()` while network I/O is still
-closing, the failure this project already diagnosed on 2026-09-11 and never carried to the
-class — is digest material and therefore a certificate question. (c) How much of the
+closing, digest material and therefore a certificate question. (c) How much of the
 `ops/` redesign happens before 2026-09-21. (d) `.env` to `longrun-2026-09-22` — **done 2026-09-18 and verified**, see item 1.
 
 **Operational residue from this round's own probes:** the healthchecks check
@@ -92,8 +85,8 @@ activation's own host port silences this and the manual command does not.
 `gbt-liveness` and `gbt-watchdog` are untouched.
 
 Target unchanged: certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4
-expires 2026-09-29 22:08 Europe/Berlin. **Next:** the owner's decision on the fix scope,
-then round 3. The earlier cursor follows unchanged.
+expires 2026-09-29 22:08 Europe/Berlin. **Next:** G-7 / R2-18 (deployment source comparison),
+R2-19 (ENOENT as unknown), and R2-16 (stderr capture), then round 3 ("bis 0") with fix counter-verification.
 
 
 **Last updated:** 2026-09-18 CEST. **Update — unit 12, round 1 of the "bis 0" loop
