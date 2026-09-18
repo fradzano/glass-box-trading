@@ -13,8 +13,13 @@
   `NOT_DRIVE_ROOTED`; against an **absent** one, `\\?\`, `\\.\` and UNC are all admitted,
   and `resolveStateDir` then refuses them with ENOENT because it stats the root first.
   **Neither steady state produces the harm. The harmful case is the transition** — the
-  guard reads absent, the runtime finds present — and the day that most obviously realises
-  it is the anchor day itself, when the long run first creates its directory.
+  guard reads absent, the runtime finds present. **Correction, 2026-09-18:** an earlier
+  draft said the anchor day most obviously realises this, "when the long run first creates
+  its directory". Measured: `C:\Users\felix\glass-box-state\longrun-2026-09-22` was
+  created at 10:07:17 UTC on 2026-09-18 and is present and empty, so the long run does not
+  create it on the anchor day and no such transition is scheduled. The transition is a
+  latent shape, not a dated event — it needs somebody to remove the directory and a
+  certificate command to run in the interval before it returns.
   **Why it is not fixed.** The mechanism has been repaired three times and the run's
   register draws its line there: a fourth finding is declared or redesigned from outside,
   not patched. A redesign means `src/shell/`, which `enumerateRuntimeFiles` binds into the
@@ -55,17 +60,55 @@
   the activation nor a wrapper, and step `2-certificate` of the activation is
   *validate-only*, so the command that actually acquires writer authority on the
   certificate day is the hand-started one. For it the condition is **not** machine-checked;
-  it is checked for the activation's own preflight and by whichever wrapper fired most
-  recently. Closing that would need a check inside the process, which is `src/shell` and
-  frozen. **This is the residual as it stands, and it is narrower than "the branch is
-  unreachable": the branch is reachable by hand, and what bounds it is that the directory
-  is present, which two independent things now observe at five-minute cadence.**
+  it is checked by the activation's step `0-preflight`, which runs before step
+  `2-certificate` and dispatches the dev preflight through the gated path. **It is not
+  checked by the wrappers at that moment, and an earlier draft that said otherwise was
+  wrong in a way worth spelling out**, because it is the sentence a reader carries away.
+  During the whole window in which the hand-started command runs, **no wrapper fires at
+  all, by the activation's own design**: `tools/install-scheduled-task.ps1:461,479` calls
+  `Disable-ScheduledTask` on both tasks unless `-Activate` is passed, so step `1-install`
+  re-registers them *still disabled*; step `4-enable` only enables them at 22:05–22:20
+  that evening, while step `2-certificate` runs from 15:35. Both tasks read `Disabled`
+  today and their `LastRunTime` is 2026-09-04 22:00 — fourteen days before this entry.
+  So "whichever wrapper fired most recently" named something two weeks stale.
+  Closing the gap properly would need a check inside the process, which is `src/shell`
+  and frozen; a runbook line running the existing pure predicate immediately before the
+  hand-started command would make a check true rather than correct a claim, and is the
+  cheap option if the owner wants one. **The residual as it stands: the branch is
+  reachable by hand, what bounds it is that the directory is present, the activation
+  checks that before its own preflight, the wrappers check it continuously once enabled —
+  and in the certificate-day window itself the only thing standing there is the operator
+  at the console.**
+  **Two narrowings measured in the conservative direction, recorded because they make the
+  admitted scope smaller than the words suggest:** a hand start today inherits `STATE_DIR`
+  from `.env`, which names the declared long run, so it is refused outright with
+  "STATE_DIR resolves to the long-run state directory this deployment declares"; reaching
+  the residual needs the operator to point `STATE_DIR` elsewhere, in an aliased spelling,
+  at a directory absent at that instant. And a hand start from the wrong working
+  directory crashes in `loadDeployment` before any admission is computed, rather than
+  falling through to a skipped comparison.
   **Correction to an earlier draft:** it claimed two of the three directories
   `stateDirIdentity` is asked about are absent in ordinary use. On this host all three are
   present — the declared long run, the dev sandbox, and the `STATE_DIR` `.env` names, which
   is the same path as the first. The error was in the conservative direction but it was not
   checked against the host, and it is corrected here rather than quietly dropped.
   **Decider:** Felix Radzanowski, taking the residual risk for the anchor day.
+  **What the wrapper assertions cost, which the first draft did not say.** They are a
+  **stop**, not only an observation: on a failed assertion both wrappers end the
+  invocation before invoking anything, so the agent does not cycle and the watchdog does
+  not reach the staleness assessment, the fence or the book recovery. Against a long run
+  writing where nobody declared it, stopping is the right choice and the refusal is loud
+  — a failure ping on that wrapper's own endpoint with the reason in the body, a non-zero
+  exit into `LastTaskResult`, and, since the same day, a `refusing:` line in the wrapper
+  log. Three consequences are accepted with it, and named so they are not discovered
+  later: the refusal used to leave **no** log line, which forged step 6's own
+  discriminator for a disabled task — fixed the same day by opening the log above the
+  assertions; both wrappers now stop on `config/deployment.json` being unreadable, which
+  is a **new shared single point of failure on digest material** neither read before; and
+  the wrappers compare `GetFullPath`, which does not resolve reparse points, while the
+  guard uses `realpathSync.native`, which does — so a junction spelling the runtime would
+  accept can hold both tasks down. The last two are recorded as findings rather than
+  repaired here.
   **Deadline:** the real repair belongs in the first digest batch after the anchor run,
   together with the two findings that share its shape — the step-2 contamination listing
   being non-recursive, and `parseDeployment` refusing equality rather than nesting.

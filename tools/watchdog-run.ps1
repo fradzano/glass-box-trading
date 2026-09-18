@@ -285,6 +285,27 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithHeartbeat "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
+# The run log is opened here rather than further down, because the assertions
+# below can end the invocation and a refusal that leaves no line behind is worse
+# than no assertion at all: `docs/P12-ACTIVATION-SPEC.md` step 6 uses "no line in
+# the two wrapper logs" as its local discriminator for a task that was disabled
+# rather than a network that failed, so a silently refusing wrapper forges
+# exactly that signature. Every refusal below therefore logs its reason first.
+$logPath = Join-Path $stateDir 'watchdog-run.log'
+
+function Write-RunLog {
+    param([string]$Message)
+    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
+    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
+    Write-Verbose $line
+}
+
+function Stop-WithLoggedHeartbeat {
+    param([string]$Reason)
+    Write-RunLog "refusing: $Reason"
+    Stop-WithHeartbeat $Reason
+}
+
 # The same three assertions the cycle wrapper makes, deliberately duplicated the
 # way this file already duplicates the session-window helper -- see the header.
 # They are here because *this* task is the 5-minute one: on the cycle wrapper's
@@ -305,21 +326,21 @@ $deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
 try {
     $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
 } catch {
-    Stop-WithHeartbeat "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
+    Stop-WithLoggedHeartbeat "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
 }
 if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
-    Stop-WithHeartbeat "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+    Stop-WithLoggedHeartbeat "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
 }
 foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
     if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
-        Stop-WithHeartbeat "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+        Stop-WithLoggedHeartbeat "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
     }
     if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
-        Stop-WithHeartbeat "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+        Stop-WithLoggedHeartbeat "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
     }
 }
 if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
-    Stop-WithHeartbeat "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun)."
+    Stop-WithLoggedHeartbeat "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun)."
 }
 
 $todayEastern = Get-TodayEasternDate
@@ -329,14 +350,8 @@ $todayEasternKey = $todayEastern.ToString('yyyy-MM-dd')
 # hours either side of midnight. Inside today's registered trigger window the
 # two always agreed, so this is a correctness repair with no measured bite.
 $nowIsWeekday = $todayEastern.DayOfWeek -ne [System.DayOfWeek]::Saturday -and $todayEastern.DayOfWeek -ne [System.DayOfWeek]::Sunday
-$logPath = Join-Path $stateDir 'watchdog-run.log'
-
-function Write-RunLog {
-    param([string]$Message)
-    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
-    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
-    Write-Verbose $line
-}
+# The run log is opened further up, above the state-directory assertions, so
+# that a refusal from them is on the record. See the comment there.
 
 if (-not $nowIsWeekday) {
     Write-RunLog "skip: weekend (watchdog-cli.ts always treats its input as a trading day, so this wrapper is the only Mon-Fri gate)"

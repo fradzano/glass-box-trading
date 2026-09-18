@@ -187,6 +187,35 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithLiveness "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
+# The run log is opened here rather than further down, because the assertions
+# below can end the invocation and a refusal that leaves no line behind is worse
+# than no assertion at all: `docs/P12-ACTIVATION-SPEC.md` step 6 uses "no line in
+# the two wrapper logs" as its local discriminator for a task that was disabled
+# rather than a network that failed, so a silently refusing wrapper forges
+# exactly that signature. Every refusal below therefore logs its reason first.
+$logPath = Join-Path $stateDir 'cycle-run.log'
+if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
+    $existing = Get-Item -LiteralPath $logPath
+    if ($existing.Length -gt $MaxLogBytes) {
+        # One generation is kept. Losing an older report is acceptable; losing
+        # the disk is not, and the journal carries what matters either way.
+        try { Move-Item -LiteralPath $logPath -Destination "$logPath.1" -Force } catch { }
+    }
+}
+
+function Write-RunLog {
+    param([string]$Message)
+    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
+    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
+    Write-Verbose $line
+}
+
+function Stop-WithLoggedLiveness {
+    param([string]$Reason)
+    Write-RunLog "refusing: $Reason"
+    Stop-WithLiveness $Reason
+}
+
 # The long run's state directory must be a drive-rooted local path that exists,
 # and the directory this deployment *declares* must be the one this wrapper is
 # actually running against (DECISIONS, 2026-09-18, R2-23 and R2-18).
@@ -219,21 +248,21 @@ $deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
 try {
     $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
 } catch {
-    Stop-WithLiveness "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
+    Stop-WithLoggedLiveness "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
 }
 if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
-    Stop-WithLiveness "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+    Stop-WithLoggedLiveness "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
 }
 foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
     if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
-        Stop-WithLiveness "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+        Stop-WithLoggedLiveness "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
     }
     if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
-        Stop-WithLiveness "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+        Stop-WithLoggedLiveness "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
     }
 }
 if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
-    Stop-WithLiveness "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun). The wrappers write where STATE_DIR points and the activation reads where the declaration points; when the two disagree, both are quietly right about different directories and the activation's contamination check passes over one the long run never touches."
+    Stop-WithLoggedLiveness "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun). The wrappers write where STATE_DIR points and the activation reads where the declaration points; when the two disagree, both are quietly right about different directories and the activation's contamination check passes over one the long run never touches."
 }
 
 function Get-EasternTimeZoneInfo {
@@ -265,22 +294,8 @@ function Test-InsideSession {
     return ($nowEastern -ge $open) -and ($nowEastern -le $close)
 }
 
-$logPath = Join-Path $stateDir 'cycle-run.log'
-if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
-    $existing = Get-Item -LiteralPath $logPath
-    if ($existing.Length -gt $MaxLogBytes) {
-        # One generation is kept. Losing an older report is acceptable; losing
-        # the disk is not, and the journal carries what matters either way.
-        try { Move-Item -LiteralPath $logPath -Destination "$logPath.1" -Force } catch { }
-    }
-}
-
-function Write-RunLog {
-    param([string]$Message)
-    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
-    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
-    Write-Verbose $line
-}
+# The run log is opened further up, above the state-directory assertions, so that
+# a refusal from them is on the record. See the comment there.
 
 if ($SkipOutsideSession -and -not (Test-InsideSession -LeadInMinutes $SessionLeadInMinutes)) {
     # R43-B8: readiness reports on EVERY firing, not only the ones that run a
