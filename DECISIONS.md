@@ -1,5 +1,75 @@
 # DECISIONS
 
+- **2026-09-18 — R2-23: the certificate guard's weak branch stays as it is, and the
+  condition that bounds it is made machine-checked instead of assumed.** Owner decision,
+  after a gate refused to countersign a plain deferral and a second gate refused the first
+  attempt at this. **What is broken.** `stateDirIdentity` in `src/shell/certificate-admission.ts`
+  falls back to `fold(path.resolve(raw))` while the directory it is asked about does not
+  exist, and `path.resolve` does not canonicalise the Windows extended-length (`\\?\`) or
+  device (`\\.\`) prefixes. Several spellings of one directory therefore produce different
+  keys, and the certificate command guard compares those keys. Measured: against a
+  **present** directory, case, `\\?\`, `\\.\`, forward slashes and a `..` detour all
+  collapse under `realpathSync.native` and are refused, and a UNC spelling is refused as
+  `NOT_DRIVE_ROOTED`; against an **absent** one, `\\?\`, `\\.\` and UNC are all admitted,
+  and `resolveStateDir` then refuses them with ENOENT because it stats the root first.
+  **Neither steady state produces the harm. The harmful case is the transition** — the
+  guard reads absent, the runtime finds present — and the day that most obviously realises
+  it is the anchor day itself, when the long run first creates its directory.
+  **Why it is not fixed.** The mechanism has been repaired three times and the run's
+  register draws its line there: a fourth finding is declared or redesigned from outside,
+  not patched. A redesign means `src/shell/`, which `enumerateRuntimeFiles` binds into the
+  runtime digest, three days before the certificate run of 2026-09-21 — before it, freshly
+  changed shell code goes under that certificate; after it, the certificate is void. A
+  correct fix outside the frozen surface does not exist, because the identity derivation
+  itself is what would have to change.
+  **The consequence, stated as what it is.** Not a file write. A run that lands there
+  acquires **writer authority** over that state tree — `resolveStateDir` spans
+  `journal.jsonl`, `halt.json`, `epoch.json`, `holder.json` and `quarantine/` under the
+  root, `epoch-store.ts` writes the epoch and the holder record, and the kernel mutex
+  `\\.\pipe\glass-box-trading-<digest>` is named from that same root — and a full
+  `--owner-go` run appends dev-account facts to a journal `AGENTS.md` declares append-only,
+  so that contamination can be annotated and never removed. For the `--preflight` path
+  specifically the spec names `pings.log`, an `analyst/` directory and an epoch binding.
+  **What is now checked, and where.** `ops/activation/core/preconditions.ts` refuses to
+  dispatch a certificate command while the declared long run is missing, not drive-rooted,
+  or unestablishable — an unknown presence refused as firmly as a known absence, because
+  the weak branch is entered on absence and an unreadable answer cannot rule absence out.
+  It is wired in `readers/observe.ts` before the preflight is spawned. Both wrappers,
+  `tools/cycle-run.ps1` and `tools/watchdog-run.ps1`, assert the same two things **and a
+  third**: that `STATE_DIR` is the directory `config/deployment.json` declares. That third
+  assertion is there because an earlier version of this work checked only `STATE_DIR`,
+  which is what the wrappers run against, while the guard defends `longRunStateDir` — the
+  two are the same path today and nothing bound them, which is R2-18. All four files are
+  outside the runtime digest.
+  **Cadence, measured from the registered tasks rather than assumed.**
+  `GlassBoxTrading-Watchdog` repeats every **5 minutes** in a 6.5-hour Monday-to-Friday
+  window and its action really is `tools/watchdog-run.ps1`, so once the tasks are enabled
+  the gap between the condition breaking and the host saying so is one firing.
+  `GlassBoxTrading-AgentCycle` repeats every **15 minutes** in the same window, but its
+  registered action is `node dist\shell\agent-cli.js` — the stale direct registration the
+  scheduler verifier already reports as failing — so the cycle wrapper's copy of the
+  assertion is **not on any firing path until step `1-install` re-registers both tasks**.
+  **Both tasks are `Disabled` as this is written**, so nothing fires at all yet.
+  **What is deliberately not covered.** The certificate command started **by hand** —
+  `npm run certificate`, or `node dist/shell/certificate-cli.js` — is mediated by neither
+  the activation nor a wrapper, and step `2-certificate` of the activation is
+  *validate-only*, so the command that actually acquires writer authority on the
+  certificate day is the hand-started one. For it the condition is **not** machine-checked;
+  it is checked for the activation's own preflight and by whichever wrapper fired most
+  recently. Closing that would need a check inside the process, which is `src/shell` and
+  frozen. **This is the residual as it stands, and it is narrower than "the branch is
+  unreachable": the branch is reachable by hand, and what bounds it is that the directory
+  is present, which two independent things now observe at five-minute cadence.**
+  **Correction to an earlier draft:** it claimed two of the three directories
+  `stateDirIdentity` is asked about are absent in ordinary use. On this host all three are
+  present — the declared long run, the dev sandbox, and the `STATE_DIR` `.env` names, which
+  is the same path as the first. The error was in the conservative direction but it was not
+  checked against the host, and it is corrected here rather than quietly dropped.
+  **Decider:** Felix Radzanowski, taking the residual risk for the anchor day.
+  **Deadline:** the real repair belongs in the first digest batch after the anchor run,
+  together with the two findings that share its shape — the step-2 contamination listing
+  being non-recursive, and `parseDeployment` refusing equality rather than nesting.
+
 - **2026-09-18 — R1-14: the watchdog wrapper gets a hand-written closure table as a
   stop-gap, and the real repair is a declared residual with a dated deadline.** Owner
   decision, taken after a gate refused to countersign a plain deferral. **What is broken.**

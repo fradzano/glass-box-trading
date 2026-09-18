@@ -285,6 +285,43 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithHeartbeat "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
+# The same three assertions the cycle wrapper makes, deliberately duplicated the
+# way this file already duplicates the session-window helper -- see the header.
+# They are here because *this* task is the 5-minute one: on the cycle wrapper's
+# 15-minute weekday trigger the worst case between the condition breaking and
+# somebody learning of it is a weekend, and on this one it is one firing.
+#
+# What is asserted and why: the certificate command guard derives directory
+# identity, and that derivation is weakest on a directory that is not there, so a
+# residual resting on "the declared long run exists" needed the condition to be
+# observed rather than assumed (DECISIONS, 2026-09-18, R2-23). And the subject is
+# checked on both sides, because the guard defends `longRunStateDir` from
+# `config/deployment.json` while the wrappers run against `STATE_DIR`: when those
+# two drift apart, each is quietly right about a different directory and the
+# activation's contamination check passes over one the long run never touches
+# (R2-18).
+$declaredLongRun = $null
+$deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
+try {
+    $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
+} catch {
+    Stop-WithHeartbeat "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
+}
+if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
+    Stop-WithHeartbeat "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+}
+foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
+    if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
+        Stop-WithHeartbeat "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+    }
+    if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
+        Stop-WithHeartbeat "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+    }
+}
+if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
+    Stop-WithHeartbeat "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun)."
+}
+
 $todayEastern = Get-TodayEasternDate
 $todayEasternKey = $todayEastern.ToString('yyyy-MM-dd')
 # The weekday test is taken in New York, not in UTC: this wrapper's session

@@ -187,29 +187,53 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithLiveness "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
-# The long run's state directory must be a drive-rooted local path that actually
-# exists, and this wrapper is the first thing on the host that would notice if it
-# stopped being either (DECISIONS, 2026-09-18, R2-23).
+# The long run's state directory must be a drive-rooted local path that exists,
+# and the directory this deployment *declares* must be the one this wrapper is
+# actually running against (DECISIONS, 2026-09-18, R2-23 and R2-18).
 #
-# Why the wrapper asserts a fact it never reads directly: the certificate command
+# Why a wrapper asserts facts it does not itself consume. The certificate command
 # guard tells a certificate run apart from the long run by deriving each
 # directory's physical identity, and that derivation is weakest on a directory
-# that is not there -- several spellings of an absent path compare unequal, where
-# the same spellings of a present one collapse onto one key. A residual was
-# declined countersignature on exactly this ground: the condition "the directory
-# exists" was true and nothing on the host observed it, so deleting it, renaming
-# it or restoring an older backup would have produced no error, no alert and no
-# failing check until a certificate command silently took the wrong branch.
+# that is not there: several spellings of an absent path compare unequal, where
+# the same spellings of a present one collapse onto one key. A residual resting
+# on "the directory exists" was declined countersignature because the condition
+# was true and nothing on the host observed it -- deleting it, renaming it or
+# restoring an older backup would have produced no error, no alert and no failing
+# check until a certificate command silently took the wrong branch.
 #
-# This runs every five minutes, so the gap between the condition breaking and
-# somebody learning of it is one firing. The activation asserts the same thing
-# before it dispatches a certificate command; this is the other end of it.
-$stateDirIsDriveRooted = $stateDir -match '^[A-Za-z]:[\\/]'
-if (-not $stateDirIsDriveRooted) {
-    Stop-WithLiveness "STATE_DIR is not a drive-rooted local path ($stateDir); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+# The subject matters as much as the predicate. An earlier version of this block
+# checked only `STATE_DIR`, which is what *this* wrapper runs against, while the
+# guard defends `longRunStateDir` from `config/deployment.json`. Today they are
+# the same path and nothing binds them, so the check would have gone on passing
+# while the two drifted apart -- which is R2-18, the defect whose trigger the
+# owner removed by hand on 2026-09-18 and whose mechanism nothing yet compared.
+# All three assertions are therefore made here, against both subjects.
+#
+# Cadence, measured rather than assumed: this task repeats every 15 minutes
+# inside a 6.5-hour Monday-to-Friday window, so the worst case between the
+# condition breaking and this wrapper noticing is a weekend -- roughly 65 hours.
+# `tools/watchdog-run.ps1` carries the same block on a 5-minute trigger, which is
+# what actually makes the gap short.
+$declaredLongRun = $null
+$deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
+try {
+    $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
+} catch {
+    Stop-WithLiveness "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
 }
-if (-not (Test-Path -LiteralPath $stateDir -PathType Container)) {
-    Stop-WithLiveness "STATE_DIR does not exist ($stateDir). It is the long run's state directory and this wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
+    Stop-WithLiveness "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+}
+foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
+    if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
+        Stop-WithLiveness "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+    }
+    if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
+        Stop-WithLiveness "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+    }
+}
+if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
+    Stop-WithLiveness "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun). The wrappers write where STATE_DIR points and the activation reads where the declaration points; when the two disagree, both are quietly right about different directories and the activation's contamination check passes over one the long run never touches."
 }
 
 function Get-EasternTimeZoneInfo {
