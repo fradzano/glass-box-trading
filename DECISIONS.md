@@ -168,6 +168,49 @@
   than implied, for the same reason as R1-14: a residual whose only compensating control is
   the decider's memory has no observer.
 
+- **2026-09-18, later the same evening — annex to the entry below on R3-03/R3-05: the dated
+  rebuild is wider than that entry says, and the two controls that do not wait for it.** Written
+  as an annex rather than as an edit, because the entry it corrects has already been acted on.
+
+  **What was too narrow.** The entry dates "a buffer or fallback sink for **pre-log refusals**".
+  The blind counter-verification of that same repair measured the residue as broader: **any
+  firing whose first write fails** ends with an empty log, refusal or not — which is exactly the
+  signature step `6-drill-silence` reads as "the task was disabled". The dated scope therefore
+  did not cover the finding it was written for. It now reads: *any path on which a firing can
+  end without leaving a line, including a successful firing whose log is unwritable*. A
+  countersignature gate refused the residual declaration built on the narrow wording, and it was
+  right to.
+
+  **Two controls were available without waiting, and both are built.** Neither is a change to
+  the wrappers, so neither spends the seam the rebuild is:
+
+  1. **The drill's evaluator now has an observer.** `docs/P12-ACTIVATION-SPEC.md`, step
+     `6-drill-silence`, says that a third cause produces the same silence and must be excluded
+     before the local discriminator is believed: the refusal travels in the ping body, so the
+     evaluator reads the ping bodies of the silence window and accepts the silence as the
+     disable signature only when none carries `the run log ... could not be written`. Without
+     it, the compensating control for that residue was the evaluator's memory — which this
+     project has already ruled insufficient once, at R1-14.
+  2. **The guard that makes a failed write loud is itself guarded.** `Write-RunLog`'s `catch`
+     only fires because a script-wide error preference makes `Add-Content` throw, and a single
+     moved line would put a log call inside one of the wrappers' short `Continue` windows and
+     silence it again. A test now fails if any `Write-RunLog` call stands between a `'Continue'`
+     assignment and its restoration, in either wrapper — and the mutant that makes exactly that
+     edit is caught, with a behaviour-neutral control surviving beside it.
+
+  **What is still owed, and by when.** The rebuild itself — one shared logging module instead of
+  two hand-synced copies, rotation for the watchdog log, a trace for every firing that ends
+  without one, and `-ErrorAction Stop` on the write so the guard stops depending on an ambient
+  setting — before **2026-10-06**. Decider: Felix Radzanowski.
+
+  **And the question that outlives this entry.** That deadline falls **after** the measured
+  unattended run begins on 2026-09-22, and the two wrappers fire every five minutes throughout
+  it. Every declaration written for these findings justified tolerance by pointing at the
+  rebuild, and not one distinguished "tolerable in October" from "tolerable from the 22nd".
+  The aggregate question — *is the logging path of these two wrappers, as it stands, fit to run
+  unattended from 22 September?* — is the owner's, it is not answered here, and the run is
+  presented with it open.
+
 - **2026-09-18 — R1-14: the watchdog wrapper gets a hand-written closure table as a
   stop-gap, and the real repair is a declared residual with a dated deadline.** Owner
   decision, taken after a gate refused to countersign a plain deferral. **What is broken.**
