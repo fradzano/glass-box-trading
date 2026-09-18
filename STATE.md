@@ -56,13 +56,23 @@ on its way out, and the branch that used to apply a teardown and append nothing 
 teardown is measured for the first time — the mutant that deletes it used to leave all 578
 tests green and is now caught. `npm run verify` exits 0.
 
-**Next, in order.** (a) The second class fix, `wrapper-run-logging`, is **an owner decision and
-is put to Felix rather than built**: it rewrites the logging and pre-log failure paths of
-`tools/cycle-run.ps1` and `tools/watchdog-run.ps1`, the two files the live tasks execute every
-five minutes, three days before the certificate run — and the last change to those files
-produced a regression this run had to book. (b) The counter-verification of `31a9ce2` itself,
-which is not yet done and without which R3-01 stays open. (c) Then round 3's finders, over the
-new state of `ops/`, with the public paths re-driven at the current commit first.
+**The second mechanism at its second seam was the owner's decision, and he took it.** Four
+options were put to him with their trade-offs; he chose the narrow repair now with the rest
+dated, and set the technical guardrails himself. Built as `cd6a4aa`: `Write-RunLog` no longer
+swallows a failed write — a log that cannot be written ends the firing through the sender that
+is still reachable — and the `.env` read for the ping URL is guarded. Proven as whole
+processes against both real wrappers and against the previous commit's: **a locked log gave
+exit 0 and silence before, and exit 1 naming the file and the line after.** The structural
+rest — a shared logging module, the watchdog log's missing rotation, and a route for refusals
+above the log open — is declared in `DECISIONS.md` with a deadline of **2026-10-06** and Felix
+as the named decider.
+
+**Next, in order.** (a) **The counter-verification of `31a9ce2` and `cd6a4aa`, which has not
+run.** Both are green, probed and mutation-calibrated, and none of that is the blind second
+opinion; R3-01 and R3-03 stay open until it does. Of this round's own counter-verifications,
+three came back other than `RESOLVED`, so this is not a formality. (b) Then round 3's finders
+over the new state of `ops/`, with the four declared public paths re-driven and re-booked at
+the current commit first — they carry `ja` at a commit that is now five commits back.
 
 **Unchanged and open for the owner, not for the loop:** certificate run 2026-09-21, anchor
 2026-09-22; both scheduled tasks stand Disabled; the activation has never run against the real
