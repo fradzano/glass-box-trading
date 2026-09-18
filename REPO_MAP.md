@@ -86,11 +86,13 @@
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-session-window.json`
 - `ops/activation/probes/mutants-steps.json`
+- `ops/activation/probes/mutants-unit12-batch3.json`
 - `ops/activation/probes/mutants-unit12-boundary.json`
 - `ops/activation/probes/mutants-unit12-controls-boundary.json`
 - `ops/activation/probes/mutants-unit12-controls-guard.json`
 - `ops/activation/probes/mutants-unit12-controls.json`
 - `ops/activation/probes/mutants-unit12-finalcycle.json`
+- `ops/activation/probes/mutants-unit12-holiday.json`
 - `ops/activation/probes/mutants-unit12-merge.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the

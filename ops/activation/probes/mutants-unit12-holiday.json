@@ -1,0 +1,14 @@
+[
+  {
+    "id": "HD1",
+    "note": "unit 12: the closed-day guard is removed, so every holiday cycle reads as the final one of a session that does not exist",
+    "from": "if (!session.isTradingDay) return false;",
+    "to": "if (false) return false;"
+  },
+  {
+    "id": "HD2",
+    "note": "unit 12: the closed-day guard is inverted, so the flag never fires on a real trading day",
+    "from": "if (!session.isTradingDay) return false;",
+    "to": "if (session.isTradingDay) return false;"
+  }
+]

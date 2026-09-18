@@ -1,0 +1,20 @@
+[
+  {
+    "id": "B31",
+    "note": "unit 12 R1-18: the guard reads the raw file again while the environment is canonicalised, so a .env spelling the key State_Dir sets the competition directory unseen",
+    "from": "const dotEnvValues = mergeEnvironment(entries.values, {}, input.platform);",
+    "to": "const dotEnvValues = entries.values;"
+  },
+  {
+    "id": "B32",
+    "note": "unit 12 R1-18: the ambiguity check goes back to exact-spelling duplicates only",
+    "from": "duplicateKeys: ambiguousDotEnvKeys(entries, input.platform),",
+    "to": "duplicateKeys: entries.duplicateKeys,"
+  },
+  {
+    "id": "B33",
+    "note": "unit 12 R1-18: the platform is dropped, so the canonicalisation follows the host rather than the decision under test",
+    "from": "const dotEnvValues = mergeEnvironment(entries.values, {}, input.platform);",
+    "to": "const dotEnvValues = mergeEnvironment(entries.values, {}, \"linux\");"
+  }
+]

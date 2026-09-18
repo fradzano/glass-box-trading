@@ -1,5 +1,51 @@
 # DECISIONS
 
+- **2026-09-18 — Unit 12, round 1: `STATE_DIR` must resolve to a drive-rooted local
+  path, and environment keys are canonicalised on Windows.** Two deployment-contract
+  changes, both forced by measurement rather than by taste, and both narrowing what the
+  agent accepts. **The rule.** `realpathSync.native` collapses `\\?\C:\x`, a junction, a
+  `subst` drive and an 8.3 short name to one drive-rooted path, but leaves every UNC
+  spelling standing — `\\localhost\C$\…`, `\\127.0.0.1\C$\…`, the machine name, any
+  share, any DFS path, and a drive letter mapped onto one. So one physical directory had
+  unboundedly many identities. Two consequences were executed: the certificate guard
+  admitted a UNC spelling of the competition state directory where the plain spelling is
+  refused, and — the serious one — the single-writer mutex derives its pipe name from
+  that root, so two processes started under a drive spelling and a UNC spelling of one
+  directory **both won the same epoch in twelve of twelve rounds**, against a control
+  that produced exactly one winner twelve times out of twelve. Because every journal
+  append runs under that mutex, both also planned the same sequence number. That is
+  S-G12-07's single-writer requirement ("derived from the OS-canonical physical
+  `STATE_DIR` so aliases of one directory converge") and the append-only journal
+  invariant, out of one root cause. The alias family is open, so no list of spellings
+  could close it: `src/shell/physical-path.ts` states the rule positively instead — a
+  state root is canonical only if it is drive-rooted, tested against the **realpath**
+  rather than the input — and `resolveStateDir` refuses anything else, which is the one
+  place a root is established, so the guard and the mutex close together. Re-measured
+  afterwards: one winner in twelve of twelve, and every admitted spelling collapsing to
+  one pipe name. **Declared limit:** a local volume mounted into a folder rather than
+  given a drive letter resolves to `\\?\Volume{GUID}\…` and would be refused with the
+  network-path reason. Reasoned, not measured — it could not be mounted for a test on
+  this host. It costs nothing on the documented path: the runbook's `STATE_DIR` values
+  are `C:\Users\felix\glass-box-state\longrun-1` and `…\dev`. **The environment.** The
+  Windows process environment looks up case-insensitively and enumerates
+  case-preservingly, so `mergeEnvironment` built a case-sensitive map in which
+  `$env:State_Dir` landed beside a `.env`-derived `STATE_DIR` and lost; `readiness-cli`
+  then created `quarantine/` in the `.env` directory while the operator believed it had
+  been redirected, with no warning and no differing exit code. Where `.env` did not name
+  the key at all the override vanished entirely — the `PRE_ARM_CERTIFICATE` case the
+  runbook uses as a clearing gesture. Keys from both sources are now canonicalised to
+  upper case on Windows, so one variable occupies one slot and a lookup by the name the
+  code uses finds it whatever was typed; on other platforms the environment really is
+  case-sensitive and nothing is folded. **A regression this caused, and its fix.** The
+  first version canonicalised the merged environment while the certificate guard still
+  read the raw file, so a `.env` spelling the key `State_Dir` set the competition
+  directory for the run while the guard, looking only at `STATE_DIR`, saw nothing to
+  protect and admitted — measurably worse than before the change, because previously
+  such a key set nothing at all. The guard now reads the file through the same
+  canonicalisation, and two `.env` lines that differ only in case count as ambiguous,
+  since on Windows they are one variable and which value wins depends on insertion
+  order rather than on the file.
+
 - **2026-09-17 — Unit 11, the digest batch: the architecture gate gets its second root with
   seven exceptions bound by count (D-11.1), and the certificate guard refuses the
   competition `STATE_DIR`.** Measured before the change, the gate reported 12 findings in

@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { admitCertificateInvocation, stateDirIdentity } from "../src/shell/certificate-admission.js";
 import { isCanonicalLocalRoot } from "../src/shell/physical-path.js";
-import { mergeEnvironment } from "../src/shell/runtime-config.js";
+import { ambiguousDotEnvKeys, mergeEnvironment } from "../src/shell/runtime-config.js";
 import { resolveStateDir } from "../src/shell/state-dir.js";
 import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
 
@@ -268,6 +268,40 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
     const posix = mergeEnvironment({ STATE_DIR: "/comp" }, { State_Dir: "/dev" }, "linux");
     expect(posix["STATE_DIR"]).toBe("/comp");
     expect(posix["State_Dir"]).toBe("/dev");
+  });
+
+
+  it("(16) reads .env through the same canonicalisation the runtime uses", () => {
+    // The regression this pins: the merged environment was canonicalised while
+    // the guard still read the raw file, so a `.env` spelling the key
+    // `State_Dir` set the competition directory for the run while the guard,
+    // looking only at `STATE_DIR`, saw nothing to protect and admitted.
+    for (const line of ["State_Dir", "state_dir", "StAtE_dIr"]) {
+      const { repoRoot, competition } = host();
+      writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=competition\n${line}=${competition}\n`, "utf8");
+      const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--owner-go"], platform: "win32" });
+      expect(admission.ok, line).toBe(false);
+      expect(admission.ok ? "" : admission.reason).toMatch(REFUSAL);
+    }
+    // The profile is read the same way, or the coupling rule never engages.
+    const { repoRoot, competition } = host();
+    writeFileSync(path.join(repoRoot, ".env"), `alpaca_profile=competition\nSTATE_DIR=${competition}\n`, "utf8");
+    expect(admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--owner-go"], platform: "win32" }).admission)
+      .toMatchObject({ ok: false, reason: expect.stringMatching(REFUSAL) as string });
+  });
+
+  it("(17) two .env lines for one variable are ambiguous even when they differ only in case", () => {
+    // On Windows `STATE_DIR` and `State_Dir` are one variable, so which value a
+    // reader ends up with depends on insertion order rather than on the file —
+    // exactly what the duplicate rule refuses to resolve.
+    const { repoRoot, competition, dev } = host();
+    writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=competition\nSTATE_DIR=${dev}\nState_Dir=${competition}\n`, "utf8");
+    const { admission } = admitCertificateInvocation({ repoRoot, processEnv: { ALPACA_PROFILE: "dev", STATE_DIR: competition }, args: ["--owner-go"], platform: "win32" });
+    expect(admission.ok).toBe(false);
+    expect(admission.ok ? "" : admission.reason).toMatch(/more than one line/u);
+    // Elsewhere the two really are different variables and nothing is ambiguous.
+    expect(ambiguousDotEnvKeys({ values: { STATE_DIR: "a", State_Dir: "b" }, duplicateKeys: [] }, "linux")).toEqual([]);
+    expect(ambiguousDotEnvKeys({ values: { STATE_DIR: "a", State_Dir: "b" }, duplicateKeys: [] }, "win32")).toEqual(["STATE_DIR"]);
   });
 
 });

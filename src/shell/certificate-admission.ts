@@ -11,7 +11,7 @@ import path from "node:path";
 import { admitCertificateCommand } from "./certificate-command-guard.js";
 import type { CertificateCommandAdmission, StateDirIdentity } from "./certificate-command-guard.js";
 import { isCanonicalLocalRoot } from "./physical-path.js";
-import { mergeEnvironment, readDotEnvStrict } from "./runtime-config.js";
+import { ambiguousDotEnvKeys, mergeEnvironment, readDotEnvStrict } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
 
 /**
@@ -52,15 +52,20 @@ export interface CertificateInvocationAdmission {
 
 export function admitCertificateInvocation(input: { readonly repoRoot: string; readonly processEnv: EnvRecord; readonly args: readonly string[]; readonly platform: NodeJS.Platform }): CertificateInvocationAdmission {
   const dotEnv = readDotEnvStrict(input.repoRoot);
-  const dotEnvValues = dotEnv.kind === "parsed" ? dotEnv.entries.values : {};
-  const environment = mergeEnvironment(dotEnvValues, input.processEnv);
+  const entries = dotEnv.kind === "parsed" ? dotEnv.entries : { values: {}, duplicateKeys: [] };
+  // The guard reads the file through the same canonicalisation the runtime will
+  // use. Reading it raw while comparing against a canonicalised environment let
+  // a `.env` that spells the key `State_Dir` set the competition directory for
+  // the run while the guard, looking only at `STATE_DIR`, saw nothing to protect.
+  const dotEnvValues = mergeEnvironment(entries.values, {}, input.platform);
+  const environment = mergeEnvironment(entries.values, input.processEnv, input.platform);
   const admission = admitCertificateCommand({
     profile: environment["ALPACA_PROFILE"],
     ownerGo: input.args.includes("--owner-go"),
     preflight: input.args.includes("--preflight"),
     stateDirs: {
       dotEnvRead: dotEnv.kind,
-      duplicateKeys: dotEnv.kind === "parsed" ? dotEnv.entries.duplicateKeys : [],
+      duplicateKeys: ambiguousDotEnvKeys(entries, input.platform),
       dotEnvProfile: dotEnvValues["ALPACA_PROFILE"],
       dotEnvStateDir: stateDirIdentity(dotEnvValues["STATE_DIR"], input.platform),
       effectiveStateDir: stateDirIdentity(environment["STATE_DIR"], input.platform),

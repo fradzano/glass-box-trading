@@ -29,5 +29,12 @@ export function isInsideSession(nowMs: number, session: SessionBounds): boolean 
  * the core on exactly one millisecond.
  */
 export function isFinalCycleOfSession(nowMs: number, cycleIntervalMs: number, session: SessionBounds): boolean {
+  // A day the calendar does not list as a session arrives as
+  // `{ isTradingDay: false, opensAt: 0, closesAt: 0 }`, and every instant is at
+  // or after zero — so without this the flag reads `true` all day on a holiday
+  // and the first cycle with an open eviction target halts `EXPIRY_EVICTION_STUCK`
+  // on the reasoning that no further cycle precedes a close that does not exist.
+  // A halt is sticky and needs a human to clear it.
+  if (!session.isTradingDay) return false;
   return nowMs + cycleIntervalMs >= session.closesAt;
 }

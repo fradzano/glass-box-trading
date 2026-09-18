@@ -103,6 +103,18 @@ describe("the final cycle of a session is decided in the same place", () => {
     expect(isFinalCycleOfSession(CLOSES + INTERVAL, INTERVAL, SESSION)).toBe(true);
   });
 
+  it("is false all day on a day the calendar does not list as a session", () => {
+    // `sessionFor` hands back { isTradingDay: false, opensAt: 0, closesAt: 0 }
+    // for a holiday, and every instant is at or after zero — so the arithmetic
+    // alone would call every holiday cycle the final one, and the first one with
+    // an open eviction target would halt on a close that does not exist.
+    const holiday = { isTradingDay: false, opensAt: 0, closesAt: 0 };
+    for (const now of [0, 1_789_718_717_348, CLOSES]) {
+      expect(isFinalCycleOfSession(now, INTERVAL, holiday), String(now)).toBe(false);
+    }
+    expect(isFinalCycleOfSession(CLOSES - INTERVAL, INTERVAL, { ...SESSION, isTradingDay: false })).toBe(false);
+  });
+
   it("means, for any cycle inside the session, that the next one is not", () => {
     for (const now of [OPENS, OPENS + INTERVAL, CLOSES - 2 * INTERVAL, CLOSES - INTERVAL, CLOSES - 1]) {
       expect(isInsideSession(now, SESSION), `precondition ${String(now)}`).toBe(true);

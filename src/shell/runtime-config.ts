@@ -52,6 +52,26 @@ export function parseDotEnv(text: string): Readonly<Record<string, string>> {
   return parseDotEnvEntries(text).values;
 }
 
+/**
+ * The keys whose value in `.env` is not decided by the file alone. Two lines for
+ * one key is the obvious case; on Windows two lines whose keys differ only in
+ * case are the same variable to the platform, so which of them a reader ends up
+ * with depends on insertion order rather than on the file. A guard may resolve
+ * neither.
+ */
+export function ambiguousDotEnvKeys(entries: DotEnvEntries, platform: NodeJS.Platform): readonly string[] {
+  const ambiguous = new Set(entries.duplicateKeys.map(key => platform === "win32" ? key.toUpperCase() : key));
+  if (platform === "win32") {
+    const seen = new Set<string>();
+    for (const key of Object.keys(entries.values)) {
+      const canonical = key.toUpperCase();
+      if (seen.has(canonical)) ambiguous.add(canonical);
+      seen.add(canonical);
+    }
+  }
+  return [...ambiguous];
+}
+
 /** What reading `.env` actually found. "Absent" and "unreadable" are different facts, and a guard may not confuse them. */
 export type DotEnvRead =
   | { readonly kind: "parsed"; readonly entries: DotEnvEntries }
