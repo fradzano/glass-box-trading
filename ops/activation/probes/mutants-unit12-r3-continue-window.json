@@ -1,0 +1,14 @@
+[
+  {
+    "id": "R3-M26",
+    "from": "try {\n    $output = & $NodePath @arguments 2>&1\n    $exitCode = $LASTEXITCODE\n} finally {\n    $ErrorActionPreference = $previousErrorActionPreference\n}",
+    "to": "try {\n    Write-RunLog \"invoking the watchdog\"\n    $output = & $NodePath @arguments 2>&1\n    $exitCode = $LASTEXITCODE\n} finally {\n    $ErrorActionPreference = $previousErrorActionPreference\n}",
+    "note": "a log call moved inside the Continue window — the one edit that makes Write-RunLog's guard against a failed write silent again, without changing anything a reader would notice. This is the defect R3-17 names, as a single line."
+  },
+  {
+    "id": "R3-M27-control",
+    "from": "$previousErrorActionPreference = $ErrorActionPreference",
+    "to": "$previousErrorActionPreference = $ErrorActionPreference # control",
+    "note": "control — a trailing comment on the window's opening line, behaviour-neutral. It must SURVIVE; if it is caught, the guard is matching text it should not."
+  }
+]
