@@ -822,6 +822,68 @@ local readers were run read-only on 2026-09-14 (see unit 7).
 
 **Unit 11 is done (2026-09-17, see below).** Remaining: units 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
 
+## Unit 12 brief — the one adversarial loop over units 1 to 11
+
+Written 2026-09-18, before the first finder call. Unit 12 is not a build unit: it is
+the single "bis 0" loop that D-10.1 placed over the whole activation instead of one
+loop per unit. Its mechanics are `~/agent-rules/VERIFY.md`; this brief fixes what is
+specific to this run.
+
+### The run
+
+- **Run name / Ablageort:** `p12-units-1-11`, in the external store
+  `~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`. Ledger, lens register,
+  mechanism register, round protocols and every call's prompt and return live there,
+  archived at call time under version control. Only the distillate comes back into
+  this repository: run state to `STATE.md`, decisions to `DECISIONS.md`, open findings
+  and the instrument's calibration to this log.
+- **Entry spec:** `docs/P12-ACTIVATION-SPEC.md`.
+- **Independent yardstick:** `docs/P12-ACTIVATION-SCENARIOS.md`. The scenario
+  catalogue was derived before the code and not from it, which is what makes it a
+  yardstick at all.
+- **Withheld from every finder:** this build log. The reasoning in it is the author's
+  claim about the artefact, and a finder that reads the claim checks the claim instead
+  of the code. Finders receive the artefact, the spec and the scenarios.
+- **Round budget:** eight. At round 8 the loop halts and presents whatever is open.
+
+### Two scopes, because the fix windows differ
+
+**DIGEST — first, and for a reason.** `src/shell/certificate-command-guard.ts`,
+`src/shell/certificate-admission.ts`, `src/shell/certificate-cli.ts`,
+`tools/check-core-architecture.mjs` and `package.json` are runtime-digest material.
+The certificate run on 2026-09-21 binds the digest of that moment, so a fix here is
+free until then and costs a new certificate afterwards. A defect found on this surface
+after 2026-09-21 is an owner decision, not a patch.
+
+**OPS — second.** `ops/activation/**` (units 1 to 10) lies outside the digest, so a
+fix there never invalidates the certificate. That is not permission to be slow: a
+defect that would show on the anchor day 2026-09-22 has to be fixed before it.
+
+### What counts as done
+
+The formal exit condition is VERIFY.md's, all six criteria at once, and it is not a
+feeling: zero open A findings, every open B resolved or declared with its
+countersignatures, no declared lens left open with a foreign-lens closing round that
+stayed empty as a whole and was countersigned in advance by Felix, no freshly patched
+seam with a chain of two or more, a calibrated instrument (mutation probe, plus an
+execution probe because this artefact is executable), and a blind closing audit
+without a load-bearing discrepancy.
+
+Failure is an answer too. If the loop does not stand at zero by the evening of
+2026-09-19 it halts and presents what is open, because 2026-09-20 belongs to unit 13
+and the certificate run to 2026-09-21.
+
+### Declared public paths, each of which owes an execution probe
+
+1. `node ops/activation/cli.ts status --state-root <root>` — the owner's read, which
+   takes no lease and appends nothing.
+2. `node ops/activation/cli.ts run --dry-run --state-root <root> --anchor-day <day>` —
+   the scheduled tick, rehearsed without touching the ledger.
+3. `npm run verify` — gate condition 1 of the runbook, over both suites, the
+   architecture gate, the sandbox and the phase check.
+4. `node dist/shell/certificate-cli.js --preflight` with the competition `STATE_DIR` —
+   refused before runtime construction, which is exactly what unit 11 part 2 promises.
+
 ## Unit 11 — the digest batch — 2026-09-17
 
 Built against the unit 11 brief below, on the day it was written. **This commit changes
