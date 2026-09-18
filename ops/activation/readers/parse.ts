@@ -346,7 +346,7 @@ export function parseEnv(input: { readonly dotEnvText: string; readonly sha256: 
   const { values, duplicateKeys } = parseDotEnvAsRuntime(input.dotEnvText);
   const effective = (key: string): string | null => input.userEnvironment[key] ?? input.machineEnvironment[key] ?? values[key] ?? null;
   const shadowedKeys = shadowableKeys().filter(key => Object.hasOwn(input.userEnvironment, key) || Object.hasOwn(input.machineEnvironment, key));
-  return { certificatePath: effective("PRE_ARM_CERTIFICATE"), profile: effective("ALPACA_PROFILE"), hash: input.sha256, duplicateKeys, shadowedKeys };
+  return { certificatePath: effective("PRE_ARM_CERTIFICATE"), profile: effective("ALPACA_PROFILE"), stateDir: effective("STATE_DIR"), hash: input.sha256, duplicateKeys, shadowedKeys };
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +420,45 @@ export function parsePreflightOutput(stdout: string): Reading<PreflightReport> {
   const policyDigest = report["policyDigest"];
   if (typeof runtimeDigest !== "string" || runtimeDigest.length === 0 || typeof policyDigest !== "string" || policyDigest.length === 0) return unknown("preflight report lacks digests");
   return known({ digests: { runtimeDigest, policyDigest }, mcpTools });
+}
+
+/**
+ * A child process's stderr, reduced to something a reason string may carry.
+ *
+ * The ports promise a reason that cannot carry a credential, and a child's stderr is not
+ * ours to vouch for: `certificate-cli.ts` writes structured refusals (`refusing: …`,
+ * `refused at <stage>: …`) but also whole stack traces. So the structured lines are kept
+ * and redacted, the stack-trace shapes are reduced to their first words, and everything
+ * else is counted rather than quoted. Discarding all of it was the defect (R2-16): an
+ * operator reading the ledger could not tell a credential rejection from a missing MCP
+ * inventory, because both arrive as "preflight printed no report".
+ *
+ * Declared limit: the redaction is a shape test, not knowledge of this deployment's
+ * secrets. It replaces runs of at least twenty word characters that mix letters and
+ * digits — the shape of a key, a token or a UUID — and leaves `CLAUDE_CODE_OAUTH_TOKEN`,
+ * which is a name, alone.
+ */
+export function childRefusal(stderr: string, limit = 300): string | null {
+  const kept: string[] = [];
+  let suppressed = 0;
+  for (const raw of withoutBom(stderr).split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    const truncated = ["runtime construction failed:", "certificate run aborted:"].find(prefix => line.startsWith(prefix));
+    if (truncated !== undefined) kept.push(`${truncated} (detail suppressed)`);
+    else if (line.startsWith("refusing: ") || line.startsWith("refused at ")) kept.push(redactCredentialShaped(line));
+    else suppressed += 1;
+  }
+  if (kept.length === 0 && suppressed === 0) return null;
+  const joined = kept.join(" | ");
+  const text = joined.length > limit ? `${joined.slice(0, limit)}…` : joined;
+  const tail = suppressed === 0 ? "" : `${kept.length === 0 ? "" : " "}(${String(suppressed)} further stderr line${suppressed === 1 ? "" : "s"} suppressed)`;
+  return `${text}${tail}`;
+}
+
+/** Runs of word characters that mix letters and digits and are long enough to be a secret. */
+function redactCredentialShaped(text: string): string {
+  return text.replace(/[A-Za-z0-9_-]{20,}/gu, match => (/\d/u.test(match) && /[A-Za-z]/u.test(match) ? "<redacted>" : match));
 }
 
 // ---------------------------------------------------------------------------

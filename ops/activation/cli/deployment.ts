@@ -38,7 +38,7 @@ function refuse(reason: string): ParsedDeployment {
  * field: a half-read deployment would put a plausible-looking wrong expectation in front
  * of the core, which compares it without ever asking where it came from.
  */
-export function parseDeploymentFacts(text: string, repoRoot: string, activationRoot: string): ParsedDeployment {
+export function parseDeploymentFacts(text: string, repoRoot: string, activationRoot: string, longRunStateDir: string): ParsedDeployment {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.replace(/^\uFEFF/, ""));
@@ -57,5 +57,5 @@ export function parseDeploymentFacts(text: string, repoRoot: string, activationR
   if (preconditions === null) return refuse("expectedHostPreconditions is missing or is not an object of text values");
   if (Object.keys(preconditions).length === 0) return refuse("expectedHostPreconditions is empty, so step 0 would compare against nothing");
 
-  return { ok: true, facts: { repoRoot, activationRoot, longRunAccountMasked: account, coverageThroughDate: coverage, expectedHostPreconditions: preconditions, minFreeDiskBytes: disk } };
+  return { ok: true, facts: { repoRoot, activationRoot, longRunStateDir, longRunAccountMasked: account, coverageThroughDate: coverage, expectedHostPreconditions: preconditions, minFreeDiskBytes: disk } };
 }

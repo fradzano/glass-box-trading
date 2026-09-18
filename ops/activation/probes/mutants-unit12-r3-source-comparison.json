@@ -1,0 +1,26 @@
+[
+  {
+    "id": "R3-M1",
+    "from": "  return folded.length > 0 && folded === foldDirectory(right);",
+    "to": "  return folded.length > 0;",
+    "note": "the two deployment sources are never actually compared — every .env STATE_DIR agrees with every declaration. This is the state the activation was in before G-7, expressed as one line."
+  },
+  {
+    "id": "R3-M2",
+    "from": "  const separated = value.trim().toLowerCase().split(\"/\").join(\"\\\\\");",
+    "to": "  const separated = value.trim().split(\"/\").join(\"\\\\\");",
+    "note": "the comparison becomes case-sensitive, so a differently-cased spelling of the one declared directory reds a healthy deployment on the anchor day."
+  },
+  {
+    "id": "R3-M3",
+    "from": "    if (env.stateDir === null) red.push(\"env.state-dir:absent\");",
+    "to": "    if (env.stateDir === \"\") red.push(\"env.state-dir:absent\");",
+    "note": "a .env with no STATE_DIR line at all stops being red; the comparison then runs against null and the absence passes as a disagreement nobody named."
+  },
+  {
+    "id": "R3-M4-control",
+    "from": "function foldDirectory(value: string): string {",
+    "to": "function foldDirectory(value: string): string /* control */ {",
+    "note": "control — a comment inside the signature, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

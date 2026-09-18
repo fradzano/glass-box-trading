@@ -1,0 +1,26 @@
+[
+  {
+    "id": "R3-M9",
+    "from": "  return text.replace(/[A-Za-z0-9_-]{20,}/gu, match => (/\\d/u.test(match) && /[A-Za-z]/u.test(match) ? \"<redacted>\" : match));",
+    "to": "  return text;",
+    "note": "the redaction is removed, so a key-shaped value in a child's refusal reaches the ledger verbatim — the credential promise the port header makes, broken at the one layer that keeps it."
+  },
+  {
+    "id": "R3-M10",
+    "from": "    if (truncated !== undefined) kept.push(`${truncated} (detail suppressed)`);",
+    "to": "    if (truncated !== undefined) kept.push(redactCredentialShaped(line));",
+    "note": "a stack trace is carried in full instead of reduced to its first words; the redaction still runs, so this measures whether anything notices the trace itself."
+  },
+  {
+    "id": "R3-M11",
+    "from": "    else if (line.startsWith(\"refusing: \") || line.startsWith(\"refused at \")) kept.push(redactCredentialShaped(line));",
+    "to": "    else if (line.startsWith(\"refusing: \")) kept.push(redactCredentialShaped(line));",
+    "note": "`refused at <stage>` lines stop being kept — and that is the shape of every build refusal, including the 401 at account_binding that the finding is about."
+  },
+  {
+    "id": "R3-M12-control",
+    "from": "export function childRefusal(stderr: string, limit = 300): string | null {",
+    "to": "export function childRefusal(stderr: string, limit = 300): string | null { /* control */",
+    "note": "control — a comment in the body's first line, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

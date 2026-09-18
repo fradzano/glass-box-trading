@@ -16,6 +16,13 @@ import type { Stamp, StampAt } from "./plan.ts";
 export interface DeploymentFacts {
   readonly repoRoot: string;
   readonly activationRoot: string;
+  /**
+   * The long run's state directory, as `config/deployment.json` declares it. It comes from
+   * that file rather than from `ops/activation/deployment.json` like the fields below, for
+   * the same reason `repoRoot` does: the caller establishes it, this module only carries it
+   * to the core, which compares it against the `STATE_DIR` the environment reading found.
+   */
+  readonly longRunStateDir: string;
   /** The masked id of the long-run account the gate expects. */
   readonly longRunAccountMasked: string;
   /** The coverage date the installer is given (spec §5, step 1). */
@@ -155,6 +162,7 @@ export function buildSchedule(anchorDay: string, facts: DeploymentFacts, toLocal
       minFreeDiskBytes: facts.minFreeDiskBytes,
       repoRoot: facts.repoRoot,
       activationRoot: facts.activationRoot,
+      longRunStateDir: facts.longRunStateDir,
     },
   };
 }

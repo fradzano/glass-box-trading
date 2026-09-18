@@ -77,8 +77,12 @@ async function main(): Promise<number> {
   }
   // Empty paths, and named so nobody mistakes them for a default. They are reachable
   // only on a command that consumes no state directory — `run` and `open` have returned
-  // 2 above — and the one place that would use them, the `observe` closure, is called
-  // from `run` alone. A test drives all three commands with the file removed.
+  // 2 above. Two places would use them: the `observe` closure, which is called from `run`
+  // alone, and `LONG_RUN_STATE_DIR` in the deployment facts, which reaches the core's
+  // source comparison through the schedule — and that comparison, like every other world
+  // finding, is only evaluated by `decide`, which `status` never calls. An empty value
+  // there would fold to the empty string and red the run rather than pass it. A test
+  // drives all three commands with the file removed.
   const UNREADABLE_STATE_DIRS = { longRunStateDir: "", devStateDir: "", devDiagnosticSink: "" };
   const DEPLOYMENT_STATE = state.ok ? state.dirs : UNREADABLE_STATE_DIRS;
   const LONG_RUN_STATE_DIR = DEPLOYMENT_STATE.longRunStateDir;
@@ -95,7 +99,7 @@ async function main(): Promise<number> {
     process.stderr.write(`warning: ${DEPLOYMENT_FILE} could not be read. Continuing, because ${invocation.command} consumes none of the facts it carries.\n`);
   }
   if (deploymentText !== null) {
-    const deployment = parseDeploymentFacts(deploymentText, REPO_ROOT, activationRoot);
+    const deployment = parseDeploymentFacts(deploymentText, REPO_ROOT, activationRoot, LONG_RUN_STATE_DIR);
     if (!deployment.ok) {
       if (required) {
         process.stderr.write(`refusing: ${DEPLOYMENT_FILE}: ${deployment.reason}\n`);

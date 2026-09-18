@@ -5,7 +5,7 @@
 // unknown, a drill counted whose cause is ambiguous, a proof taken from yesterday
 // or from a catch-up firing — so most tests below pin a refusal.
 import { describe, expect, it } from "vitest";
-import { GATE_CHECK_MAX_AGE_MS, authorizeCertificateWrite, decide, definitionFindings, tokenizeArguments } from "../core/decide.ts";
+import { GATE_CHECK_MAX_AGE_MS, authorizeCertificateWrite, decide, definitionFindings, tokenizeArguments, worldFindings } from "../core/decide.ts";
 import { foldLedger, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
 import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
@@ -38,6 +38,8 @@ const NODE = "C:\\Program Files\\nodejs\\node.exe";
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const USER_SID = "S-1-5-21-1000";
 const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
+/** What `config/deployment.json` declares, and what `.env` must therefore say (G-7 / R2-18). */
+const LONG_RUN = "C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22";
 
 /** A drill history like the one of 2026-09-11: down a minute before the alert, back up two hours later. */
 function flipsFor(alertUtcMs: number): CheckObservation["flips"] {
@@ -84,7 +86,7 @@ const NO_DISARM: DisarmObservation = { registered: false, fires: null, state: nu
 const STILL_DOWN: CheckObservation["flips"] = [{ utcMs: CONFIRMED_DOWN, up: false }];
 
 function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utc([anchorDay, 14, 55]), longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utc([anchorDay, 14, 55]), longRunAccountMasked: "PA3L…U97", coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT, longRunStateDir: LONG_RUN };
 }
 const SCHEDULE = scheduleFor(MON, TUE);
 
@@ -254,7 +256,7 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
       watchdog: check(FINGERPRINTS.watchdog, "up", now - 60_000),
     }),
     apiIndependentRead: known(true),
-    env: known({ certificatePath: expectedCertificateLine(fold) === "present" ? CERT_PATH : null, profile: "competition", hash: "e1", duplicateKeys: [], shadowedKeys: [] }),
+    env: known({ certificatePath: expectedCertificateLine(fold) === "present" ? CERT_PATH : null, profile: "competition", stateDir: LONG_RUN, hash: "e1", duplicateKeys: [], shadowedKeys: [] }),
     resolvedAccountMasked: known("PA3L…U97"),
     deploymentDigests: known({ runtimeDigest: "r1", policyDigest: "p1" }),
     certificate: known({ path: CERT_PATH, verdict: "PASS", digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: [] }),
@@ -368,27 +370,62 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts when the certificate line is back after step 0 removed it", () => {
     const fold = before("2-certificate");
-    const decision = decide(fold, worldFor(fold, [MON, 16, 0], { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 16, 0], { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", stateDir: LONG_RUN, hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.certificate-line.expected-absent");
   });
 
   it("aborts on a non-competition profile, which would skip the latch (ACT-57)", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "dev", hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "dev", stateDir: LONG_RUN, hash: "e2", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.profile:dev");
   });
 
   it("aborts on a duplicate key in .env", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: ["ALPACA_PROFILE"], shadowedKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", stateDir: LONG_RUN, hash: "e2", duplicateKeys: ["ALPACA_PROFILE"], shadowedKeys: [] }) }), SCHEDULE);
     expect(evidenceOf(decision)["red"]).toContain("env.duplicate-keys:ALPACA_PROFILE");
   });
 
   it("aborts when a certificate path or profile is set outside .env, which the runtime would prefer (owner ruling 2026-09-14)", () => {
     const fold = before("4-enable");
-    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", hash: "e2", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE"] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: known({ certificatePath: null, profile: "competition", stateDir: LONG_RUN, hash: "e2", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE"] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: OWED_TEARDOWN });
     expect(evidenceOf(decision)["red"]).toContain("env.shadowed-outside-dotenv:PRE_ARM_CERTIFICATE");
+  });
+
+  // G-7 / R2-18. The wrappers write their logs where `.env` points and every long-run
+  // reading is taken where the declaration points, so a divergence is not a cosmetic
+  // disagreement: step 2's contamination assertion passes over a directory the long run
+  // never touches and step 9 waits for firings it will never see. Both directories can
+  // exist and be empty, which is why nothing complained before this comparison existed.
+  it("aborts when .env and the declaration name different long-run state directories", () => {
+    const fold = before("4-enable");
+    const diverged = known({ certificatePath: null, profile: "competition", stateDir: "C:\\Users\\felix\\glass-box-state\\longrun-1", hash: "e2", duplicateKeys: [], shadowedKeys: [] });
+    const decision = decide(fold, worldFor(fold, [MON, 22, 6], { env: diverged }), SCHEDULE);
+    expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: OWED_TEARDOWN });
+    expect(evidenceOf(decision)["red"]).toContain(`env.state-dir.declared-${LONG_RUN}:observed-C:\\Users\\felix\\glass-box-state\\longrun-1`);
+  });
+
+  it("aborts when .env names no state directory at all, rather than reading the declaration into the gap", () => {
+    const fold = before("4-enable");
+    const absent = known({ certificatePath: null, profile: "competition", stateDir: null, hash: "e2", duplicateKeys: [], shadowedKeys: [] });
+    expect(evidenceOf(decide(fold, worldFor(fold, [MON, 22, 6], { env: absent }), SCHEDULE))["red"]).toContain("env.state-dir:absent");
+  });
+
+  // The folding is deliberately shallow, and its leniency runs in the safe direction: two
+  // spellings that differ only in case or in a trailing separator are the same directory
+  // to Windows, and anything deeper — a junction, an 8.3 name, a `\\?\` prefix — compares
+  // unequal and reds the run rather than passing it.
+  it("accepts a spelling that differs only in case or a trailing separator, and nothing deeper", () => {
+    const fold = before("4-enable");
+    const spelt = (stateDir: string) => known({ certificatePath: null, profile: "competition", stateDir, hash: "e2", duplicateKeys: [], shadowedKeys: [] });
+    const redFor = (stateDir: string): readonly string[] => worldFindings(fold, worldFor(fold, [MON, 22, 6], { env: spelt(stateDir) }), SCHEDULE).red;
+    expect(redFor(LONG_RUN)).toEqual([]);
+    expect(redFor(LONG_RUN.toUpperCase())).toEqual([]);
+    expect(redFor(`${LONG_RUN}\\`)).toEqual([]);
+    expect(redFor(LONG_RUN.split("\\").join("/"))).toEqual([]);
+    expect(redFor(`\\\\?\\${LONG_RUN}`)).toEqual([`env.state-dir.declared-${LONG_RUN}:observed-\\\\?\\${LONG_RUN}`]);
+    expect(redFor(`${LONG_RUN}\\quarantine`)).toHaveLength(1);
   });
 
   it("aborts when the resolved account is not the long-run account", () => {
@@ -434,7 +471,7 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("after the gate, pages without teardown when the certificate line names another file", () => {
     const fold = before("11-anchor");
-    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { env: known({ certificatePath: "C:\\other.json", profile: "competition", hash: "e3", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, [TUE, 15, 20], { env: known({ certificatePath: "C:\\other.json", profile: "competition", stateDir: LONG_RUN, hash: "e3", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "abort", reason: "WORLD_MISMATCH", teardown: [] });
   });
 
@@ -569,7 +606,7 @@ describe("decide — step 0, preflight", () => {
   const at: Clock = [MON, 15, 30];
 
   it("removes the stale certificate line and records the wrapper hash and host preconditions", () => {
-    const decision = decide(fold, worldFor(fold, at, { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", hash: "e0", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
+    const decision = decide(fold, worldFor(fold, at, { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", stateDir: LONG_RUN, hash: "e0", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "act", step: "0-preflight", actions: [{ kind: "remove-certificate-line" }] });
     expect(evidenceOf(decision)).toMatchObject({ wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }, hostPreconditions: HOST, envHashBefore: "e0", fingerprints: FINGERPRINTS, tokenProbe: "ok" });
     expect(evidenceOf(decision)["alertConfirmation"]).toMatchObject({ operator: "felix", bundledAlert: true, downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN, watchdog: CONFIRMED_DOWN }, oldestReceiptUtcMs: CONFIRMED_ALERT });
@@ -683,6 +720,13 @@ describe("decide — step 2, certificate", () => {
   it("aborts when --preflight left an artefact in the long-run state directory, by name and regardless of case", () => {
     expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { longRunArtefacts: known(["quarantine", "journal.jsonl"]) }), SCHEDULE))).toBe("LONG_RUN_STATE_CONTAMINATED");
     expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { longRunArtefacts: known(["Pings.log"]) }), SCHEDULE))).toBe("LONG_RUN_STATE_CONTAMINATED");
+  });
+
+  // The other half of R2-19. The shell now reads an absent directory as unknown; this is
+  // what the core does with it — the assertion refuses rather than passing over nothing.
+  it("refuses to assert over a long-run directory it could not list, absent or unreadable alike", () => {
+    expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { longRunArtefacts: unknown("the long-run state directory does not exist (C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22); an absent directory is not an empty one") }), SCHEDULE))).toBe("LONG_RUN_STATE_UNREADABLE");
+    expect(abortReason(decide(fold, worldFor(fold, [MON, 16, 10], { longRunArtefacts: unknown("long-run state directory: EACCES") }), SCHEDULE))).toBe("LONG_RUN_STATE_UNREADABLE");
   });
 
   it("aborts on an unreadable certificate, and after 22:40", () => {

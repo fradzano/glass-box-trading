@@ -8,6 +8,8 @@ import { parseDeploymentFacts } from "../cli/deployment.ts";
 
 const REPO = "C:\\Users\\felix\\source\\repos\\glass-box-trading";
 const ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
+/** Not from this file: the caller reads it out of `config/deployment.json` and hands it in. */
+const LONG_RUN = "C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22";
 
 const COMPLETE = {
   longRunAccountMasked: "PA3L…U97",
@@ -17,7 +19,7 @@ const COMPLETE = {
 };
 
 function parse(value: unknown) {
-  return parseDeploymentFacts(JSON.stringify(value), REPO, ROOT);
+  return parseDeploymentFacts(JSON.stringify(value), REPO, ROOT, LONG_RUN);
 }
 
 function reason(value: unknown): string {
@@ -34,6 +36,9 @@ describe("the deployment file", () => {
       facts: {
         repoRoot: REPO,
         activationRoot: ROOT,
+        // Carried through from `config/deployment.json`, not read from this file: the core
+        // holds it against the `STATE_DIR` the environment reading found (G-7 / R2-18).
+        longRunStateDir: LONG_RUN,
         longRunAccountMasked: "PA3L…U97",
         coverageThroughDate: "2026-12-16",
         expectedHostPreconditions: { HiberbootEnabled: "0", DisableAutomaticRestartSignOn: "1" },
@@ -43,11 +48,11 @@ describe("the deployment file", () => {
   });
 
   it("ignores a byte-order mark, which every Windows editor is happy to add", () => {
-    expect(parseDeploymentFacts(`\uFEFF${JSON.stringify(COMPLETE)}`, REPO, ROOT).ok).toBe(true);
+    expect(parseDeploymentFacts(`\uFEFF${JSON.stringify(COMPLETE)}`, REPO, ROOT, LONG_RUN).ok).toBe(true);
   });
 
   it("refuses text that is not JSON, and JSON that is not an object", () => {
-    expect(parseDeploymentFacts("{", REPO, ROOT)).toEqual({ ok: false, reason: "the deployment file is not JSON" });
+    expect(parseDeploymentFacts("{", REPO, ROOT, LONG_RUN)).toEqual({ ok: false, reason: "the deployment file is not JSON" });
     expect(reason([COMPLETE])).toBe("the deployment file is not a JSON object");
   });
 

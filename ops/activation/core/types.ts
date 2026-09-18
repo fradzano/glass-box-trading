@@ -121,6 +121,14 @@ export interface CheckObservation {
 export interface EnvObservation {
   readonly certificatePath: string | null;
   readonly profile: string | null;
+  /**
+   * The `STATE_DIR` the runtime would see — user over machine over `.env`, the same
+   * precedence as the two above. It is observed so that the core can hold it against the
+   * directory `config/deployment.json` declares: the wrappers write their logs where this
+   * value points and the activation reads where the declaration points, and nothing used
+   * to compare the two (G-7 / R2-18).
+   */
+  readonly stateDir: string | null;
   /** SHA-256 of the file's bytes. */
   readonly hash: string;
   readonly duplicateKeys: readonly string[];
@@ -305,6 +313,13 @@ export interface Schedule {
   readonly repoRoot: string;
   /** The activation state root the disarm one-shot reads the ledger from. */
   readonly activationRoot: string;
+  /**
+   * The long run's state directory as `config/deployment.json` declares it — the
+   * yardstick for `EnvObservation.stateDir`, which is the same fact stated a second
+   * time in `.env`. The core only compares the two; establishing either is the
+   * shell's work (G-7 / R2-18).
+   */
+  readonly longRunStateDir: string;
 }
 
 /** What the shell is asked to do to the world. Each variant is one effect; nothing else may change it. */

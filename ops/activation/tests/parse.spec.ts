@@ -9,7 +9,7 @@ import { buildCertificate, validateArmingCertificate } from "../../../src/core/c
 import { parseDotEnv } from "../../../src/shell/runtime-config.ts";
 import { inputs, ORIGIN } from "../../../tests/arm01-fixtures.ts";
 import { definitionFindings } from "../core/decide.ts";
-import { berlinLocal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "../readers/parse.ts";
+import { berlinLocal, childRefusal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "../readers/parse.ts";
 
 const NAMES = { cycle: "GlassBoxTrading-AgentCycle", watchdog: "GlassBoxTrading-Watchdog", disarm: "GlassBoxTrading-Disarm" };
 
@@ -269,8 +269,21 @@ describe("parse — .env as the runtime reads it", () => {
 
   it("sees a certificate path or profile set outside .env, which the runtime would prefer, and names it", () => {
     const reading = parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: { PRE_ARM_CERTIFICATE: "C:\\old.json" }, machineEnvironment: { ALPACA_PROFILE: "dev" } });
-    expect(reading).toEqual({ certificatePath: "C:\\old.json", profile: "dev", hash: "h", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE"] });
+    expect(reading).toEqual({ certificatePath: "C:\\old.json", profile: "dev", stateDir: null, hash: "h", duplicateKeys: [], shadowedKeys: ["PRE_ARM_CERTIFICATE", "ALPACA_PROFILE"] });
     expect(parseEnv({ dotEnvText: "", sha256: "h", userEnvironment: { ALPACA_PROFILE: "competition" }, machineEnvironment: { ALPACA_PROFILE: "dev" } }).profile).toBe("competition");
+  });
+
+  // The second statement of a fact the deployment also declares. It is read with the same
+  // precedence as the other two, because the core compares it against the declaration and a
+  // comparison against a value the runtime would not use proves nothing (G-7 / R2-18).
+  it("reads STATE_DIR as the runtime would see it, from .env or from whatever shadows it", () => {
+    const fromFile = parseEnv({ dotEnvText: "STATE_DIR=C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22\n", sha256: "h", userEnvironment: {}, machineEnvironment: {} });
+    expect(fromFile.stateDir).toBe("C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22");
+    expect(fromFile.shadowedKeys).toEqual([]);
+    const shadowed = parseEnv({ dotEnvText: "STATE_DIR=C:\\declared\n", sha256: "h", userEnvironment: { STATE_DIR: "C:\\elsewhere" }, machineEnvironment: {} });
+    expect(shadowed.stateDir).toBe("C:\\elsewhere");
+    expect(shadowed.shadowedKeys).toEqual(["STATE_DIR"]);
+    expect(parseEnv({ dotEnvText: "ALPACA_PROFILE=competition\n", sha256: "h", userEnvironment: {}, machineEnvironment: {} }).stateDir).toBeNull();
   });
 });
 
@@ -323,6 +336,39 @@ describe("parse — certificate and preflight", () => {
     expect(parsePreflightOutput(report({ profile: "competition" })).known).toBe(false);
     expect(parsePreflightOutput(report({ mcpTools: 0 })).known).toBe(false);
     expect(parsePreflightOutput("refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set\n")).toEqual({ known: false, reason: "preflight printed no report" });
+  });
+});
+
+// The reason the ledger shows when a child refused. Everything the certificate CLI writes
+// on refusal goes to stderr, and the reader used to take only stdout, so a credential
+// rejection and a missing MCP inventory arrived as the same sentence (R2-16). The reducer
+// keeps what our own code wrote and keeps what it did not vouch for out.
+describe("parse — a child's stderr", () => {
+  it("keeps the structured refusals verbatim", () => {
+    expect(childRefusal("refused at account_binding: HTTP 401 unauthorized\n")).toBe("refused at account_binding: HTTP 401 unauthorized");
+    expect(childRefusal("refusing: outside the exchange session for today\r\n")).toBe("refusing: outside the exchange session for today");
+    expect(childRefusal("refusing: a\nrefused at analyst: b\n")).toBe("refusing: a | refused at analyst: b");
+  });
+
+  it("reduces a stack trace to its first words and counts what it drops", () => {
+    expect(childRefusal("runtime construction failed: Error: ENOENT\n    at open (node:fs:1:1)\n")).toBe("runtime construction failed: (detail suppressed) (1 further stderr line suppressed)");
+    expect(childRefusal("certificate run aborted: Error: boom\n")).toBe("certificate run aborted: (detail suppressed)");
+    expect(childRefusal("some library warning\nand another\n")).toBe("(2 further stderr lines suppressed)");
+  });
+
+  it("redacts what is shaped like a key and leaves a name alone", () => {
+    expect(childRefusal("refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set\n")).toBe("refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set");
+    expect(childRefusal("refusing: key PKTEST1234ABCD5678WXYZ rejected\n")).toBe("refusing: key <redacted> rejected");
+    // A hyphen belongs to the run, so a UUID is one match rather than five (a ping URL's
+    // uuid is a credential, DECISIONS.md 2026-09-14).
+    expect(childRefusal("refusing: ping 7a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9 failed\n")).toBe("refusing: ping <redacted> failed");
+  });
+
+  it("says nothing about silence, and truncates a shouting child", () => {
+    expect(childRefusal("")).toBeNull();
+    expect(childRefusal("   \r\n\n")).toBeNull();
+    const long = childRefusal(`refusing: ${"x".repeat(500)}\n`, 40);
+    expect(long).toBe(`refusing: ${"x".repeat(30)}…`);
   });
 });
 

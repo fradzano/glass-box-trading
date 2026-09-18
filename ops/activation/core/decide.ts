@@ -359,6 +359,30 @@ function unreadable<T>(reading: Reading<T>): string | null {
   return reading.known ? null : reading.reason;
 }
 
+/**
+ * One directory spelling, reduced as far as a pure comparison honestly can: case-folded,
+ * both separators spelled alike, a trailing separator dropped. Written with string
+ * operations rather than a path library because this is a core (spec §9).
+ */
+function foldDirectory(value: string): string {
+  const separated = value.trim().toLowerCase().split("/").join("\\");
+  let text = separated;
+  while (text.length > 0 && text.endsWith("\\")) text = text.slice(0, -1);
+  return text;
+}
+
+/**
+ * Do two spellings name the same directory? Only as far as folding can tell: a junction,
+ * an 8.3 short name, a `\\?\` prefix or a `..` detour compares **unequal** here. That is
+ * the safe direction — an unequal comparison reds a deployment that may in fact be
+ * consistent, it never passes one that is not — and it is the reason the wrappers assert
+ * the same agreement against the file system on every firing.
+ */
+function sameDirectory(left: string, right: string): boolean {
+  const folded = foldDirectory(left);
+  return folded.length > 0 && folded === foldDirectory(right);
+}
+
 // ---------------------------------------------------------------------------
 // 0-resume: the world against the expectation of the current phase
 // ---------------------------------------------------------------------------
@@ -396,6 +420,15 @@ export function worldFindings(fold: LedgerFold, observations: Observations, sche
     // The runtime lets process variables win over .env, so a key set outside it bypasses what the ledger expects of .env.
     if (env.shadowedKeys.length > 0) red.push(`env.shadowed-outside-dotenv:${env.shadowedKeys.join(",")}`);
     if (env.profile !== "competition") red.push(`env.profile:${env.profile ?? "absent"}`);
+    // The declaration and `.env` state one fact twice, and until now nothing compared them
+    // (G-7 / R2-18). The wrappers write `cycle-run.log` and `watchdog-run.log` where this
+    // value points; every long-run reading below is taken where the declaration points. A
+    // divergence is silent when both directories exist and are empty: step 2's
+    // contamination assertion passes over a directory the long run never touches and step 9
+    // waits forever for firings it will never see. A value that happens to agree today is
+    // not a comparison, which is why this is checked rather than assumed.
+    if (env.stateDir === null) red.push("env.state-dir:absent");
+    else if (!sameDirectory(env.stateDir, schedule.longRunStateDir)) red.push(`env.state-dir.declared-${schedule.longRunStateDir}:observed-${env.stateDir}`);
     const line = expectedCertificateLine(fold);
     if (line === "absent" && env.certificatePath !== null) red.push("env.certificate-line.expected-absent");
     if (line === "present" && (env.certificatePath === null || env.certificatePath !== recordedString(fold, "2-certificate", "certificatePath"))) {

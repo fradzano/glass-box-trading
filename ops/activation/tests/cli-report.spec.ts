@@ -27,6 +27,7 @@ const SCHEDULE: Schedule = {
   minFreeDiskBytes: 10_000_000_000,
   repoRoot: "C:\\repo",
   activationRoot: "C:\\state",
+  longRunStateDir: "C:\\longrun",
 };
 
 type Line = Pick<LedgerDraft, "attempt" | "anchorDay" | "kind"> & Partial<LedgerDraft>;

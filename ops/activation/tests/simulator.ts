@@ -48,6 +48,8 @@ export const CYCLE_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\cycle-run.ps1"
 export const WATCHDOG_ARGS = `${HOST_OPTIONS} -File "${REPO}\\tools\\watchdog-run.ps1" -RepoRoot "${REPO}" -NodePath "${NODE}" -WatchdogIntervalMinutes 10`;
 const STALE_CYCLE_ARGS = `"${REPO}\\dist\\shell\\agent-cli.js"`;
 export const ACTIVATION_ROOT = "C:\\Users\\felix\\glass-box-state\\activation-1";
+/** What `config/deployment.json` declares, and therefore what `.env` must name (G-7 / R2-18). */
+export const LONG_RUN = "C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22";
 
 export function utcOf(date: string, hour: number, minute: number): number {
   const [year, month, day] = date.split("-").map(Number);
@@ -64,7 +66,7 @@ function atString(utcMs: number): string {
 }
 
 export function scheduleFor(certificateDay: string, anchorDay: string): Schedule {
-  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utcOf(anchorDay, 14, 55), longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+  return { certificateDay, drillNightDay: anchorDay, anchorDay, gateNotAfterUtcMs: utcOf(anchorDay, 14, 55), longRunAccountMasked: ACCOUNT, coverageThroughDate: "2026-12-16", expectedHostPreconditions: HOST, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT, longRunStateDir: LONG_RUN };
 }
 
 export interface SimCheck {
@@ -296,7 +298,7 @@ export function observe(world: SimWorld): Observations {
     }),
     checks: world.network ? known(checks) : unreachable(),
     apiIndependentRead: world.network ? known(true) : unreachable(),
-    env: known({ certificatePath: world.certificateLine, profile: "competition", hash: `env:${world.certificateLine ?? "none"}`, duplicateKeys: [], shadowedKeys: [] }),
+    env: known({ certificatePath: world.certificateLine, profile: "competition", stateDir: LONG_RUN, hash: `env:${world.certificateLine ?? "none"}`, duplicateKeys: [], shadowedKeys: [] }),
     resolvedAccountMasked: known(ACCOUNT),
     deploymentDigests: known({ runtimeDigest: "r1", policyDigest: "p1" }),
     certificate: known(world.nowUtcMs >= world.certificateReadyAtUtcMs ? { path: CERT_PATH, verdict: world.certificateVerdict, digests: { runtimeDigest: "r1", policyDigest: "p1" }, violations: world.certificateVerdict === "PASS" ? [] : ["certificate verdict is not PASS"] } : null),

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "R3-M13",
+    "from": "        resolve({ exitCode: 0, stdout, stderr });",
+    "to": "        resolve({ exitCode: 0, stdout, stderr: \"\" });",
+    "note": "the port captures the child's stderr and then throws it away on success. Expected to SURVIVE, and the survivor is the point: no test in either suite crosses `host-ports.ts`, so the one layer that actually binds to this host is measured by nothing (R2-15, R2-C18)."
+  },
+  {
+    "id": "R3-M14",
+    "from": "      resolve({ exitCode: typeof error.code === \"number\" && error.killed !== true ? error.code : null, stdout, stderr });",
+    "to": "      resolve({ exitCode: typeof error.code === \"number\" && error.killed !== true ? error.code : null, stdout, stderr: \"\" });",
+    "note": "the same on the failure path, which is the only path a refusal takes. Expected to SURVIVE for the same reason — recorded so the blind spot has a number rather than a shrug."
+  }
+]

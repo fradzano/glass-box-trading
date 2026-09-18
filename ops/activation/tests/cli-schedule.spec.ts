@@ -13,6 +13,7 @@ import type { LocalInstant } from "../core/types.ts";
 const FACTS: DeploymentFacts = {
   repoRoot: "C:\\Users\\felix\\source\\repos\\glass-box-trading",
   activationRoot: "C:\\Users\\felix\\glass-box-state\\activation-1",
+  longRunStateDir: "C:\\Users\\felix\\glass-box-state\\longrun-2026-09-22",
   longRunAccountMasked: "PA3L…U97",
   coverageThroughDate: "2026-12-16",
   expectedHostPreconditions: { HiberbootEnabled: "0", DisableAutomaticRestartSignOn: "1" },

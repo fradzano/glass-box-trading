@@ -1,7 +1,10 @@
 // The observation ports, bound to this host (build log, unit 7). Thin on purpose: each one
-// runs one command, reads one file or makes one request, and reduces every failure to a
-// reason that cannot carry a credential — an error code, an HTTP status, an error name.
-// Nothing here parses what it read; `observe.ts` hands that to the parsers.
+// runs one command, reads one file or makes one request, and reduces every failure it
+// *interprets* to a reason that cannot carry a credential — an error code, an HTTP status,
+// an error name. Nothing here parses what it read; `observe.ts` hands that to the parsers.
+// A command's two output streams are the exception, and deliberately so: both are carried
+// out verbatim, because the port cannot tell which of them holds the reason. The credential
+// promise is kept one layer up, by `childRefusal`, which is where it can be tested.
 //
 // The runtime's own modules come from `dist/`, the build the scheduled tasks run: the
 // certificate validator, the journal codec, the environment loader and the broker adapter.
@@ -75,12 +78,15 @@ function brokerReason(error: unknown): string {
 
 function run(file: string, args: readonly string[], options: { readonly cwd: string; readonly env?: NodeJS.ProcessEnv; readonly timeoutMs: number }): Promise<CommandResult> {
   return new Promise(resolve => {
-    execFile(file, [...args], { cwd: options.cwd, env: options.env, timeout: options.timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" }, (error, stdout) => {
+    // Both streams, always. `execFile` hands stderr to the third parameter, and taking only
+    // the first two is how every refusal the certificate CLI prints was discarded (R2-16).
+    // Nothing here interprets it; `childRefusal` reduces it before it reaches a reason.
+    execFile(file, [...args], { cwd: options.cwd, env: options.env, timeout: options.timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
       if (error === null) {
-        resolve({ exitCode: 0, stdout });
+        resolve({ exitCode: 0, stdout, stderr });
         return;
       }
-      resolve({ exitCode: typeof error.code === "number" && error.killed !== true ? error.code : null, stdout });
+      resolve({ exitCode: typeof error.code === "number" && error.killed !== true ? error.code : null, stdout, stderr });
     });
   });
 }

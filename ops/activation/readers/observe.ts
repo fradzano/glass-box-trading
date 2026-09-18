@@ -23,7 +23,7 @@ import type { JournalCodec } from "./parse-host.ts";
 import { analystObservation, expectedNodePath, latestCertificateName, maskAccountId, parseEnvironmentShadow, parseHostPreconditions, parseJournalHead, parseSessionSampleLog, sessionSampleLine } from "./parse-host.ts";
 import { certificateDispatchPrecondition } from "../core/preconditions.ts";
 import type { CertificateValidator, LogFile, PreflightReport, TaskNames } from "./parse.ts";
-import { berlinLocal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseEnv, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "./parse.ts";
+import { berlinLocal, childRefusal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseEnv, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "./parse.ts";
 
 /** The read-only PowerShell readers in `readers/host/`. */
 export type HostScript = "tasks" | "boot" | "sessions" | "preconditions" | "environment";
@@ -34,6 +34,13 @@ export const TRUSTED_WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerSh
 export interface CommandResult {
   readonly exitCode: number | null;
   readonly stdout: string;
+  /**
+   * What the child wrote to stderr. Required rather than optional, so that a port which
+   * drops it cannot type-check: every refusal the certificate CLI prints goes here, and
+   * discarding it left the ledger unable to tell a credential rejection from a missing
+   * MCP inventory (R2-16). Nothing reads it raw — `childRefusal` reduces it first.
+   */
+  readonly stderr: string;
 }
 
 /** A file read: its text and the SHA-256 of its bytes, or that it does not exist, or why it could not be read. */
@@ -111,6 +118,19 @@ function commandOutput(result: CommandResult, name: string): Reading<string> {
 
 function portReading<T>(result: PortResult<T>, name: string): Reading<T> {
   return result.ok ? known(result.value) : unknown(`${name}: ${result.reason}`);
+}
+
+/**
+ * What the child said, appended to a reading that did not come out known. `stdout` carries
+ * the report and `stderr` carries the reason there is none, so a failure that is only read
+ * on one of the two streams is a failure with no cause attached (R2-16). A known reading is
+ * returned untouched: a preflight that reported is not made doubtful by anything it warned
+ * about on the way.
+ */
+function withChildStderr(reading: Reading<PreflightReport>, stderr: string): Reading<PreflightReport> {
+  if (reading.known) return reading;
+  const refusal = childRefusal(stderr);
+  return refusal === null ? reading : unknown(`${reading.reason}; the child wrote: ${refusal}`);
 }
 
 async function readEnv(ports: ObservationPorts, config: ObservationConfig): Promise<Reading<EnvObservation>> {
@@ -236,7 +256,9 @@ export async function readObservations(ports: ObservationPorts, config: Observat
   // due and did not happen, which is a different fact from one the plan never asked for.
   const preflight = !dispatch.ok && plan.preflight
     ? unknown<PreflightReport>(`the preflight was not dispatched: ${dispatch.reason}`)
-    : preflightOutput === null ? notTaken<PreflightReport>("the preflight") : preflightOutput.exitCode === null ? unknown<PreflightReport>("the preflight did not finish") : parsePreflightOutput(preflightOutput.stdout);
+    : preflightOutput === null
+      ? notTaken<PreflightReport>("the preflight")
+      : withChildStderr(preflightOutput.exitCode === null ? unknown<PreflightReport>("the preflight did not finish") : parsePreflightOutput(preflightOutput.stdout), preflightOutput.stderr);
   const deploymentDigests = preflight.known ? known(preflight.value.digests) : unknown<DigestPair>(`digests: ${preflight.reason}`);
 
   const boot = commandOutput(await ports.runHostScript("boot"), "boot reader");
@@ -280,7 +302,16 @@ export async function readObservations(ports: ObservationPorts, config: Observat
     wrapperHashes,
     hostPreconditions: preconditions.known ? parseHostPreconditions(preconditions.value) : preconditions,
     alertConfirmation,
-    longRunArtefacts: longRunListing.ok ? known(longRunListing.value ?? []) : unknown(`long-run state directory: ${longRunListing.reason}`),
+    // A directory that is not there is not an empty one (A1). It used to read as
+    // `known([])`, so step 2's contamination assertion passed over a directory that did
+    // not exist — the mechanism that made the wrong long-run path silent for a whole
+    // round (R2-19, round 1's G-1 recurring here). `null` from the port means absent, and
+    // absent is a fact this reader cannot establish anything else from.
+    longRunArtefacts: !longRunListing.ok
+      ? unknown(`long-run state directory: ${longRunListing.reason}`)
+      : longRunListing.value === null
+        ? unknown<readonly string[]>(`the long-run state directory does not exist (${config.longRunStateDir}); an absent directory is not an empty one`)
+        : known(longRunListing.value),
     freeDiskBytes,
     analyst,
     schedulerCheck,

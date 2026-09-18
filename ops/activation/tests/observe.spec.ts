@@ -87,11 +87,11 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
     ...overrides.files,
   }));
   const scripts: Record<HostScript, CommandResult> = {
-    tasks: { exitCode: 0, stdout: HOST_TASKS },
-    boot: { exitCode: 0, stdout: HOST_BOOT },
-    sessions: { exitCode: 0, stdout: HOST_SESSIONS },
-    preconditions: { exitCode: 0, stdout: HOST_PRECONDITIONS },
-    environment: { exitCode: 0, stdout: HOST_ENVIRONMENT },
+    tasks: { exitCode: 0, stdout: HOST_TASKS, stderr: "" },
+    boot: { exitCode: 0, stdout: HOST_BOOT, stderr: "" },
+    sessions: { exitCode: 0, stdout: HOST_SESSIONS, stderr: "" },
+    preconditions: { exitCode: 0, stdout: HOST_PRECONDITIONS, stderr: "" },
+    environment: { exitCode: 0, stdout: HOST_ENVIRONMENT, stderr: "" },
     ...overrides.scripts,
   };
   // A directory that exists and is empty is NOT the same fact as one that is not
@@ -114,7 +114,7 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
     now: () => NOW,
     runtimeIdentity: () => ({ execPath: NODE, nodeVersion: "v24.9.0", powerShellPath: POWERSHELL, taskUserId: "DESKTOP-V6EGFDV\\felix", taskUserSid: USER_SID }),
     runHostScript: script => { calls.names.push(`script:${script}`); return Promise.resolve(scripts[script]); },
-    runVerifier: expectEnabled => { calls.names.push(`verifier:${String(expectEnabled)}`); return Promise.resolve({ exitCode: 1, stdout: HOST_VERIFIER_FAILED }); },
+    runVerifier: expectEnabled => { calls.names.push(`verifier:${String(expectEnabled)}`); return Promise.resolve({ exitCode: 1, stdout: HOST_VERIFIER_FAILED, stderr: "" }); },
     readText: file => Promise.resolve(read(file)),
     readFirstLine: file => {
       const value = read(file);
@@ -126,7 +126,7 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
     healthchecks: () => { calls.names.push("healthchecks"); return Promise.resolve(healthy()); },
     competitionAccountNumber: () => { calls.names.push("competition-account"); return Promise.resolve({ ok: true, value: ACCOUNT_NUMBER }); },
     devAccountBook: () => { calls.names.push("dev-account"); return Promise.resolve({ ok: true, value: { positions: 0, nonTerminalOrders: 0 } }); },
-    preflight: () => { calls.names.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT }); },
+    preflight: () => { calls.names.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT, stderr: "" }); },
     analystTokenPresent: () => Promise.resolve(true),
     analystProbe: () => { calls.names.push("probe"); return Promise.resolve({ ok: true }); },
     validateCertificate: validateArmingCertificate,
@@ -195,7 +195,7 @@ describe("observe — a complete snapshot from the readers", () => {
     const opened = planLedgerAppend({ lastSeq: 0, lastAtUtcMs: null }, { at: "2026-09-21T15:00:00+02:00", atUtcMs: NOW - 1_800_000, attempt: "a1", anchorDay: "2026-09-22", step: null, kind: "note", outcome: null, evidence: {}, nextOwnerAction: null });
     if (!opened.ok) throw new Error(opened.reason);
     const expectedHost = { SleepAcSeconds: "0", HibernateAcSeconds: "0", HiberbootEnabled: "0", ActiveHoursStart: "9", ActiveHoursEnd: "3", AutoAdminLogon: "0", DisableAutomaticRestartSignOn: "1", ShutdownPrivilege: "present", AdministratorsMember: "yes" };
-    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", gateNotAfterUtcMs: Date.UTC(2026, 8, 22, 12, 55), longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT };
+    const schedule: Schedule = { certificateDay: "2026-09-21", drillNightDay: "2026-09-22", anchorDay: "2026-09-22", gateNotAfterUtcMs: Date.UTC(2026, 8, 22, 12, 55), longRunAccountMasked: "PA9T…CT7", coverageThroughDate: "2026-12-16", expectedHostPreconditions: expectedHost, minFreeDiskBytes: 10_000_000_000, repoRoot: REPO, activationRoot: ACTIVATION_ROOT, longRunStateDir: LONG_RUN };
     const decision = decide(foldLedger(parseLedgerText(opened.line)), snapshot, schedule);
     // ARSO is still on (spec §3: the elevated step must switch it off), and gate condition 4 has not been recorded. Nothing else.
     expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED", teardown: OWED_TEARDOWN, evidence: { unknown: [], red: ["host.DisableAutomaticRestartSignOn", "alert-confirmation.absent"] } });
@@ -204,7 +204,7 @@ describe("observe — a complete snapshot from the readers", () => {
 
 describe("observe — failures and plans", () => {
   it("makes a failed reader's field unknown, and only that field", async () => {
-    const snapshot = await readObservations(host({ scripts: { tasks: { exitCode: 3, stdout: "" }, preconditions: { exitCode: null, stdout: "" } } }).ports, CONFIG, ALL);
+    const snapshot = await readObservations(host({ scripts: { tasks: { exitCode: 3, stdout: "", stderr: "" }, preconditions: { exitCode: null, stdout: "", stderr: "" } } }).ports, CONFIG, ALL);
     expect(unknownNames(snapshot)).toEqual(["tasks: task reader exited 3", "hostPreconditions: host precondition reader did not finish", "disarm: task reader exited 3"]);
   });
 
@@ -231,12 +231,40 @@ describe("observe — failures and plans", () => {
     expect(unknownNames(snapshot)).toEqual(["devAccount: the dev account read not taken in this invocation", "analyst: the analyst probe not taken in this invocation"]);
   });
 
-  it("spends no probe on an analyst whose preflight printed no report", async () => {
-    const { ports, calls } = host({ preflight: () => Promise.resolve({ exitCode: 1, stdout: "refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set\n" }) });
+  // The refusal is on **stderr**, which is where `certificate-cli.ts` writes every one of
+  // them. This fixture used to put it on stdout, which is why the reader could discard the
+  // whole stream and still look right here (R2-16). The reason must now name the cause.
+  it("spends no probe on an analyst whose preflight printed no report, and carries the child's refusal into the reason", async () => {
+    const { ports, calls } = host({ preflight: () => Promise.resolve({ exitCode: 1, stdout: "", stderr: "refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set\n" }) });
     const snapshot = await readObservations(ports, CONFIG, ALL);
     expect(calls.names).not.toContain("probe");
-    expect(snapshot.analyst).toEqual({ known: false, reason: "preflight: preflight printed no report" });
-    expect(snapshot.deploymentDigests).toEqual({ known: false, reason: "digests: preflight printed no report" });
+    expect(snapshot.analyst).toEqual({ known: false, reason: "preflight: preflight printed no report; the child wrote: refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set" });
+    expect(snapshot.deploymentDigests).toEqual({ known: false, reason: "digests: preflight printed no report; the child wrote: refused at analyst: CLAUDE_CODE_OAUTH_TOKEN is not set" });
+  });
+
+  // Two refusals that were indistinguishable before: both printed no report, and the
+  // stream that said why was thrown away at `execFile`'s third parameter (R2-16).
+  it("tells a credential rejection apart from a missing MCP inventory", async () => {
+    const rejected = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: 1, stdout: "", stderr: "refused at account_binding: HTTP 401 unauthorized\n" }) }).ports, CONFIG, ALL);
+    const inventory = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: 1, stdout: "", stderr: "refused at analyst: the MCP inventory is empty\n" }) }).ports, CONFIG, ALL);
+    expect(rejected.deploymentDigests).not.toEqual(inventory.deploymentDigests);
+    if (rejected.deploymentDigests.known || inventory.deploymentDigests.known) throw new Error("both preflights refused; neither digest pair can be known");
+    expect(rejected.deploymentDigests.reason).toContain("refused at account_binding: HTTP 401 unauthorized");
+    expect(inventory.deploymentDigests.reason).toContain("refused at analyst: the MCP inventory is empty");
+  });
+
+  // A stack trace is not ours to vouch for, so it is reduced to its first words; a value
+  // shaped like a key is redacted wherever it stands. The port carries both streams out
+  // verbatim, and this is the layer that keeps the credential promise.
+  it("keeps a stack trace and a key-shaped value out of the reason", async () => {
+    const stderr = "runtime construction failed: Error: connect ECONNREFUSED\n    at Socket (node:net:1234:56)\nrefusing: PKTEST1234ABCD5678WXYZ was rejected\n";
+    const snapshot = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: 1, stdout: "", stderr }) }).ports, CONFIG, ALL);
+    if (snapshot.deploymentDigests.known) throw new Error("the preflight refused; the digest pair cannot be known");
+    expect(snapshot.deploymentDigests.reason).toContain("runtime construction failed: (detail suppressed)");
+    expect(snapshot.deploymentDigests.reason).not.toContain("ECONNREFUSED");
+    expect(snapshot.deploymentDigests.reason).not.toContain("PKTEST1234ABCD5678WXYZ");
+    expect(snapshot.deploymentDigests.reason).toContain("refusing: <redacted> was rejected");
+    expect(snapshot.deploymentDigests.reason).toContain("(1 further stderr line suppressed)");
   });
 
   it("appends this invocation's session sample before reading the log back, and a failed append loses only that sample", async () => {
@@ -310,14 +338,14 @@ describe("observe — failures and plans", () => {
   });
 
   it("reports a certificate line set outside .env, because the runtime would take it from there", async () => {
-    const shadowed = { exitCode: 0, stdout: "{\"user\":{\"PRE_ARM_CERTIFICATE\":\"C:\\\\old.json\"},\"machine\":{}}" };
+    const shadowed = { exitCode: 0, stdout: "{\"user\":{\"PRE_ARM_CERTIFICATE\":\"C:\\\\old.json\"},\"machine\":{}}", stderr: "" };
     const snapshot = await readObservations(host({ scripts: { environment: shadowed } }).ports, CONFIG, ALL);
     expect(snapshot.env).toMatchObject({ known: true, value: { certificatePath: "C:\\old.json", shadowedKeys: ["PRE_ARM_CERTIFICATE"] } });
-    expect((await readObservations(host({ scripts: { environment: { exitCode: 3, stdout: "" } } }).ports, CONFIG, ALL)).env).toEqual({ known: false, reason: "environment: environment reader exited 3" });
+    expect((await readObservations(host({ scripts: { environment: { exitCode: 3, stdout: "", stderr: "" } } }).ports, CONFIG, ALL)).env).toEqual({ known: false, reason: "environment: environment reader exited 3" });
   });
 
   it("does not take a preflight that did not finish at its word, even when it printed a report", async () => {
-    const snapshot = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: null, stdout: PREFLIGHT_REPORT }) }).ports, CONFIG, ALL);
+    const snapshot = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: null, stdout: PREFLIGHT_REPORT, stderr: "" }) }).ports, CONFIG, ALL);
     expect(snapshot.deploymentDigests).toEqual({ known: false, reason: "digests: the preflight did not finish" });
   });
 
@@ -329,7 +357,7 @@ describe("observe — failures and plans", () => {
   // nothing observed it, so the observation is pinned here rather than trusted.
   it("does not dispatch a certificate preflight while the declared long-run directory is missing, and says so", async () => {
     const calls: string[] = [];
-    const absent = host({ absentDirectories: [LONG_RUN], preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT }); } });
+    const absent = host({ absentDirectories: [LONG_RUN], preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT, stderr: "" }); } });
     const snapshot = await readObservations(absent.ports, CONFIG, ALL);
     expect(calls).toEqual([]);
     expect(snapshot.deploymentDigests).toMatchObject({ known: false });
@@ -340,10 +368,25 @@ describe("observe — failures and plans", () => {
 
   it("dispatches the preflight when the long-run directory is present and empty, which is the healthy state before the anchor day", async () => {
     const calls: string[] = [];
-    const present = host({ preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT }); } });
+    const present = host({ preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT, stderr: "" }); } });
     const snapshot = await readObservations(present.ports, CONFIG, ALL);
     expect(calls).toEqual(["preflight"]);
     expect(snapshot.deploymentDigests.known).toBe(true);
     expect(snapshot.longRunArtefacts).toEqual({ known: true, value: [] });
+  });
+
+  // R2-19, round 1's G-1 recurring in `ops/`: a fact that cannot be established used to
+  // degrade in the permissive direction. `known([])` and *absent* are not the same fact,
+  // and step 2 asserts over exactly this value, so the difference decides whether the
+  // contamination assertion measures a directory or nothing at all.
+  it("reads an absent long-run directory as unknown rather than as known empty, and step 2 refuses to assert over it", async () => {
+    const snapshot = await readObservations(host({ absentDirectories: [LONG_RUN] }).ports, CONFIG, ALL);
+    expect(snapshot.longRunArtefacts.known).toBe(false);
+    if (snapshot.longRunArtefacts.known) return;
+    expect(snapshot.longRunArtefacts.reason).toContain("does not exist");
+    expect(snapshot.longRunArtefacts.reason).toContain(LONG_RUN);
+
+    const present = await readObservations(host().ports, CONFIG, ALL);
+    expect(present.longRunArtefacts).toEqual({ known: true, value: [] });
   });
 });

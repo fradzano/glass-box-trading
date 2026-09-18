@@ -1,0 +1,26 @@
+[
+  {
+    "id": "R3-M5",
+    "from": "      : longRunListing.value === null\n        ? unknown<readonly string[]>(`the long-run state directory does not exist (${config.longRunStateDir}); an absent directory is not an empty one`)\n        : known(longRunListing.value),",
+    "to": "      : known(longRunListing.value ?? []),",
+    "note": "the pre-R2-19 reading, restored verbatim: a directory that does not exist reads as known-empty, and step 2's contamination assertion passes over nothing."
+  },
+  {
+    "id": "R3-M6",
+    "from": "  const refusal = childRefusal(stderr);\n  return refusal === null ? reading : unknown(`${reading.reason}; the child wrote: ${refusal}`);",
+    "to": "  return reading;",
+    "note": "the child's stderr is dropped again after being captured — the R2-16 state one layer later, where the reason once more cannot tell a credential rejection from a missing inventory."
+  },
+  {
+    "id": "R3-M7",
+    "from": "function withChildStderr(reading: Reading<PreflightReport>, stderr: string): Reading<PreflightReport> {\n  if (reading.known) return reading;",
+    "to": "function withChildStderr(reading: Reading<PreflightReport>, stderr: string): Reading<PreflightReport> {\n  if (!reading.known) return reading;",
+    "note": "the enrichment is applied to a known reading and withheld from an unknown one — the inversion that would make the reason useless exactly when it is needed."
+  },
+  {
+    "id": "R3-M8-control",
+    "from": "  const longRunListing = await ports.listDirectory(config.longRunStateDir);",
+    "to": "  const longRunListing = await ports.listDirectory(config.longRunStateDir); /* control */",
+    "note": "control — a trailing comment, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

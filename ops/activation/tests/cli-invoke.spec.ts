@@ -21,7 +21,7 @@ import { parseLedgerText } from "../core/ledger.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
 import { readActivationLedger } from "../store/ledger-store.ts";
-import { ACCOUNT, HOST, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
+import { ACCOUNT, HOST, LONG_RUN, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
 import type { SimWorld } from "./simulator.ts";
 
 
@@ -44,6 +44,7 @@ function factsFor(stateRoot: string): DeploymentFacts {
   return {
     repoRoot: "C:\\Users\\felix\\source\\repos\\glass-box-trading",
     activationRoot: stateRoot,
+    longRunStateDir: LONG_RUN,
     longRunAccountMasked: ACCOUNT,
     coverageThroughDate: "2026-12-16",
     expectedHostPreconditions: HOST,

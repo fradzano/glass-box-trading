@@ -21,6 +21,7 @@ const SCHEDULE: Schedule = {
   minFreeDiskBytes: 0,
   repoRoot: "repo",
   activationRoot: "state",
+  longRunStateDir: "longrun",
 };
 
 function foldOf(done: readonly StepId[]) {
