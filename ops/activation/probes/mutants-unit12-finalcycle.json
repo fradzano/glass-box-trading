@@ -1,0 +1,20 @@
+[
+  {
+    "id": "FC1",
+    "note": "unit 12 R1-12: the boundary goes back to the hand-written comparison, one millisecond off the core's",
+    "from": "return nowMs + cycleIntervalMs >= session.closesAt;",
+    "to": "return nowMs + cycleIntervalMs > session.closesAt;"
+  },
+  {
+    "id": "FC2",
+    "note": "the interval is ignored, so the flag asks about this cycle instead of the next",
+    "from": "return nowMs + cycleIntervalMs >= session.closesAt;",
+    "to": "return nowMs >= session.closesAt;"
+  },
+  {
+    "id": "FC3",
+    "note": "the flag never fires, so both end-of-session safety stops are switched off",
+    "from": "return nowMs + cycleIntervalMs >= session.closesAt;",
+    "to": "return false;"
+  }
+]

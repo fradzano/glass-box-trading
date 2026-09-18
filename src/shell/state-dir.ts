@@ -6,6 +6,7 @@
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { probeDurableWrite } from "./epoch-store.js";
+import { NON_CANONICAL_ROOT_DETAIL, isCanonicalLocalRoot } from "./physical-path.js";
 
 export interface StatePaths {
   readonly root: string;
@@ -63,7 +64,7 @@ export function probeStateDurability(paths: StatePaths): { readonly ok: true } |
   return probeDurableWrite(paths.root);
 }
 
-export function resolveStateDir(raw: string): StateDirResolution {
+export function resolveStateDir(raw: string, platform: NodeJS.Platform = process.platform, resolvePhysical: (value: string) => string = value => realpathSync.native(value)): StateDirResolution {
   if (typeof raw !== "string" || raw.trim().length === 0 || !path.isAbsolute(raw)) {
     return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR must be an absolute path literal" };
   }
@@ -72,7 +73,13 @@ export function resolveStateDir(raw: string): StateDirResolution {
     if (!statSync(resolved).isDirectory()) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: "STATE_DIR is not a directory" };
     // Durable paths and the mutex use physical filesystem identity, not an
     // accepted alias spelling (for example C:\x versus \\?\C:\x).
-    const root = realpathSync.native(resolved);
+    const root = resolvePhysical(resolved);
+    // …but `realpathSync.native` canonicalises only the alias classes that
+    // collapse to a drive root. A UNC spelling survives as its own string, and
+    // the mutex endpoint is derived from this very value, so admitting one here
+    // would hand two processes over one directory separate writer mutexes.
+    // Refused rather than canonicalised: the alias family is open.
+    if (!isCanonicalLocalRoot(root, platform)) return { ok: false, reason: "CONFIG_INVALID_STATE_DIR", detail: NON_CANONICAL_ROOT_DETAIL };
     accessSync(root, constants.W_OK | constants.R_OK);
     const quarantineDir = path.join(root, "quarantine");
     mkdirSync(quarantineDir, { recursive: true });

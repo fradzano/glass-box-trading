@@ -38,6 +38,7 @@ import type { MutationGateway } from "./mutation-gateway.js";
 import { createPingPort } from "./ping-healthchecks.js";
 import { httpStatusOf } from "./broker-errors.js";
 import { analystEnvironmentPaths, loadEnvironment, loadPolicy, rawStartupConfig, roleCredentials, secretValues } from "./runtime-config.js";
+import { isFinalCycleOfSession } from "../core/session-window.js";
 import type { EnvRecord } from "./runtime-config.js";
 import type { StatePaths } from "./state-dir.js";
 import { withOperationTimeout } from "./operation-timeout.js";
@@ -459,7 +460,7 @@ export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuil
     nextTradingDay: next,
     residueMaxSessions: config.residueMaxSessions,
     closeEscalationStepCents: config.closeEscalationStepCents,
-    finalCycleOfSession: overrides.finalCycleOfSession ?? (clock() + config.decision.cycleIntervalMs > session.closesAt),
+    finalCycleOfSession: overrides.finalCycleOfSession ?? isFinalCycleOfSession(clock(), config.decision.cycleIntervalMs, session),
     competitionStartMs: Date.parse(config.competitionStartIso),
     initialCapitalCents: config.execution.initialCapitalCents,
     // The validated bundle carries ISO instants; the S-CYC-12 core takes epoch milliseconds.

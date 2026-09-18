@@ -8,7 +8,7 @@
 // could enter, so an inverted comparison passed the whole green gate and would
 // have recorded a human confirmation for an act no human performed.
 import { describe, expect, it } from "vitest";
-import { isInsideSession } from "../src/core/session-window.js";
+import { isFinalCycleOfSession, isInsideSession } from "../src/core/session-window.js";
 import { fenceUnhaltApproval, fenceUnhaltToken } from "../src/core/fence-unhalt.js";
 import { assessStaleness } from "../src/core/lifecycle.js";
 
@@ -79,5 +79,35 @@ describe("the certificate's human checkpoint decides in a function", () => {
   it("records the operator it was given rather than inventing one", () => {
     expect(fenceUnhaltApproval("CLEAR-HALT 1", 1, "owner")).toMatchObject({ operator: "owner" });
     expect(fenceUnhaltApproval("CLEAR-HALT 1", 1, "someone-else")).toMatchObject({ operator: "someone-else" });
+  });
+});
+
+describe("the final cycle of a session is decided in the same place", () => {
+  const INTERVAL = 900_000;
+
+  it("is true exactly when the next cycle would begin at or after the close", () => {
+    expect(isFinalCycleOfSession(CLOSES - INTERVAL - 1, INTERVAL, SESSION)).toBe(false);
+    // The instant the hand-written copy got wrong: an aligned schedule puts a
+    // firing exactly here, and `>` answered "not final" for a cycle after which
+    // the session is over.
+    expect(isFinalCycleOfSession(CLOSES - INTERVAL, INTERVAL, SESSION)).toBe(true);
+    expect(isFinalCycleOfSession(CLOSES - INTERVAL + 1, INTERVAL, SESSION)).toBe(true);
+  });
+
+  it("keeps the two end-of-session safety stops on the side they must be on", () => {
+    // Before the open it must stay false, or the stuck-eviction halt and the
+    // flatten assertion would fire on a session that has not started…
+    expect(isFinalCycleOfSession(OPENS - INTERVAL, INTERVAL, SESSION)).toBe(false);
+    // …and after the close it must stay true, or a late cycle would silence them.
+    expect(isFinalCycleOfSession(CLOSES, INTERVAL, SESSION)).toBe(true);
+    expect(isFinalCycleOfSession(CLOSES + INTERVAL, INTERVAL, SESSION)).toBe(true);
+  });
+
+  it("means, for any cycle inside the session, that the next one is not", () => {
+    for (const now of [OPENS, OPENS + INTERVAL, CLOSES - 2 * INTERVAL, CLOSES - INTERVAL, CLOSES - 1]) {
+      expect(isInsideSession(now, SESSION), `precondition ${String(now)}`).toBe(true);
+      expect(isFinalCycleOfSession(now, INTERVAL, SESSION), String(now))
+        .toBe(!isInsideSession(now + INTERVAL, SESSION));
+    }
   });
 });

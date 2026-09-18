@@ -1,0 +1,14 @@
+[
+  {
+    "id": "SD1",
+    "note": "unit 12 R1-15: the runtime accepts a non-canonical state root again, so the writer mutex can see two identities for one directory",
+    "from": "if (!isCanonicalLocalRoot(root, platform)) return { ok: false, reason: \"CONFIG_INVALID_STATE_DIR\", detail: NON_CANONICAL_ROOT_DETAIL };",
+    "to": "if (false) return { ok: false, reason: \"CONFIG_INVALID_STATE_DIR\", detail: NON_CANONICAL_ROOT_DETAIL };"
+  },
+  {
+    "id": "SD2",
+    "note": "unit 12 R1-15: the check runs against the accepted spelling rather than the physical root",
+    "from": "if (!isCanonicalLocalRoot(root, platform))",
+    "to": "if (!isCanonicalLocalRoot(resolved, platform))"
+  }
+]

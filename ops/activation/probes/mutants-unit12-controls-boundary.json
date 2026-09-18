@@ -1,0 +1,8 @@
+[
+  {
+    "id": "CTL3",
+    "note": "control: the same drive-root test with an equivalent character class changes nothing, so this mutant must SURVIVE; if it is caught, the probe is reporting something other than behaviour",
+    "from": "/^[A-Za-z]:[\\\\/]/u",
+    "to": "/^[a-zA-Z]:[\\\\/]/u"
+  }
+]

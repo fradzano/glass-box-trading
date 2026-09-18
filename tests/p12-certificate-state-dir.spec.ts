@@ -8,6 +8,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { admitCertificateInvocation, stateDirIdentity } from "../src/shell/certificate-admission.js";
+import { isCanonicalLocalRoot } from "../src/shell/physical-path.js";
+import { mergeEnvironment } from "../src/shell/runtime-config.js";
+import { resolveStateDir } from "../src/shell/state-dir.js";
 import { admitCertificateCommand } from "../src/shell/certificate-command-guard.js";
 
 const temporaryDirectories: string[] = [];
@@ -202,6 +205,69 @@ describe("P12 unit 11 — the certificate command refuses the competition STATE_
     writeFileSync(path.join(repoRoot, ".env"), `ALPACA_PROFILE=competition\nSTATE_DIR=${competition}\n`, "utf8");
     expect(environment["STATE_DIR"]).toBe(dev);
     expect(environment["ALPACA_PROFILE"]).toBe("dev");
+  });
+
+
+  it("(13) a spelling that does not canonicalise to one directory is an unestablished identity, not another directory", () => {
+    // Measured on this platform: `\\?\C:\x`, a junction and a `subst` drive all
+    // collapse to `C:\x`, while every UNC spelling survives as its own string —
+    // `\\localhost\C$\x`, `\\127.0.0.1\C$\x`, the machine name, any share. The
+    // alias family is open, so the rule is positive rather than a list.
+    for (const canonical of ["C:\\glass-box-state\\longrun-1", "c:/glass-box-state/longrun-1", "Z:\\x"]) {
+      expect(isCanonicalLocalRoot(canonical, "win32"), canonical).toBe(true);
+    }
+    for (const alias of ["\\\\localhost\\C$\\glass-box-state\\longrun-1", "\\\\127.0.0.1\\C$\\x", "\\\\fileserver\\share\\x", "\\\\?\\UNC\\localhost\\C$\\x", "\\\\?\\C:\\x", "\\\\server\\share\\C:\\x"]) {
+      expect(isCanonicalLocalRoot(alias, "win32"), alias).toBe(false);
+    }
+    expect(isCanonicalLocalRoot("/var/lib/glass-box", "linux")).toBe(true);
+    expect(isCanonicalLocalRoot("//host/share/x", "linux")).toBe(false);
+
+    // The guard sees it as an identity it could not establish, so the rule refuses.
+    const unc = "\\\\localhost\\C$\\glass-box-state\\longrun-1";
+    expect(stateDirIdentity(unc, "win32", () => unc)).toEqual({ kind: "unknown", code: "NOT_DRIVE_ROOTED" });
+    const base = { dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "competition" } as const;
+    expect(admitCertificateCommand({
+      profile: "dev", ownerGo: true, preflight: false,
+      stateDirs: { ...base, dotEnvStateDir: { kind: "key", value: "k" }, effectiveStateDir: { kind: "unknown", code: "NOT_DRIVE_ROOTED" } },
+    })).toMatchObject({ ok: false, reason: expect.stringMatching(/identity could not be established/u) as string });
+  });
+
+  it("(14) the runtime refuses such a root outright, so the writer mutex can never see two identities for one directory", () => {
+    const { competition } = host();
+    // The same physical directory, admitted under a drive spelling…
+    const good = resolveStateDir(competition, "win32");
+    expect(good.ok).toBe(true);
+    // …and refused under one that resolves to a non-drive root. The resolver is
+    // injected rather than provoked, because reaching the admin share depends on
+    // the host; what is under test is the rule, and it is the rule that closed
+    // the two-holder measurement.
+    const refused = resolveStateDir(competition, "win32", () => "\\\\localhost\\C$\\glass-box-state\\longrun-1");
+    expect(refused).toMatchObject({ ok: false, reason: "CONFIG_INVALID_STATE_DIR" });
+    expect(refused.ok ? "" : refused.detail).toMatch(/drive-rooted/u);
+  });
+
+  it("(15) a process override wins whatever case the operator typed it in", () => {
+    const dotEnv = { ALPACA_PROFILE: "competition", STATE_DIR: "C:\\comp" } as const;
+    // The file names the key: the override lands on the file's slot, and the
+    // record keeps one key for the variable rather than two that disagree.
+    const folded = mergeEnvironment(dotEnv, { State_Dir: "C:\\dev" }, "win32");
+    expect(folded["STATE_DIR"]).toBe("C:\\dev");
+    expect(Object.keys(folded).filter(key => key.toLowerCase() === "state_dir")).toEqual(["STATE_DIR"]);
+    // The file does not name it: the override still has to be findable under the
+    // name the code looks up. This is the `PRE_ARM_CERTIFICATE` case, which the
+    // runbook uses as a clearing gesture.
+    expect(mergeEnvironment(dotEnv, { Pre_Arm_Certificate: "C:\\cert.json" }, "win32")["PRE_ARM_CERTIFICATE"]).toBe("C:\\cert.json");
+    expect(mergeEnvironment(dotEnv, { STATE_DIR: "C:\\dev" }, "win32")["STATE_DIR"]).toBe("C:\\dev");
+    // A file key in an odd case is canonicalised too, or the value would sit in
+    // the record under a name nothing looks up.
+    const oddFile = mergeEnvironment({ State_Dir: "C:\\comp" }, {}, "win32");
+    expect(oddFile["STATE_DIR"]).toBe("C:\\comp");
+    expect(Object.keys(oddFile)).toEqual(["STATE_DIR"]);
+    expect(mergeEnvironment({ State_Dir: "C:\\comp" }, { STATE_DIR: "C:\\dev" }, "win32")["STATE_DIR"]).toBe("C:\\dev");
+    // Elsewhere the environment really is case-sensitive, and two names stay two.
+    const posix = mergeEnvironment({ STATE_DIR: "/comp" }, { State_Dir: "/dev" }, "linux");
+    expect(posix["STATE_DIR"]).toBe("/comp");
+    expect(posix["State_Dir"]).toBe("/dev");
   });
 
 });

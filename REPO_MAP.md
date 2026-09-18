@@ -80,13 +80,18 @@
 - `ops/activation/probes/mutants-parse-host.json`
 - `ops/activation/probes/mutants-parse-integrity.json`
 - `ops/activation/probes/mutants-parse.json`
+- `ops/activation/probes/mutants-physical-path.json`
 - `ops/activation/probes/mutants-probe.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-session-window.json`
 - `ops/activation/probes/mutants-steps.json`
+- `ops/activation/probes/mutants-unit12-boundary.json`
+- `ops/activation/probes/mutants-unit12-controls-boundary.json`
 - `ops/activation/probes/mutants-unit12-controls-guard.json`
 - `ops/activation/probes/mutants-unit12-controls.json`
+- `ops/activation/probes/mutants-unit12-finalcycle.json`
+- `ops/activation/probes/mutants-unit12-merge.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
@@ -182,6 +187,7 @@
 - `src/shell/mcp-environment.ts` — The real ports behind the pinned MCP launcher (P7, S-CYC-11): evidence
 - `src/shell/mutation-gateway.ts` — The single final mutation gateway (S-G12-07): every broker mutation and
 - `src/shell/operation-timeout.ts` — Bound an external lifecycle operation without trusting it to honor cancellation.
+- `src/shell/physical-path.ts` — One rule for "is this path a canonical local root?", used wherever a state
 - `src/shell/ping-healthchecks.ts` — The dead-man check port (S-G14-03): a healthchecks.io-style URL. The runner
 - `src/shell/presentation-guard.ts` — P9 / R33 (B1) — the stylesheet is inlined verbatim into the published
 - `src/shell/publisher.ts` — The publication step (S-CYC-07, S-J-07, S-J-08, SUB-02/SUB-11): read the

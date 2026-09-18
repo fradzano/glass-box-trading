@@ -1,0 +1,32 @@
+[
+  {
+    "id": "ME1",
+    "note": "unit 12 R1-16: keys are no longer canonicalised on Windows, so a differently-cased override lands beside the file key instead of on it",
+    "from": "const canonical = (key: string): string => platform === \"win32\" ? key.toUpperCase() : key;",
+    "to": "const canonical = (key: string): string => key;"
+  },
+  {
+    "id": "ME2",
+    "note": "unit 12 R1-16: only the file is canonicalised, so a process-only override for a key .env does not name stays unfindable",
+    "from": "for (const [key, value] of Object.entries(processEnv)) if (value !== undefined) merged[canonical(key)] = value;",
+    "to": "for (const [key, value] of Object.entries(processEnv)) if (value !== undefined) merged[key] = value;"
+  },
+  {
+    "id": "ME3",
+    "note": "unit 12 R1-16: only the process side is canonicalised, so a file key in an odd case sits under a name nothing looks up",
+    "from": "for (const [key, value] of Object.entries(dotEnvValues)) merged[canonical(key)] = value;",
+    "to": "for (const [key, value] of Object.entries(dotEnvValues)) merged[key] = value;"
+  },
+  {
+    "id": "ME4",
+    "note": "the fold is applied on every platform, so two genuinely different POSIX variables collapse into one",
+    "from": "platform === \"win32\" ? key.toUpperCase() : key;",
+    "to": "key.toUpperCase();"
+  },
+  {
+    "id": "ME5",
+    "note": "the file is layered on top of the process environment, so a defined override stops winning",
+    "from": "for (const [key, value] of Object.entries(processEnv)) if (value !== undefined) merged[canonical(key)] = value;\n  return merged;",
+    "to": "for (const [key, value] of Object.entries(processEnv)) if (value !== undefined && merged[canonical(key)] === undefined) merged[canonical(key)] = value;\n  return merged;"
+  }
+]

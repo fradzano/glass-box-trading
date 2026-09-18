@@ -79,9 +79,32 @@ export function readDotEnv(repoRoot: string): Readonly<Record<string, string>> {
   return read.kind === "parsed" ? read.entries.values : {};
 }
 
-/** The one merge rule: the file underneath, defined process variables on top. */
-export function mergeEnvironment(dotEnvValues: Readonly<Record<string, string>>, processEnv: EnvRecord): EnvRecord {
-  return { ...dotEnvValues, ...Object.fromEntries(Object.entries(processEnv).filter(([, value]) => value !== undefined)) };
+/**
+ * The one merge rule: the file underneath, defined process variables on top.
+ *
+ * On Windows the process environment looks up case-insensitively but enumerates
+ * case-preservingly, so `$env:State_Dir` arrives as the key `State_Dir` and used
+ * to land *beside* a `.env`-derived `STATE_DIR` instead of on top of it. The
+ * override was then silently discarded and the command ran against the `.env`
+ * directory — measured on `readiness-cli`, which created `quarantine/` in the
+ * directory the operator believed it had been redirected away from, with no
+ * warning and no differing exit code. Where `.env` did not name the key at all
+ * the override vanished instead, which is the `PRE_ARM_CERTIFICATE` case the
+ * runbook uses as a clearing gesture. So on Windows a process key overrides the
+ * file key it matches case-insensitively, and the key the file used is kept.
+ */
+export function mergeEnvironment(dotEnvValues: Readonly<Record<string, string>>, processEnv: EnvRecord, platform: NodeJS.Platform = process.platform): EnvRecord {
+  const merged: Record<string, string | undefined> = {};
+  // One canonical spelling per variable, from both sources, so that a lookup by
+  // the name the code uses finds the value whatever the operator or the file
+  // typed — and so that no variable can end up occupying two slots that
+  // disagree. Upper case is the canonical form: every `.env` key and every
+  // lookup in this repository is already upper case, and on Windows the
+  // platform itself treats the spellings as one name.
+  const canonical = (key: string): string => platform === "win32" ? key.toUpperCase() : key;
+  for (const [key, value] of Object.entries(dotEnvValues)) merged[canonical(key)] = value;
+  for (const [key, value] of Object.entries(processEnv)) if (value !== undefined) merged[canonical(key)] = value;
+  return merged;
 }
 
 export function loadEnvironment(repoRoot: string, processEnv: EnvRecord): EnvRecord {

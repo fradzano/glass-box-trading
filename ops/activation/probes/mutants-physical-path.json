@@ -1,0 +1,26 @@
+[
+  {
+    "id": "PP1",
+    "note": "unit 12 R1-15: every spelling counts as canonical again, so a UNC alias of the state directory is accepted",
+    "from": "return WINDOWS_DRIVE_ROOT.test(physical);",
+    "to": "return true;"
+  },
+  {
+    "id": "PP2",
+    "note": "unit 12 R1-15: the drive-root anchor loses its anchor, so a UNC path containing a drive letter later passes",
+    "from": "const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:[\\\\/]/u;",
+    "to": "const WINDOWS_DRIVE_ROOT = /[A-Za-z]:[\\\\/]/u;"
+  },
+  {
+    "id": "PP3",
+    "note": "the rule is applied on the wrong platform, so Windows spellings are judged by the POSIX branch",
+    "from": "if (platform !== \"win32\") return physical.startsWith(\"/\") && !physical.startsWith(\"//\");",
+    "to": "if (platform === \"win32\") return physical.startsWith(\"/\") && !physical.startsWith(\"//\");"
+  },
+  {
+    "id": "PP4",
+    "note": "a POSIX network-style root is accepted again",
+    "from": "return physical.startsWith(\"/\") && !physical.startsWith(\"//\");",
+    "to": "return physical.startsWith(\"/\");"
+  }
+]

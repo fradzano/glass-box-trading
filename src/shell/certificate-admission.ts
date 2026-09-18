@@ -10,6 +10,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 import { admitCertificateCommand } from "./certificate-command-guard.js";
 import type { CertificateCommandAdmission, StateDirIdentity } from "./certificate-command-guard.js";
+import { isCanonicalLocalRoot } from "./physical-path.js";
 import { mergeEnvironment, readDotEnvStrict } from "./runtime-config.js";
 import type { EnvRecord } from "./runtime-config.js";
 
@@ -26,7 +27,13 @@ export function stateDirIdentity(raw: string | undefined, platform: NodeJS.Platf
   const resolved = path.resolve(raw);
   const fold = (value: string): string => platform === "win32" ? value.toLowerCase() : value;
   try {
-    return { kind: "key", value: fold(resolvePhysical(resolved)) };
+    const physical = resolvePhysical(resolved);
+    // A spelling `realpathSync.native` cannot collapse — a UNC or network path —
+    // is not a second directory, it is one directory under a second identity.
+    // Comparing it as a key would let an alias of the competition directory pass
+    // as somewhere else, so it counts as an identity that was never established.
+    if (!isCanonicalLocalRoot(physical, platform)) return { kind: "unknown", code: "NOT_DRIVE_ROOTED" };
+    return { kind: "key", value: fold(physical) };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
     // A directory that does not exist cannot be the competition directory
