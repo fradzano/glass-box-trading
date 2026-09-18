@@ -21,6 +21,7 @@ import type { HealthchecksReading } from "./healthchecks-io.ts";
 import { combineChecks } from "./parse-healthchecks.ts";
 import type { JournalCodec } from "./parse-host.ts";
 import { analystObservation, expectedNodePath, latestCertificateName, maskAccountId, parseEnvironmentShadow, parseHostPreconditions, parseJournalHead, parseSessionSampleLog, sessionSampleLine } from "./parse-host.ts";
+import { certificateDispatchPrecondition } from "../core/preconditions.ts";
 import type { CertificateValidator, LogFile, PreflightReport, TaskNames } from "./parse.ts";
 import { berlinLocal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseEnv, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "./parse.ts";
 
@@ -217,14 +218,29 @@ export async function readObservations(ports: ObservationPorts, config: Observat
   const accountNumber = await ports.competitionAccountNumber();
   const resolvedAccountMasked = accountNumber.ok ? maskAccountId(accountNumber.value) : unknown<string>(`account: ${accountNumber.reason}`);
 
-  const preflightOutput = plan.preflight ? await ports.preflight() : null;
+  // The long run's directory is listed before the preflight is dispatched, not
+  // after, because its presence is a precondition of dispatching one at all.
+  // `certificateDispatchPrecondition` carries the reasoning; in short, the
+  // certificate guard's identity derivation is weakest on an absent directory,
+  // and a residual that hung on "the directory exists" was refused countersignature
+  // precisely because nothing observed it.
+  const longRunListing = await ports.listDirectory(config.longRunStateDir);
+  const longRunPresent: Reading<boolean> = longRunListing.ok
+    ? known(longRunListing.value !== null)
+    : unknown<boolean>(longRunListing.reason);
+  const dispatch = certificateDispatchPrecondition({ declaredLongRunStateDir: config.longRunStateDir, longRunPresent });
+
+  const preflightOutput = plan.preflight && dispatch.ok ? await ports.preflight() : null;
   // The report is the proof, not the exit code: a refused build prints no report and reads unknown either way.
-  const preflight = preflightOutput === null ? notTaken<PreflightReport>("the preflight") : preflightOutput.exitCode === null ? unknown<PreflightReport>("the preflight did not finish") : parsePreflightOutput(preflightOutput.stdout);
+  // A preflight the precondition would not let start is `unknown` with that reason, never `notTaken`: it was
+  // due and did not happen, which is a different fact from one the plan never asked for.
+  const preflight = !dispatch.ok && plan.preflight
+    ? unknown<PreflightReport>(`the preflight was not dispatched: ${dispatch.reason}`)
+    : preflightOutput === null ? notTaken<PreflightReport>("the preflight") : preflightOutput.exitCode === null ? unknown<PreflightReport>("the preflight did not finish") : parsePreflightOutput(preflightOutput.stdout);
   const deploymentDigests = preflight.known ? known(preflight.value.digests) : unknown<DigestPair>(`digests: ${preflight.reason}`);
 
   const boot = commandOutput(await ports.runHostScript("boot"), "boot reader");
   const preconditions = commandOutput(await ports.runHostScript("preconditions"), "host precondition reader");
-  const longRunListing = await ports.listDirectory(config.longRunStateDir);
 
   const sessionSamples = await sampleSessions(ports, config);
   const certificate = await readCertificate(ports, config, deploymentDigests);

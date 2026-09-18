@@ -1,0 +1,38 @@
+[
+  {
+    "id": "PRE-01",
+    "from": "  if (!input.longRunPresent.known) {",
+    "to": "  if (false) {",
+    "note": "an unestablished presence stops being refused and falls through to the value check — the softening a future edit is most likely to make, because 'could not read it' reads like a lesser problem than 'it is not there'"
+  },
+  {
+    "id": "PRE-02",
+    "from": "  if (!input.longRunPresent.value) {",
+    "to": "  if (input.longRunPresent.value) {",
+    "note": "the presence test inverted: a present directory is refused and an absent one passes"
+  },
+  {
+    "id": "PRE-03",
+    "from": "  if (!isDriveRootedPath(input.declaredLongRunStateDir)) {",
+    "to": "  if (false) {",
+    "note": "the path-shape rule removed, so a UNC declaration is dispatched against"
+  },
+  {
+    "id": "PRE-04",
+    "from": "  return isLetter && candidate[1] === \":\" && (separator === \"\\\\\" || separator === \"/\");",
+    "to": "  return candidate[1] === \":\" && (separator === \"\\\\\" || separator === \"/\");",
+    "note": "the drive letter stops having to be a letter"
+  },
+  {
+    "id": "PRE-05",
+    "from": "  if (candidate.length < 3) return false;",
+    "to": "  if (candidate.length < 2) return false;",
+    "note": "the length floor lowered by one, so a bare drive spec reaches the separator test"
+  },
+  {
+    "id": "PRE-06-control",
+    "from": "  const drive = candidate[0] ?? \"\";",
+    "to": "  const drive: string = candidate[0] ?? \"\";",
+    "note": "control - an explicit type annotation on a local, behaviour-identical. It must SURVIVE; the previous control inserted a comment after a type alias's `=` and was caught, which measured the parser rather than the suite."
+  }
+]

@@ -72,7 +72,7 @@ interface Calls {
 }
 
 /** A host that answers the way this one did, with overrides per test. Files live in a map; appends go into it. */
-function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partial<Record<HostScript, CommandResult>>; readonly files?: Readonly<Record<string, string>> } = {}): { readonly ports: ObservationPorts; readonly calls: Calls; readonly files: Map<string, string> } {
+function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partial<Record<HostScript, CommandResult>>; readonly files?: Readonly<Record<string, string>>; readonly absentDirectories?: readonly string[] } = {}): { readonly ports: ObservationPorts; readonly calls: Calls; readonly files: Map<string, string> } {
   const calls: Calls = { names: [] };
   const files = new Map<string, string>(Object.entries({
     [`${REPO}\\.env`]: DOT_ENV,
@@ -91,10 +91,17 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
     environment: { exitCode: 0, stdout: HOST_ENVIRONMENT },
     ...overrides.scripts,
   };
+  // A directory that exists and is empty is NOT the same fact as one that is not
+  // there, and this stub used to answer `null` for both — the very confusion the
+  // production readers were found to make. The long run's state directory is
+  // empty on a healthy host right up to the anchor day, so a fixture that cannot
+  // say "present and empty" cannot exercise the normal case at all. Directories
+  // are present here unless a test names them absent.
+  const absentDirectories = new Set(overrides.absentDirectories ?? []);
   const directory = (name: string): readonly string[] | null => {
+    if (absentDirectories.has(name)) return null;
     const prefix = `${name}\\`;
-    const names = [...files.keys()].filter(file => file.startsWith(prefix)).map(file => file.slice(prefix.length)).filter(rest => !rest.includes("\\"));
-    return names.length === 0 ? null : names;
+    return [...files.keys()].filter(file => file.startsWith(prefix)).map(file => file.slice(prefix.length)).filter(rest => !rest.includes("\\"));
   };
   const read = (file: string): FileRead => {
     const text = files.get(file);
@@ -309,5 +316,31 @@ describe("observe — failures and plans", () => {
   it("does not take a preflight that did not finish at its word, even when it printed a report", async () => {
     const snapshot = await readObservations(host({ preflight: () => Promise.resolve({ exitCode: null, stdout: PREFLIGHT_REPORT }) }).ports, CONFIG, ALL);
     expect(snapshot.deploymentDigests).toEqual({ known: false, reason: "digests: the preflight did not finish" });
+  });
+
+  // The precondition of DECISIONS 2026-09-18 (R2-23): a certificate command is
+  // not dispatched at all while the declared long-run directory is missing,
+  // because that is the state in which the certificate guard's identity
+  // derivation cannot tell one directory's spellings apart. The residual that
+  // rested on this condition was refused countersignature precisely because
+  // nothing observed it, so the observation is pinned here rather than trusted.
+  it("does not dispatch a certificate preflight while the declared long-run directory is missing, and says so", async () => {
+    const calls: string[] = [];
+    const absent = host({ absentDirectories: [LONG_RUN], preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT }); } });
+    const snapshot = await readObservations(absent.ports, CONFIG, ALL);
+    expect(calls).toEqual([]);
+    expect(snapshot.deploymentDigests).toMatchObject({ known: false });
+    if (snapshot.deploymentDigests.known) return;
+    expect(snapshot.deploymentDigests.reason).toContain("was not dispatched");
+    expect(snapshot.deploymentDigests.reason).toContain(LONG_RUN);
+  });
+
+  it("dispatches the preflight when the long-run directory is present and empty, which is the healthy state before the anchor day", async () => {
+    const calls: string[] = [];
+    const present = host({ preflight: () => { calls.push("preflight"); return Promise.resolve({ exitCode: 0, stdout: PREFLIGHT_REPORT }); } });
+    const snapshot = await readObservations(present.ports, CONFIG, ALL);
+    expect(calls).toEqual(["preflight"]);
+    expect(snapshot.deploymentDigests.known).toBe(true);
+    expect(snapshot.longRunArtefacts).toEqual({ known: true, value: [] });
   });
 });

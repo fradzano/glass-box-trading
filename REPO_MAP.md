@@ -52,6 +52,7 @@
 - `ops/activation/core/decide.ts` — The decision (spec §5–§7): one invocation's answer, from the fold of the ledger,
 - `ops/activation/core/fold.ts` — The fold (spec §4, §5): from the ledger to what the current attempt has done.
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
+- `ops/activation/core/preconditions.ts` — Preconditions the activation asserts before it dispatches a certificate
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
 - `ops/activation/deployment.example.json`
@@ -84,6 +85,7 @@
 - `ops/activation/probes/mutants-parse-integrity.json`
 - `ops/activation/probes/mutants-parse.json`
 - `ops/activation/probes/mutants-physical-path.json`
+- `ops/activation/probes/mutants-preconditions.json`
 - `ops/activation/probes/mutants-probe.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
@@ -137,6 +139,7 @@
 - `ops/activation/tests/parse-healthchecks.spec.ts` — Unit 7: the healthchecks.io parsers. The first test is the one that matters most:
 - `ops/activation/tests/parse-host.spec.ts` — Unit 7, the parsers behind the host readers. Where this host could produce the input, the
 - `ops/activation/tests/parse.spec.ts` — Unit 7: the pure parsers behind the activation's readers. Wherever this host could
+- `ops/activation/tests/preconditions.spec.ts` — P12 unit 12, round 2: the precondition the activation asserts before it
 - `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).

@@ -21,6 +21,7 @@
 - `ops/activation/tests/parse-healthchecks.spec.ts`
 - `ops/activation/tests/parse-host.spec.ts`
 - `ops/activation/tests/parse.spec.ts`
+- `ops/activation/tests/preconditions.spec.ts`
 - `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts`
 - `ops/activation/tests/steps.spec.ts`
