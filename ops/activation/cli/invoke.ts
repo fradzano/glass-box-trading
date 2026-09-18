@@ -227,7 +227,14 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
         if (fold.currentAttempt === null && snapshot.state !== "absent" && snapshot.state !== "empty") {
           return { kind: "ledger-defect", stage: "read-ledger", reason: found };
         }
-        applied = await applyTeardown(abortTeardown(fold), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);
+        // `fullTeardown`, not `abortTeardown`, and for the same reason as
+        // `SCHEDULE_NOT_FOR_THIS_ATTEMPT`: the fold's answer about the gate belongs to the
+        // attempt being left behind, not to the day being opened. A previous attempt that
+        // reached step 10 and then aborted at step 11 reads `stepDone(fold, "10-gate")`
+        // true, so `abortTeardown` would owe **nothing** — and a new anchor day would
+        // start on top of the old day's enabled tasks and certificate line. A new day
+        // begins clean or it does not begin.
+        applied = await applyTeardown(fullTeardown(), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);
         const attempt = nextAttemptId(snapshot.entries, anchorDay);
         if (!invocation.dryRun) {
           await append(session, openingDraft(found, attempt, anchorDay, stamp, { teardown: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }));

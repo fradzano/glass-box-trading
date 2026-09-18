@@ -21,7 +21,7 @@ import { parseLedgerText } from "../core/ledger.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
 import { readActivationLedger } from "../store/ledger-store.ts";
-import { ACCOUNT, HOST, freshWorld, localOf, observe, utcOf } from "./simulator.ts";
+import { ACCOUNT, HOST, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
 import type { SimWorld } from "./simulator.ts";
 
 
@@ -268,6 +268,33 @@ describe("opening the next attempt", () => {
 
     expect(result.outcome).toEqual({ kind: "opened", attempt: "2026-09-29.1", found: "PREVIOUS_ATTEMPT_ENDED_2026-09-22" });
     expect((await entries(stateRoot)).at(-1)?.anchorDay).toBe("2026-09-29");
+  });
+
+  // A previous day's attempt that reached step 10 and then aborted at step 11 leaves the
+  // fold reading `stepDone(fold, "10-gate") === true`. Asking `abortTeardown` there would
+  // owe nothing at all, and the new anchor day would begin on top of the old day's
+  // enabled tasks and certificate line. The opening path therefore owes the full teardown
+  // unconditionally, for the same reason SCHEDULE_NOT_FOR_THIS_ATTEMPT does: the gate that
+  // is done belongs to the attempt being left behind.
+  it("opens a new anchor day with a clean sweep, although the previous day's gate was green", async () => {
+    const stateRoot = await root();
+
+    // Drive a whole activation to a green gate and then end it, so the ledger carries
+    // exactly the shape the defect needed: 10-gate done, attempt ended, another day.
+    const world = freshWorld(utcOf(CERTIFICATE_DAY, 15, 0));
+    openAttempt(world, "a1", ANCHOR);
+    runUntil(world, scheduleFor(CERTIFICATE_DAY, ANCHOR), utcOf(ANCHOR, 16, 5));
+    await writeFile(path.join(stateRoot, "ledger.jsonl"), world.ledgerText);
+
+    const before = parseLedgerText(world.ledgerText);
+    expect(before.entries.some(entry => entry.step === "10-gate" && entry.kind === "result")).toBe(true);
+
+    const { deps } = harness(stateRoot, utcOf("2026-09-28", 15, 35));
+    await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+    const result = await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", "2026-09-29"]), deps);
+
+    expect(result.outcome.kind).toBe("opened");
+    expect(result.applied.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
   });
 
   it("does not reopen the same anchor day on its own, so an abort at 22:30 survives the tick at 22:35", async () => {

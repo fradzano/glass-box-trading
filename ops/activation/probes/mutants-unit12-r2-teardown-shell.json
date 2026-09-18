@@ -12,6 +12,12 @@
     "note": "the teardown stops at its first failure, against applyAll's own stated contract that a disable which failed is no reason to leave the certificate line in place"
   },
   {
+    "id": "G4-08",
+    "from": "        applied = await applyTeardown(fullTeardown(), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);",
+    "to": "        applied = await applyTeardown(abortTeardown(fold), deps.actions, teardownContext(deps, schedule), invocation.dryRun, deps.print);",
+    "note": "the opening path asks abortTeardown instead of fullTeardown - the defect the owner found by reading, where a previous day's green gate makes a new anchor day start on top of the old day's enabled tasks and certificate line"
+  },
+  {
     "id": "G4-07-control",
     "from": "async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<readonly ActionReport[]> {",
     "to": "async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<ReadonlyArray<ActionReport>> {",
