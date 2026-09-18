@@ -1,0 +1,20 @@
+[
+  {
+    "id": "R3-M18",
+    "from": "    nextOwnerAction: `The owner stopped this attempt: ${teardownClauseOrSilence(applied)}. Open a new attempt when the run is to continue.`,",
+    "to": "    nextOwnerAction: \"The owner stopped this attempt. Both tasks are disabled and the certificate line is removed; open a new attempt when the run is to continue.\",",
+    "note": "the append-only sentence restored verbatim to what it was — an entry that asserts a completed teardown beside its own `applied: false` evidence. This is the finding itself, expressed as one line."
+  },
+  {
+    "id": "R3-M19",
+    "from": "  if (reports.length === 0) return null;\n  const failed = reports.filter(report => !report.applied);\n  if (failed.length === 0) return `the teardown ran: ${reports.map(report => report.kind).join(\", \")}`;",
+    "to": "  if (reports.length === 0) return null;\n  const failed: readonly ActionReport[] = [];\n  if (failed.length === 0) return `the teardown ran: ${reports.map(report => report.kind).join(\", \")}`;",
+    "note": "the one builder stops looking at `applied`, so every report reads as a completed teardown — the generator, at the single place it now lives."
+  },
+  {
+    "id": "R3-M20-control",
+    "from": "export function teardownClause(reports: readonly ActionReport[]): string | null {",
+    "to": "export function teardownClause(reports: readonly ActionReport[]): string | null { /* control */",
+    "note": "control — a comment in the body's first line, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "R3-M15",
+    "from": "            try {\n              await append(session, drafted);\n            } catch (error) {\n              const teardown = await applyTeardown(abortTeardown(fold), deps.actions, context, invocation.dryRun, deps.print);\n              applied = [...applied, ...teardown];\n              carried.push(...teardown);\n              throw error;\n            }",
+    "to": "            await append(session, drafted);",
+    "note": "the whole A4 teardown removed — an append that fails at step 10 stops being an abort. This mutant survived the entire suite before this round; if it survives again, the repair is still unmeasured."
+  },
+  {
+    "id": "R3-M16",
+    "from": "              carried.push(...teardown);",
+    "to": "",
+    "note": "the teardown runs but does not reach the caller, so the owner is told only that the invocation failed — the half of the defect that lives on the way out."
+  },
+  {
+    "id": "R3-M17-control",
+    "from": "async function runCarryingTeardown(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule): Promise<InvocationResult> {",
+    "to": "async function runCarryingTeardown(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule): Promise<InvocationResult> { /* control */",
+    "note": "control — a comment in the body's first line, behaviour-neutral. It must SURVIVE; if it is caught, the probe is measuring text rather than behaviour."
+  }
+]

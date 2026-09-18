@@ -106,8 +106,10 @@
 - `ops/activation/probes/mutants-unit12-r2-teardown.json`
 - `ops/activation/probes/mutants-unit12-r3-child-stderr.json`
 - `ops/activation/probes/mutants-unit12-r3-observe.json`
+- `ops/activation/probes/mutants-unit12-r3-owner-abort-record.json`
 - `ops/activation/probes/mutants-unit12-r3-source-comparison.json`
 - `ops/activation/probes/mutants-unit12-r3-stderr-capture.json`
+- `ops/activation/probes/mutants-unit12-r3-teardown-record.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
