@@ -822,6 +822,78 @@ local readers were run read-only on 2026-09-14 (see unit 7).
 
 **Unit 11 is done (2026-09-17, see below).** Remaining: units 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
 
+## Unit 12 — round 1 of the loop — 2026-09-18
+
+The run is `p12-units-1-11`; its ledger, registers, round protocols and every call's
+archived prompt and return live outside this repository, under
+`~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`. **The loop is paused after
+round 1, not finished** — `STATE.md` carries the run state and the authoritative list of
+open findings. What follows is what belongs in the repository: the seams, and what the
+test instrument is now known to measure.
+
+### What round 1 covered, and what it did not
+
+Four blind cold-read finders over the **digest surface** only — the certificate guard,
+its admission, the CLI, the architecture gate, the `verify` chain — each with one
+declared lens, judging against the spec and the scenario catalogue. None of them saw
+this build log: it is the author's claim about the artefact, and a finder who reads the
+claim checks the claim. Every finding then went to its own gate on the gate tier,
+obliged to execute the trigger rather than reason about it.
+
+`ops/` units 1–10, about 6,400 lines, have not been looked at by any finder. That is
+round 2's scope.
+
+### Seam register — which mechanisms were patched, and how often
+
+| Mechanism | Seams | What it is |
+|---|---|---|
+| `certificate-admission-facts` | **3** | How the certificate command establishes what it may do: reading `.env`, deriving directory identity, merging the environment, carrying it into runtime construction. |
+| `shell-written-decisions` | **2** | Decisions the CLI used to make inline, now pure functions in `src/core/session-window.ts` and `src/core/fence-unhalt.ts`. |
+
+Both stand above the threshold where a further patch is no longer a judgement call. The
+third seam on the first is not a third hardening: the counter-verification of the second
+found that the fix itself had opened a hole — the environment was canonicalised while the
+guard still read the file raw — so it is the repair of damage the redesign caused. **A
+fourth finding at either mechanism is declared as a residual with a named decider, or the
+mechanism is redesigned from outside. It is not adjusted from within again.**
+
+### Calibration of the test instrument
+
+This says what the suite measures, which is a statement about the tests and can live
+nowhere else.
+
+- **53 mutants injected across the round's new rules, all caught**, each restored
+  byte-identically: the guard's states, the directory identity, the environment merge,
+  the session boundary, the fence checkpoint, the canonical-root rule, the deployment
+  reader, the activation's wiring.
+- **Three behaviour-neutral control mutants survived, as they must.** Without them "all
+  caught" would be unfalsifiable.
+- **Four mutants survived their first run, and every one was a real gap in a
+  freshly-written test** — including one that showed the environment-merge rule itself
+  was wrong for a lower-case key in `.env`, which is why that rule is now total rather
+  than "the file's spelling wins its slot".
+- **Known blind: entry-point wiring.** No test in either suite enters `src/shell/*-cli.ts`.
+  A mutant that replaces the final-cycle default with `false` compiles and leaves the whole
+  chain green; the same is true of every other entry point, demonstrated on `unhalt-cli.ts`,
+  where removing the `--confirm` requirement passes suite, lint and typecheck. Where this
+  mattered most it is now guarded by source-text assertions that say in their own comment
+  what they cannot do.
+- **Known blind: a missing directory and an empty one.** The host ports map `ENOENT` to a
+  known-empty listing, and the fixtures supply their own paths, so no reader test can
+  catch a wrong path. The deployment's directories are therefore asserted against the
+  host, not against a reader.
+- **Known blind: `certificate-run.ts`'s approval branch**, including the call that writes
+  the human attestation into the append-only journal. Replacing the journalled operator
+  and reason with fabricated values passes the full suite. Open as R1-17.
+
+### What it cost and what it bought
+
+Two A findings, both of which would have mattered on the anchor day: one gave two
+processes separate writer mutexes over one journal, the other pointed every long-run read
+at a directory that does not exist, so the activation could not have completed. Neither
+was in the unit the loop was aimed at; both were reached from it. Seven further B findings
+were confirmed and fixed, two were refuted, and nine hygiene findings went to the backlog.
+
 ## Unit 12 brief — the one adversarial loop over units 1 to 11
 
 Written 2026-09-18, before the first finder call. Unit 12 is not a build unit: it is
