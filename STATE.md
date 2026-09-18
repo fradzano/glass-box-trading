@@ -8,6 +8,46 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-18 CEST. **Update — unit 12, round 1 of the "bis 0" loop
+over units 1–11, is done; the loop is paused after that round, not finished.** The run
+is `p12-units-1-11`; its ledger, registers, round protocols and every call's archived
+prompt and return live in `~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`,
+outside this repo. Four blind cold-read finders over the digest surface, then one gate
+per finding on the gate tier, each obliged to execute the trigger rather than reason
+about it. **Two A findings were found and fixed, and both would have mattered.**
+(1) `realpathSync.native` leaves a UNC spelling standing, so one physical directory had
+unboundedly many identities: two processes started under a drive spelling and a UNC
+spelling of one state directory **both won the same epoch in 12 of 12 rounds**, against
+a control correct 12 of 12, and both planned the same journal sequence number — the
+single-writer requirement of SPEC S-G12-07 and the append-only journal invariant, out
+of one root cause. (2) `ops/activation/cli.ts` derived the long run's state directory by
+climbing two levels from the repository where three are needed, so it named
+`C:\Users\felix\source\glass-box-state\longrun-1`, which does not exist: step 2's
+contamination assertion passed over a directory that is not there, and the wrapper-log
+reads behind gate condition "step 9 satisfied" returned `wait` forever, so **the
+activation could not have completed on the anchor day**. Both are fixed, with the
+second replaced by a declaration rather than a repair — `config/deployment.json` now
+names the three state directories, both the certificate guard and the activation read
+it, and `config/*.json` is digest material so the certificate binds them. **The long run
+moves to `C:\Users\felix\glass-box-state\longrun-2026-09-22`** (created, empty);
+**`.env` still names `longrun-1` and is the owner's to change**, because it holds
+secrets this session does not touch. Owner decision **D-12.1 is taken and built**, which
+also closed R1-09. Commits `1c54cc1`, `5b8f0a4`, `41e65b3`, `6789ca1` on
+`p7/dev-live-certificate`, all pushed; `npm run verify` exit 0 at HEAD with root suite
+709/709 and activation suite 548/548, architecture gate over both roots, 53 mutants
+caught and 3 behaviour-neutral controls surviving. **Open findings, authoritative list
+in the run's `FINDINGS.md`:** R1-10 (the activation spawns the certificate preflight
+before the duplicate-key red is judged; damage confined to the dev sandbox), R1-14 (the
+watchdog asserts every weekday is a trading day — bites 2026-11-26 and the 13:00–16:00
+ET tail of 2026-11-27, so after the anchor), R1-17 (the certificate's approval branch,
+including the line that journals the human attestation, is reached by no test), plus
+nine C findings in the backlog. **Not yet done and needed before the loop can terminate:**
+the fix counter-verification of the last two batches, the execution probe of the four
+declared public paths, and `ops/` units 1–10, which no finder has seen. Target unchanged:
+certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4 expires
+2026-09-29 22:08 Europe/Berlin. **Next:** round 2 of the loop over `ops/`, started with
+`hooks/verify_run.py next-round`, then unit 13. The earlier cursor follows unchanged.
+
 **Last updated:** 2026-09-17 CEST. **Update — unit 11, the digest batch, is done.** The architecture gate covers `ops/activation/core` as its second root (seven exceptions for the accessor-free ledger check, each bound to its exact message and count, owner ruling D-11.1); the certificate command guard refuses a certificate command whose effective `STATE_DIR` is the competition directory `.env` names; `npm run verify` now includes the activation typecheck and suite. Evidence: `verify` exit 0, root suite 680/680, activation suite 543/543, probes guard 5/5, admission 9/9, gate 9/9, ledger 25/25 re-run, two control mutants survived as they must. **This commit changed the runtime digest on purpose; no further commit may touch digest material (`src/`, `tools/*.mjs`, `package.json`, lockfile, root `tsconfig`s, `config/`, `assets/`) before the certificate run on 2026-09-21**, or that certificate needs repeating. **Open, in order:** unit 12 (the one "bis 0" loop over units 1–11 — a defect it finds in digest material is a new certificate decision, so it should run before 2026-09-21 or its digest-side fixes wait until after the anchor; **order agreed 2026-09-17: the digest surface first** — `src/shell/certificate-admission.ts`, `src/shell/certificate-command-guard.ts`, `tools/check-core-architecture.mjs`, `package.json` — then units 1–10 under `ops/`, where fixes do not touch the digest but defects affecting the anchor day still must be fixed before it; unit 12 has no brief yet, and the session writes its scope and lens register first; window 2026-09-18/19, since unit 13 needs 2026-09-20), unit 13 (elevated registration, `ActionPorts` host bindings = D-10.2, page port for `gbt-activation`, `deployment.json`, end-to-end `--dry-run`; planned 2026-09-20). Target unchanged: certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4 expires 2026-09-29 22:08 Europe/Berlin. The earlier cursor follows unchanged.
 
 **Last updated:** 2026-09-17 CEST. **Update 2026-09-17 — session boundary after unit 10; D-10.1 decided.** The activation pages through a fourth healthchecks.io check, `gbt-activation` (`hc:32b59017`, created via the API, URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`); the CLI's page port and one proving page are unit 13's. The "bis 0" loop runs once over units 1–11 as unit 12 (owner ruling). **Open, in order:** unit 11 (digest batch: the core's second architecture-gate root, the `STATE_DIR` guard, scripts — changes the digest, so before the certificate run), unit 12 (the loop), unit 13 (elevated registration, `ActionPorts` host bindings = D-10.2, page port, `ops/activation/deployment.json` filled from this host, end-to-end `--dry-run`). Target unchanged: certificate and drills 2026-09-21, anchor 2026-09-22; gate condition 4 expires 2026-09-29 22:08 Europe/Berlin. Units 11–13 continue in fresh sessions. The 02:40 cursor follows unchanged.
