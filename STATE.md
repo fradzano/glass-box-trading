@@ -12,8 +12,11 @@
 run is `p12-units-1-11`, round counter at 2; its ledger, registers, round protocols and
 every call's archived prompt and return live in
 `~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo. Round 2
-covered `ops/` units 1–10 (~6,400 lines): 38 findings — six A, seventeen B, thirteen C,
-two unclassified. Following round 2, single fixes were locked in favor of class generators.
+covered `ops/` units 1–10 (~6,400 lines). **Final count for the round, against the run's
+findings list: 56 — seven A, twenty-three B, twenty-four C, two still unclassified.**
+The figure of 38 in an earlier version of this entry was correct when it was written and
+was not pulled forward when the three residual submissions and their gates added twelve
+more; round 1 stands at 27. Following round 2, single fixes were locked in favor of class generators.
 Two major class generators have now been implemented, calibrated, and pushed:
 
 1. **G-4 — Abort contract & oracle re-pointing (`a0aaad5`, `e7ff97c`):**
@@ -31,6 +34,15 @@ Two major class generators have now been implemented, calibrated, and pushed:
    - Safety subcommands (`status`, `abort`, `disarm`) no longer depend on deployment state and cannot be held hostage with exit 1 or raw stack traces.
    - Process-level verification matrix confirms expected exit codes on missing deployment files (`status`: 0; `abort`: 1; `disarm`: 1; `run`/`open`: 2).
    - Verbatim identifier spellings preserved (`DEPLOYMENT_STATE.devStateDir`, `DEPLOYMENT_STATE.devDiagnosticSink`, `LONG_RUN_STATE_DIR`), unreadable state cleanly named (`UNREADABLE_STATE_DIRS`).
+
+**The one thing to read before touching anything: nothing round 2 built has been
+counter-verified.** G-4, the `invoke.ts:230` repair, G-3, the R1-14 wrapper gate and the
+R2-23 precondition are all *fixed, counter-verification pending* — they are green, probed and
+mutation-calibrated, and none of that is the blind second opinion the loop requires. The
+findings they address stay open until it runs, and **running it is round 3's first work, ahead
+of any new finding.** Round 2 is the reason this is spelled out rather than assumed: of round
+1's four fixes, two came back `PATCHED` rather than `RESOLVED`, and one of those had moved the
+defect into a quieter form.
 
 **The two round-1 fixes that were still unverified split.** `41e65b3` is **RESOLVED** for
 both its findings (65 state dir spellings + 60,996 evaluations of `isFinalCycleOfSession`).
