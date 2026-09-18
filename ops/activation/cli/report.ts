@@ -6,6 +6,7 @@
 // same thing from every line: what is true now, and what it means for the next step.
 import { executionOrder, nextStep, stepWindow } from "../core/steps.ts";
 import type { LedgerFold } from "../core/fold.ts";
+import { teardownClause } from "./plan.ts";
 import type { ActionReport, InvocationOutcome } from "./plan.ts";
 import type { LocalInstant, Schedule } from "../core/types.ts";
 
@@ -72,10 +73,9 @@ export function statusLines(fold: LedgerFold, schedule: Schedule | null): readon
  * touched — and the entry is append-only, so the false sentence could never be withdrawn.
  */
 function teardownLine(reports: readonly ActionReport[]): string {
-  if (reports.length === 0) return "the armed run was left as it is; tearing it down is the owner's decision";
-  const failed = reports.filter(report => !report.applied);
-  if (failed.length === 0) return "the teardown ran: " + reports.map(report => report.kind).join(", ");
-  return `the teardown did NOT complete — ${failed.map(report => `${report.kind} (${report.reason ?? "no reason given"})`).join("; ")}. Check the world by hand before anything else.`;
+  // An empty list means something specific here and only here: after the gate, an abort
+  // owes nothing (spec §5), so there is nothing to report rather than nothing attempted.
+  return teardownClause(reports) ?? "the armed run was left as it is; tearing it down is the owner's decision";
 }
 
 /** One line per invocation for the log, and the sentence the owner acts on when there is one. */
@@ -105,8 +105,14 @@ export function outcomeLines(outcome: InvocationOutcome): readonly string[] {
       return [];
     case "refused":
       return [`refusing: ${outcome.reason}`];
-    case "work-failed":
-      return [`FAILED: ${outcome.reason}`];
+    case "work-failed": {
+      // A failure that tore something down on its way out says so. The A4 teardown at step
+      // 10 runs inside the lease and the store failure is rethrown afterwards, so this line
+      // is the only place the owner is told that both tasks were disabled and the
+      // certificate line removed by the invocation that just reported a failure.
+      const clause = teardownClause(outcome.teardown ?? []);
+      return clause === null ? [`FAILED: ${outcome.reason}`] : [`FAILED: ${outcome.reason}`, clause];
+    }
     case "ledger-defect":
       return [`LEDGER DEFECT ${outcome.stage}:${outcome.reason}`, "the record itself cannot be trusted; do not start another attempt before reading it"];
   }

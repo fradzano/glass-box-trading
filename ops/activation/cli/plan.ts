@@ -33,6 +33,38 @@ export interface ActionReport {
   readonly completion: AppliedAction["completion"] | null;
 }
 
+/**
+ * What a teardown **did**, in one clause, built from the reports and from nothing else.
+ *
+ * This is the single builder, and it exists because the alternative has now failed twice.
+ * A sentence about a teardown used to be selected from whether one was *owed*: the console
+ * line said "both tasks are disabled and the certificate line is unset" while the ledger
+ * entry beside it recorded four actions as `applied: false, reason: NO_HOST_BINDINGS`. That
+ * one line was repaired; the same sentence, chosen the same way, survived in the
+ * append-only `next_owner_action`, in three refusal strings and in the disarm's own line —
+ * which is what a class of defects looks like when only its loudest instance is fixed.
+ * Every caller that says anything about a teardown now says it from here.
+ *
+ * `null` when there are no reports at all, deliberately: "nothing was attempted" and
+ * "nothing was owed" are different facts, and only the caller knows which one it holds.
+ */
+export function teardownClause(reports: readonly ActionReport[]): string | null {
+  if (reports.length === 0) return null;
+  const failed = reports.filter(report => !report.applied);
+  if (failed.length === 0) return `the teardown ran: ${reports.map(report => report.kind).join(", ")}`;
+  return `the teardown did NOT complete — ${failed.map(report => `${report.kind} (${report.reason ?? "no reason given"})`).join("; ")}. Check the world by hand before anything else.`;
+}
+
+/** The same clause where a sentence needs one whatever happened, including "nothing was attempted". */
+export function teardownClauseOrSilence(reports: readonly ActionReport[]): string {
+  return teardownClause(reports) ?? "no teardown action was attempted";
+}
+
+/** The `actions` evidence of an entry that records a teardown — the machine-readable half of the same fact. */
+export function teardownEvidence(reports: readonly ActionReport[]): readonly { readonly kind: string; readonly applied: boolean; readonly reason: string | null }[] {
+  return reports.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason }));
+}
+
 export type InvocationOutcome =
   | { readonly kind: "acted"; readonly step: StepId; readonly outcome: Outcome; readonly deferred: boolean }
   | { readonly kind: "recorded"; readonly step: StepId; readonly outcome: Outcome }
@@ -52,7 +84,13 @@ export type InvocationOutcome =
   | { readonly kind: "yielded"; readonly reason: string }
   | { readonly kind: "reported" }
   | { readonly kind: "refused"; readonly reason: string }
-  | { readonly kind: "work-failed"; readonly reason: string }
+  /**
+   * `teardown` carries what a teardown did on the way out, when one ran before the failure
+   * was classified. The A4 teardown at step 10 runs inside the lease and the store failure
+   * is then rethrown, so without this field the owner is told the invocation failed and
+   * never that both tasks were disabled and the certificate line removed.
+   */
+  | { readonly kind: "work-failed"; readonly reason: string; readonly teardown?: readonly ActionReport[] }
   | { readonly kind: "ledger-defect"; readonly stage: string; readonly reason: string };
 
 /**
@@ -213,8 +251,17 @@ export function openingDraft(found: string, attempt: string, anchorDay: string, 
   return draft({ stamp, attempt, anchorDay, step: null, kind: "note", outcome: null, evidence: { ...evidence, opened: found }, nextOwnerAction: null });
 }
 
-/** The owner's own abort (ACT-27): a deliberate stop must not be readable as a crash. */
-export function ownerAbortDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, evidence: Readonly<Record<string, unknown>>): LedgerDraft {
+/**
+ * The owner's own abort (ACT-27): a deliberate stop must not be readable as a crash.
+ *
+ * It takes the reports rather than a ready-made evidence record, so that the two halves of
+ * the same fact cannot drift: the `actions` evidence and the sentence the owner acts on are
+ * built here, from one argument. They used to be two — the caller assembled the evidence and
+ * this function asserted, in a fixed string, that both tasks were disabled and the
+ * certificate line removed. On a host with no bindings that string was false in the same
+ * entry that recorded four `applied: false` actions, and the entry is append-only.
+ */
+export function ownerAbortDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[]): LedgerDraft {
   return draft({
     stamp,
     attempt,
@@ -222,8 +269,28 @@ export function ownerAbortDraft(operator: string, attempt: string, anchorDay: st
     step: null,
     kind: "abort",
     outcome: null,
-    evidence: { ...evidence, reason: "OWNER_ABORT", operator },
-    nextOwnerAction: "The owner stopped this attempt. Both tasks are disabled and the certificate line is removed; open a new attempt when the run is to continue.",
+    evidence: { actions: teardownEvidence(applied), reason: "OWNER_ABORT", operator },
+    nextOwnerAction: `The owner stopped this attempt: ${teardownClauseOrSilence(applied)}. Open a new attempt when the run is to continue.`,
+  });
+}
+
+/**
+ * The owner's abort against a ledger with no open attempt. The teardown has already been
+ * applied by then — it runs before the lease, deliberately — and the command used to append
+ * nothing at all, so the one record of a deliberate stop was a console line in a scheduled
+ * context that may never show one. A note is not a terminal entry: there is no attempt to
+ * end, and claiming one would be a second falsehood.
+ */
+export function ownerAbortWithoutAttemptDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[]): LedgerDraft {
+  return draft({
+    stamp,
+    attempt,
+    anchorDay,
+    step: null,
+    kind: "note",
+    outcome: null,
+    evidence: { actions: teardownEvidence(applied), ownerAbort: "NO_ATTEMPT_OPEN", operator },
+    nextOwnerAction: null,
   });
 }
 

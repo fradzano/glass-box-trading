@@ -207,12 +207,38 @@ describe("the other decisions", () => {
   });
 
   it("writes the owner's own abort as a deliberate stop, not as a crash", () => {
-    const entry = accepted(ownerAbortDraft("felix", ATTEMPT, ANCHOR, STAMP, { disabled: ["cycle", "watchdog"] }));
+    const entry = accepted(ownerAbortDraft("felix", ATTEMPT, ANCHOR, STAMP, [
+      { kind: "disable-tasks", applied: true, detail: null, reason: null, completion: null },
+      { kind: "remove-certificate-line", applied: true, detail: null, reason: null, completion: null },
+    ]));
     expect(entry.kind).toBe("abort");
     expect(entry.step).toBeNull();
     expect(entry.evidence["reason"]).toBe("OWNER_ABORT");
     expect(entry.evidence["operator"]).toBe("felix");
-    expect(entry.nextOwnerAction).toContain("open a new attempt");
+    expect(entry.nextOwnerAction).toContain("the teardown ran: disable-tasks, remove-certificate-line");
+    expect(entry.nextOwnerAction).toContain("Open a new attempt");
+  });
+
+  // The append-only half of the class fix. The sentence in this entry used to be a fixed
+  // string asserting that both tasks were disabled and the certificate line removed, in the
+  // same entry whose `actions` evidence recorded four `applied: false` — and `cli.ts` sends
+  // the owner to this field by name. An entry that cannot be withdrawn may not claim.
+  it("never claims more in the owner-abort entry than the reports carry", () => {
+    const nothing = accepted(ownerAbortDraft("felix", ATTEMPT, ANCHOR, STAMP, [
+      { kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null },
+      { kind: "remove-certificate-line", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null },
+    ]));
+    expect(nothing.nextOwnerAction).toContain("the teardown did NOT complete");
+    expect(nothing.nextOwnerAction).toContain("disable-tasks (NO_HOST_BINDINGS)");
+    expect(nothing.nextOwnerAction).not.toContain("are disabled");
+    expect(nothing.evidence["actions"]).toEqual([
+      { kind: "disable-tasks", applied: false, reason: "NO_HOST_BINDINGS" },
+      { kind: "remove-certificate-line", applied: false, reason: "NO_HOST_BINDINGS" },
+    ]);
+
+    const untouched = accepted(ownerAbortDraft("felix", ATTEMPT, ANCHOR, STAMP, []));
+    expect(untouched.nextOwnerAction).toContain("no teardown action was attempted");
+    expect(untouched.evidence["actions"]).toEqual([]);
   });
 
   it("notes a wait the first time its reason appears", () => {

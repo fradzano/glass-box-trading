@@ -36,9 +36,11 @@ import {
   observationPlanFor,
   openingDraft,
   ownerAbortDraft,
+  ownerAbortWithoutAttemptDraft,
   recordDraft,
   resultDraft,
   systemDraftFactory,
+  teardownClauseOrSilence,
   waitNoteDraft,
 } from "./plan.ts";
 import type { ActionReport, InvocationOutcome, StampAt } from "./plan.ts";
@@ -212,8 +214,14 @@ async function status(invocation: ActivationInvocation, deps: InvocationDeps): P
   return { outcome: { kind: "reported" }, applied: [], fold, schedule: built !== null && built.ok ? built.schedule : null };
 }
 
-/** `run`: what the scheduled task invokes every five minutes. */
-async function run(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule): Promise<InvocationResult> {
+/**
+ * `run`: what the scheduled task invokes every five minutes.
+ *
+ * `carried` is the caller's array, not a copy: a teardown that ran inside the lease has to
+ * reach the caller even when the invocation leaves through a throw, and a return value
+ * cannot carry anything past one.
+ */
+async function run(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule, carried: ActionReport[] = []): Promise<InvocationResult> {
   const withLedger = deps.withLedger ?? withActivationLedger;
   const anchorDay = schedule.anchorDay;
   let applied: readonly ActionReport[] = [];
@@ -315,6 +323,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
             } catch (error) {
               const teardown = await applyTeardown(abortTeardown(fold), deps.actions, context, invocation.dryRun, deps.print);
               applied = [...applied, ...teardown];
+              carried.push(...teardown);
               throw error;
             }
           }
@@ -329,6 +338,24 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
     return { outcome: { kind: "yielded", reason: "another invocation holds the activation lease; one note was written and nothing else was done" }, applied: [], fold, schedule };
   }
   return { outcome: result.value, applied, fold, schedule };
+}
+
+/**
+ * `run`, with its own reports carried out of a failure.
+ *
+ * The A4 teardown at step 10 runs inside the lease and the store failure is rethrown after
+ * it. Without this the throw reached the dispatcher's catch, which knows nothing about what
+ * was applied and reports `applied: []` — so an invocation that had just disabled both tasks
+ * and removed the certificate line told the owner only that it had failed.
+ */
+async function runCarryingTeardown(invocation: ActivationInvocation, deps: InvocationDeps, schedule: Schedule): Promise<InvocationResult> {
+  const carried: ActionReport[] = [];
+  try {
+    return await run(invocation, deps, schedule, carried);
+  } catch (error) {
+    const failure = storeFailure(error);
+    return { outcome: failure.kind === "work-failed" ? { ...failure, teardown: carried } : failure, applied: carried, fold: null, schedule };
+  }
 }
 
 /**
@@ -366,22 +393,28 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
       const snapshot = await session.read();
       fold = foldLedgerSnapshot(snapshot);
       const attempt = fold.currentAttempt;
-      if (attempt === null) {
-        return { kind: "refused", reason: "no attempt is open, so there is nothing to end; the teardown above ran anyway" };
-      }
-      if (fold.attemptEnded !== null) {
-        return { kind: "ended", seq: fold.attemptEnded.seq, reason: `attempt ${attempt.id} was already ended at seq ${String(fold.attemptEnded.seq)}; the teardown above ran anyway` };
-      }
       const tail = { lastSeq: snapshot.entries.at(-1)?.seq ?? 0, lastAtUtcMs: snapshot.entries.at(-1)?.atUtcMs ?? null };
       const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
-      const evidence = { actions: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) };
-      if (!invocation.dryRun) await append(session, ownerAbortDraft(invocation.operator ?? "", attempt.id, attempt.anchorDay, stamp, evidence));
+      if (attempt === null) {
+        // The teardown has already run — it runs before the lease, deliberately — and this
+        // branch used to append nothing at all, so a deliberate stop against a fresh or
+        // rotated state root left no trace in the append-only record: both tasks disabled,
+        // the certificate line gone, the disarm deleted, and a console line in a context
+        // that may never show one. A note, not a terminal entry: there is no attempt to end.
+        const today = stamp.at.slice(0, 10);
+        if (!invocation.dryRun) await append(session, ownerAbortWithoutAttemptDraft(invocation.operator ?? "", nextAttemptId(snapshot.entries, today), today, stamp, applied));
+        return { kind: "refused", reason: `no attempt is open, so there is nothing to end; ${teardownClauseOrSilence(applied)}` };
+      }
+      if (fold.attemptEnded !== null) {
+        return { kind: "ended", seq: fold.attemptEnded.seq, reason: `attempt ${attempt.id} was already ended at seq ${String(fold.attemptEnded.seq)}; ${teardownClauseOrSilence(applied)}` };
+      }
+      if (!invocation.dryRun) await append(session, ownerAbortDraft(invocation.operator ?? "", attempt.id, attempt.anchorDay, stamp, applied));
       return { kind: "aborted", step: null, reason: "OWNER_ABORT", teardown: applied, nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue." };
     },
   );
 
   if (result.kind === "contended") {
-    return { outcome: { kind: "work-failed", reason: "another invocation holds the lease, so the terminal entry was not written; the teardown ran. Retry the abort." }, applied, fold, schedule: null };
+    return { outcome: { kind: "work-failed", reason: "another invocation holds the lease, so the terminal entry was not written. Retry the abort.", teardown: applied }, applied, fold, schedule: null };
   }
   return { outcome: result.value, applied, fold, schedule: null };
 }
@@ -433,16 +466,19 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, an
         if (!invocation.dryRun) {
           await append(session, { at: stamp.at, atUtcMs: stamp.atUtcMs, attempt: id, anchorDay: day, step: null, kind: "note", outcome: null, evidence: { disarm: "NO_GREEN_GATE", actions: reports.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }, nextOwnerAction: null });
         }
-        return { kind: "aborted", step: null, reason: "DISARMED", teardown: reports, nextOwnerAction: "The disarm one-shot found no green gate and disabled both tasks. Read the ledger before the next attempt." };
+        return { kind: "aborted", step: null, reason: "DISARMED", teardown: reports, nextOwnerAction: `The disarm one-shot found no green gate: ${teardownClauseOrSilence(reports)}. Read the ledger before the next attempt.` };
       },
     );
     if (result.kind === "contended") {
       // A live invocation may be mid-gate. The one-shot still owes the world its
       // disable: the gate either wrote its result before 15:05 or it did not.
       const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
-      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: "The disarm ran while another invocation held the lease; both tasks were disabled. Read the ledger." }, applied: reports, fold, schedule: null };
+      return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: `The disarm ran while another invocation held the lease: ${teardownClauseOrSilence(reports)}. Read the ledger.` }, applied: reports, fold, schedule: null };
     }
-    return { outcome: result.value, applied: [], fold, schedule: null };
+    // What the disarm applied travels in `applied` like every other command's does; it
+    // used to live only inside the outcome, so a caller reading `result.applied` was told
+    // nothing had happened by the one command whose whole purpose is to act.
+    return { outcome: result.value, applied: result.value.kind === "aborted" ? result.value.teardown : [], fold, schedule: null };
   } catch (error) {
     // Fail safe, not closed: a ledger that cannot be read is exactly the case the
     // disarm exists for (spec §6; residual G1, an unparseable `ledger.lock`).
@@ -450,7 +486,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, an
     const failure = storeFailure(error);
     const detail = failure.kind === "ledger-defect" ? `${failure.stage}:${failure.reason}` : failure.kind;
     return {
-      outcome: { kind: "aborted", step: null, reason: `DISARMED_LEDGER_UNREADABLE (${detail})`, teardown: reports, nextOwnerAction: "The disarm could not read the ledger and disabled both tasks. Read the activation state root by hand before anything else." },
+      outcome: { kind: "aborted", step: null, reason: `DISARMED_LEDGER_UNREADABLE (${detail})`, teardown: reports, nextOwnerAction: `The disarm could not read the ledger: ${teardownClauseOrSilence(reports)}. Read the activation state root by hand before anything else.` },
       applied: reports,
       fold,
       schedule: null,
@@ -547,7 +583,7 @@ export async function invoke(invocation: ActivationInvocation, deps: InvocationD
   const schedule = built.schedule;
 
   try {
-    if (invocation.command === "run") return await run(invocation, deps, schedule);
+    if (invocation.command === "run") return await runCarryingTeardown(invocation, deps, schedule);
     return await open(invocation, deps, schedule);
   } catch (error) {
     return { outcome: storeFailure(error), applied: [], fold: null, schedule };

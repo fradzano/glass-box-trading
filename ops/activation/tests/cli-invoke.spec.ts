@@ -18,10 +18,13 @@ import type { DeploymentFacts } from "../cli/schedule.ts";
 import { parseInvocation } from "../cli/args.ts";
 import type { ActivationInvocation } from "../cli/args.ts";
 import { parseLedgerText } from "../core/ledger.ts";
+import { foldLedger } from "../core/fold.ts";
+import { nextStep } from "../core/steps.ts";
+import { outcomeLines } from "../cli/report.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
 import { readActivationLedger } from "../store/ledger-store.ts";
-import { ACCOUNT, HOST, LONG_RUN, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
+import { ACCOUNT, ACTIVATION_ROOT, HOST, LONG_RUN, freshWorld, localOf, observe, openAttempt, runUntil, scheduleFor, utcOf } from "./simulator.ts";
 import type { SimWorld } from "./simulator.ts";
 
 
@@ -307,6 +310,70 @@ describe("a safety command carries no prerequisite it does not consume", () => {
   });
 });
 
+// Axiom A4: an append that fails **is** an abort — disable both tasks, page, exit (ACT-44,
+// ACT-60). The teardown that honours it was built and then measured by nothing: deleting the
+// whole block left every test green, which is the state in which a repair returns silently.
+describe("a result append that fails at the gate", () => {
+  /**
+   * A ledger whose result append at the gate throws — the one moment A4 is about. It is
+   * selected by what the draft *is*, not by how many appends came before it, so the test
+   * cannot drift into failing a different write when the order changes.
+   */
+  const failingResultAppend: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+    read: () => session.read(),
+    append: async draft => {
+      if (draft.kind === "result" && draft.step === "10-gate") throw new Error("ENOSPC: no space left on device");
+      return await session.append(draft);
+    },
+  }));
+
+  /** A world and a ledger that agree, driven to the invocation that has the gate in front of it. */
+  async function atTheGate(): Promise<{ readonly stateRoot: string; readonly world: SimWorld }> {
+    const stateRoot = await root();
+    const world = freshWorld(utcOf(CERTIFICATE_DAY, 15, 0));
+    openAttempt(world, "a1", ANCHOR);
+    runUntil(world, scheduleFor(CERTIFICATE_DAY, ANCHOR), utcOf(ANCHOR, 14, 30));
+    await writeFile(path.join(stateRoot, "ledger.jsonl"), world.ledgerText);
+    const fold = foldLedger(parseLedgerText(world.ledgerText));
+    expect(nextStep(fold)).toBe("10-gate");
+    // The observations must come from the world this ledger was driven through, not from a
+    // fresh one: a world that never ran steps 0 to 9 is a `WORLD_MISMATCH`, and the run
+    // would abort before it ever reached the append this test is about.
+    world.nowUtcMs = utcOf(ANCHOR, 14, 40);
+    return { stateRoot, world };
+  }
+
+  it("tears down inside the lease when the result append throws, and says what it tore down", async () => {
+    const { stateRoot, world } = await atTheGate();
+    const { deps, printed } = harness(stateRoot, world.nowUtcMs, {
+      withLedger: failingResultAppend,
+      now: () => world.nowUtcMs,
+      observe: async () => Promise.resolve(observe(world)),
+      // The disarm one-shot this world registered carries the simulator's activation root
+      // in its argument line, and the core compares that line by value (spec §6). A schedule
+      // built on the temporary ledger directory would red `disarm.arguments` and abort
+      // before the gate — a world mismatch, not the append failure this test is about.
+      facts: { ...factsFor(stateRoot), activationRoot: ACTIVATION_ROOT },
+    });
+
+    const result = await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), deps);
+
+    // The intent landed, the certificate was written, the result append threw — and the
+    // teardown ran before the failure left the session, where the lease is still held.
+    expect(printed).toContain("would disable-tasks cycle, watchdog");
+    expect(printed).toContain("would remove-certificate-line");
+    expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
+    expect(result.applied.map(report => report.kind)).toContain("remove-certificate-line");
+
+    // And the owner is told. Without this the outcome said only that the invocation had
+    // failed, while both tasks had just been disabled and the certificate line removed.
+    expect(result.outcome.kind).toBe("work-failed");
+    if (result.outcome.kind !== "work-failed") return;
+    expect(result.outcome.teardown?.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
+    expect(outcomeLines(result.outcome).join(" | ")).toContain("the teardown did NOT complete");
+  });
+});
+
 describe("opening the next attempt", () => {
   it("opens a new attempt for a new anchor day by itself, because the day resets the steps", async () => {
     const stateRoot = await root();
@@ -422,14 +489,30 @@ describe("the owner's own abort", () => {
     expect(last?.evidence["reason"]).toBe("OWNER_ABORT");
   });
 
-  it("still tears down when there is no attempt to end, and says so", async () => {
+  // The expectation of an empty ledger here was the defect, not the contract: the teardown
+  // runs before the lease, so this branch really does act on the world, and it used to leave
+  // no trace of having done so. A note, not a terminal entry — there is no attempt to end.
+  it("still tears down when there is no attempt to end, and records that it did", async () => {
     const stateRoot = await root();
     const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
     const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
 
     expect(result.outcome.kind).toBe("refused");
     expect(printed[0]).toBe("would disable-tasks cycle, watchdog");
-    expect(await entries(stateRoot)).toHaveLength(0);
+    if (result.outcome.kind !== "refused") throw new Error("the abort refused; the outcome carries the reason");
+    expect(result.outcome.reason).toContain("the teardown did NOT complete");
+
+    const written = await entries(stateRoot);
+    expect(written).toHaveLength(1);
+    expect(written[0]?.kind).toBe("note");
+    expect(written[0]?.evidence["ownerAbort"]).toBe("NO_ATTEMPT_OPEN");
+    expect(written[0]?.evidence["operator"]).toBe("felix");
+    expect(written[0]?.evidence["actions"]).toEqual([
+      { kind: "disable-tasks", applied: false, reason: "NO_HOST_BINDINGS" },
+      { kind: "remove-certificate-line", applied: false, reason: "NO_HOST_BINDINGS" },
+      { kind: "delete-disarm", applied: false, reason: "NO_HOST_BINDINGS" },
+      { kind: "clear-checks", applied: false, reason: "NO_HOST_BINDINGS" },
+    ]);
   });
 
   it("does not end an attempt twice", async () => {
