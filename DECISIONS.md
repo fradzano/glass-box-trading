@@ -113,6 +113,61 @@
   together with the two findings that share its shape — the step-2 contamination listing
   being non-recursive, and `parseDeployment` refusing equality rather than nesting.
 
+- **2026-09-18 — R3-03 and R3-05: the two acute wrapper-logging defects are repaired now,
+  and the structural rebuild of the wrapper pair is dated after the anchor day.** Owner
+  decision, taken against three alternatives, with the reasoning recorded because the shape
+  of it will apply again. **What is broken.** `Write-RunLog` in both `tools/cycle-run.ps1`
+  and `tools/watchdog-run.ps1` swallowed every write failure in a blank `catch { }`, so a
+  **successful** firing whose log file is locked or read-only exited 0 having written
+  nothing — forging `docs/P12-ACTIVATION-SPEC.md` step `6-drill-silence`'s "no line in the
+  two wrapper logs", the local discriminator between a task that was disabled and a network
+  that failed, and doing it *with a green ping beside it*, which no refusal can. That is
+  class A, found by the blind counter-verification of round 3 and measured against the real
+  wrapper at the real clock. Beside it, the `.env` read for the ping URL ran unguarded under
+  the script-wide `$ErrorActionPreference = 'Stop'` — the same failure class R46-B5 and
+  R44-B8 closed at the sibling `STATE_DIR` read twenty lines further down, and left out of
+  that repair in both files.
+
+  **What was decided, and against what.** The mechanism `wrapper-run-logging` stands at its
+  second seam, where the loop's rule is *class fix or declaration, never the next patch*. The
+  full class fix — one shared logging module instead of two hand-synced copies, rotation for
+  `watchdog-run.log`, and a route by which a refusal *above* the log open still leaves a
+  trace — was declined for now: it is the largest change this run has proposed to the live
+  firing path, three days before the certificate run, on two files no suite crosses
+  (`scheduled-task-scripts.spec.ts` covers the installer and the verifier), and the last
+  change to exactly these files produced a regression this run had to book (R2-34). Leaving
+  the class-A finding as a plain residual was declined too: both acute sources are isolable
+  with a minimal radius, and a residual that could be repaired cheaply is a residual chosen
+  for convenience.
+
+  **What was built.** `Write-RunLog` no longer swallows: a failed write ends the firing
+  through the sender that is still reachable — `Stop-WithHeartbeat` / `Stop-WithLiveness`,
+  deliberately *not* the `Stop-WithLogged…` variants, which would recurse into the call that
+  just failed — so a log that cannot be written produces a fail ping and a non-zero exit
+  instead of a forged silence. The `.env` read for the ping URL is guarded, and an unreadable
+  `.env` is now said out loud rather than left for the `STATE_DIR` read below to rediscover,
+  which never happens when `STATE_DIR` comes from the process environment.
+
+  **Proven by process, not by reading.** Both real wrappers were driven in a synthetic repo
+  root with their own state directory and all three `HEALTHCHECK_*` variables blank, under
+  three conditions each, and the same three against the wrappers as they stood in the
+  previous commit. Before: a locked log gave **exit 0 and silence**. After: **exit 1** naming
+  the log and the line it could not write. The `.env` case exited 1 both before and after —
+  what changed is the shape: an unhandled `Get-Content` error thrown from inside a helper
+  before any sender existed has become a named refusal routed through the sender, which also
+  means a real fail ping wherever the URL comes from the process environment rather than from
+  the locked file. Output archived with the run.
+
+  **THE LIMIT.** Two things this does not fix, both real and both measured: a refusal *above*
+  the log open still writes nothing, because `$logPath` cannot exist before `$stateDir`
+  resolves; and the two wrappers keep five hand-synced duplicate helpers that have already
+  drifted. **Deadline:** the structural rebuild — shared logging module, watchdog log
+  rotation, and a buffer or fallback sink for pre-log refusals — is owed **before
+  2026-10-06**, two weeks after the anchor day, in the first change batch that is not under
+  anchor-day pressure. Decider and follow-up owner: Felix Radzanowski. Stated here rather
+  than implied, for the same reason as R1-14: a residual whose only compensating control is
+  the decider's memory has no observer.
+
 - **2026-09-18 — R1-14: the watchdog wrapper gets a hand-written closure table as a
   stop-gap, and the real repair is a declared residual with a dated deadline.** Owner
   decision, taken after a gate refused to countersign a plain deferral. **What is broken.**

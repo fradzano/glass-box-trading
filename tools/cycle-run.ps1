@@ -149,7 +149,19 @@ function Test-NodeRuns {
 
 $livenessUrl = $env:HEALTHCHECK_LIVENESS_URL
 if ([string]::IsNullOrWhiteSpace($livenessUrl)) {
-    $livenessUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_LIVENESS_URL'
+    # Guarded, because this read runs *before* the sender exists. Under the
+    # script-wide $ErrorActionPreference = 'Stop', a locked or unreadable .env
+    # terminated the wrapper right here: no log, no ping, no exit line -- the
+    # same failure class R44-B8 closed further down at the sibling STATE_DIR
+    # read, which this call was left out of. An unreadable .env must not be
+    # quieter than a missing one, so the URL simply stays unset and the refusal
+    # below travels as far as it can.
+    try {
+        $livenessUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_LIVENESS_URL'
+    } catch {
+        $livenessUrl = $null
+        $livenessUrlReadFailure = ($_.Exception.Message -replace "\s+", " ").Trim()
+    }
 }
 
 function Stop-WithLiveness {
@@ -159,6 +171,11 @@ function Stop-WithLiveness {
     $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "wrapper refused: $Message"
     throw "$Message (liveness $delivery)"
 }
+
+# Said out loud rather than left to the STATE_DIR read below to rediscover: with
+# STATE_DIR set in the process environment that read never happens, and an
+# unreadable .env would pass unnoticed on the one firing that should say so.
+if ($livenessUrlReadFailure) { Stop-WithLiveness "$RepoRoot\.env could not be read: $livenessUrlReadFailure" }
 
 if (-not (Test-Path -LiteralPath $RepoRoot)) { Stop-WithLiveness "RepoRoot '$RepoRoot' does not exist." }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
@@ -204,9 +221,23 @@ if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
 }
 
 function Write-RunLog {
+    # A write that fails is not a line that is missing: `docs/P12-ACTIVATION-SPEC.md`
+    # step 6 reads "no line in the two wrapper logs" as a task that was disabled, so a
+    # firing whose log is locked or read-only used to exit 0 having written nothing and
+    # forge exactly that signature -- with a green ping beside it, which no refusal can
+    # do. The blanket `catch { }` swallowed it. A log that cannot be written ends the
+    # firing loudly instead, through the sender that is still reachable.
+    #
+    # It calls Stop-WithLiveness and NOT Stop-WithLoggedLiveness: the logged variant
+    # writes a line first, which is the call that just failed.
     param([string]$Message)
     $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
-    try { Add-Content -LiteralPath $logPath -Value $line -Encoding utf8 } catch { }
+    try {
+        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
+    } catch {
+        $detail = ($_.Exception.Message -replace "\s+", " ").Trim()
+        Stop-WithLiveness "the run log '$logPath' could not be written ($detail); the line was: $Message"
+    }
     Write-Verbose $line
 }
 
