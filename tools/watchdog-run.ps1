@@ -65,6 +65,64 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# ---------------------------------------------------------------------------
+# Exchange closures -- a STOP-GAP, and declared as one (DECISIONS, 2026-09-18).
+#
+# `src/shell/watchdog-cli.ts` asserts `isTradingDay: true` unconditionally and
+# this wrapper's only other gate was Monday-to-Friday, so on a weekday the
+# exchange is shut the watchdog turned an agent outage on a closed market into a
+# fenced epoch store, a standing WATCHDOG_TAKEOVER halt that only a human can
+# clear, and a fail ping on every firing -- roughly every fifteen minutes for the
+# rest of the day. Measured on Thanksgiving with the real CLI; the same pure
+# function fed the exchange calendar answers OUTSIDE_SESSION.
+#
+# The repair this deserves is the watchdog path reading the exchange calendar it
+# already fetches, at `watchdog-cli.ts` and at `watchdog-runtime.ts`'s degraded
+# composition. That is `src/`, which is runtime-digest material and frozen until
+# after the anchor run. This file is not digest material (`enumerateRuntimeFiles`
+# takes only `tools/*.mjs` and `tools/*.py`), so the gate can be closed here
+# without voiding a certificate.
+#
+# THE LIMIT, said plainly: this is a hand-written table, which is the same
+# species of asserted fact as the one it repairs. It cannot know about an
+# unscheduled closure -- a weather day, a national day of mourning -- which is
+# decided days ahead, not years. It is authoritative only through its last entry.
+# It must be replaced by a calendar read, not extended forever.
+#
+# Coverage runs past the measurement period on purpose: the scheduled triggers
+# are registered weekly with no end boundary, so the only thing that stops them
+# is a human disabling both tasks on the journaling-only day. If that is missed,
+# the December and 2027 dates are what would otherwise bite.
+$MarketFullDayClosures = @(
+    '2026-11-26',  # Thanksgiving                     -- inside the measurement period
+    '2026-12-25',  # Christmas Day
+    '2027-01-01',  # New Year's Day
+    '2027-01-18',  # Martin Luther King, Jr. Day
+    '2027-02-15',  # Washington's Birthday
+    '2027-03-26',  # Good Friday
+    '2027-05-31',  # Memorial Day
+    '2027-06-18',  # Juneteenth observed (the 19th is a Saturday)
+    '2027-07-05',  # Independence Day observed (the 4th is a Sunday)
+    '2027-09-06',  # Labor Day
+    '2027-11-25',  # Thanksgiving
+    '2027-12-24'   # Christmas Day observed (the 25th is a Saturday)
+)
+
+# Early closes, all at 13:00 America/New_York. The wrapper hands the CLI the real
+# close, so the post-13:00 tail is outside the session and assessStaleness stays
+# quiet -- no separate skip is needed for these.
+$MarketEarlyCloses = @{
+    '2026-11-27' = 13  # the day after Thanksgiving   -- inside the measurement period
+    '2026-12-24' = 13  # Christmas Eve
+    '2027-11-26' = 13  # the day after Thanksgiving
+}
+
+# The last date either table speaks for. Past it the wrapper keeps today's
+# behaviour and says so in the log, rather than inventing a silence: a wrapper
+# that skipped past its own coverage would remove the safety net instead of
+# repairing it.
+$MarketTableThroughDate = '2027-12-31'
+
 function Get-EasternTimeZoneInfo {
     # Kept in sync by hand with the identical helper in install-scheduled-task.ps1.
     try {
@@ -74,19 +132,42 @@ function Get-EasternTimeZoneInfo {
     }
 }
 
-function Get-TodaySessionUtc {
-    # Regular-hours 09:30-16:00 America/New_York for "today" (New York wall-clock
-    # date), DST-correct via .NET's zone tables. Does NOT know about market
-    # holidays or early closes -- see the installer's header comment for the
-    # same limitation applied to the scheduled trigger window.
+function Get-TodayEasternDate {
+    # "Today" as the exchange reckons it. Every date decision in this file goes
+    # through here, so none of them can drift into UTC: between 00:00 and 05:00
+    # Berlin the UTC date is already tomorrow in New York's yesterday, and a
+    # weekday test on the wrong one is wrong at exactly the hours nobody watches.
     $eastern = Get-EasternTimeZoneInfo
-    $nowUtc = [System.DateTime]::UtcNow
-    $todayEasternDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($nowUtc, $eastern).Date
+    return [System.TimeZoneInfo]::ConvertTimeFromUtc([System.DateTime]::UtcNow, $eastern).Date
+}
+
+function Test-MarketFullDayClosure {
+    # Split out so the closure decision can be driven for any date by a test
+    # rather than only for whatever day the host happens to be on. A gate that
+    # can only be exercised by waiting for Thanksgiving is not a gate anybody
+    # can check.
+    param([Parameter(Mandatory = $true)][datetime]$EasternDate)
+    return $MarketFullDayClosures -contains $EasternDate.ToString('yyyy-MM-dd')
+}
+
+function Get-TodaySessionUtc {
+    # Regular hours 09:30-16:00 America/New_York for the given New York
+    # wall-clock date -- today's by default -- DST-correct via .NET's zone
+    # tables, with the early-close table above applied. It does NOT know about
+    # unscheduled closures; see the table's header for the limit this carries.
+    param([datetime]$EasternDate = (Get-TodayEasternDate))
+    $eastern = Get-EasternTimeZoneInfo
+    $todayEasternDate = $EasternDate.Date
+    $key = $todayEasternDate.ToString('yyyy-MM-dd')
+    $closeHour = 16
+    if ($MarketEarlyCloses.ContainsKey($key)) { $closeHour = $MarketEarlyCloses[$key] }
     $openEastern = [System.DateTime]::SpecifyKind($todayEasternDate.AddHours(9).AddMinutes(30), [System.DateTimeKind]::Unspecified)
-    $closeEastern = [System.DateTime]::SpecifyKind($todayEasternDate.AddHours(16), [System.DateTimeKind]::Unspecified)
+    $closeEastern = [System.DateTime]::SpecifyKind($todayEasternDate.AddHours($closeHour), [System.DateTimeKind]::Unspecified)
     return [pscustomobject]@{
-        OpensAtUtc  = [System.TimeZoneInfo]::ConvertTimeToUtc($openEastern, $eastern)
-        ClosesAtUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($closeEastern, $eastern)
+        OpensAtUtc     = [System.TimeZoneInfo]::ConvertTimeToUtc($openEastern, $eastern)
+        ClosesAtUtc    = [System.TimeZoneInfo]::ConvertTimeToUtc($closeEastern, $eastern)
+        IsEarlyClose   = $MarketEarlyCloses.ContainsKey($key)
+        EasternDateKey = $key
     }
 }
 
@@ -204,8 +285,13 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithHeartbeat "STATE_DIR is not set (checked the process environment and $RepoRoot\.env)." }
 
-$nowUtc = [System.DateTime]::UtcNow
-$nowIsWeekday = $nowUtc.DayOfWeek -ne [System.DayOfWeek]::Saturday -and $nowUtc.DayOfWeek -ne [System.DayOfWeek]::Sunday
+$todayEastern = Get-TodayEasternDate
+$todayEasternKey = $todayEastern.ToString('yyyy-MM-dd')
+# The weekday test is taken in New York, not in UTC: this wrapper's session
+# window is Eastern throughout, and a UTC weekday disagrees with it for the
+# hours either side of midnight. Inside today's registered trigger window the
+# two always agreed, so this is a correctness repair with no measured bite.
+$nowIsWeekday = $todayEastern.DayOfWeek -ne [System.DayOfWeek]::Saturday -and $todayEastern.DayOfWeek -ne [System.DayOfWeek]::Sunday
 $logPath = Join-Path $stateDir 'watchdog-run.log'
 
 function Write-RunLog {
@@ -220,6 +306,21 @@ if (-not $nowIsWeekday) {
     exit 0
 }
 
+if (Test-MarketFullDayClosure -EasternDate $todayEastern) {
+    # The same reason as the weekend, for the days a Mon-Fri test cannot see.
+    # Without this the watchdog fences the epoch store and raises a standing
+    # WATCHDOG_TAKEOVER halt on a market that never opened.
+    Write-RunLog "skip: exchange closed on $todayEasternKey (stop-gap table in this wrapper; watchdog-cli.ts asserts isTradingDay unconditionally)"
+    exit 0
+}
+
+if ($todayEasternKey -gt $MarketTableThroughDate) {
+    # Loud rather than silent: past its coverage the table speaks for nothing, and
+    # a wrapper that skipped here would remove the safety net instead of repairing
+    # it. The run is meant to be over long before this line can be reached.
+    Write-RunLog "warn: $todayEasternKey is past the closure table's coverage ($MarketTableThroughDate); proceeding as if it were a normal trading day, which is what this wrapper did everywhere before the table existed"
+}
+
 
 $session = Get-TodaySessionUtc
 $nowMs = [System.DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -227,7 +328,8 @@ $opensAtMs = [System.DateTimeOffset]::new($session.OpensAtUtc, [System.TimeSpan]
 $closesAtMs = [System.DateTimeOffset]::new($session.ClosesAtUtc, [System.TimeSpan]::Zero).ToUnixTimeMilliseconds()
 $instanceId = "watchdog-$($env:COMPUTERNAME)-$PID"
 
-Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir"
+$earlyCloseNote = if ($session.IsEarlyClose) { " earlyClose=13:00ET" } else { "" }
+Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir$earlyCloseNote"
 
 $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "$closesAtMs", "$deadManBoundMs")
 # Windows PowerShell 5.1 wraps every stderr line of a native command in an

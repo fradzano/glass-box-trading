@@ -1,5 +1,108 @@
 # DECISIONS
 
+- **2026-09-18 — R1-14: the watchdog wrapper gets a hand-written closure table as a
+  stop-gap, and the real repair is a declared residual with a dated deadline.** Owner
+  decision, taken after a gate refused to countersign a plain deferral. **What is broken.**
+  `src/shell/watchdog-cli.ts:40` asserts `isTradingDay: true` unconditionally, and
+  `tools/watchdog-run.ps1`'s only other gate was Monday-to-Friday over a fixed 09:30–16:00
+  window. On a weekday the exchange is shut, the watchdog therefore turns an agent outage
+  on a closed market into a fenced epoch store and a **standing** `WATCHDOG_TAKEOVER` halt
+  that only a human can clear — `readiness-cli.js` re-reads it on every firing and fail-pings
+  each time, so it is a repeating alarm roughly every fifteen minutes, not one push. Worse,
+  the phase-0 book recovery that follows the halt is **not session-gated**:
+  `emergencyCloseEligibility` asks only whether a leg reduces risk, and the asserted trading
+  day propagates into the snapshot so the `SESSION` veto cannot see a closed market either —
+  the watchdog would *attempt* to flatten the whole book into a shut exchange. Executed on
+  Thanksgiving with the real CLI; the same pure function fed the exchange calendar answers
+  `OUTSIDE_SESSION`. Affected dates inside the measurement period, derived from the
+  repository's own compiled calendar functions: **2026-11-26** (a full-day closure, all 390
+  minutes) and the **13:00–15:59 ET tail of 2026-11-27** (an early close). **Why a stop-gap
+  rather than the repair.** The repair is the watchdog path reading the exchange calendar it
+  already fetches, at `watchdog-cli.ts:40` and at `watchdog-runtime.ts:162`'s degraded
+  composition. Both are `src/`, which is runtime-digest material and frozen until after the
+  anchor run of 2026-09-22. `tools/*.ps1` is **not** digest material —
+  `enumerateRuntimeFiles` takes only `tools/*.mjs` and `tools/*.py`, and
+  `docs/P12-ACTIVATION-SPEC.md` §6 says so in words — so the gate can be closed in the
+  wrapper without voiding a certificate. The price is a re-baselined preflight, because both
+  wrappers are hashed by name at step 0; that is a re-run of step 0, not of a certificate.
+  **What was built.** `tools/watchdog-run.ps1` gains a full-day closure table and an
+  early-close table, both in Eastern dates; a closed day exits 0 with a `skip:` log line the
+  way a weekend already did; an early close is handed to the CLI as the real `closesAtMs`, so
+  the post-13:00 tail falls outside the session and `assessStaleness` stays quiet without a
+  separate skip. Coverage runs to 2027-12-31 on purpose, because the scheduled triggers are
+  registered weekly with **no end boundary** and the only thing that stops them is a human
+  disabling both tasks on the journaling-only day; if that is missed, 2026-12-24, 2026-12-25
+  and 2027-01-01 are what would otherwise bite. Past the table's coverage the wrapper warns
+  and proceeds rather than skipping — a wrapper that fell silent past its own table would
+  remove the safety net instead of repairing it. The weekday test also moves from the UTC
+  weekday to the New York one, so every date decision in the file is taken in the same zone
+  (R2-C15; no bite was measured inside the registered trigger window). Verified by execution
+  over nine dates including both live defect dates, a weekend, the overrun window and a date
+  past the coverage.
+  **THE LIMIT, and it is the reason this is called a stop-gap:** a hand-written table is the
+  same species of asserted fact as the assertion it repairs. It cannot know about an
+  unscheduled closure — a weather day, a national day of mourning — which is decided days
+  ahead, not years. **Residual, and its deadline:** the real repair is owed **before
+  2026-11-26**, which is the first date the table is standing in for. Decider and follow-up
+  owner: Felix Radzanowski. A residual whose only compensating control is the decider's
+  memory has no observer, so the deadline is stated here rather than implied, and this repo's
+  own precedent — G1, a declared residual *with a runbook step* — is the shape to match.
+
+- **2026-09-18 — R2-02: the libuv abort on refusal paths after broker I/O is deferred to
+  after the anchor run, with an expiry and a named owner.** Owner decision, gate-countersigned
+  with conditions. **What is broken.** After printing a well-formed refusal,
+  `certificate-cli.js` and `agent-cli.js` do not exit — they abort on
+  `!(handle->flags & UV_HANDLE_CLOSING)` in `src\win\async.c:76`, because `process.exit()`
+  runs while `fetch` is still closing its sockets, and the caller sees `0xC0000409` where the
+  documented code is 1. This project diagnosed the identical failure on 2026-09-11 in
+  `tools/healthchecks-provision.mjs` and fixed it there by returning the code instead of
+  calling `process.exit()`; the fix was never carried to the entry points. **The measured
+  trigger condition** (gate condition C1): the abort needs a healthcheck ping URL present in
+  the child's environment — it needs two distinct network origins, and a single fetch never
+  aborted in 5 of 5 runs. `ops/activation/readers/host-ports.ts:221` blanks all three ping
+  URLs, and under exactly that environment the preflight exits **1 cleanly, 10 runs of 10**.
+  So the defect does not fire on the activation's own path. **The complete consumer list**
+  (also C1), five and not one: the activation's reader via `observe.ts:222`, which tests only
+  for `null`; `tools/cycle-run.ps1:270-278`, which fail-pings on any non-zero and re-exits the
+  same integer; Task Scheduler's `LastTaskResult`, read only as an `[INFO]` line in
+  `tools/verify-scheduled-tasks.ps1:338`; the npm scripts; and the README's documented manual
+  first cycle. **None branches on the specific value.** The streams arrive whole — measured
+  through a node parent and through the real PowerShell transport from 4 KiB to 8 MiB,
+  byte-exact — and the failure ping lands before the abort, so nothing the refusal was meant
+  to persist or emit is lost. **Why deferred.** Every entry point is in `src/shell/`, which is
+  digest material: a fix before the certificate run of 2026-09-21 puts freshly changed shell
+  code under that certificate, and a fix after it voids the certificate. **Expiry:** the first
+  maintenance cycle after the anchor day, and in any case before the next certificate run.
+  **Follow-up owner:** Felix Radzanowski. **Scope** (condition C3): the declaration covers the
+  defect *class*, not two files — the same `process.exit()`-after-`fetch` shape stands in
+  `deadline-cli.ts` (5 sites), `unhalt-cli.ts` (7), `watchdog-cli.ts` (4), `readiness-cli.ts`
+  (4) and `gateway-cli.ts` (4). `readiness-cli` and `watchdog-cli`'s quiet path were measured
+  clean. The **watchdog's recovery path** — a broker read plus a ping, which is the two-origin
+  condition — is the one member of the class that runs only when something else has already
+  gone wrong, and its state before the anchor run is recorded separately below.
+
+- **2026-09-18 — R2-02, condition C3: the watchdog's recovery path was NOT measured before
+  the anchor run, and this is the statement that says so.** The gate that countersigned the
+  R2-02 residual named this path as the member of the defect class it most wanted measured,
+  because it is the safety net whose failure is least visible and because it has the
+  two-origin shape the abort needs: a broker read *and* a ping. **It was not driven, and the
+  reason is a side effect, not a difficulty.** Reaching it requires a fenced epoch store, a
+  journal stale inside a session window, and live dev credentials — without valid credentials
+  the composition degrades to fence-and-halt-only with the broker and market ports null,
+  which is one origin and therefore does not exercise the condition at all. With credentials
+  it would run the full phase-0 book recovery, which *submits close orders* for anything open
+  on the dev account. Spending a live recovery on the paper sandbox three days before the
+  anchor day, to measure a defect whose worst known consequence is a wrong integer in a log
+  line, is the wrong trade. **What is known without driving it:** the abort's necessary
+  condition was measured by the gate as two distinct network origins plus `process.exit()`
+  within roughly 100 ms of the last socket teardown, and a synthetic child of exactly that
+  shape aborted in every run. The recovery path has both origins by construction. So the
+  honest statement is *structurally exposed, not observed* — and it is written down that way
+  rather than as either a clean bill or an alarm. **What would make it cheap to measure
+  later:** a dev account verified flat beforehand, a scratch state root, and an artificial
+  session window handed to the CLI, which takes its window as arguments precisely so this is
+  possible. That is a maintenance-cycle task, and it belongs with the R2-02 fix itself.
+
 - **2026-09-18 — Unit 12, round 1: the deployment's state directories are declared in
   `config/deployment.json`, the long run moves to `longrun-2026-09-22`, and the
   certificate guard defends a directory instead of a text.** Owner decision, taken after

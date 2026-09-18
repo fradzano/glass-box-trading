@@ -30,3 +30,8 @@ video/.remotion/
 submission/render/out/
 submission/*.mp4
 video/public/captures/
+
+# Host-specific deployment facts for the activation: masked account, coverage date,
+# disk threshold and the expected host preconditions. Per-host by design, so it is
+# written on the machine and never committed (the example beside it documents the shape).
+ops/activation/deployment.json
