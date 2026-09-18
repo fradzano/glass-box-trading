@@ -8,6 +8,68 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-18 CEST, late. **Update — round 3 is through, and the run is
+PRESENTED, not terminated. It is a halt with an open discrepancy, and it needs two decisions
+from the owner before it can go on.** Run `p12-units-1-11`, round counter at **3** of 8, lease
+armed; ledger, registers, round protocols and every call's archived prompt and return live in
+`~/verify-runs/fradzano/glass-box-trading/p12-units-1-11/`, outside this repo.
+
+### What the owner has to decide, and why the loop cannot proceed without him
+
+1. **Two class-A findings on `abort-teardown-contract` (R3-08, R3-09).** A blind ruling gate
+   ruled that any further change to that mechanism is its **third** seam, which the coordinator
+   may not set; and criterion 1 forbids an agent declaring an A away alone. Both exits — a
+   countersigned residual with the owner as named decider, or his authorisation of a third seam
+   — run through him. R3-08: an abort against an already-ended attempt applies four real
+   actions, pings three checks, appends nothing, exits 0, does not page and tells the owner
+   "Nothing was done". R3-09: the reporting path built for axiom A4 hangs on an outcome kind
+   that a real ledger failure never produces — and the test that certified it injected an error
+   shape the store cannot throw. Both are **latent** until unit 13 binds the action ports.
+2. **`wrapper-run-logging`, one residual, one question.** Five class-B findings are one price in
+   five guises: this round's own repair turned `Write-RunLog` from a swallowing side effect into
+   a terminating one, so every call site became an abort point in a control flow with other
+   duties. A countersignature gate refused three of the five declarations written for them. The
+   question the owner must answer is in `LEDGER.md` § "Residual W": **is the logging path of
+   these two wrappers, as it stands, fit to run unattended from 2026-09-22 — given that its
+   rebuild is dated 2026-10-06, two weeks after the run begins?**
+
+### What was built, verified and pushed tonight
+
+`1c5f16a` the three round-2 preconditions · `31a9ce2` the teardown-record class fix · `cd6a4aa`
+the narrow wrapper repair the owner chose · `0123bdc` the `.env` key-identity fix · `f62ab58`
+the platform pin and five re-anchored mutants · `5a98f88`/`f661ceb` the drill observer and the
+Continue-window guard. `npm run verify` exits 0 at HEAD: 709 root tests, 587 activation tests,
+architecture gate, sandbox, phase check.
+
+**Counter-verified blind and closed:** R2-06, R2-08, R2-09, R2-17, R2-16, R2-18, R2-19, R3-01,
+R3-02, R3-03, R3-05, R3-18. **Returned `PATCHED` and still open:** R2-14, R1-14 (as declared),
+R2-34, R3-04, R3-06. **Confirmed `UNADDRESSED`:** R2-28.
+
+### The state of the end condition, honestly
+
+Criterion 1 **open**: five class-A findings (R1-14, R1-21, R2-29, R3-08, R3-09) and five rows
+with no class (R1-17, R2-05, R2-07, R2-36, R2-37), which the rulebook counts as blocking too.
+Criteria 2, 3, 4 **open**. Criterion 5 met and freshly calibrated, with two limits the re-audit
+named: the public paths are booked two commits behind HEAD again, and one mutation result was
+claimed before it was archived. Criterion 6 **not met**: the closing audit found 44
+discrepancies, the corrections answered 40 by annex, and the single re-audit — whose verdict is
+final — left four partly answered and named nine the corrections themselves introduced.
+
+**This is the outcome the rulebook provides for, not a failure of it.** A halt with an open
+discrepancy goes to the human as it stands; a third audit cycle would only look like diligence,
+because nothing would check it.
+
+### Next, for whoever picks this up
+
+(a) The owner's two decisions above — nothing else moves until they are made. (b) Then the
+lens `State across process boundaries`, declared for round 3 and not run, which is the one lens
+of the applicable row this run has driven only once. (c) The four partly-answered discrepancies
+and the nine introduced ones are listed with their seats in `ROUNDS.md` § "Feld
+`Abschluss-Audit`" — they are open in the presentation and are not to be quietly tidied.
+
+**Unchanged and the owner's, not the loop's:** certificate run 2026-09-21, anchor 2026-09-22,
+both scheduled tasks Disabled, and the activation has still never run against the real host.
+
 **Last updated:** 2026-09-18 CEST. **Update — round 3 is running: the fix counter-verification
 is through, and it closed seven findings, re-opened three and found twenty-five more.** The run
 is `p12-units-1-11`, round counter at **3**; its ledger, registers, round protocols and every
