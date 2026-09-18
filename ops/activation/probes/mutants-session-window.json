@@ -1,0 +1,32 @@
+[
+  {
+    "id": "SW1",
+    "note": "unit 12 R1-05: the close instant counts as inside the session again, which is the divergence the CLI used to carry",
+    "from": "nowMs >= session.opensAt && nowMs < session.closesAt;",
+    "to": "nowMs >= session.opensAt && nowMs <= session.closesAt;"
+  },
+  {
+    "id": "SW2",
+    "note": "the opening instant is excluded, so the first legal moment is refused",
+    "from": "nowMs >= session.opensAt &&",
+    "to": "nowMs > session.opensAt &&"
+  },
+  {
+    "id": "SW3",
+    "note": "a non-trading day counts as open",
+    "from": "return session.isTradingDay &&",
+    "to": "return true &&"
+  },
+  {
+    "id": "SW4",
+    "note": "the window is ignored entirely and every instant is inside",
+    "from": "return session.isTradingDay && nowMs >= session.opensAt && nowMs < session.closesAt;",
+    "to": "return true;"
+  },
+  {
+    "id": "SW5",
+    "note": "the two bounds are swapped, so the session is everything outside itself",
+    "from": "nowMs >= session.opensAt && nowMs < session.closesAt;",
+    "to": "nowMs < session.opensAt && nowMs >= session.closesAt;"
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "id": "CTL2",
+    "note": "control: the two unknown-identity operands swapped is the same disjunction, so this mutant must SURVIVE",
+    "from": "if (dotEnvStateDir.kind === \"unknown\" || effectiveStateDir.kind === \"unknown\")",
+    "to": "if (effectiveStateDir.kind === \"unknown\" || dotEnvStateDir.kind === \"unknown\")"
+  }
+]

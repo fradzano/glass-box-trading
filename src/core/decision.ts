@@ -1,4 +1,5 @@
 import { integerUnit, lotCount } from "./domain.js";
+import { isInsideSession } from "./session-window.js";
 import type {
   AnalystBatch,
   CandidateVerdict,
@@ -213,7 +214,7 @@ function quotesEqualExceptTimestamp(left: OptionQuote, right: OptionQuote): bool
 
 function evaluateSession(candidate: EntryCandidate, snapshot: DecisionSnapshot, config: DecisionConfig, now: number): GateVerdict {
   const reasons: string[] = [];
-  if (!snapshot.calendar.isTradingDay || now < snapshot.calendar.opensAt || now >= snapshot.calendar.closesAt) {
+  if (!isInsideSession(now, snapshot.calendar)) {
     reasons.push("calendar is closed at explicit now");
   }
   const underlying = candidate.legs[0]?.underlying;

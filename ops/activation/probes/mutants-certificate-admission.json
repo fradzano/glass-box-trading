@@ -2,26 +2,26 @@
   {
     "id": "CA1",
     "note": "alias spellings are not resolved to the physical directory (junction, extended path)",
-    "from": "physical = realpathSync.native(resolved);",
-    "to": "physical = resolved;"
+    "from": "return { kind: \"key\", value: fold(resolvePhysical(resolved)) };",
+    "to": "return { kind: \"key\", value: fold(resolved) };"
   },
   {
     "id": "CA2",
     "note": "case is not folded on Windows for a directory that does not exist yet",
-    "from": "return platform === \"win32\" ? physical.toLowerCase() : physical;",
-    "to": "return physical;"
+    "from": "const fold = (value: string): string => platform === \"win32\" ? value.toLowerCase() : value;",
+    "to": "const fold = (value: string): string => value;"
   },
   {
     "id": "CA3",
     "note": "a relative STATE_DIR is resolved against the working directory instead of being unusable",
-    "from": "|| !path.isAbsolute(raw)) return null;",
-    "to": ") return null;"
+    "from": "|| !path.isAbsolute(raw)) return { kind: \"none\" };",
+    "to": ") return { kind: \"none\" };"
   },
   {
     "id": "CA4",
     "note": "the profile that must be dev is taken from .env alone, ignoring the process override",
-    "from": "profile: effective[\"ALPACA_PROFILE\"],",
-    "to": "profile: dotEnv[\"ALPACA_PROFILE\"],"
+    "from": "profile: environment[\"ALPACA_PROFILE\"],",
+    "to": "profile: dotEnvValues[\"ALPACA_PROFILE\"],"
   },
   {
     "id": "CA5",
@@ -38,19 +38,49 @@
   {
     "id": "CA7",
     "note": "the .env profile is read from the merged environment, where the dev override hides it",
-    "from": "dotEnvProfile: dotEnv[\"ALPACA_PROFILE\"],",
-    "to": "dotEnvProfile: effective[\"ALPACA_PROFILE\"],"
+    "from": "dotEnvProfile: dotEnvValues[\"ALPACA_PROFILE\"],",
+    "to": "dotEnvProfile: environment[\"ALPACA_PROFILE\"],"
   },
   {
     "id": "CA8",
     "note": "the protected directory is read from the merged environment, so it always equals the effective one",
-    "from": "dotEnvStateDirKey: stateDirKey(dotEnv[\"STATE_DIR\"], input.platform),",
-    "to": "dotEnvStateDirKey: stateDirKey(effective[\"STATE_DIR\"], input.platform),"
+    "from": "dotEnvStateDir: stateDirIdentity(dotEnvValues[\"STATE_DIR\"], input.platform),",
+    "to": "dotEnvStateDir: stateDirIdentity(environment[\"STATE_DIR\"], input.platform),"
   },
   {
     "id": "CA9",
     "note": "the effective directory ignores the .env fallback when no override is set",
-    "from": "effectiveStateDirKey: stateDirKey(effective[\"STATE_DIR\"], input.platform),",
-    "to": "effectiveStateDirKey: stateDirKey(input.processEnv[\"STATE_DIR\"], input.platform),"
+    "from": "effectiveStateDir: stateDirIdentity(environment[\"STATE_DIR\"], input.platform),",
+    "to": "effectiveStateDir: stateDirIdentity(input.processEnv[\"STATE_DIR\"], input.platform),"
+  },
+  {
+    "id": "CA10",
+    "note": "unit 12 R1-03: every resolution failure falls back to the spelling again, so an unreadable identity passes as a different directory",
+    "from": "return code === \"ENOENT\" ? { kind: \"key\", value: fold(resolved) } : { kind: \"unknown\", code };",
+    "to": "return { kind: \"key\", value: fold(resolved) };"
+  },
+  {
+    "id": "CA11",
+    "note": "unit 12 R1-03: a directory that is merely absent is reported as an unknown identity, which refuses a legitimate command",
+    "from": "return code === \"ENOENT\" ?",
+    "to": "return false ?"
+  },
+  {
+    "id": "CA12",
+    "note": "unit 12 R1-02: how .env was read is thrown away again, so unreadable reads as parsed",
+    "from": "dotEnvRead: dotEnv.kind,",
+    "to": "dotEnvRead: \"parsed\","
+  },
+  {
+    "id": "CA13",
+    "note": "unit 12 R1-07: the duplicated keys are dropped on the way to the rule",
+    "from": "duplicateKeys: dotEnv.kind === \"parsed\" ? dotEnv.entries.duplicateKeys : [],",
+    "to": "duplicateKeys: [],"
+  },
+  {
+    "id": "CA14",
+    "note": "unit 12 R1-04: the admitted environment is discarded, so the runtime would read .env a second time",
+    "from": "return { admission, environment };",
+    "to": "return { admission, environment: input.processEnv };"
   }
 ]

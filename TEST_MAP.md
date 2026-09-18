@@ -58,6 +58,7 @@
 - `tests/p10-deadline-runtime.spec.ts`
 - `tests/p12-certificate-state-dir.spec.ts`
 - `tests/p12-qualification-decoupling.spec.ts`
+- `tests/p12-shell-decisions.spec.ts`
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts`
 - `tests/p8-cli-exit-codes.spec.ts`

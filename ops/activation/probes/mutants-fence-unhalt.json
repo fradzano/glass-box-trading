@@ -1,0 +1,32 @@
+[
+  {
+    "id": "FU1",
+    "note": "unit 12 R1-06: the checkpoint is inverted, so any answer but the token clears the halt",
+    "from": "if (answer.trim() !== fenceUnhaltToken(haltSeq)) return null;",
+    "to": "if (answer.trim() === fenceUnhaltToken(haltSeq)) return null;"
+  },
+  {
+    "id": "FU2",
+    "note": "unit 12 R1-06: the token format drifts from what the spec documents and the prompt would still agree with itself",
+    "from": "return `CLEAR-HALT ${String(haltSeq)}`;",
+    "to": "return `CLEAR_HALT_${String(haltSeq)}`;"
+  },
+  {
+    "id": "FU3",
+    "note": "surrounding whitespace is no longer tolerated, so a pasted token is rejected",
+    "from": "if (answer.trim() !== fenceUnhaltToken(haltSeq))",
+    "to": "if (answer !== fenceUnhaltToken(haltSeq))"
+  },
+  {
+    "id": "FU4",
+    "note": "the halt sequence is ignored, so an answer for one halt clears another",
+    "from": "if (answer.trim() !== fenceUnhaltToken(haltSeq)) return null;",
+    "to": "if (!answer.trim().startsWith(\"CLEAR-HALT\")) return null;"
+  },
+  {
+    "id": "FU5",
+    "note": "the approval records an operator of its own rather than the one it was given",
+    "from": "return { operator, reason:",
+    "to": "return { operator: \"owner\", reason:"
+  }
+]

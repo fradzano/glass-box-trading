@@ -2,31 +2,61 @@
   {
     "id": "CG1",
     "note": "the coupling applies whatever profile .env names",
-    "from": "if (dotEnvProfile === \"competition\" && dotEnvStateDirKey !== null",
-    "to": "if (true && dotEnvStateDirKey !== null"
+    "from": "if (dotEnvProfile === \"competition\") {",
+    "to": "if (true) {"
   },
   {
     "id": "CG2",
-    "note": "two unusable STATE_DIRs (both null) count as the same directory",
-    "from": "&& dotEnvStateDirKey !== null && effectiveStateDirKey",
-    "to": "&& true && effectiveStateDirKey"
+    "note": "any effective STATE_DIR is treated as the competition directory",
+    "from": "if (dotEnvStateDir.kind === \"key\" && effectiveStateDir.kind === \"key\" && effectiveStateDir.value === dotEnvStateDir.value) {",
+    "to": "if (true) {"
   },
   {
     "id": "CG3",
-    "note": "any effective STATE_DIR is treated as the competition directory",
-    "from": "&& effectiveStateDirKey === dotEnvStateDirKey) {",
-    "to": "&& true) {"
+    "note": "two directories that are merely both unusable count as the same one",
+    "from": "&& effectiveStateDir.value === dotEnvStateDir.value) {",
+    "to": "&& effectiveStateDir.kind === dotEnvStateDir.kind) {"
   },
   {
     "id": "CG4",
     "note": "the coupling refusal is reported as an admission",
-    "from": "return { ok: false, reason: \"STATE_DIR resolves",
-    "to": "return { ok: true, reason: \"STATE_DIR resolves"
+    "from": "return { ok: false, reason: \"STATE_DIR resolves to the competition state directory that .env names; set the dev STATE_DIR for this command\" };",
+    "to": "return { ok: true };"
   },
   {
     "id": "CG5",
-    "note": "the coupling is never evaluated",
-    "from": "if (dotEnvProfile === \"competition\" && dotEnvStateDirKey !== null && effectiveStateDirKey === dotEnvStateDirKey) {",
-    "to": "if (false) {"
+    "note": "the dev-only profile rule stops refusing, so the coupling rule decides alone",
+    "from": "if (input.profile !== \"dev\") return",
+    "to": "if (false) return"
+  },
+  {
+    "id": "CG6",
+    "note": "unit 12 R1-02: an unreadable .env is admitted again instead of refused",
+    "from": "if (dotEnvRead === \"unreadable\") return",
+    "to": "if (false) return"
+  },
+  {
+    "id": "CG7",
+    "note": "unit 12 R1-07: a .env that assigns a deciding key twice is resolved instead of refused",
+    "from": "const ambiguous = DECIDING_KEYS.filter(key => duplicateKeys.includes(key));",
+    "to": "const ambiguous = DECIDING_KEYS.filter(key => key === \"\" && duplicateKeys.includes(key));"
+  },
+  {
+    "id": "CG8",
+    "note": "unit 12 R1-07: STATE_DIR drops out of the keys whose ambiguity decides",
+    "from": "const DECIDING_KEYS = [\"ALPACA_PROFILE\", \"STATE_DIR\"] as const;",
+    "to": "const DECIDING_KEYS = [\"ALPACA_PROFILE\"] as const;"
+  },
+  {
+    "id": "CG9",
+    "note": "unit 12 R1-03: an identity that could not be established is admitted again",
+    "from": "if (dotEnvStateDir.kind === \"unknown\" || effectiveStateDir.kind === \"unknown\") return",
+    "to": "if (false) return"
+  },
+  {
+    "id": "CG10",
+    "note": "unit 12 R1-03: only one side's unknown identity is refused",
+    "from": "if (dotEnvStateDir.kind === \"unknown\" || effectiveStateDir.kind === \"unknown\")",
+    "to": "if (dotEnvStateDir.kind === \"unknown\")"
   }
 ]

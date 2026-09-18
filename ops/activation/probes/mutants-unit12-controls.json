@@ -1,0 +1,8 @@
+[
+  {
+    "id": "CTL1",
+    "note": "control: the same comparison written the other way round changes nothing, so this mutant must SURVIVE; if it is caught, the probe is reporting something other than behaviour",
+    "from": "return session.isTradingDay && nowMs >= session.opensAt && nowMs < session.closesAt;",
+    "to": "return session.isTradingDay && session.opensAt <= nowMs && session.closesAt > nowMs;"
+  }
+]

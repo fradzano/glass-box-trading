@@ -7,12 +7,14 @@ import { runCertificate } from "./certificate-run.js";
 import { admitCertificateInvocation } from "./certificate-admission.js";
 import { CERTIFICATE_RUN_LIMITS } from "./certificate-command-guard.js";
 import { certificateCliExitCode } from "./cli-exit-codes.js";
+import { isInsideSession } from "../core/session-window.js";
+import { fenceUnhaltApproval, fenceUnhaltToken } from "../core/fence-unhalt.js";
 import { createInterface } from "node:readline/promises";
 
 const args = process.argv.slice(2);
 const preflight = args.includes("--preflight");
 const smokeCycle = args.includes("--smoke-cycle");
-const commandAdmission = admitCertificateInvocation({ repoRoot: process.cwd(), processEnv: process.env, args, platform: process.platform });
+const { admission: commandAdmission, environment } = admitCertificateInvocation({ repoRoot: process.cwd(), processEnv: process.env, args, platform: process.platform });
 if (!commandAdmission.ok) {
   process.stderr.write(`refusing: ${commandAdmission.reason}\n`);
   process.exit(certificateCliExitCode({ kind: "command_refused" }));
@@ -21,7 +23,7 @@ const log = (line: string): void => { process.stdout.write(`${new Date().toISOSt
 const clock = (): number => Date.now();
 let built: Awaited<ReturnType<typeof buildRuntime>>;
 try {
-  built = await buildRuntime({ repoRoot: process.cwd(), processEnv: process.env, clock, objective: "certificate", instanceId: `certificate-${String(process.pid)}`, log });
+  built = await buildRuntime({ repoRoot: process.cwd(), processEnv: process.env, environment, clock, objective: "certificate", instanceId: `certificate-${String(process.pid)}`, log });
 } catch (error) {
   process.stderr.write(`runtime construction failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exit(certificateCliExitCode({ kind: "runtime_construction_failed" }));
@@ -40,7 +42,7 @@ if (preflight) {
 }
 if (smokeCycle) {
   // One real cycle with no order possible: outside the session G6 vetoes every action; inside it this is the owner's call, not a smoke test.
-  if (runtime.session.isTradingDay && clock() >= runtime.session.opensAt && clock() <= runtime.session.closesAt) {
+  if (isInsideSession(clock(), runtime.session)) {
     process.stderr.write("refusing: --smoke-cycle runs only outside the session (inside it a cycle can place orders)\n");
     await runtime.shutdown();
     process.exit(certificateCliExitCode({ kind: "smoke_cycle_inside_session" }));
@@ -50,7 +52,7 @@ if (smokeCycle) {
   await runtime.shutdown();
   process.exit(certificateCliExitCode({ kind: "smoke_cycle_finished" }));
 }
-if (!runtime.session.isTradingDay || clock() < runtime.session.opensAt || clock() > runtime.session.closesAt) {
+if (!isInsideSession(clock(), runtime.session)) {
   process.stderr.write("refusing: outside the exchange session for today; the live test needs market hours\n");
   await runtime.shutdown();
   process.exit(certificateCliExitCode({ kind: "outside_session" }));
@@ -64,13 +66,11 @@ try {
     log,
     ...CERTIFICATE_RUN_LIMITS,
     approveFenceUnhalt: async (facts, signal) => {
-      const token = `CLEAR-HALT ${String(facts.haltSeq)}`;
       process.stdout.write(`Fence reconciliation is stably flat after HTTP ${String(facts.httpStatus)}. Working orders: ${facts.workingOrders.join(",") || "none"}; confirmed canceled: ${facts.canceledOrders.join(",") || "none"}.\n`);
       const readline = createInterface({ input: process.stdin, output: process.stdout });
       try {
-        const answer = await readline.question(`Human checkpoint: type exactly '${token}' to clear this AUTH_FAILURE halt: `, { signal });
-        if (answer.trim() !== token) return null;
-        return { operator: process.env["USERNAME"] ?? "owner", reason: `human confirmed stable flat fence reconciliation for AUTH_FAILURE halt seq ${String(facts.haltSeq)}` };
+        const answer = await readline.question(`Human checkpoint: type exactly '${fenceUnhaltToken(facts.haltSeq)}' to clear this AUTH_FAILURE halt: `, { signal });
+        return fenceUnhaltApproval(answer, facts.haltSeq, process.env["USERNAME"] ?? "owner");
       } finally {
         readline.close();
       }

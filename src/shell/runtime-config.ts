@@ -10,9 +10,22 @@ import path from "node:path";
 
 export type EnvRecord = Readonly<Record<string, string | undefined>>;
 
-/** A minimal `.env` reader: `KEY=value` lines, `#` comments, optional single/double quotes. Existing process variables win. */
-export function parseDotEnv(text: string): Readonly<Record<string, string>> {
+/** The values a `.env` yields, and the ambiguity the plain reader would otherwise hide. */
+export interface DotEnvEntries {
+  /** Last assignment of a key wins, which is what the runtime reads. */
+  readonly values: Readonly<Record<string, string>>;
+  /** Keys assigned on more than one line, in first-seen order. */
+  readonly duplicateKeys: readonly string[];
+}
+
+/**
+ * A minimal `.env` reader: `KEY=value` lines, `#` comments, optional
+ * single/double quotes. Reports what it had to resolve as well as the result,
+ * so that a caller who must not guess does not have to.
+ */
+export function parseDotEnvEntries(text: string): DotEnvEntries {
   const out: Record<string, string> = {};
+  const duplicates: string[] = [];
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
@@ -21,22 +34,58 @@ export function parseDotEnv(text: string): Readonly<Record<string, string>> {
     const key = line.slice(0, separator).trim();
     let value = line.slice(separator + 1).trim();
     if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    if (Object.prototype.hasOwnProperty.call(out, key) && !duplicates.includes(key)) duplicates.push(key);
     out[key] = value;
   }
-  return out;
+  return { values: out, duplicateKeys: duplicates };
+}
+
+/**
+ * A minimal `.env` reader: `KEY=value` lines, `#` comments, optional
+ * single/double quotes. Existing process variables win. Last-one-wins on a
+ * duplicated key is deliberate and load-bearing: the activation's observer is
+ * held to reading exactly what the runtime reads
+ * (`ops/activation/tests/parse.spec.ts`), and it is that observer, not this
+ * function, that reports the duplicate as a red.
+ */
+export function parseDotEnv(text: string): Readonly<Record<string, string>> {
+  return parseDotEnvEntries(text).values;
+}
+
+/** What reading `.env` actually found. "Absent" and "unreadable" are different facts, and a guard may not confuse them. */
+export type DotEnvRead =
+  | { readonly kind: "parsed"; readonly entries: DotEnvEntries }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unreadable"; readonly code: string };
+
+/**
+ * The `.env` file alone, without process variables, with the failure kept.
+ * A file that exists but cannot be read at this instant — an editor's
+ * exclusive lock, a permission bit, a transient I/O error — must not be
+ * indistinguishable from a host that has no `.env`.
+ */
+export function readDotEnvStrict(repoRoot: string): DotEnvRead {
+  try {
+    return { kind: "parsed", entries: parseDotEnvEntries(readFileSync(path.join(repoRoot, ".env"), "utf8")) };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
+    return code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable", code };
+  }
 }
 
 /** The `.env` file alone, without process variables; an absent or unreadable file reads as empty. */
 export function readDotEnv(repoRoot: string): Readonly<Record<string, string>> {
-  try {
-    return parseDotEnv(readFileSync(path.join(repoRoot, ".env"), "utf8"));
-  } catch {
-    return {};
-  }
+  const read = readDotEnvStrict(repoRoot);
+  return read.kind === "parsed" ? read.entries.values : {};
+}
+
+/** The one merge rule: the file underneath, defined process variables on top. */
+export function mergeEnvironment(dotEnvValues: Readonly<Record<string, string>>, processEnv: EnvRecord): EnvRecord {
+  return { ...dotEnvValues, ...Object.fromEntries(Object.entries(processEnv).filter(([, value]) => value !== undefined)) };
 }
 
 export function loadEnvironment(repoRoot: string, processEnv: EnvRecord): EnvRecord {
-  return { ...readDotEnv(repoRoot), ...Object.fromEntries(Object.entries(processEnv).filter(([, value]) => value !== undefined)) };
+  return mergeEnvironment(readDotEnv(repoRoot), processEnv);
 }
 
 export function loadPolicy(repoRoot: string): Readonly<Record<string, unknown>> {

@@ -10,6 +10,7 @@ import type { AccountActivityRecord } from "./alpaca-mapping.js";
 import { integerUnit, lotCount } from "./domain.js";
 import type { EntryCandidate, EntryLimitKind, OptionContract, OptionLeg, OptionPriceCents, OptionQuote, Quantity } from "./domain.js";
 import { isWorkingBrokerStatus, netMidTwice, reversedLegs, utcIsoToEpochMs } from "./execution.js";
+import { isInsideSession } from "./session-window.js";
 import type { BrokerBook, BrokerPosition, CloseAttemptRecord, EntryLifecycleRecord, LifecycleVeto } from "./execution.js";
 import { isPrimaryEntryType } from "./journal.js";
 import type { CloseRouteLabel, JournalDraft, JournalEntry, JournalSnapshot, ReasonCode } from "./journal.js";
@@ -742,7 +743,7 @@ export type StalenessAssessment =
  */
 export function assessStaleness(nowMs: number, session: SessionWindow, lastAuthoritativeAtMs: number | null, deadManBoundMs: number, deploymentTerminal: boolean): StalenessAssessment {
   if (deploymentTerminal) return { kind: "quiet", reason: "DEPLOYMENT_TERMINAL" };
-  if (!session.isTradingDay || nowMs < session.opensAt || nowMs >= session.closesAt) return { kind: "quiet", reason: "OUTSIDE_SESSION" };
+  if (!isInsideSession(nowMs, session)) return { kind: "quiet", reason: "OUTSIDE_SESSION" };
   if (lastAuthoritativeAtMs === null) return { kind: "quiet", reason: "NO_JOURNAL" };
   const ageMs = nowMs - lastAuthoritativeAtMs;
   if (ageMs > deadManBoundMs) return { kind: "stale", ageMs };

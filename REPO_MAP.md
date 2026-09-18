@@ -68,6 +68,7 @@
 - `ops/activation/probes/mutants-cli-schedule.json`
 - `ops/activation/probes/mutants-confirmation.json`
 - `ops/activation/probes/mutants-decide.json`
+- `ops/activation/probes/mutants-fence-unhalt.json`
 - `ops/activation/probes/mutants-fold.json`
 - `ops/activation/probes/mutants-healthchecks-io.json`
 - `ops/activation/probes/mutants-healthchecks.json`
@@ -82,7 +83,10 @@
 - `ops/activation/probes/mutants-probe.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
+- `ops/activation/probes/mutants-session-window.json`
 - `ops/activation/probes/mutants-steps.json`
+- `ops/activation/probes/mutants-unit12-controls-guard.json`
+- `ops/activation/probes/mutants-unit12-controls.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
@@ -133,12 +137,14 @@
 - `src/core/decision.ts`
 - `src/core/domain.ts`
 - `src/core/execution.ts` — Pure execution core (P3: S-X-01..04, S-CYC-01/02/04/05/06, G13): limit
+- `src/core/fence-unhalt.ts` — The certificate run's one deliberate human act, as a decision instead of a
 - `src/core/journal.ts` — Pure journal core: closed entry schemas (S-J-03/04), the line codec with
 - `src/core/lifecycle.ts` — Pure lifecycle core (P5: S-CYC-03/08/09/10, G9, G10, G11, S-G14-01..03,
 - `src/core/order-identity.ts`
 - `src/core/projection.ts` — Pure public-evidence projection (P6: S-J-07 content, S-J-09, the S-CYC-12
 - `src/core/publish.ts` — Pure publication core (P6: S-J-07 candidate/probe/promotion/rollback,
 - `src/core/qualification.ts` — Pure qualification core (P6: S-CYC-12). A qualifying options activity is a
+- `src/core/session-window.ts` — One definition of "is now inside today's exchange session". It exists because
 - `src/core/sha256.ts` — Pure SHA-256 over UTF-8 text (P7: S-ARM-01 digests). The core may not import
 - `src/core/startup.ts` — Pure startup core (P4: S-CYC-11, S-G12-06): fail-closed validation of the
 - `src/fixtures/p1-recorded-cycle.ts`
@@ -249,6 +255,7 @@
 - `tests/p10-deadline-runtime.spec.ts` — P10 — the Friday deadline entries' composition root
 - `tests/p12-certificate-state-dir.spec.ts` — P12 unit 11 (docs/P12-ACTIVATION-BUILD.md, "Unit 11 brief", part 2): a
 - `tests/p12-qualification-decoupling.spec.ts` — P12: a long paper run keeps the competition profile's protections — the
+- `tests/p12-shell-decisions.spec.ts` — P12 unit 12 (the adversarial loop over units 1-11): the two decisions the
 - `tests/p7-launch-hardening.spec.ts`
 - `tests/p8-arming-gate.spec.ts` — P8 — the competition arming gate (S-ARM-01 / S-CYC-11: WIN-7, WIN-10).
 - `tests/p8-cli-exit-codes.spec.ts` — P8 — the three CLI exit-code tables (S-G12-01). The convention the spec

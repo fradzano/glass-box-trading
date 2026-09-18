@@ -29,7 +29,7 @@ const BINDING = { profile: "dev", tradingOrigin: ORIGIN, accountId: EXPECTED } a
 const CERTIFICATE_TEST_CONFIG = { scheduling: { cycleWalltimeBudgetMs: 100, lockTakeoverBoundMs: 1_000 } } as const;
 const temporaryDirectories: string[] = [];
 
-const NO_COUPLING = { dotEnvProfile: "dev", dotEnvStateDirKey: null, effectiveStateDirKey: null } as const;
+const NO_COUPLING = { dotEnvRead: "parsed", duplicateKeys: [], dotEnvProfile: "dev", dotEnvStateDir: { kind: "none" }, effectiveStateDir: { kind: "none" } } as const;
 
 describe("certificate command admission", () => {
   it("refuses every non-dev command before runtime construction and requires owner-go for smoke/live commands", () => {

@@ -47,6 +47,12 @@ export const MARKET_DATA_ORIGIN = "https://data.alpaca.markets";
 export interface RuntimeOptions {
   readonly repoRoot: string;
   readonly processEnv: EnvRecord;
+  /**
+   * The already-merged environment to build on, for a caller that admitted a
+   * command against it and must not have `.env` read a second time underneath
+   * that decision. Omitted, the environment is loaded here as before.
+   */
+  readonly environment?: EnvRecord;
   readonly clock: () => number;
   readonly objective: "certificate" | "competition";
   readonly instanceId: string;
@@ -213,7 +219,7 @@ export async function shutdownRuntimeResources(child: Pick<VerifiedChildHandle, 
 
 export async function buildRuntime(options: RuntimeOptions): Promise<RuntimeBuild> {
   const { repoRoot, clock, log } = options;
-  const env = loadEnvironment(repoRoot, options.processEnv);
+  const env = options.environment ?? loadEnvironment(repoRoot, options.processEnv);
   const raw = rawStartupConfig(loadPolicy(repoRoot), env);
   const secrets = secretValues(env);
 
