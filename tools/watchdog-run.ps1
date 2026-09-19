@@ -58,6 +58,20 @@
     cycle wrapper uses, and until 2026-09-19 this log had no rotation at all
     while its sibling did -- the kind of asymmetry two hand-kept copies of one
     mechanism produce. Rotation now lives in tools/run-log.psm1 for both.
+
+.PARAMETER TestClockUtc
+    A test seam, and the only one in this file: an ISO-8601 UTC instant that
+    replaces "now" for the trading-day, session-window and timestamp decisions,
+    so that the safety paths of this wrapper can be exercised on any day of the
+    week without touching the host clock. It changes no decision rule -- it only
+    supplies the instant every rule already reads.
+
+    Its absence in production is MACHINE-CHECKED, not promised: the activation's
+    own `scriptParameterFindings` reds any parameter it does not expect on a
+    registered task, and `tools/verify-scheduled-tasks.ps1` does the same, so a
+    registered task carrying this flag fails step 1 and every later resume. That
+    is why a seam is acceptable here at all: the thing that must never happen is
+    detected by the check that runs before the deployment is armed.
 #>
 [CmdletBinding()]
 param(
@@ -69,10 +83,29 @@ param(
 
     [int]$WatchdogIntervalMinutes = 0,
 
-    [int]$MaxLogBytes = 16777216
+    [int]$MaxLogBytes = 16777216,
+
+    [string]$TestClockUtc = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The instant every date and window decision in this file reads. It is the host's
+# clock unless -TestClockUtc was passed; see the parameter's documentation for why
+# a seam is acceptable here and what makes its absence in production checkable.
+$script:NowUtcOverride = $null
+if (-not [string]::IsNullOrWhiteSpace($TestClockUtc)) {
+    try {
+        $script:NowUtcOverride = [System.DateTime]::SpecifyKind([System.DateTime]::Parse($TestClockUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal), [System.DateTimeKind]::Utc)
+    } catch {
+        throw "-TestClockUtc '$TestClockUtc' is not an ISO-8601 instant this host can parse: $($_.Exception.Message)"
+    }
+}
+
+function Get-NowUtc {
+    if ($null -ne $script:NowUtcOverride) { return $script:NowUtcOverride }
+    return [System.DateTime]::UtcNow
+}
 
 # The run log comes from tools/run-log.psm1 -- one implementation for both wrappers
 # (docs/P12-STOP-AND-LOG-CONTRACTS.md, LC-8). Until 2026-09-19 each wrapper carried its
@@ -90,7 +123,7 @@ try {
     $runLogModuleFailure = $script:runLogModuleFailureText
     function Initialize-RunLog { param([string]$Path, [int]$MaxBytes = 0, [int]$RetryCount = 1, [int]$RetryDelayMilliseconds = 0) }
     function Write-RunLog { param([string]$Message) return $false }
-    function Get-RunLogStatus { return @{ Initialized = $false; Failed = $true; FirstFailure = "the shared run-log module could not be loaded: $script:runLogModuleFailureText"; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null } }
+    function Get-RunLogStatus { return @{ Initialized = $false; Failed = $true; Degraded = $true; FirstFailure = "the shared run-log module could not be loaded: $script:runLogModuleFailureText"; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null } }
     function Get-RunLogFailureClause { return "; the shared run-log module could not be loaded ($script:runLogModuleFailureText), so this firing wrote no run log at all" }
 }
 
@@ -167,7 +200,7 @@ function Get-TodayEasternDate {
     # Berlin the UTC date is already tomorrow in New York's yesterday, and a
     # weekday test on the wrong one is wrong at exactly the hours nobody watches.
     $eastern = Get-EasternTimeZoneInfo
-    return [System.TimeZoneInfo]::ConvertTimeFromUtc([System.DateTime]::UtcNow, $eastern).Date
+    return [System.TimeZoneInfo]::ConvertTimeFromUtc((Get-NowUtc), $eastern).Date
 }
 
 function Test-MarketFullDayClosure {
@@ -438,12 +471,15 @@ if ($todayEasternKey -gt $MarketTableThroughDate) {
 
 
 $session = Get-TodaySessionUtc
-$nowMs = [System.DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$nowMs = [System.DateTimeOffset]::new((Get-NowUtc), [System.TimeSpan]::Zero).ToUnixTimeMilliseconds()
 $opensAtMs = [System.DateTimeOffset]::new($session.OpensAtUtc, [System.TimeSpan]::Zero).ToUnixTimeMilliseconds()
 $closesAtMs = [System.DateTimeOffset]::new($session.ClosesAtUtc, [System.TimeSpan]::Zero).ToUnixTimeMilliseconds()
 $instanceId = "watchdog-$($env:COMPUTERNAME)-$PID"
 
 $earlyCloseNote = if ($session.IsEarlyClose) { " earlyClose=13:00ET" } else { "" }
+# A firing driven by a test clock says so in its own log line, so no reader of the
+# evidence can mistake a rehearsal for a real firing.
+if ($null -ne $script:NowUtcOverride) { $earlyCloseNote += " testClockUtc=$($script:NowUtcOverride.ToString('o'))" }
 $null = Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir$earlyCloseNote"
 
 $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "$closesAtMs", "$deadManBoundMs")
@@ -502,5 +538,5 @@ $null = Write-RunLog "heartbeat: $heartbeat"
 # firing whose log could not be written still exits non-zero, so the task history
 # carries what the log does not: 9 means "the firing completed, its run log did not".
 if ($exitCode -ne 0) { exit $exitCode }
-if ((Get-RunLogStatus).Failed) { exit 9 }
+if ((Get-RunLogStatus).Degraded) { exit 9 }
 exit 0

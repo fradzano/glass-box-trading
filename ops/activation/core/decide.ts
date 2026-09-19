@@ -180,6 +180,17 @@ function scriptParameterFindings(name: TaskName, tokens: readonly string[]): rea
       case "-sessionleadinminutes":
         if (name !== "cycle" || takeValue() !== SESSION_LEAD_IN_DEFAULT) findings.push(`${name}.parameter.sessionleadinminutes`);
         break;
+      case "-testclockutc":
+        // The wrappers' one test seam (2026-09-19): it supplies the instant every
+        // trading-day and session rule already reads, so the safety paths can be
+        // exercised on any weekday without touching the host clock. A **registered**
+        // task must never carry it, and that is what this case is: the seam's absence in
+        // production is machine-checked here and in tools/verify-scheduled-tasks.ps1,
+        // rather than promised in a comment. It is named rather than left to the default
+        // branch so the finding says what it found.
+        takeValue();
+        findings.push(`${name}.parameter.test-seam-registered:${parameter}`);
+        break;
       default:
         findings.push(`${name}.parameter.unknown:${parameter}`);
     }

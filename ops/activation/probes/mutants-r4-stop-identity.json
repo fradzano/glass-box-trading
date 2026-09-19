@@ -1,0 +1,7 @@
+[
+  { "id": "SI1", "note": "R4-01 restored: a continuation lifts whatever stop occupies the path, so a newer one is erased", "from": "      if (state.mark.id !== expectedId) return { kind: \"superseded\", standing: state.mark };", "to": "      if (false) return { kind: \"superseded\", standing: state.mark };" },
+  { "id": "SI2", "note": "the compare-and-delete stops being atomic against a concurrent writer", "from": "  return withStopLock<StopClearResult>(", "to": "  return (async (root2: string, work: () => Promise<StopClearResult>) => work())(root, async () => {\n    return await (async () => {" },
+  { "id": "SI3", "note": "an unreadable mark is deleted anyway, which is the same defect one level down", "from": "      if (state.kind === \"unreadable\") return { kind: \"unreadable\", reason: state.reason };", "to": "      if (state.kind === \"unreadable\") { await unlink(stopMarkPath(root)); return { kind: \"cleared\", id: expectedId }; }" },
+  { "id": "SI4", "note": "the mark loses its identity field on the way to disk, so every stop looks like every other", "from": "  const bytes = Buffer.from(`${JSON.stringify(mark, null, 2)}\\n`, \"utf8\");", "to": "  const bytes = Buffer.from(`${JSON.stringify({ ...mark, id: \"fixed\" }, null, 2)}\\n`, \"utf8\");" },
+  { "id": "SI5", "note": "CONTROL, expected to survive: a comment word, no behaviour", "from": " * Lifts exactly the stop the caller read, and nothing else (SC-8, R4-01).", "to": " * Lifts precisely the stop the caller read, and nothing else (SC-8, R4-01)." }
+]

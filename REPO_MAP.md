@@ -92,6 +92,7 @@
 - `ops/activation/probes/mutants-r4-cycle-wrapper.json`
 - `ops/activation/probes/mutants-r4-run-log-module.json`
 - `ops/activation/probes/mutants-r4-stop-core.json`
+- `ops/activation/probes/mutants-r4-stop-identity.json`
 - `ops/activation/probes/mutants-r4-stop-shell.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
@@ -163,7 +164,10 @@
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
 - `ops/activation/tests/stop-cross-process.spec.ts` — The stop contract across process boundaries (`docs/P12-STOP-AND-LOG-CONTRACTS.md`,
+- `ops/activation/tests/stop-mark-store.spec.ts` — The stop mark on disk (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-2, SC-8; R4-01).
 - `ops/activation/tests/stop.spec.ts` — The stop contract's pure half (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-3).
+- `ops/activation/tests/support/compete.mjs` — One competitor in the two-process race over one world.
+- `ops/activation/tests/support/file-action-ports.ts` — Isolated action doubles, backed by a file, so that **competing effects** can be
 - `ops/activation/tests/wrapper-run-log.spec.ts` — The wrapper log contract (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, part II), measured
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the

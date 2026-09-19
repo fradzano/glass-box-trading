@@ -153,6 +153,15 @@ function Write-RunLogFallback {
 
     foreach ($candidate in $candidates) {
         try {
+            # The sink for the case where the sink failed still may not grow without end:
+            # it is the file nobody is watching, on the deployment that runs unattended for
+            # a quarter (LC-10). One generation, the same bound, and a failure here is
+            # simply the next candidate's turn.
+            $bound = if ($null -ne $State -and $State.MaxBytes -gt 0) { $State.MaxBytes } else { 16777216 }
+            if (Test-Path -LiteralPath $candidate) {
+                $existingFallback = Get-Item -LiteralPath $candidate -ErrorAction Stop
+                if ($existingFallback.Length -gt $bound) { Move-Item -LiteralPath $candidate -Destination "$candidate.1" -Force -ErrorAction Stop }
+            }
             Add-Content -LiteralPath $candidate -Value $Line -Encoding utf8 -ErrorAction Stop
             if ($null -ne $State -and $null -eq $State.FallbackUsed) { $State.FallbackUsed = $candidate }
             return $true
@@ -170,11 +179,15 @@ function Get-RunLogStatus {
         what went wrong if it did not.
     #>
     if ($null -eq $script:RunLog) {
-        return @{ Initialized = $false; Failed = $true; FirstFailure = 'the run log was never opened'; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null }
+        return @{ Initialized = $false; Failed = $true; Degraded = $true; FirstFailure = 'the run log was never opened'; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null }
     }
     return @{
         Initialized     = $true
         Failed          = $script:RunLog.Failed
+        # One question for the caller: is this firing's diagnostic record sound? A log
+        # that could not be written and a log that could not be rotated are both answers
+        # of "no", and both have to reach the verdict (LC-10).
+        Degraded        = ($script:RunLog.Failed -or $null -ne $script:RunLog.RotationFailure)
         FirstFailure    = $script:RunLog.FirstFailure
         FirstLostLine   = $script:RunLog.FirstLostLine
         LostLines       = $script:RunLog.LostLines
@@ -188,15 +201,27 @@ function Get-RunLogStatus {
 function Get-RunLogFailureClause {
     <#
     .SYNOPSIS
-        The clause a heartbeat body carries when the log failed, and the empty string
-        when it did not (LC-2). It is built from the status and from nothing else, so the
-        sentence and the fact cannot drift apart.
+        The clause a heartbeat body carries when the log is not doing its job, and the
+        empty string when it is (LC-2). It is built from the status and from nothing else,
+        so the sentence and the fact cannot drift apart.
+
+        A failed ROTATION belongs here too (LC-10, R4-04). It used to be recorded in the
+        status and consumed by nobody: measured with the `.1` target exclusively locked and
+        the primary log writable, rotation failed, the next write succeeded, the verdict
+        stayed green, and the log grew past its bound in silence. Over an unattended
+        quarter the bound is the only thing that keeps this storage finite.
     #>
     $status = Get-RunLogStatus
-    if (-not $status.Failed) { return '' }
-    $where = if ($null -ne $status.FallbackUsed) { "; written to '$($status.FallbackUsed)' instead" } else { '; no fallback sink took it either' }
-    $lost = if ($null -ne $status.FirstLostLine) { "; first lost line: $($status.FirstLostLine)" } else { '' }
-    return "; the run log could not be written ($($status.FirstFailure)); lines lost: $($status.LostLines)$lost$where"
+    $clause = ''
+    if ($status.Failed) {
+        $where = if ($null -ne $status.FallbackUsed) { "; written to '$($status.FallbackUsed)' instead" } else { '; no fallback sink took it either' }
+        $lost = if ($null -ne $status.FirstLostLine) { "; first lost line: $($status.FirstLostLine)" } else { '' }
+        $clause += "; the run log could not be written ($($status.FirstFailure)); lines lost: $($status.LostLines)$lost$where"
+    }
+    if ($null -ne $status.RotationFailure) {
+        $clause += "; the run log could not be rotated ($($status.RotationFailure)), so '$($status.Path)' is growing past its bound"
+    }
+    return $clause
 }
 
 Export-ModuleMember -Function Initialize-RunLog, Write-RunLog, Get-RunLogStatus, Get-RunLogFailureClause

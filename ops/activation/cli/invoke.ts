@@ -14,11 +14,13 @@
 //   * `disarm` fails **safe**, not closed: a ledger it cannot read disables both tasks
 //     rather than aborting. Residual G1 (an unparseable `ledger.lock`) would otherwise
 //     turn the one command whose job is to disable into the one command that cannot.
+import { randomUUID } from "node:crypto";
 import { applyAction } from "../actions/apply.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
-import { stopMarkLine, stopRefusal } from "../core/stop.ts";
+import { compensationFor, stopMarkLine, stopRefusal } from "../core/stop.ts";
 import type { StopMark, StopMarkState } from "../core/stop.ts";
-import { clearStopMark, readStopMark, writeStopMark } from "../store/stop-mark.ts";
+import { clearStopMark, readStopMark, writeStopLiftFailure, writeStopMark } from "../store/stop-mark.ts";
+import type { StopClearResult } from "../store/stop-mark.ts";
 import { abortTeardown, decide, fullTeardown } from "../core/decide.ts";
 import { foldLedgerSnapshot, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
@@ -99,7 +101,13 @@ export interface InvocationDeps {
    */
   readonly readStopMark?: (root: string) => Promise<StopMarkState>;
   readonly writeStopMark?: (root: string, mark: StopMark) => Promise<void>;
-  readonly clearStopMark?: (root: string) => Promise<boolean>;
+  /** Compare-and-delete: it lifts the stop whose id was read, and no other (R4-01). */
+  readonly clearStopMark?: (root: string, expectedId: string) => Promise<StopClearResult>;
+  /**
+   * What makes one stop distinguishable from the next. It is a port because randomness is
+   * not the core's and not this module's: the shell supplies it, a test pins it.
+   */
+  readonly newStopId?: () => string;
 }
 
 /** The four actions the owner's stop owes the world, in the order it applies them. */
@@ -122,6 +130,11 @@ const STOP_CONFIRMATION: readonly WorldAction[] = [
   { kind: "remove-certificate-line" },
   { kind: "delete-disarm" },
 ];
+
+/** Whether this action arms the deployment, asked of the action rather than of its kind. */
+function armsDeploymentAction(action: WorldAction): boolean {
+  return stopRefusal(action.kind, { kind: "present", mark: { id: "", operator: "", at: "", atUtcMs: 0, reason: "" } }) !== null;
+}
 
 /** Reasons that mean "nothing was attempted", as opposed to "something was attempted and failed". */
 const NOT_ATTEMPTED: readonly string[] = ["NO_HOST_BINDINGS", "DRY_RUN"];
@@ -147,6 +160,19 @@ export interface InvocationResult {
   readonly applied: readonly ActionReport[];
   readonly fold: LedgerFold | null;
   readonly schedule: Schedule | null;
+}
+
+/**
+ * The default identity of a stop: unique per typed stop, and never reused.
+ *
+ * Deliberately **not** a UUID. The ledger codec refuses UUID-shaped values anywhere in
+ * `evidence`, by shape rather than by field name, because a healthchecks ping URL carries
+ * one and the 2026-09-12 exposure came from a deny-list that forgot a field. The id goes
+ * into the opening entry, so it has to be an identifier that cannot be mistaken for a
+ * credential — found by that rule firing on the first run of this code.
+ */
+function defaultStopId(): string {
+  return `stop-${String(Date.now())}-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
 }
 
 function refuse(reason: string): InvocationResult {
@@ -213,6 +239,27 @@ export async function applyAll(actions: readonly WorldAction[], options: ApplyOp
     const result = await applyAction(action, ports, context);
     if (result.ok) {
       reports.push({ kind: action.kind, applied: true, detail: result.value.detail, reason: null, completion: result.value.completion });
+      // SC-3a: the guard before an action closes the window *between* actions; this closes
+      // the window *inside* one. An effect that takes time — a real `Enable-ScheduledTask`
+      // does — can land after a stop was typed, and the stop may be unable to take the
+      // lease to undo it, because this invocation is holding it. Measured as two operating
+      // system processes over one file-backed world: the deployment ended armed. So the
+      // invocation that applied the effect undoes it, needing nobody's lease.
+      const after = await options.readStop();
+      if (after.kind !== "absent" && armsDeploymentAction(action)) {
+        const compensation = compensationFor(action.kind, action.kind === "enable-tasks" || action.kind === "disable-tasks" ? action.tasks : BOTH_TASKS);
+        if (compensation === null) {
+          print(`WARNING: ${action.kind} cannot be undone, and a stop was typed while it ran`);
+          reports.push({ kind: action.kind, applied: false, detail: null, reason: "STOPPED_BY_OWNER_AFTER_EFFECT_NOT_UNDOABLE", completion: null });
+        } else {
+          const undo = await applyAction(compensation, ports, context);
+          print(`undoing ${action.kind}: a stop was typed while it was being applied`);
+          reports.push(undo.ok
+            ? { kind: compensation.kind, applied: true, detail: { ...undo.value.detail, compensates: action.kind }, reason: null, completion: undo.value.completion }
+            : { kind: compensation.kind, applied: false, detail: null, reason: `COMPENSATION_FAILED:${undo.reason}`, completion: null });
+        }
+        if (stopAtFirstFailure) break;
+      }
       continue;
     }
     reports.push({ kind: action.kind, applied: false, detail: null, reason: result.reason, completion: null });
@@ -322,6 +369,23 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
   let applied: readonly ActionReport[] = [];
   let fold: LedgerFold | null = null;
 
+  /**
+   * Every action this invocation applies goes through here, and `carried` is what leaves
+   * through a throw (SC-7, R4-03).
+   *
+   * The previous version populated `carried` at exactly one place — the result-append
+   * catch at the gate — and the contract claimed every exit after effects carried them.
+   * Executed by the review of 2026-09-19: the **opening** branch disabled both tasks and
+   * removed the certificate line, its note then failed to append, and the owner was told
+   * `ledger-defect` with `teardown: []` and `applied: []`. A single accumulator, written
+   * where the effect happens, is what makes that claim true rather than intended.
+   */
+  const carry = async (actions: readonly WorldAction[], options: ApplyOptions): Promise<readonly ActionReport[]> => {
+    const reports = await applyAll(actions, options);
+    carried.push(...reports);
+    return reports;
+  };
+
   const result = await withLedger<InvocationOutcome>(
     {
       root: invocation.stateRoot,
@@ -359,7 +423,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
         // true, so `abortTeardown` would owe **nothing** — and a new anchor day would
         // start on top of the old day's enabled tasks and certificate line. A new day
         // begins clean or it does not begin.
-        applied = await applyTeardown(fullTeardown(), applyOptionsFor(invocation, deps, teardownContext(deps, schedule.anchorDay), false));
+        applied = await carry(fullTeardown(), applyOptionsFor(invocation, deps, teardownContext(deps, schedule.anchorDay), false));
         const attempt = nextAttemptId(snapshot.entries, anchorDay);
         if (!invocation.dryRun) {
           await append(session, openingDraft(found, attempt, anchorDay, stamp, { teardown: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }));
@@ -386,7 +450,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
           return { kind: "recorded", step: decision.step, outcome: decision.outcome };
         }
         case "abort": {
-          applied = await applyTeardown(decision.teardown, applyOptionsFor(invocation, deps, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule.anchorDay), false));
+          applied = await carry(decision.teardown, applyOptionsFor(invocation, deps, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule.anchorDay), false));
           if (!invocation.dryRun) await append(session, abortDraft(decision, attempt, anchorDay, stamp));
           return { kind: "aborted", step: decision.step, reason: decision.reason, teardown: applied, nextOwnerAction: decision.nextOwnerAction };
         }
@@ -396,7 +460,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
             return { kind: "work-failed", reason: "the execution boundary could not be read, so no action may be attributed to this host" };
           }
           if (!invocation.dryRun) await append(session, intentDraft(decision, attempt, anchorDay, stamp));
-          applied = await applyAll(decision.actions, applyOptionsFor(invocation, deps, context, true));
+          applied = await carry(decision.actions, applyOptionsFor(invocation, deps, context, true));
           const closing = monotonicStamp(deps.stampAt(deps.now()), { lastSeq: tail.lastSeq + 1, lastAtUtcMs: stamp.atUtcMs }, deps.stampAt);
           const drafted = resultDraft(decision, applied, attempt, anchorDay, closing);
           if (drafted !== null && !invocation.dryRun) {
@@ -416,9 +480,8 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
             try {
               await append(session, drafted);
             } catch (error) {
-              const teardown = await applyTeardown(abortTeardown(fold), applyOptionsFor(invocation, deps, context, false));
+              const teardown = await carry(abortTeardown(fold), applyOptionsFor(invocation, deps, context, false));
               applied = [...applied, ...teardown];
-              carried.push(...teardown);
               throw error;
             }
           }
@@ -469,10 +532,11 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
   // cannot be seen by the invocation it is racing. A failure here does not stop the
   // teardown — the owner typed a stop and the world still owes him one — but it is
   // carried into the verdict, and a stop without its mark is never reported as confirmed.
+  const stopId = (deps.newStopId ?? defaultStopId)();
   let markFailure: string | null = null;
   if (!invocation.dryRun) {
     try {
-      await write(invocation.stateRoot, { operator, at: opening.at, atUtcMs: opening.atUtcMs, reason: "OWNER_ABORT" });
+      await write(invocation.stateRoot, { id: stopId, operator, at: opening.at, atUtcMs: opening.atUtcMs, reason: "OWNER_ABORT" });
     } catch (error) {
       markFailure = error instanceof Error ? error.message : "the stop mark could not be written";
       deps.print(`WARNING: the stop mark could not be written (${markFailure}); a concurrent invocation will not see this stop`);
@@ -491,16 +555,28 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
   // SC-7 for the stop itself: a store failure here leaves a disarmed world and no record
   // of it. Without this catch the throw reaches the dispatcher, which knows nothing about
   // the four actions that already ran and reports `applied: []`.
-  let result: Awaited<ReturnType<typeof withActivationLedger<InvocationOutcome>>>;
-  try {
-    result = await withLedger<InvocationOutcome>(
-    {
-      root: invocation.stateRoot,
-      owner: deps.owner,
-      makeSystemDraft: systemDraftFactory({ nowUtcMs: deps.now(), stampAt: deps.stampAt, attempt: nextAttemptId([], today), anchorDay: today }),
-      contentionTimeoutMs: 30_000,
-    },
-    async session => {
+  /**
+   * How often the stop comes back for the lease before it gives up on recording itself.
+   *
+   * The store answers `contended` immediately when a **live** owner holds the lease — it
+   * does not wait — so without this a stop typed while a tick is applying an action wrote
+   * no entry at all: the world was disarmed, the mark stood, the report was honest, and
+   * the append-only record said nothing about the owner having stopped the run. Measured
+   * with two operating-system processes. Three rounds a second apart covers an
+   * invocation that is finishing one action; a holder that stays longer than that is
+   * reported rather than waited out, because a stop that blocks is worse than one that
+   * says it could not finish.
+   */
+  const CONFIRM_ROUNDS = 3;
+  const CONFIRM_WAIT_MS = 1_000;
+  const leaseOptions = (): Parameters<typeof withActivationLedger<InvocationOutcome>>[0] => ({
+    root: invocation.stateRoot,
+    owner: deps.owner,
+    makeSystemDraft: systemDraftFactory({ nowUtcMs: deps.now(), stampAt: deps.stampAt, attempt: nextAttemptId([], today), anchorDay: today }),
+    contentionTimeoutMs: 30_000,
+  });
+
+  const leaseWork = async (session: ActivationLedgerSession): Promise<InvocationOutcome> => {
       // SC-4: holding the lease is the instant at which no other invocation is inside an
       // `act`. Whatever a racing invocation applied between the immediate pass and this
       // moment is undone here, before anything is written down — so the record describes
@@ -556,8 +632,15 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
         teardown: all,
         nextOwnerAction: `The attempt is ended: ${clause}. Open a new one when the run is to continue.`,
       };
-    },
-    );
+    };
+
+  let result: Awaited<ReturnType<typeof withActivationLedger<InvocationOutcome>>>;
+  try {
+    result = await withLedger<InvocationOutcome>(leaseOptions(), leaseWork);
+    for (let round = 1; round < CONFIRM_ROUNDS && result.kind === "contended"; round += 1) {
+      await new Promise(resolve => { setTimeout(resolve, CONFIRM_WAIT_MS); });
+      result = await withLedger<InvocationOutcome>(leaseOptions(), leaseWork);
+    }
   } catch (error) {
     const all = [...immediate, ...confirming];
     return { outcome: storeFailure(error, all), applied: all, fold, schedule: null };
@@ -579,15 +662,29 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
     };
   }
 
+  // SC-2a, added after R4-01: a stop is durable only if its own mark is still the one
+  // standing when it finishes. Executed before this read-back existed: a continuation
+  // running concurrently erased the mark and this command still reported "the stop is
+  // confirmed". The mark is the only thing that stops a later tick from arming, so a
+  // report that outlives it is the most expensive sentence this CLI can print.
+  let markFailureAfter = markFailure;
+  if (markFailureAfter === null && !invocation.dryRun) {
+    const standing = await (deps.readStopMark ?? readStopMark)(invocation.stateRoot);
+    if (standing.kind === "absent") markFailureAfter = "the stop mark was gone again by the time this stop finished; something lifted it";
+    else if (standing.kind === "unreadable") markFailureAfter = `the stop mark could not be read back (${standing.reason})`;
+    else if (standing.mark.id !== stopId) markFailureAfter = `a different stop stands now (${standing.mark.operator} at ${standing.mark.at}); this one was superseded while it ran`;
+    if (markFailureAfter !== null) deps.print(`WARNING: ${markFailureAfter}`);
+  }
+
   // SC-4 again, at the other end: the record landed, but something the stop attempted
-  // failed, or its mark was never written. The outcome says so instead of reporting the
-  // abort that the branches above built.
-  const verdict = stopVerdict(all, markFailure);
+  // failed, or its mark was never written or did not survive. The outcome says so
+  // instead of reporting the abort that the branches above built.
+  const verdict = stopVerdict(all, markFailureAfter);
   if (verdict === "unconfirmed") {
     return {
       outcome: {
         kind: "work-failed",
-        reason: `the stop is NOT confirmed: ${stopVerdictClause(verdict, markFailure)}. ${teardownClauseOrSilence(all)}`,
+        reason: `the stop is NOT confirmed: ${stopVerdictClause(verdict, markFailureAfter)}. ${teardownClauseOrSilence(all)}`,
         teardown: all,
       },
       applied: all,
@@ -718,16 +815,47 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
       const attempt = nextAttemptId(snapshot.entries, anchorDay);
       const previous = fold.currentAttempt?.id ?? null;
-      // SC-8: this is the one command that lifts the owner's own stop, and it does so
-      // under the lease, in the same critical section that records the continuation. A
-      // tick never clears the mark — not even the one that opens a new anchor day — so a
-      // stop typed on Monday night is not undone by Tuesday's clock.
-      let stopLifted = false;
+      // SC-8, rebuilt after R4-01 and R4-02. Two things changed, and neither alone is
+      // enough:
+      //
+      //   * The opening is **recorded first** and the stop lifted afterwards. The old
+      //     order lifted first, so an append that failed with the shape the store really
+      //     throws left the mark gone and no continuation on the record — executed, and
+      //     the deployment was armable again with nothing saying why.
+      //   * The lift names the **id** it read. A stop typed while this continuation was
+      //     working is a different stop, it is left standing, and it is reported. The
+      //     owner's most recent word is the one that counts.
+      //
+      // What is left is an explicit, recoverable state rather than a silent one: the
+      // attempt is open and a stop still stands, so nothing arms, `status` shows both,
+      // and typing `open` again lifts the newer stop.
+      let lift: StopClearResult = { kind: "absent" };
       if (!invocation.dryRun) {
-        stopLifted = await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot);
-        await append(session, openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, { operator: invocation.operator ?? "", previousAttempt: previous, stopLifted }));
+        await append(session, openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, {
+          operator: invocation.operator ?? "",
+          previousAttempt: previous,
+          liftsStop: standing.kind === "present" ? standing.mark.id : null,
+        }));
+        lift = standing.kind === "present"
+          ? await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot, standing.mark.id)
+          : { kind: "absent" };
+        if (lift.kind !== "cleared" && standing.kind === "present") {
+          await writeStopLiftFailure(invocation.stateRoot, { attempt, anchorDay, operator: invocation.operator ?? "", intendedId: standing.mark.id, outcome: lift.kind, at: stamp.at });
+          await append(session, {
+            at: stamp.at,
+            atUtcMs: stamp.atUtcMs,
+            attempt,
+            anchorDay,
+            step: null,
+            kind: "note",
+            outcome: null,
+            evidence: { stopLift: lift.kind, intendedId: standing.mark.id, standing: lift.kind === "superseded" ? { operator: lift.standing.operator, at: lift.standing.at } : null },
+            nextOwnerAction: "The attempt was opened and the owner's stop was NOT lifted, so nothing will be armed. Read `activation status` and run `open` again.",
+          });
+        }
       }
-      if (stopLifted) deps.print("the owner's stop mark was lifted; arming actions are permitted again");
+      if (lift.kind === "cleared") deps.print("the owner's stop mark was lifted; arming actions are permitted again");
+      else if (lift.kind !== "absent") deps.print(`the attempt is open, but the stop was NOT lifted (${lift.kind}); nothing will be armed until it is`);
       return { kind: "opened", attempt, found: "OWNER_OPENED" };
     },
   );

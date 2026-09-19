@@ -198,7 +198,7 @@ async function makeUnwritable(file: string): Promise<void> {
 function holdLock(file: string, milliseconds: number): Promise<void> {
   const script = `$f=[System.IO.File]::Open('${file.replace(/'/gu, "''")}','OpenOrCreate','ReadWrite','None'); Start-Sleep -Milliseconds ${String(milliseconds)}; $f.Close()`;
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+    const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { windowsHide: true });
     child.on("error", reject);
     child.on("close", () => { resolve(); });
   });
@@ -218,12 +218,36 @@ function holdLock(file: string, milliseconds: number): Promise<void> {
 const easternNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
 const tradingWeekday = easternNow.getDay() !== 0 && easternNow.getDay() !== 6;
 
+/**
+ * A Monday inside the American session, as an instant.
+ *
+ * Until 2026-09-19 the three cases below only ran on a weekday, so the watchdog's whole
+ * run path — the one the dead man depends on — went unmeasured on exactly the days
+ * somebody is most likely to be working on it. `-TestClockUtc` supplies the instant every
+ * trading-day and session rule in the wrapper already reads; it changes no rule, and a
+ * registered task carrying it is red in both the activation's own parameter check and the
+ * scheduler verifier.
+ */
+const TRADING_MONDAY = "2026-09-21T17:00:00Z";
+
+
+async function runPowerShell(script: string): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { windowsHide: true });
+    let text = "";
+    child.stdout.on("data", chunk => { text += String(chunk); });
+    child.stderr.on("data", chunk => { text += String(chunk); });
+    child.on("error", reject);
+    child.on("close", () => { resolve(text); });
+  });
+}
+
 describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both facts survive", () => {
-  it.runIf(tradingWeekday)("the watchdog runs its child, reports the child's exit code and the log failure in one ping, and exits 9", async () => {
+  it("the watchdog runs its child, reports the child's exit code and the log failure in one ping, and exits 9", async () => {
     const context = await tree();
     await makeUnwritable(path.join(context.stateDir, "watchdog-run.log"));
 
-    const run = await runWrapper("watchdog-run.ps1", context);
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
 
     // LC-1: the child ran although nothing could be written about it.
     const marker = await readFile(path.join(context.root, "watchdog-run.ps1.marker"), "utf8");
@@ -245,11 +269,11 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(await logText(context, "watchdog-run.log")).toBe("");
   }, 30_000);
 
-  it.runIf(tradingWeekday)("keeps the child's non-zero exit code as the wrapper's verdict, with the log failure beside it", async () => {
+  it("keeps the child's non-zero exit code as the wrapper's verdict, with the log failure beside it", async () => {
     const context = await tree();
     await makeUnwritable(path.join(context.stateDir, "watchdog-run.log"));
 
-    const run = await runWrapper("watchdog-run.ps1", context, { childExit: 3 });
+    const run = await runWrapper("watchdog-run.ps1", context, { childExit: 3, extra: ["-TestClockUtc", TRADING_MONDAY] });
 
     expect(run.exitCode).toBe(3);
     expect(pings).toHaveLength(1);
@@ -321,10 +345,10 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
 });
 
 describe("LC-4 — one verdict ping per firing", () => {
-  it.runIf(tradingWeekday)("a healthy watchdog firing writes its lines and sends one success ping", async () => {
+  it("a healthy watchdog firing writes its lines and sends one success ping", async () => {
     const context = await tree();
 
-    const run = await runWrapper("watchdog-run.ps1", context);
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
 
     expect(run.exitCode).toBe(0);
     expect(pings).toHaveLength(1);
@@ -333,6 +357,8 @@ describe("LC-4 — one verdict ping per firing", () => {
 
     const log = await logText(context, "watchdog-run.log");
     expect(log).toContain("run: instanceId=watchdog-");
+    // The rehearsal says so in its own evidence, so no reader mistakes it for a real firing.
+    expect(log).toContain("testClockUtc=");
     expect(log).toContain("output: stub stdout line");
     expect(log).toContain("output: stub stderr line");
     expect(log).toContain("exit: 0");
@@ -376,23 +402,72 @@ describe("LC-4 — one verdict ping per firing", () => {
 });
 
 describe("LC-5 — a transient lock costs a retry, not a firing", () => {
-  it("waits out a 200 ms exclusive lock and writes the line anyway", async () => {
+  // Measured at the module rather than through a whole wrapper process, for a measurement
+  // reason: a wrapper takes hundreds of milliseconds to start, so a lock held for the
+  // 200 ms of the finding is long gone before its first write, and a mutation that removed
+  // the retry entirely survived that version of this case.
+  //
+  // The holder is a script file rather than a command line, and it announces itself before
+  // it sleeps; the write waits for that announcement. Both details were learned by getting
+  // them wrong: a quoted `-Command` came through mangled, and without the handshake the
+  // probe measured process startup instead of the retry.
+  async function lockingProbe(context: Tree, holdMs: number, extra: readonly string[]): Promise<string> {
+    const log = path.join(context.stateDir, "probe.log");
+    const marker = `${log}.locked`;
+    const holderScript = path.join(context.stateDir, "holder.ps1");
+    await writeFile(holderScript, [
+      `$f = [System.IO.File]::Open('${log}', 'OpenOrCreate', 'ReadWrite', 'None')`,
+      `Set-Content -LiteralPath '${marker}' -Value 'locked'`,
+      `Start-Sleep -Milliseconds ${String(holdMs)}`,
+      "$f.Close()",
+      "",
+    ].join("\n"), "utf8");
+
+    return await runPowerShell([
+      `Import-Module '${path.join(REPO, "tools", "run-log.psm1")}' -Force`,
+      `Initialize-RunLog -Path '${log}'`,
+      `$holder = Start-Process -FilePath '${POWERSHELL}' -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','${holderScript}') -PassThru -WindowStyle Hidden`,
+      `$deadline = (Get-Date).AddSeconds(10)`,
+      `while (-not (Test-Path -LiteralPath '${marker}') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 10 }`,
+      `Write-Output ('holder=' + $(if (Test-Path -LiteralPath '${marker}') { 'present' } else { 'absent' }))`,
+      ...extra,
+    ].join("; "));
+  }
+
+  it("writes the line anyway when a foreign process holds the log briefly", async () => {
     const context = await tree();
-    const log = path.join(context.stateDir, "watchdog-run.log");
-    const lock = holdLock(log, 200);
+    const output = await lockingProbe(context, 300, [
+      "$landed = Write-RunLog 'a line written while the file was held'",
+      "$holder.WaitForExit()",
+      "Write-Output \"landed=$landed\"",
+      "Write-Output \"failed=$((Get-RunLogStatus).Failed)\"",
+    ]);
 
-    const run = await runWrapper("watchdog-run.ps1", context);
-    await lock;
+    expect(output).toContain("holder=present");
+    expect(output).toContain("landed=True");
+    expect(output).toContain("failed=False");
+    expect(await readFile(path.join(context.stateDir, "probe.log"), "utf8")).toContain("a line written while the file was held");
+  }, 30_000);
 
-    // The firing's first line is attempted while the lock still stands. It lands, so
-    // there is no failure to report: exit 0, no fail ping, and no fallback file — which
-    // is the whole difference between a transient lock and a broken log.
-    expect(run.exitCode).toBe(0);
-    expect(pings.filter(ping => ping.url.endsWith("/fail"))).toHaveLength(0);
-    const text = await logText(context, "watchdog-run.log");
-    expect(text).toMatch(/^\uFEFF?\d{4}-\d{2}-\d{2}T/u);
-    expect(await logText(context, "watchdog-run.log.fallback")).toBe("");
-  });
+  it("gives up inside a bounded budget rather than waiting out a permanent lock", async () => {
+    const context = await tree();
+    const output = await lockingProbe(context, 6_000, [
+      "$started = [System.Diagnostics.Stopwatch]::StartNew()",
+      "$landed = Write-RunLog 'a line nobody can write'",
+      "$started.Stop()",
+      "Stop-Process -Id $holder.Id -Force",
+      "Write-Output \"landed=$landed\"",
+      "Write-Output \"elapsed=$($started.ElapsedMilliseconds)\"",
+    ]);
+
+    expect(output).toContain("holder=present");
+    expect(output).toContain("landed=False");
+    const elapsed = Number(/elapsed=(\d+)/u.exec(output)?.[1] ?? "0");
+    // Bounded, and far below the five-minute firing interval it has to fit inside: four
+    // attempts across roughly 450 ms.
+    expect(elapsed).toBeGreaterThan(300);
+    expect(elapsed).toBeLessThan(2_000);
+  }, 30_000);
 });
 
 describe("LC-7 — a second sink, so that no line anywhere means no firing", () => {
@@ -458,7 +533,7 @@ describe("LC-6 — the failure path does not rest on an ambient setting", () => 
     ].join("; ");
 
     const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+      const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { windowsHide: true });
       let text = "";
       child.stdout.on("data", chunk => { text += String(chunk); });
       child.stderr.on("data", chunk => { text += String(chunk); });
@@ -470,4 +545,77 @@ describe("LC-6 — the failure path does not rest on an ambient setting", () => 
     expect(output).toContain("failed=True");
     expect(output).toContain("the run log could not be written");
   });
+});
+
+describe("LC-10 — a log that cannot be rotated is not a log that is fine (R4-04)", () => {
+  it("fails the verdict and names the bound it is growing past", async () => {
+    const context = await tree();
+    const log = path.join(context.stateDir, "watchdog-run.log");
+    await writeFile(log, "x".repeat(4096), "utf8");
+    // The rotation TARGET is what is unavailable here, not the log: the primary stays
+    // writable, every line lands, and the only thing that fails is the bound. Measured
+    // before this case existed: verdict green, clause empty, log grew past MaxBytes.
+    const holder = holdLock(`${log}.1`, 4_000);
+
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-MaxLogBytes", "1024", "-TestClockUtc", TRADING_MONDAY] });
+    await holder;
+
+    expect(run.exitCode).toBe(9);
+    expect(pings).toHaveLength(1);
+    expect(pings[0]?.url).toBe("/hc/fail");
+    expect(pings[0]?.body).toContain("could not be rotated");
+    expect(pings[0]?.body).toContain("growing past its bound");
+    // And the firing still did its work: the child ran and its lines are in the log.
+    expect(await logText(context, "watchdog-run.log")).toContain("exit: 0");
+  }, 30_000);
+
+  it("bounds the fallback sink too, because nobody is watching that one either", async () => {
+    const context = await tree();
+    const log = path.join(context.stateDir, "watchdog-run.log");
+    await makeUnwritable(log);
+    await writeFile(`${log}.fallback`, "y".repeat(4096), "utf8");
+
+    await runWrapper("watchdog-run.ps1", context, { extra: ["-MaxLogBytes", "1024", "-TestClockUtc", TRADING_MONDAY] });
+
+    // The bound holds inside one firing as well as across firings: with a 1 KiB bound and
+    // a whole firing's lines going to the fallback, it rotates more than once, and that is
+    // the behaviour that keeps this storage finite over a quarter. What must be true is
+    // that a generation was rotated away and the live sink is under its bound.
+    const rotated = await stat(`${log}.fallback.1`);
+    expect(rotated.size).toBeGreaterThan(0);
+    const fresh = await logText(context, "watchdog-run.log.fallback");
+    expect(fresh).not.toContain("yyyy");
+    expect(Buffer.byteLength(fresh, "utf8")).toBeLessThanOrEqual(2048);
+  }, 30_000);
+});
+
+describe("the closure gate, on any day of the week (R4-05's other half)", () => {
+  it("skips a full-day closure and says which table decided, whatever today is", async () => {
+    const context = await tree();
+
+    // Thanksgiving 2026, inside the measurement period: the day that produced the live
+    // defect this table was written for.
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", "2026-11-26T17:00:00Z"] });
+
+    expect(run.exitCode).toBe(0);
+    expect(pings).toHaveLength(0);
+    const log = await logText(context, "watchdog-run.log");
+    expect(log).toContain("skip: exchange closed on 2026-11-26");
+    // The child must NOT have run: a firing on a closed market is what fenced the epoch
+    // store and raised a standing halt.
+    await expect(readFile(path.join(context.root, "watchdog-run.ps1.marker"), "utf8")).rejects.toThrow();
+  }, 30_000);
+
+  it("runs the child on the early-close day and hands the CLI the real 13:00 close", async () => {
+    const context = await tree();
+
+    // 2026-11-27, the day after Thanksgiving: a trading day that ends at 13:00 New York.
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", "2026-11-27T16:00:00Z"] });
+
+    expect(run.exitCode).toBe(0);
+    const log = await logText(context, "watchdog-run.log");
+    expect(log).toContain("earlyClose=13:00ET");
+    const marker = await readFile(path.join(context.root, "watchdog-run.ps1.marker"), "utf8");
+    expect(marker).toContain(context.stateDir);
+  }, 30_000);
 });

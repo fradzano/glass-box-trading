@@ -22,7 +22,7 @@ import { foldLedger } from "../core/fold.ts";
 import { nextStep } from "../core/steps.ts";
 import { outcomeLines } from "../cli/report.ts";
 import { exitCodeFor, pages } from "../cli/plan.ts";
-import { readStopMark, writeStopMark } from "../store/stop-mark.ts";
+import { clearStopMark, readStopMark, writeStopMark } from "../store/stop-mark.ts";
 import type { StopMark } from "../core/stop.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { LedgerStoreError, currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
@@ -656,6 +656,37 @@ describe("the owner's own abort", () => {
     expect(second.applied.map(report => report.kind)).toContain("clear-checks");
   });
 
+  it("comes back for the lease and records itself when the holder lets go", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    const before = (await entries(stateRoot)).length;
+
+    // A tick holds the lease for a moment, the way one does while an action is being
+    // applied, and lets go. The store answers a live holder with `contended` immediately
+    // rather than waiting, so without the bounded rounds the owner's stop would disarm
+    // the world and write nothing at all about it.
+    let release = (): void => undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const holder = withActivationLedger({
+      root: stateRoot,
+      owner: currentLedgerLockOwner(),
+      makeSystemDraft: () => { throw new Error("the holder writes no system draft in this test"); },
+    }, async () => { await held; return 1; });
+    await new Promise(resolve => { setTimeout(resolve, 50); });
+    setTimeout(() => { release(); }, 1_200);
+
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
+    const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+    await holder;
+
+    expect(result.outcome.kind).toBe("aborted");
+    const written = await entries(stateRoot);
+    expect(written.length).toBeGreaterThan(before);
+    expect(written.at(-1)?.kind).toBe("abort");
+    expect(written.at(-1)?.evidence["reason"]).toBe("OWNER_ABORT");
+  }, 20_000);
+
   it("reports a stop it could neither confirm nor record when another invocation holds the lease", async () => {
     const stateRoot = await root();
     const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
@@ -869,7 +900,7 @@ describe("what a standing stop does to every later invocation", () => {
         // The stop lands between the first action and the second — the shape of R2-03.
         readStop: () => {
           reads += 1;
-          return Promise.resolve(reads === 1 ? { kind: "absent" as const } : { kind: "present" as const, mark: { operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" } });
+          return Promise.resolve(reads === 1 ? { kind: "absent" as const } : { kind: "present" as const, mark: { id: "stop-1", operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" } });
         },
       },
     );
@@ -906,7 +937,11 @@ describe("what a standing stop does to every later invocation", () => {
     expect(result.outcome.kind).toBe("opened");
     expect((await readStopMark(stateRoot)).kind).toBe("absent");
     expect(printed.join(" ")).toContain("stop mark was lifted");
-    expect((await entries(stateRoot)).at(-1)?.evidence["stopLifted"]).toBe(true);
+    // The opening names the stop it was authorised to lift, and it is written before the
+    // lift, so a failed append can no longer leave the mark gone and the record empty.
+    const opening = (await entries(stateRoot)).at(-1);
+    expect(opening?.evidence["opened"]).toBe("OWNER_OPENED");
+    expect(String(opening?.evidence["liftsStop"])).toMatch(/^stop-\d+-[0-9a-f]{8}$/u);
   });
 
   it("is what status says first, because it changes what every line after it means", async () => {
@@ -918,5 +953,120 @@ describe("what a standing stop does to every later invocation", () => {
 
     expect(printed[0]).toContain("STOPPED");
     expect(printed[0]).toContain("felix");
+  });
+});
+
+// R4-01 and R4-02, from the owner-commissioned review of 2026-09-19, as contract rather
+// than as defect. Both were executed against the previous commit before they were booked:
+// an older continuation erased a newer stop and the concurrent abort still reported "the
+// stop is confirmed"; and an opening whose append failed left the mark gone with nothing
+// on the record.
+describe("a stop has an identity, and a continuation may lift only the one it read", () => {
+  async function stoppedWithAttempt(stateRoot: string): Promise<void> {
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
+    await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+  }
+
+  it("leaves a newer stop standing when one is typed while the continuation works", async () => {
+    const stateRoot = await root();
+    await stoppedWithAttempt(stateRoot);
+    const older = await readStopMark(stateRoot);
+    if (older.kind !== "present") throw new Error("the first stop did not land");
+
+    // The interleaving the review executed, made deterministic: the newer stop lands in
+    // the instant between the continuation's read and its compare-and-delete.
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), {
+      clearStopMark: async (targetRoot: string, expectedId: string) => {
+        await writeStopMark(targetRoot, { id: "stop-newer-1", operator: "felix", at: "2026-09-21T16:29:00+02:00", atUtcMs: utcOf(CERTIFICATE_DAY, 16, 29), reason: "OWNER_ABORT" });
+        return await clearStopMark(targetRoot, expectedId);
+      },
+    });
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    // The attempt is open — that part the owner asked for — and the newer stop survived.
+    expect(result.outcome.kind).toBe("opened");
+    const standing = await readStopMark(stateRoot);
+    expect(standing.kind).toBe("present");
+    if (standing.kind !== "present") throw new Error("the newer stop was erased");
+    expect(standing.mark.id).toBe("stop-newer-1");
+
+    // And it is not silent: the console says it, the ledger says it, and a recovery file
+    // beside the mark says it for whoever looks at the state root first.
+    expect(printed.join(" ")).toContain("NOT lifted");
+    const last = (await entries(stateRoot)).at(-1);
+    expect(last?.evidence["stopLift"]).toBe("superseded");
+    expect(last?.nextOwnerAction).toContain("run `open` again");
+    expect(await readFile(path.join(stateRoot, "stop.json.lift-failed"), "utf8")).toContain("superseded");
+  });
+
+  it("leaves the stop standing when the opening itself cannot be recorded", async () => {
+    const stateRoot = await root();
+    await stoppedWithAttempt(stateRoot);
+    const before = await readStopMark(stateRoot);
+    if (before.kind !== "present") throw new Error("the stop did not land");
+
+    const failingOpen: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+      read: () => session.read(),
+      append: async draft => {
+        if (draft.evidence["opened"] === "OWNER_OPENED") throw new LedgerStoreError("write-ledger", "NO_SPACE");
+        return await session.append(draft);
+      },
+    }));
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), { withLedger: failingOpen });
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("ledger-defect");
+    // The old order lifted the stop first, so this exact case left the deployment armable
+    // with no continuation on the record. The mark outlives a failed opening now.
+    const after = await readStopMark(stateRoot);
+    expect(after.kind).toBe("present");
+    if (after.kind !== "present") throw new Error("the stop was lifted by a failed opening");
+    expect(after.mark.id).toBe(before.mark.id);
+  });
+
+  it("refuses to call a stop confirmed when its own mark did not survive it", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+
+    // Something lifted the mark while the stop was working — which is what the review
+    // executed, and what the previous version reported as "the stop is confirmed".
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), {
+      readStopMark: () => Promise.resolve({ kind: "absent" as const }),
+    });
+    const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("work-failed");
+    expect(exitCodeFor(result.outcome)).toBe(4);
+    if (result.outcome.kind !== "work-failed") throw new Error("the outcome carries the reason");
+    expect(result.outcome.reason).toContain("gone again");
+    expect(printed.join(" ")).toContain("WARNING");
+  });
+});
+
+// R4-03: SC-7 was true at one exit and claimed at all of them.
+describe("every exit after effects carries what those effects were", () => {
+  it("carries the opening run's teardown out of a failed note append", async () => {
+    const stateRoot = await root();
+    const failingOpening: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+      read: () => session.read(),
+      append: async draft => {
+        if (typeof draft.evidence["opened"] === "string") throw new LedgerStoreError("write-ledger", "NO_SPACE");
+        return await session.append(draft);
+      },
+    }));
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35), { withLedger: failingOpening });
+
+    const result = await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), deps);
+
+    // The branch applies a full teardown before it appends. Measured before this fix:
+    // `teardown: []` and `applied: []` while the ports had really disabled both tasks.
+    expect(result.outcome.kind).toBe("ledger-defect");
+    if (result.outcome.kind !== "ledger-defect") throw new Error("the outcome carries the teardown");
+    expect(result.outcome.teardown?.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
+    expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
+    expect(outcomeLines(result.outcome).join(" | ")).toContain("disable-tasks");
   });
 });

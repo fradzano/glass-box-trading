@@ -12,13 +12,20 @@
 // Serialising the two commands cannot fix it without giving up the ordering that makes a
 // stop immediate. So the stop leaves a **mark** instead, and every action asks the mark
 // whether it may still arm anything. The mark is the fact; the ordering stays.
-import type { WorldAction } from "./types.ts";
+import type { TaskName, WorldAction } from "./types.ts";
 
 /**
  * What the owner's stop wrote down. It is the whole mark: a reader that can produce these
  * four fields knows a stop stands, who typed it and when, without reading the ledger.
  */
 export interface StopMark {
+  /**
+   * What makes this stop *this* stop. A continuation names the id it read and lifts only
+   * that one; a stop typed while the continuation was working is a different id and is
+   * left standing (R4-01, executed 2026-09-19: without an identity, an older continuation
+   * erased a newer stop and the deployment became armable again in silence).
+   */
+  readonly id: string;
   readonly operator: string;
   /** Local time with its offset, the same shape every ledger entry carries. */
   readonly at: string;
@@ -99,5 +106,38 @@ export function stopMarkLine(state: StopMarkState): string {
       return `STOPPED      by ${state.mark.operator} at ${state.mark.at} (${state.mark.reason}); nothing will be armed until 'activation open' clears it`;
     case "unreadable":
       return `STOP UNKNOWN the stop mark could not be read (${state.reason}); every arming action refuses while this stands`;
+  }
+}
+
+/**
+ * What undoes an arming action that landed **after** a stop was typed (SC-3a, R4-01).
+ *
+ * The guard before each action closes the window between two actions; it cannot close the
+ * window *inside* one. A real `Enable-ScheduledTask` takes time, and a stop typed while it
+ * runs arrives too late to prevent it — measured with two operating-system processes and a
+ * file-backed world: the tick's enable landed after the stop's teardown, the stop could not
+ * take the lease to confirm because the tick was holding it, and the deployment ended
+ * armed.
+ *
+ * So the invocation that applied the effect is the one that undoes it. It knows the effect
+ * happened, it is still running, and it needs nobody's lease to disarm. `null` means the
+ * action has no inverse: a restart cannot be called back, and the stop mark is what keeps
+ * the machine from arming itself after the boot.
+ */
+export function compensationFor(kind: WorldAction["kind"], tasks: readonly TaskName[]): WorldAction | null {
+  switch (kind) {
+    case "enable-tasks":
+    case "install-tasks":
+      return { kind: "disable-tasks", tasks };
+    case "write-certificate-line":
+      return { kind: "remove-certificate-line" };
+    case "register-disarm":
+      return { kind: "delete-disarm" };
+    case "restart":
+    case "disable-tasks":
+    case "remove-certificate-line":
+    case "delete-disarm":
+    case "clear-checks":
+      return null;
   }
 }

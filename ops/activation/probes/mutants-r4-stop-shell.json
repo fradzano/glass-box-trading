@@ -1,12 +1,98 @@
 [
-  { "id": "SS1", "note": "SC-3 revoked at the wiring: the guard is computed and never consulted", "from": "    const refusal = stopRefusal(action.kind, await options.readStop());", "to": "    const refusal = null as string | null; await options.readStop();" },
-  { "id": "SS2", "note": "SC-3 revoked differently: the mark is read once per invocation instead of before each action, which is the stale answer R2-03 was made of", "from": "    const refusal = stopRefusal(action.kind, await options.readStop());\n    if (refusal !== null) {", "to": "    const refusal = stopRefusal(action.kind, { kind: \"absent\" });\n    if (refusal !== null) {" },
-  { "id": "SS3", "note": "SC-2 revoked: the mark is written after the world was changed, so a racing invocation cannot see it in time", "from": "  let markFailure: string | null = null;\n  if (!invocation.dryRun) {", "to": "  let markFailure: string | null = null;\n  if (false) {" },
-  { "id": "SS4", "note": "SC-4 revoked: a stop that could not write its mark is reported as a confirmed stop", "from": "  if (markFailure !== null) return \"unconfirmed\";", "to": "  if (false) return \"unconfirmed\";" },
-  { "id": "SS5", "note": "SC-4 revoked: nothing is re-applied under the lease, so an action that landed in the race window stands", "from": "      confirming = await applyTeardown(STOP_CONFIRMATION, applyOptionsFor(invocation, deps, context, false));", "to": "      confirming = [];" },
-  { "id": "SS6", "note": "R3-08 restored: a repeat against an ended attempt records nothing at all", "from": "        if (!invocation.dryRun) await append(session, ownerAbortRepeatDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming, fold.attemptEnded.seq));", "to": "        if (false) await append(session, ownerAbortRepeatDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming, fold.attemptEnded.seq));" },
-  { "id": "SS7", "note": "R3-09 restored: a store failure drops what the invocation already did to the world", "from": "  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason, carried);", "to": "  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason);" },
-  { "id": "SS8", "note": "SC-8 revoked: the owner's continuation no longer lifts his own stop", "from": "        stopLifted = await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot);", "to": "        stopLifted = false;" },
-  { "id": "SS9", "note": "SC-9 revoked: status stops saying that a stop stands", "from": "  deps.print(stopMarkLine(await (deps.readStopMark ?? readStopMark)(invocation.stateRoot)));", "to": "  await (deps.readStopMark ?? readStopMark)(invocation.stateRoot);" },
-  { "id": "SS10", "note": "CONTROL, expected to survive: a comment word, no behaviour", "from": "  // SC-2: the mark before the first action, because a stop that has not been written down", "to": "  // SC-2: the mark before the first action, since a stop that has not been written down" }
+  {
+    "id": "SS1",
+    "note": "SC-3 revoked at the wiring: the guard is computed and never consulted",
+    "from": "    const refusal = stopRefusal(action.kind, await options.readStop());",
+    "to": "    const refusal = null as string | null; await options.readStop();"
+  },
+  {
+    "id": "SS2",
+    "note": "SC-3 revoked differently: the mark is read once per invocation instead of before each action, which is the stale answer R2-03 was made of",
+    "from": "    const refusal = stopRefusal(action.kind, await options.readStop());\n    if (refusal !== null) {",
+    "to": "    const refusal = stopRefusal(action.kind, { kind: \"absent\" });\n    if (refusal !== null) {"
+  },
+  {
+    "id": "SS3",
+    "note": "SC-2 revoked: the mark is written after the world was changed, so a racing invocation cannot see it in time",
+    "from": "  let markFailure: string | null = null;\n  if (!invocation.dryRun) {",
+    "to": "  let markFailure: string | null = null;\n  if (false) {"
+  },
+  {
+    "id": "SS4",
+    "note": "SC-4 revoked: a stop that could not write its mark is reported as a confirmed stop",
+    "from": "  if (markFailure !== null) return \"unconfirmed\";",
+    "to": "  if (false) return \"unconfirmed\";"
+  },
+  {
+    "id": "SS5",
+    "note": "SC-4 revoked: nothing is re-applied under the lease, so an action that landed in the race window stands",
+    "from": "      confirming = await applyTeardown(STOP_CONFIRMATION, applyOptionsFor(invocation, deps, context, false));",
+    "to": "      confirming = [];"
+  },
+  {
+    "id": "SS6",
+    "note": "R3-08 restored: a repeat against an ended attempt records nothing at all",
+    "from": "        if (!invocation.dryRun) await append(session, ownerAbortRepeatDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming, fold.attemptEnded.seq));",
+    "to": "        if (false) await append(session, ownerAbortRepeatDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming, fold.attemptEnded.seq));"
+  },
+  {
+    "id": "SS7",
+    "note": "R3-09 restored: a store failure drops what the invocation already did to the world",
+    "from": "  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason, carried);",
+    "to": "  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason);"
+  },
+  {
+    "id": "SS8",
+    "note": "SC-8 revoked: the owner's continuation no longer lifts his own stop",
+    "from": "        lift = standing.kind === \"present\"\n          ? await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot, standing.mark.id)\n          : { kind: \"absent\" };",
+    "to": "        lift = { kind: \"absent\" };"
+  },
+  {
+    "id": "SS9",
+    "note": "SC-9 revoked: status stops saying that a stop stands",
+    "from": "  deps.print(stopMarkLine(await (deps.readStopMark ?? readStopMark)(invocation.stateRoot)));",
+    "to": "  await (deps.readStopMark ?? readStopMark)(invocation.stateRoot);"
+  },
+  {
+    "id": "SS10",
+    "note": "CONTROL, expected to survive: a comment word, no behaviour",
+    "from": "  // SC-2: the mark before the first action, because a stop that has not been written down",
+    "to": "  // SC-2: the mark before the first action, since a stop that has not been written down"
+  },
+  {
+    "id": "SS11",
+    "note": "R4-02 restored: the stop is lifted before the opening is recorded, so a failed append leaves the mark gone",
+    "from": "        await append(session, openingDraft(\"OWNER_OPENED\", attempt, anchorDay, stamp, {",
+    "to": "        lift = standing.kind === \"present\" ? await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot, standing.mark.id) : { kind: \"absent\" };\n        await append(session, openingDraft(\"OWNER_OPENED\", attempt, anchorDay, stamp, {"
+  },
+  {
+    "id": "SS12",
+    "note": "SC-2a revoked: a stop no longer reads its own mark back, so it reports confirmed after something erased it",
+    "from": "  if (markFailureAfter === null && !invocation.dryRun) {",
+    "to": "  if (false) {"
+  },
+  {
+    "id": "SS13",
+    "note": "SC-3a revoked: an effect that landed after the stop is left standing by the process that applied it",
+    "from": "      const after = await options.readStop();\n      if (after.kind !== \"absent\" && armsDeploymentAction(action)) {",
+    "to": "      const after = await options.readStop();\n      if (false && after.kind !== \"absent\" && armsDeploymentAction(action)) {"
+  },
+  {
+    "id": "SS14",
+    "note": "the compensation is applied but never reported, so the ledger understates what happened",
+    "from": "          reports.push(undo.ok",
+    "to": "          if (false) reports.push(undo.ok"
+  },
+  {
+    "id": "SS15",
+    "note": "R4-03 restored: only the gate's result-append catch carries its effects out",
+    "from": "    const reports = await applyAll(actions, options);\n    carried.push(...reports);",
+    "to": "    const reports = await applyAll(actions, options);"
+  },
+  {
+    "id": "SS16",
+    "note": "the stop stops coming back for the lease, so a stop typed during an action records nothing at all",
+    "from": "    for (let round = 1; round < CONFIRM_ROUNDS && result.kind === \"contended\"; round += 1) {",
+    "to": "    for (let round = 1; round < 1 && result.kind === \"contended\"; round += 1) {"
+  }
 ]

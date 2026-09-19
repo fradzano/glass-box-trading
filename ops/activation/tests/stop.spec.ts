@@ -10,7 +10,7 @@ import { armsDeployment, stopMarkLine, stopRefusal } from "../core/stop.ts";
 import type { StopMarkState } from "../core/stop.ts";
 import type { WorldAction } from "../core/types.ts";
 
-const MARK: StopMarkState = { kind: "present", mark: { operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1_790_000_000_000, reason: "OWNER_ABORT" } };
+const MARK: StopMarkState = { kind: "present", mark: { id: "stop-1", operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1_790_000_000_000, reason: "OWNER_ABORT" } };
 const NONE: StopMarkState = { kind: "absent" };
 const UNKNOWN: StopMarkState = { kind: "unreadable", reason: "stop.json: EACCES" };
 
