@@ -70,6 +70,28 @@ automatic end of the run.
 registered, the activation has never run against the real host, and the 22.09. is a
 **conditional** target — a missing proof moves the start.
 
+### Session close, 2026-09-20
+
+Nothing is parked and nothing is in flight: the tree is clean, the branch is pushed, no
+background process was left running, and `npm run verify` exits 0 at this commit (709 root
+tests, 661 activation tests, architecture gate, sandbox, phase check). The three gate agents
+and the finding collector all returned; their reports are summarised above and their findings
+are booked in the run's `FINDINGS.md` as R4-07 to R4-20.
+
+**The owner's own steps live outside this repo**, in an untracked file on his desktop:
+`C:\\Users\\felix\\Desktop\\felix-todo-gbt-longrun-gate.md`. It holds what is already done and
+must not be repeated (the alert confirmations of 2026-09-15, valid through 2026-09-29; the
+auto-restart sign-on switch of 2026-09-19, nine of nine host preconditions matching), the one
+decision that is his and not a repair (R4-14), the supervised windows of the certificate day
+and the anchor day, and the end of the run — which no automatism performs.
+
+**Next session's assignment is unit 13**, as an explicit unattended flight: the host bindings
+of the action ports, the elevated registration of `GlassBoxTrading-Activation`, and the real
+activation alert on the fourth healthchecks check. It is the last unit that prepares the long
+run. What it must not repeat is this round's lesson: a new mechanism ships with the confidence
+of the one it replaces, and both class-A defects of this round were introduced by the repair
+that closed the previous ones.
+
 
 **Last updated:** 2026-09-20 CEST, early. **Update — the external review of `318e15a` found six
 defects, two of them class A; all six were reproduced, booked as R4-01 to R4-06 and repaired,
