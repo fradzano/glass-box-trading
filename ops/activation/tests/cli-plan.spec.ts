@@ -386,8 +386,21 @@ describe("a failure that came back out of the ledger lease (review residual G2)"
 
   it("reads a store failure raised inside the callback as a ledger defect, because it kept its own stage", () => {
     const outcome = classifyStoreFailure("write-ledger", "NO_SPACE");
-    expect(outcome).toEqual({ kind: "ledger-defect", stage: "write-ledger", reason: "NO_SPACE" });
+    expect(outcome).toEqual({ kind: "ledger-defect", stage: "write-ledger", reason: "NO_SPACE", teardown: [] });
     expect(exitCodeFor(outcome)).toBe(3);
+  });
+
+  // SC-7. The classification decides which number the task history gets; it never decides
+  // whether the owner learns that both tasks were disabled on the way out. Before this,
+  // the teardown travelled with `work-failed` alone — and a real append failure never
+  // produces one, which is what made the A4 reporting path unreachable in production.
+  it("carries what was applied on the way out, whichever stage failed", () => {
+    const report = { kind: "disable-tasks" as const, applied: true, detail: {}, reason: null, completion: null };
+    for (const stage of ["write-ledger", "sync-ledger", "close-ledger", "release-lock", "callback"]) {
+      const outcome = classifyStoreFailure(stage, stage === "callback" ? "WORK_FAILED" : "IO_ERROR", [report]);
+      const carried = outcome.kind === "ledger-defect" || outcome.kind === "work-failed" ? outcome.teardown : undefined;
+      expect(carried).toEqual([report]);
+    }
   });
 
   it("reads every other stage as a ledger defect too", () => {

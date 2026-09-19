@@ -11,7 +11,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { invoke } from "../cli/invoke.ts";
+import { applyAll, invoke } from "../cli/invoke.ts";
 import type { InvocationDeps } from "../cli/invoke.ts";
 import { stampFactory } from "../cli/schedule.ts";
 import type { DeploymentFacts } from "../cli/schedule.ts";
@@ -21,6 +21,9 @@ import { parseLedgerText } from "../core/ledger.ts";
 import { foldLedger } from "../core/fold.ts";
 import { nextStep } from "../core/steps.ts";
 import { outcomeLines } from "../cli/report.ts";
+import { exitCodeFor, pages } from "../cli/plan.ts";
+import { readStopMark, writeStopMark } from "../store/stop-mark.ts";
+import type { StopMark } from "../core/stop.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { LedgerStoreError, currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
 import { readActivationLedger } from "../store/ledger-store.ts";
@@ -138,11 +141,18 @@ describe("what a dry run shows", () => {
 
     // The owner's abort is four actions; a rehearsal that showed one of them would hide
     // three (spec §9: "prints every intended action").
+    // Seven, not four: since the stop contract the rehearsal shows both passes — the four
+    // actions the stop applies before it takes the lease, and the three it re-applies
+    // under it (SC-4). A rehearsal that hid the second pass would rehearse a different
+    // command from the one it stands for.
     expect(printed).toEqual([
       "would disable-tasks cycle, watchdog",
       "would remove-certificate-line",
       "would delete-disarm",
       "would clear-checks",
+      "would disable-tasks cycle, watchdog",
+      "would remove-certificate-line",
+      "would delete-disarm",
     ]);
   });
 });
@@ -287,7 +297,10 @@ describe("a safety command carries no prerequisite it does not consume", () => {
     const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), { ...deps, facts: null });
 
     expect(result.outcome.kind).toBe("aborted");
-    expect(result.applied.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line", "delete-disarm", "clear-checks"]);
+    expect(result.applied.map(report => report.kind)).toEqual([
+      "disable-tasks", "remove-certificate-line", "delete-disarm", "clear-checks",
+      "disable-tasks", "remove-certificate-line", "delete-disarm",
+    ]);
   });
 
   it("the 15:05 disarm still disables without the measured facts, which is the whole point of it", async () => {
@@ -350,7 +363,7 @@ describe("a result append that fails at the gate", () => {
     return { stateRoot, world };
   }
 
-  it("tears down inside the lease when the result append throws — and does NOT tell the owner, which is R3-09", async () => {
+  it("tears down inside the lease when the result append throws, and tells the owner it did", async () => {
     const { stateRoot, world } = await atTheGate();
     const { deps, printed } = harness(stateRoot, world.nowUtcMs, {
       withLedger: failingResultAppend,
@@ -372,24 +385,50 @@ describe("a result append that fails at the gate", () => {
     expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
     expect(result.applied.map(report => report.kind)).toContain("remove-certificate-line");
 
-    // And the owner is NOT told. What follows asserts the defect, not the contract.
-    //
-    // This is finding R3-09, standing as a measurement rather than as an argument. The
-    // reporting path built for axiom A4 hangs on the `work-failed` outcome, and a real append
-    // failure never produces one: every failure inside `session.append` leaves the store as a
-    // `LedgerStoreError`, `withActivationLedger` rethrows it unchanged, and the invocation ends
-    // as a `ledger-defect`. The teardown above really ran — the two printed lines and
-    // `result.applied` prove it — and nothing the owner reads says so.
-    //
-    // The day the reporting path is repaired, these three expectations fail and demand to be
-    // rewritten into the contract they are standing in for. That is the point of them. The
-    // repair itself is a third seam on `abort-teardown-contract` and belongs to the owner,
-    // not to this test (ruling of 2026-09-18, in the run's mechanism register).
+    // SC-7, and this is where R3-09 stood. The classification is still `ledger-defect`,
+    // because that is what a failed append to the record is and the task history needs
+    // its own number for it — but the teardown now travels with it, and the owner is told
+    // in the same breath that both tasks were disabled and the certificate line removed.
     expect(result.outcome.kind).toBe("ledger-defect");
-    const lines = outcomeLines(result.outcome).join(" | ");
-    expect(lines).toContain("LEDGER DEFECT");
-    expect(lines).not.toContain("teardown");
+    expect(exitCodeFor(result.outcome)).toBe(3);
+    expect(pages(result.outcome)).toBe(true);
+    const lines = outcomeLines(result.outcome);
+    expect(lines[0]).toContain("LEDGER DEFECT");
+    expect(lines[1]).toContain("disable-tasks");
+    expect(lines[1]).toContain("remove-certificate-line");
+    expect(lines.at(-1)).toContain("the record itself cannot be trusted");
   });
+
+  // The shapes the store really throws, one per stage it can fail at. The test that stood
+  // here injected a plain `Error` — the one shape `session.append` can never produce — so
+  // the branch it certified was one production cannot take. "Grün ≠ korrekt" in its exact
+  // form, on the repair's own test.
+  for (const stage of ["write-ledger", "sync-ledger", "close-ledger"] as const) {
+    it(`carries the teardown out of a real ${stage} failure`, async () => {
+      const { stateRoot, world } = await atTheGate();
+      const failingAt: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+        read: () => session.read(),
+        append: async draft => {
+          if (draft.kind === "result" && draft.step === "10-gate") throw new LedgerStoreError(stage, "IO_ERROR");
+          return await session.append(draft);
+        },
+      }));
+      const { deps } = harness(stateRoot, world.nowUtcMs, {
+        withLedger: failingAt,
+        now: () => world.nowUtcMs,
+        observe: async () => Promise.resolve(observe(world)),
+        facts: { ...factsFor(stateRoot), activationRoot: ACTIVATION_ROOT },
+      });
+
+      const result = await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), deps);
+
+      expect(result.outcome.kind).toBe("ledger-defect");
+      if (result.outcome.kind !== "ledger-defect") throw new Error("the outcome carries the stage");
+      expect(result.outcome.stage).toBe(stage);
+      expect(result.outcome.teardown?.map(report => report.kind)).toContain("disable-tasks");
+      expect(outcomeLines(result.outcome).join(" | ")).toContain("disable-tasks");
+    });
+  }
 });
 
 describe("opening the next attempt", () => {
@@ -485,7 +524,7 @@ describe("opening the next attempt", () => {
 });
 
 describe("the owner's own abort", () => {
-  it("tears down first, then writes the terminal entry that names the operator", async () => {
+  it("tears down first, confirms under the lease, and writes the terminal entry that names the operator", async () => {
     const stateRoot = await root();
     const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
     await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
@@ -493,32 +532,83 @@ describe("the owner's own abort", () => {
     const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
     const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
 
-    expect(result.outcome).toEqual({
-      kind: "aborted",
-      step: null,
-      reason: "OWNER_ABORT",
-      teardown: [{ kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "remove-certificate-line", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "delete-disarm", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }, { kind: "clear-checks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null }],
-      nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue.",
-    });
-    expect(printed).toEqual(["would disable-tasks cycle, watchdog", "would remove-certificate-line", "would delete-disarm", "would clear-checks"]);
+    if (result.outcome.kind !== "aborted") throw new Error(`the abort did not report an abort: ${result.outcome.kind}`);
+    expect(result.outcome.reason).toBe("OWNER_ABORT");
+    // Two passes: the four the stop owes before the lease, the three it re-applies under
+    // it (SC-4). Nothing applied, because this deployment has no host bindings — and the
+    // sentence the owner reads says exactly that rather than implying a teardown ran.
+    expect(result.outcome.teardown.map(report => report.kind)).toEqual([
+      "disable-tasks", "remove-certificate-line", "delete-disarm", "clear-checks",
+      "disable-tasks", "remove-certificate-line", "delete-disarm",
+    ]);
+    expect(result.outcome.teardown.every(report => !report.applied && report.reason === "NO_HOST_BINDINGS")).toBe(true);
+    expect(result.outcome.nextOwnerAction).toContain("the stop changed nothing, because this deployment has no host bindings");
+    expect(printed).toEqual([
+      "would disable-tasks cycle, watchdog", "would remove-certificate-line", "would delete-disarm", "would clear-checks",
+      "would disable-tasks cycle, watchdog", "would remove-certificate-line", "would delete-disarm",
+    ]);
+
     const last = (await entries(stateRoot)).at(-1);
     expect(last?.kind).toBe("abort");
     expect(last?.evidence["operator"]).toBe("felix");
     expect(last?.evidence["reason"]).toBe("OWNER_ABORT");
+    // Both passes are in the record, separately: a reader a week later can tell a world
+    // that was already safe from one a racing invocation had re-armed in between.
+    expect((last?.evidence["actions"] as readonly unknown[]).length).toBe(4);
+    expect((last?.evidence["confirming"] as readonly unknown[]).length).toBe(3);
   });
 
-  // The expectation of an empty ledger here was the defect, not the contract: the teardown
-  // runs before the lease, so this branch really does act on the world, and it used to leave
-  // no trace of having done so. A note, not a terminal entry — there is no attempt to end.
+  it("writes the stop mark before it touches the world, so a racing invocation can see it", async () => {
+    const stateRoot = await root();
+    const order: string[] = [];
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), {
+      writeStopMark: async (targetRoot: string, mark: StopMark) => { order.push("mark"); await writeStopMark(targetRoot, mark); },
+      print: (line: string) => order.push(line),
+    });
+
+    await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+
+    expect(order[0]).toBe("mark");
+    const state = await readStopMark(stateRoot);
+    expect(state.kind).toBe("present");
+    if (state.kind !== "present") throw new Error("the mark was not written");
+    expect(state.mark.operator).toBe("felix");
+    expect(state.mark.reason).toBe("OWNER_ABORT");
+  });
+
+  it("disarms anyway when the mark cannot be written, and refuses to call that a confirmed stop", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), {
+      writeStopMark: () => Promise.reject(new Error("EROFS: read-only file system")),
+    });
+
+    const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+
+    // SC-2: it still disarmed, it said so, and it is not reported as a durable stop.
+    expect(printed[0]).toContain("the stop mark could not be written");
+    expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
+    expect(result.outcome.kind).toBe("work-failed");
+    expect(exitCodeFor(result.outcome)).toBe(4);
+    expect(pages(result.outcome)).toBe(true);
+    if (result.outcome.kind !== "work-failed") throw new Error("the outcome carries the reason");
+    expect(result.outcome.reason).toContain("the stop mark could NOT be written");
+  });
+
   it("still tears down when there is no attempt to end, and records that it did", async () => {
     const stateRoot = await root();
     const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
     const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
 
-    expect(result.outcome.kind).toBe("refused");
+    // It acted on the world, so it is an abort and not a refusal: exit 2 means "I did not
+    // start", and this one did.
+    expect(result.outcome.kind).toBe("aborted");
+    expect(exitCodeFor(result.outcome)).toBe(1);
     expect(printed[0]).toBe("would disable-tasks cycle, watchdog");
-    if (result.outcome.kind !== "refused") throw new Error("the abort refused; the outcome carries the reason");
-    expect(result.outcome.reason).toContain("the teardown did NOT complete");
+    if (result.outcome.kind !== "aborted") throw new Error("the abort did not report an abort");
+    expect(result.outcome.reason).toBe("OWNER_ABORT_NO_ATTEMPT");
+    expect(result.outcome.nextOwnerAction).toContain("Check that this is the state root you meant");
 
     const written = await entries(stateRoot);
     expect(written).toHaveLength(1);
@@ -533,17 +623,68 @@ describe("the owner's own abort", () => {
     ]);
   });
 
-  it("does not end an attempt twice", async () => {
+  // R3-08, as the contract rather than as the defect. What stood here asserted that a
+  // repeat appended nothing; what it left out was that the repeat had already applied
+  // four actions and pinged three checks, exited 0, did not page, and printed "Nothing
+  // was done."
+  it("does not end an attempt twice, and still records what the repeat did to the world", async () => {
     const stateRoot = await root();
     const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
     await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
     const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
     await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
-    const after = (await entries(stateRoot)).length;
+    const after = await entries(stateRoot);
 
     const second = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
-    expect(second.outcome.kind).toBe("ended");
-    expect(await entries(stateRoot)).toHaveLength(after);
+
+    // The attempt is ended once: the second stop writes a note, never a second abort.
+    const written = await entries(stateRoot);
+    expect(written).toHaveLength(after.length + 1);
+    expect(written.filter(entry => entry.kind === "abort")).toHaveLength(after.filter(entry => entry.kind === "abort").length);
+    expect(written.at(-1)?.kind).toBe("note");
+    expect(written.at(-1)?.evidence["ownerAbort"]).toBe("ATTEMPT_ALREADY_ENDED");
+    expect(written.at(-1)?.evidence["endedAtSeq"]).toBe(after.filter(entry => entry.kind === "abort").at(-1)?.seq);
+
+    // And it is not reported as a no-op: it pages, it does not exit 0, and the line the
+    // owner reads names the actions instead of "Nothing was done".
+    expect(second.outcome.kind).toBe("aborted");
+    expect(exitCodeFor(second.outcome)).toBe(1);
+    expect(pages(second.outcome)).toBe(true);
+    const lines = outcomeLines(second.outcome).join(" | ");
+    expect(lines).toContain("OWNER_ABORT_REPEAT");
+    expect(lines).not.toContain("Nothing was done");
+    expect(second.applied.map(report => report.kind)).toContain("clear-checks");
+  });
+
+  it("reports a stop it could neither confirm nor record when another invocation holds the lease", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+
+    let release = (): void => undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const holder = withActivationLedger({
+      root: stateRoot,
+      owner: currentLedgerLockOwner(),
+      makeSystemDraft: () => { throw new Error("the holder writes no system draft in this test"); },
+    }, async () => { await held; return 1; });
+    await new Promise(resolve => { setTimeout(resolve, 50); });
+
+    const result = await invoke(
+      command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]),
+      harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), { withLedger: (options, work) => withActivationLedger({ ...options, contentionTimeoutMs: 100 }, work) }).deps,
+    );
+    release();
+    await holder;
+
+    // SC-4: it disarmed, and it says plainly that nothing confirmed or recorded it.
+    expect(result.outcome.kind).toBe("work-failed");
+    expect(exitCodeFor(result.outcome)).toBe(4);
+    if (result.outcome.kind !== "work-failed") throw new Error("the outcome carries the reason");
+    expect(result.outcome.reason).toContain("neither confirmed under the lease nor recorded");
+    expect(result.outcome.teardown?.map(report => report.kind)).toContain("disable-tasks");
+    // The mark stands even so, which is the half of the stop that does not need the lease.
+    expect((await readStopMark(stateRoot)).kind).toBe("present");
   });
 });
 
@@ -661,5 +802,121 @@ describe("status", () => {
     expect(result.outcome).toEqual({ kind: "reported" });
     expect(result.fold?.currentAttempt).toBeNull();
     expect(result.schedule).toBeNull();
+  });
+});
+
+// SC-3 and SC-8, against the real mark on the real disk: the harness binds no stop ports,
+// so every read below goes through `readStopMark` to the file the abort wrote.
+describe("what a standing stop does to every later invocation", () => {
+  async function stopped(stateRoot: string): Promise<void> {
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
+    await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+  }
+
+  it("refuses an arming action and names the stop, instead of applying it", async () => {
+    const stateRoot = await root();
+    await stopped(stateRoot);
+
+    const printed: string[] = [];
+    const reports = await applyAll(
+      [{ kind: "enable-tasks", tasks: ["cycle", "watchdog"] }],
+      {
+        ports: null,
+        context: { envFile: path.join(stateRoot, ".env"), repoRoot: stateRoot, activationRoot: stateRoot, anchorDay: ANCHOR, nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform },
+        dryRun: false,
+        print: line => printed.push(line),
+        stopAtFirstFailure: true,
+        readStop: () => readStopMark(stateRoot),
+      },
+    );
+
+    expect(reports[0]?.applied).toBe(false);
+    expect(reports[0]?.reason).toContain("STOPPED_BY_OWNER");
+    // Not NO_HOST_BINDINGS: the stop is asked first, so the reason an operator reads is
+    // the one that decided, not the one that would have decided next.
+    expect(reports[0]?.reason).not.toContain("NO_HOST_BINDINGS");
+    expect(printed[0]).toContain("refusing enable-tasks");
+  });
+
+  it("keeps refusing while the mark is merely unreadable, because absence has to be established", async () => {
+    const stateRoot = await root();
+    const reports = await applyAll(
+      [{ kind: "enable-tasks", tasks: ["cycle", "watchdog"] }],
+      {
+        ports: null,
+        context: { envFile: path.join(stateRoot, ".env"), repoRoot: stateRoot, activationRoot: stateRoot, anchorDay: ANCHOR, nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform },
+        dryRun: false,
+        print: () => undefined,
+        stopAtFirstFailure: true,
+        readStop: () => Promise.resolve({ kind: "unreadable" as const, reason: "stop.json: EACCES" }),
+      },
+    );
+
+    expect(reports[0]?.reason).toContain("STOP_MARK_UNREADABLE");
+  });
+
+  it("is read again before every single action, so an invocation that decided earlier cannot arm later", async () => {
+    const stateRoot = await root();
+    let reads = 0;
+    const reports = await applyAll(
+      [{ kind: "disable-tasks", tasks: ["cycle"] }, { kind: "enable-tasks", tasks: ["cycle"] }, { kind: "delete-disarm" }],
+      {
+        ports: null,
+        context: { envFile: path.join(stateRoot, ".env"), repoRoot: stateRoot, activationRoot: stateRoot, anchorDay: ANCHOR, nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform },
+        dryRun: false,
+        print: () => undefined,
+        stopAtFirstFailure: false,
+        // The stop lands between the first action and the second — the shape of R2-03.
+        readStop: () => {
+          reads += 1;
+          return Promise.resolve(reads === 1 ? { kind: "absent" as const } : { kind: "present" as const, mark: { operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" } });
+        },
+      },
+    );
+
+    expect(reads).toBe(3);
+    expect(reports[0]?.reason).toBe("NO_HOST_BINDINGS");
+    expect(reports[1]?.reason).toContain("STOPPED_BY_OWNER");
+    // The third is a disarming action and is let through although the stop now stands.
+    expect(reports[2]?.reason).toBe("NO_HOST_BINDINGS");
+  });
+
+  it("is not lifted by a tick that opens a new anchor day", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    await stopped(stateRoot);
+
+    const nextDay = harness(stateRoot, utcOf("2026-09-23", 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", "2026-09-23"]), nextDay.deps);
+
+    expect((await readStopMark(stateRoot)).kind).toBe("present");
+  });
+
+  it("is lifted by the owner's own continuation, and by nothing else", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    await stopped(stateRoot);
+    expect((await readStopMark(stateRoot)).kind).toBe("present");
+
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30));
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("opened");
+    expect((await readStopMark(stateRoot)).kind).toBe("absent");
+    expect(printed.join(" ")).toContain("stop mark was lifted");
+    expect((await entries(stateRoot)).at(-1)?.evidence["stopLifted"]).toBe(true);
+  });
+
+  it("is what status says first, because it changes what every line after it means", async () => {
+    const stateRoot = await root();
+    await stopped(stateRoot);
+
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 10));
+    await invoke(command(["status", "--state-root", stateRoot]), deps);
+
+    expect(printed[0]).toContain("STOPPED");
+    expect(printed[0]).toContain("felix");
   });
 });

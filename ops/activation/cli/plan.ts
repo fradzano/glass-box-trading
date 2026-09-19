@@ -91,7 +91,15 @@ export type InvocationOutcome =
    * never that both tasks were disabled and the certificate line removed.
    */
   | { readonly kind: "work-failed"; readonly reason: string; readonly teardown?: readonly ActionReport[] }
-  | { readonly kind: "ledger-defect"; readonly stage: string; readonly reason: string };
+  /**
+   * `teardown` carries the same thing here, and it has to (SC-7). The A4 reporting path
+   * was wired to `work-failed` alone, and a genuine append failure never produces one:
+   * every failure inside `session.append` leaves the store as a `LedgerStoreError`,
+   * `withActivationLedger` rethrows it unchanged, and the invocation ends here instead.
+   * So the invocation that had just disabled both tasks and removed the certificate line
+   * told the owner only that the record was unreliable (R3-09).
+   */
+  | { readonly kind: "ledger-defect"; readonly stage: string; readonly reason: string; readonly teardown?: readonly ActionReport[] };
 
 /**
  * 0 is "nothing is wrong", 1 is "the attempt is over", 2 is "I did not start", 3 is
@@ -261,7 +269,8 @@ export function openingDraft(found: string, attempt: string, anchorDay: string, 
  * certificate line removed. On a host with no bindings that string was false in the same
  * entry that recorded four `applied: false` actions, and the entry is append-only.
  */
-export function ownerAbortDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[]): LedgerDraft {
+export function ownerAbortDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[], confirming: readonly ActionReport[] = []): LedgerDraft {
+  const all = [...applied, ...confirming];
   return draft({
     stamp,
     attempt,
@@ -269,9 +278,56 @@ export function ownerAbortDraft(operator: string, attempt: string, anchorDay: st
     step: null,
     kind: "abort",
     outcome: null,
-    evidence: { actions: teardownEvidence(applied), reason: "OWNER_ABORT", operator },
-    nextOwnerAction: `The owner stopped this attempt: ${teardownClauseOrSilence(applied)}. Open a new attempt when the run is to continue.`,
+    // Two passes, two fields (SC-4): what the stop applied before it took the lease, and
+    // what it re-applied while holding it. A reader a week later can tell a world that
+    // was already safe from one that a racing invocation had re-armed in between, and
+    // that difference is exactly what the second pass exists to catch.
+    evidence: { actions: teardownEvidence(applied), confirming: teardownEvidence(confirming), reason: "OWNER_ABORT", operator },
+    nextOwnerAction: `The owner stopped this attempt: ${teardownClauseOrSilence(all)}. Open a new attempt when the run is to continue.`,
   });
+}
+
+/**
+ * A stop typed against an attempt that is already ended (SC-5).
+ *
+ * It is a note, not a second terminal entry: the attempt was ended once and ending it
+ * twice would be a falsehood in an append-only record. What was **not** a falsehood
+ * before this entry existed is what the record said about the world — nothing at all.
+ * The invocation applied four actions and pinged three checks, exited 0, did not page,
+ * and told the owner "Nothing was done" (R3-08).
+ */
+export function ownerAbortRepeatDraft(
+  operator: string,
+  attempt: string,
+  anchorDay: string,
+  stamp: Stamp,
+  applied: readonly ActionReport[],
+  confirming: readonly ActionReport[],
+  endedAtSeq: number,
+): LedgerDraft {
+  return draft({
+    stamp,
+    attempt,
+    anchorDay,
+    step: null,
+    kind: "note",
+    outcome: null,
+    evidence: { actions: teardownEvidence(applied), confirming: teardownEvidence(confirming), ownerAbort: "ATTEMPT_ALREADY_ENDED", endedAtSeq, operator },
+    nextOwnerAction: null,
+  });
+}
+
+/** What a stop's verdict means, in the words the owner reads (SC-4, SC-6). */
+export function stopVerdictClause(verdict: "confirmed" | "no-bindings" | "unconfirmed", markFailure: string | null): string {
+  if (markFailure !== null) return `the stop mark could NOT be written (${markFailure}), so a concurrent invocation could not see this stop`;
+  switch (verdict) {
+    case "confirmed":
+      return "the stop is confirmed: it was re-applied under the lease and everything it attempted applied";
+    case "no-bindings":
+      return "the stop changed nothing, because this deployment has no host bindings: it decided and recorded, and the world is as it was";
+    case "unconfirmed":
+      return "the stop is NOT confirmed: at least one action it attempted did not apply";
+  }
 }
 
 /**
@@ -281,7 +337,7 @@ export function ownerAbortDraft(operator: string, attempt: string, anchorDay: st
  * context that may never show one. A note is not a terminal entry: there is no attempt to
  * end, and claiming one would be a second falsehood.
  */
-export function ownerAbortWithoutAttemptDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[]): LedgerDraft {
+export function ownerAbortWithoutAttemptDraft(operator: string, attempt: string, anchorDay: string, stamp: Stamp, applied: readonly ActionReport[], confirming: readonly ActionReport[] = []): LedgerDraft {
   return draft({
     stamp,
     attempt,
@@ -289,7 +345,7 @@ export function ownerAbortWithoutAttemptDraft(operator: string, attempt: string,
     step: null,
     kind: "note",
     outcome: null,
-    evidence: { actions: teardownEvidence(applied), ownerAbort: "NO_ATTEMPT_OPEN", operator },
+    evidence: { actions: teardownEvidence(applied), confirming: teardownEvidence(confirming), ownerAbort: "NO_ATTEMPT_OPEN", operator },
     nextOwnerAction: null,
   });
 }
@@ -358,9 +414,9 @@ export function systemDraftFactory(options: {
  * the two would page a deliberate stop as a ledger defect, and hide a real one behind a
  * routine abort.
  */
-export function classifyStoreFailure(stage: string, reason: string): InvocationOutcome {
+export function classifyStoreFailure(stage: string, reason: string, teardown: readonly ActionReport[] = []): InvocationOutcome {
   if (stage === "callback" && reason === "WORK_FAILED") {
-    return { kind: "work-failed", reason: "the invocation failed inside the ledger lease; the ledger itself is intact" };
+    return { kind: "work-failed", reason: "the invocation failed inside the ledger lease; the ledger itself is intact", teardown };
   }
-  return { kind: "ledger-defect", stage, reason };
+  return { kind: "ledger-defect", stage, reason, teardown };
 }

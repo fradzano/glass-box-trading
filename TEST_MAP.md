@@ -25,6 +25,8 @@
 - `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts`
 - `ops/activation/tests/steps.spec.ts`
+- `ops/activation/tests/stop-cross-process.spec.ts`
+- `ops/activation/tests/stop.spec.ts`
 - `ops/activation/tests/wrapper-run-log.spec.ts`
 - `tests/alpaca-mapping.spec.ts`
 - `tests/arm01-certificate.spec.ts`

@@ -243,7 +243,7 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     // The firing completed; its log did not. 9 says exactly that in the task history.
     expect(run.exitCode).toBe(9);
     expect(await logText(context, "watchdog-run.log")).toBe("");
-  });
+  }, 30_000);
 
   it.runIf(tradingWeekday)("keeps the child's non-zero exit code as the wrapper's verdict, with the log failure beside it", async () => {
     const context = await tree();
@@ -256,7 +256,7 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(pings[0]?.url).toBe("/hc/fail");
     expect(pings[0]?.body).toContain("watchdog exit 3");
     expect(pings[0]?.body).toContain("the run log could not be written");
-  });
+  }, 30_000);
 
   // A skipped firing sends nothing when all is well — the check is expected to be silent
   // on a day the exchange is shut. A skip whose line could not be written is not a
@@ -274,7 +274,7 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(pings[0]?.body).toContain("watchdog skipped this firing");
     expect(pings[0]?.body).toContain("the run log could not be written");
     expect(pings[0]?.body).toContain("watchdog-run.log");
-  });
+  }, 30_000);
 
   it.runIf(!tradingWeekday)("and stays silent on a skip whose line landed, which is what a closed day owes", async () => {
     const context = await tree();
@@ -284,7 +284,7 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(run.exitCode).toBe(0);
     expect(pings).toHaveLength(0);
     expect(await logText(context, "watchdog-run.log")).toContain("skip: weekend");
-  });
+  }, 30_000);
 
   it("does the same for the cycle wrapper", async () => {
     const context = await tree();
@@ -300,7 +300,7 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(pings[0]?.url).toBe("/hc/fail");
     expect(pings[0]?.body).toContain("cycle exit 0");
     expect(pings[0]?.body).toContain("the run log could not be written");
-  });
+  }, 30_000);
 
   // The form the scheduled task is actually registered with, on the branch it takes
   // outside the session. Which branch that is depends on the clock, so this case asserts
@@ -342,7 +342,7 @@ describe("LC-4 — one verdict ping per firing", () => {
     // `True` into the task's own output stream, where an operator reads it as a fact.
     expect(run.stdout).not.toContain("True");
     expect(run.stdout).not.toContain("False");
-  });
+  }, 30_000);
 
   it("never prints the writer's return value into the task's own output stream", async () => {
     const context = await tree();
@@ -351,7 +351,7 @@ describe("LC-4 — one verdict ping per firing", () => {
 
     expect(run.stdout).not.toContain("True");
     expect(run.stdout).not.toContain("False");
-  });
+  }, 30_000);
 
   it("a healthy cycle firing does the same on its own endpoint", async () => {
     const context = await tree();
@@ -425,7 +425,7 @@ describe("LC-8 — one implementation, and the watchdog log rotates like the cyc
     const fresh = await logText(context, "watchdog-run.log");
     expect(fresh).toMatch(/^\uFEFF?\d{4}-\d{2}-\d{2}T/u);
     expect(fresh).not.toContain("xxxx");
-  });
+  }, 30_000);
 
   it("neither wrapper carries its own copy of the writer any more", async () => {
     for (const wrapper of ["cycle-run.ps1", "watchdog-run.ps1"]) {

@@ -128,6 +128,14 @@ undone by Tuesday's clock.
 trading day needs one typed command more than it does today, and the refusal that enforces
 it names that command.*
 
+**SC-8a — and `open` works while a stop stands, which is the point of it.** Its refusal of
+a second attempt for one anchor day stands over everything except the owner's own stop.
+Two states need this. A stop against a state root with no attempt writes a note, and the
+fold reads the last entry's attempt id as the current attempt, so that note looks like an
+open attempt; and a stop that could not take the lease disarmed and marked without ending
+anything. Without this clause the stop would leave the owner no way back in — found by
+the cross-process probe of 2026-09-19, not by reading the code.
+
 **SC-9 — A stop is visible without reading the ledger.** `activation status` prints
 whether a stop mark stands, who set it and when.
 
@@ -232,6 +240,13 @@ Rotation loses one generation by design; the journal carries what matters. The a
 step 9 keeps reading `cycle-run.log` and `cycle-run.log.1` only: on the anchor morning an
 unwritable log is a host problem to stop for, not one to route around.
 
+**One log line stands outside LC-2, by necessity.** A line that reports the ping's delivery
+cannot be written before the ping is sent, so if that one line is the only write that
+fails, its failure cannot reach the body it describes. It travels instead in the process
+exit code (9) and in the fallback sink. Everything the firing is *about* — its start, the
+child's output, the child's exit code — is written before the ping and is therefore inside
+the body.
+
 ---
 
 ## How these contracts are measured
@@ -242,7 +257,10 @@ Both parts are executable claims, so neither is believed on reading:
   2026-09-19 before it passes against the repair.
 * The stop contract is driven **across process boundaries** — two real OS processes, the
   real lock, the real files — not only through the in-process harness, because SC-3 and
-  SC-4 are about what two processes do to one world.
+  SC-4 are about what two processes do to one world. **Its limit, named:** with the action
+  ports unbound until unit 13, what the cross-process probe measures is the *decision*
+  every port call passes through, not an action taking effect. The effect itself is owed a
+  controlled probe once the bindings exist.
 * The store failures of SC-7 are injected as the shapes the store really throws, at
   `write-ledger`, `sync-ledger` and `close-ledger`.
 * The log contract is driven against **whole wrapper processes** with a locked log, a

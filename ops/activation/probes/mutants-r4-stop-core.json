@@ -1,0 +1,10 @@
+[
+  { "id": "ST1", "note": "SC-3 revoked: enabling the tasks is no longer an arming action, so a stop does not stop it", "from": "    case \"enable-tasks\":\n    case \"write-certificate-line\":", "to": "    case \"write-certificate-line\":" },
+  { "id": "ST2", "note": "SC-3 revoked: the certificate line may be written over a standing stop", "from": "    case \"write-certificate-line\":\n    case \"install-tasks\":", "to": "    case \"install-tasks\":" },
+  { "id": "ST3", "note": "an unreadable mark reads as permission, which is the exact shape of the defect the mark exists to close", "from": "  if (state.kind === \"unreadable\") {", "to": "  if (false) {" },
+  { "id": "ST4", "note": "nothing is ever refused: the guard answers null for every action", "from": "  if (!armsDeployment(kind)) return null;", "to": "  return null;\n  if (!armsDeployment(kind)) return null;" },
+  { "id": "ST5", "note": "a stop blocks another stop: the disarming actions are the ones refused", "from": "  if (!armsDeployment(kind)) return null;", "to": "  if (armsDeployment(kind)) return null;" },
+  { "id": "ST6", "note": "the refusal stops naming who stopped the deployment, so an operator cannot tell a stop from a bug", "from": "    return `STOPPED_BY_OWNER: ${state.mark.operator} stopped this deployment at ${state.mark.at}", "to": "    return `REFUSED: an action was not applied at ${state.mark.at}" },
+  { "id": "ST7", "note": "CONTROL, expected to survive: a comment word, no behaviour", "from": " * The distinction is the whole of SC-3.", "to": " * The distinction is the heart of SC-3." },
+  { "id": "ST8", "note": "CONTROL, expected to survive: the status line's wording, which nothing decides on", "from": "      return \"stop         none: no owner stop stands over this state root\";", "to": "      return \"stop         none: there is no owner stop over this state root\";" }
+]

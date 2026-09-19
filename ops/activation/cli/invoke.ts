@@ -16,6 +16,9 @@
 //     turn the one command whose job is to disable into the one command that cannot.
 import { applyAction } from "../actions/apply.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
+import { stopMarkLine, stopRefusal } from "../core/stop.ts";
+import type { StopMark, StopMarkState } from "../core/stop.ts";
+import { clearStopMark, readStopMark, writeStopMark } from "../store/stop-mark.ts";
 import { abortTeardown, decide, fullTeardown } from "../core/decide.ts";
 import { foldLedgerSnapshot, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
@@ -36,9 +39,11 @@ import {
   observationPlanFor,
   openingDraft,
   ownerAbortDraft,
+  ownerAbortRepeatDraft,
   ownerAbortWithoutAttemptDraft,
   recordDraft,
   resultDraft,
+  stopVerdictClause,
   systemDraftFactory,
   teardownClauseOrSilence,
   waitNoteDraft,
@@ -87,6 +92,53 @@ export interface InvocationDeps {
   /** Reading the ledger without taking the lease — `status` only. */
   readonly readLedger?: (root: string) => Promise<ActivationLedgerSnapshot>;
   readonly withLedger?: typeof withActivationLedger;
+  /**
+   * The owner's stop mark (`core/stop.ts`, SC-2 to SC-8). It is a port like every other,
+   * so a test can make the read fail — which is a state the contract has an answer for —
+   * without making a file unreadable on the machine it runs on.
+   */
+  readonly readStopMark?: (root: string) => Promise<StopMarkState>;
+  readonly writeStopMark?: (root: string, mark: StopMark) => Promise<void>;
+  readonly clearStopMark?: (root: string) => Promise<boolean>;
+}
+
+/** The four actions the owner's stop owes the world, in the order it applies them. */
+const STOP_TEARDOWN: readonly WorldAction[] = [
+  { kind: "disable-tasks", tasks: BOTH_TASKS },
+  { kind: "remove-certificate-line" },
+  { kind: "delete-disarm" },
+  { kind: "clear-checks" },
+];
+
+/**
+ * What the confirming pass re-applies under the lease (SC-4). `clear-checks` is left out
+ * deliberately: it sends a real success ping per endpoint, it changes nothing about
+ * whether the deployment can trade, and sending three more of them would make the stop's
+ * own evidence noisier without making it truer. The three that remain are the ones an
+ * invocation racing the stop could have undone.
+ */
+const STOP_CONFIRMATION: readonly WorldAction[] = [
+  { kind: "disable-tasks", tasks: BOTH_TASKS },
+  { kind: "remove-certificate-line" },
+  { kind: "delete-disarm" },
+];
+
+/** Reasons that mean "nothing was attempted", as opposed to "something was attempted and failed". */
+const NOT_ATTEMPTED: readonly string[] = ["NO_HOST_BINDINGS", "DRY_RUN"];
+
+/**
+ * How much of a stop stands, from the reports and the mark alone (SC-4, SC-6).
+ *
+ * `no-bindings` is not a euphemism for success: it is the state of this deployment until
+ * unit 13 binds the ports, and the sentence the owner reads says so. Keeping it apart
+ * from `confirmed` is what stops "the stop ran" from meaning two different things.
+ */
+type StopVerdict = "confirmed" | "no-bindings" | "unconfirmed";
+
+function stopVerdict(reports: readonly ActionReport[], markFailure: string | null): StopVerdict {
+  if (markFailure !== null) return "unconfirmed";
+  if (reports.some(report => !report.applied && !NOT_ATTEMPTED.includes(report.reason ?? ""))) return "unconfirmed";
+  return reports.some(report => report.applied) ? "confirmed" : "no-bindings";
 }
 
 export interface InvocationResult {
@@ -101,9 +153,12 @@ function refuse(reason: string): InvocationResult {
   return { outcome: { kind: "refused", reason }, applied: [], fold: null, schedule: null };
 }
 
-function storeFailure(error: unknown): InvocationOutcome {
-  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason);
-  return { kind: "work-failed", reason: "the invocation failed outside the store's own stages" };
+function storeFailure(error: unknown, carried: readonly ActionReport[] = []): InvocationOutcome {
+  // SC-7: whatever the failure is classified as, what this invocation already did to the
+  // world travels with it. The classification decides which number the task history gets;
+  // it never decides whether the owner is told that both tasks were disabled.
+  if (error instanceof LedgerStoreError) return classifyStoreFailure(error.stage, error.reason, carried);
+  return { kind: "work-failed", reason: "the invocation failed outside the store's own stages", teardown: carried };
 }
 
 /**
@@ -116,16 +171,35 @@ function storeFailure(error: unknown): InvocationOutcome {
  * Without bindings, or in a dry run, nothing is applied and every action is reported as
  * refused with the reason — never as applied.
  */
-export async function applyAll(
-  actions: readonly WorldAction[],
-  ports: ActionPorts | null,
-  context: ActionContext,
-  dryRun: boolean,
-  print: (line: string) => void,
-  stopAtFirstFailure: boolean,
-): Promise<readonly ActionReport[]> {
+export interface ApplyOptions {
+  readonly ports: ActionPorts | null;
+  readonly context: ActionContext;
+  readonly dryRun: boolean;
+  readonly print: (line: string) => void;
+  readonly stopAtFirstFailure: boolean;
+  /**
+   * SC-3: the owner's stop, read **fresh immediately before each action**. Not once per
+   * invocation: the whole case this exists for is an invocation that decided before the
+   * stop and applies after it, so a value read at the top of the invocation would be the
+   * same stale answer that produced R2-03.
+   */
+  readonly readStop: () => Promise<StopMarkState>;
+}
+
+export async function applyAll(actions: readonly WorldAction[], options: ApplyOptions): Promise<readonly ActionReport[]> {
+  const { ports, context, dryRun, print, stopAtFirstFailure } = options;
   const reports: ActionReport[] = [];
   for (const action of actions) {
+    // Before anything else, including the dry run: a rehearsal of an action that the
+    // world would refuse has to show the refusal, or the rehearsal is a different
+    // invocation from the one it rehearses.
+    const refusal = stopRefusal(action.kind, await options.readStop());
+    if (refusal !== null) {
+      print(`refusing ${action.kind}: ${refusal}`);
+      reports.push({ kind: action.kind, applied: false, detail: null, reason: refusal, completion: null });
+      if (stopAtFirstFailure) break;
+      continue;
+    }
     if (dryRun || ports === null) {
       const reason = dryRun ? "DRY_RUN" : "NO_HOST_BINDINGS";
       print(`would ${action.kind}${action.kind === "enable-tasks" || action.kind === "disable-tasks" ? ` ${action.tasks.join(", ")}` : ""}`);
@@ -157,8 +231,8 @@ export async function applyAll(
  * shell's job is to apply what it is handed, and `stopAtFirstFailure: false` because a
  * disable that failed is no reason to leave the certificate line in place.
  */
-export async function applyTeardown(teardown: readonly WorldAction[], ports: ActionPorts | null, context: ActionContext, dryRun: boolean, print: (line: string) => void): Promise<readonly ActionReport[]> {
-  return applyAll(teardown, ports, context, dryRun, print, false);
+export async function applyTeardown(teardown: readonly WorldAction[], options: Omit<ApplyOptions, "stopAtFirstFailure">): Promise<readonly ActionReport[]> {
+  return applyAll(teardown, { ...options, stopAtFirstFailure: false });
 }
 
 function contextFor(deps: InvocationDeps, schedule: Schedule, observations: Observations | null): ActionContext | null {
@@ -197,6 +271,23 @@ function ownerContext(deps: InvocationDeps): ActionContext {
   return { envFile: deps.envFile, repoRoot: deps.repoRoot, activationRoot: deps.activationRoot, anchorDay: "", nodePath: "", taskUserId: "", taskUserSid: "", platform: process.platform };
 }
 
+/**
+ * One place that says how an action application is set up, so that no call site can
+ * forget the stop guard. The read is a closure over the state root: `applyAll` calls it
+ * again before every single action.
+ */
+function applyOptionsFor(invocation: ActivationInvocation, deps: InvocationDeps, context: ActionContext, stopAtFirstFailure: boolean): ApplyOptions {
+  const read = deps.readStopMark ?? readStopMark;
+  return {
+    ports: deps.actions,
+    context,
+    dryRun: invocation.dryRun,
+    print: deps.print,
+    stopAtFirstFailure,
+    readStop: () => read(invocation.stateRoot),
+  };
+}
+
 async function append(session: ActivationLedgerSession, draft: LedgerDraft): Promise<void> {
   await session.append(draft);
 }
@@ -205,6 +296,9 @@ async function append(session: ActivationLedgerSession, draft: LedgerDraft): Pro
 async function status(invocation: ActivationInvocation, deps: InvocationDeps): Promise<InvocationResult> {
   const read = deps.readLedger;
   if (read === undefined) return refuse("no ledger reader is bound");
+  // SC-9: a stop is visible without reading the ledger, and it is printed before the
+  // ledger page, because it changes what every line after it means.
+  deps.print(stopMarkLine(await (deps.readStopMark ?? readStopMark)(invocation.stateRoot)));
   const snapshot = await read(invocation.stateRoot);
   const fold = foldLedgerSnapshot(snapshot);
   const anchorDay = fold.currentAttempt?.anchorDay ?? null;
@@ -265,7 +359,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
         // true, so `abortTeardown` would owe **nothing** — and a new anchor day would
         // start on top of the old day's enabled tasks and certificate line. A new day
         // begins clean or it does not begin.
-        applied = await applyTeardown(fullTeardown(), deps.actions, teardownContext(deps, schedule.anchorDay), invocation.dryRun, deps.print);
+        applied = await applyTeardown(fullTeardown(), applyOptionsFor(invocation, deps, teardownContext(deps, schedule.anchorDay), false));
         const attempt = nextAttemptId(snapshot.entries, anchorDay);
         if (!invocation.dryRun) {
           await append(session, openingDraft(found, attempt, anchorDay, stamp, { teardown: applied.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }));
@@ -292,7 +386,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
           return { kind: "recorded", step: decision.step, outcome: decision.outcome };
         }
         case "abort": {
-          applied = await applyTeardown(decision.teardown, deps.actions, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule.anchorDay), invocation.dryRun, deps.print);
+          applied = await applyTeardown(decision.teardown, applyOptionsFor(invocation, deps, contextFor(deps, schedule, observations) ?? teardownContext(deps, schedule.anchorDay), false));
           if (!invocation.dryRun) await append(session, abortDraft(decision, attempt, anchorDay, stamp));
           return { kind: "aborted", step: decision.step, reason: decision.reason, teardown: applied, nextOwnerAction: decision.nextOwnerAction };
         }
@@ -302,7 +396,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
             return { kind: "work-failed", reason: "the execution boundary could not be read, so no action may be attributed to this host" };
           }
           if (!invocation.dryRun) await append(session, intentDraft(decision, attempt, anchorDay, stamp));
-          applied = await applyAll(decision.actions, deps.actions, context, invocation.dryRun, deps.print, true);
+          applied = await applyAll(decision.actions, applyOptionsFor(invocation, deps, context, true));
           const closing = monotonicStamp(deps.stampAt(deps.now()), { lastSeq: tail.lastSeq + 1, lastAtUtcMs: stamp.atUtcMs }, deps.stampAt);
           const drafted = resultDraft(decision, applied, attempt, anchorDay, closing);
           if (drafted !== null && !invocation.dryRun) {
@@ -322,7 +416,7 @@ async function run(invocation: ActivationInvocation, deps: InvocationDeps, sched
             try {
               await append(session, drafted);
             } catch (error) {
-              const teardown = await applyTeardown(abortTeardown(fold), deps.actions, context, invocation.dryRun, deps.print);
+              const teardown = await applyTeardown(abortTeardown(fold), applyOptionsFor(invocation, deps, context, false));
               applied = [...applied, ...teardown];
               carried.push(...teardown);
               throw error;
@@ -354,8 +448,7 @@ async function runCarryingTeardown(invocation: ActivationInvocation, deps: Invoc
   try {
     return await run(invocation, deps, schedule, carried);
   } catch (error) {
-    const failure = storeFailure(error);
-    return { outcome: failure.kind === "work-failed" ? { ...failure, teardown: carried } : failure, applied: carried, fold: null, schedule };
+    return { outcome: storeFailure(error, carried), applied: carried, fold: null, schedule };
   }
 }
 
@@ -367,23 +460,40 @@ async function runCarryingTeardown(invocation: ActivationInvocation, deps: Invoc
  */
 async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Promise<InvocationResult> {
   const withLedger = deps.withLedger ?? withActivationLedger;
+  const write = deps.writeStopMark ?? writeStopMark;
   const context = ownerContext(deps);
+  const operator = invocation.operator ?? "";
+  const opening = deps.stampAt(deps.now());
+
+  // SC-2: the mark before the first action, because a stop that has not been written down
+  // cannot be seen by the invocation it is racing. A failure here does not stop the
+  // teardown — the owner typed a stop and the world still owes him one — but it is
+  // carried into the verdict, and a stop without its mark is never reported as confirmed.
+  let markFailure: string | null = null;
+  if (!invocation.dryRun) {
+    try {
+      await write(invocation.stateRoot, { operator, at: opening.at, atUtcMs: opening.atUtcMs, reason: "OWNER_ABORT" });
+    } catch (error) {
+      markFailure = error instanceof Error ? error.message : "the stop mark could not be written";
+      deps.print(`WARNING: the stop mark could not be written (${markFailure}); a concurrent invocation will not see this stop`);
+    }
+  }
+
   // Every part of the teardown is attempted, whatever the part before it did: the owner
   // typed a stop, and a failed disable is a reason to keep going, not to stop halfway.
-  const applied = await applyAll(
-    [{ kind: "disable-tasks", tasks: BOTH_TASKS }, { kind: "remove-certificate-line" }, { kind: "delete-disarm" }, { kind: "clear-checks" }],
-    deps.actions,
-    context,
-    invocation.dryRun,
-    deps.print,
-    false,
-  );
+  const immediate = await applyTeardown(STOP_TEARDOWN, applyOptionsFor(invocation, deps, context, false));
 
   let fold: LedgerFold | null = null;
+  let confirming: readonly ActionReport[] = [];
   // Only used when the ledger has no entry at all to take an attempt from — a ledger on
   // which there is nothing to abort in the first place.
-  const today = deps.stampAt(deps.now()).at.slice(0, 10);
-  const result = await withLedger<InvocationOutcome>(
+  const today = opening.at.slice(0, 10);
+  // SC-7 for the stop itself: a store failure here leaves a disarmed world and no record
+  // of it. Without this catch the throw reaches the dispatcher, which knows nothing about
+  // the four actions that already ran and reports `applied: []`.
+  let result: Awaited<ReturnType<typeof withActivationLedger<InvocationOutcome>>>;
+  try {
+    result = await withLedger<InvocationOutcome>(
     {
       root: invocation.stateRoot,
       owner: deps.owner,
@@ -391,33 +501,101 @@ async function abort(invocation: ActivationInvocation, deps: InvocationDeps): Pr
       contentionTimeoutMs: 30_000,
     },
     async session => {
+      // SC-4: holding the lease is the instant at which no other invocation is inside an
+      // `act`. Whatever a racing invocation applied between the immediate pass and this
+      // moment is undone here, before anything is written down — so the record describes
+      // the world the stop leaves behind rather than the world it found halfway through.
+      confirming = await applyTeardown(STOP_CONFIRMATION, applyOptionsFor(invocation, deps, context, false));
+      const all = [...immediate, ...confirming];
+      const verdict = stopVerdict(all, markFailure);
+
       const snapshot = await session.read();
       fold = foldLedgerSnapshot(snapshot);
       const attempt = fold.currentAttempt;
       const tail = { lastSeq: snapshot.entries.at(-1)?.seq ?? 0, lastAtUtcMs: snapshot.entries.at(-1)?.atUtcMs ?? null };
       const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
+      const clause = `${stopVerdictClause(verdict, markFailure)}; ${teardownClauseOrSilence(all)}`;
+
       if (attempt === null) {
         // The teardown has already run — it runs before the lease, deliberately — and this
         // branch used to append nothing at all, so a deliberate stop against a fresh or
         // rotated state root left no trace in the append-only record: both tasks disabled,
         // the certificate line gone, the disarm deleted, and a console line in a context
         // that may never show one. A note, not a terminal entry: there is no attempt to end.
-        const today = stamp.at.slice(0, 10);
-        if (!invocation.dryRun) await append(session, ownerAbortWithoutAttemptDraft(invocation.operator ?? "", nextAttemptId(snapshot.entries, today), today, stamp, applied));
-        return { kind: "refused", reason: `no attempt is open, so there is nothing to end; ${teardownClauseOrSilence(applied)}` };
+        const day = stamp.at.slice(0, 10);
+        if (!invocation.dryRun) await append(session, ownerAbortWithoutAttemptDraft(operator, nextAttemptId(snapshot.entries, day), day, stamp, immediate, confirming));
+        return {
+          kind: "aborted",
+          step: null,
+          reason: "OWNER_ABORT_NO_ATTEMPT",
+          teardown: all,
+          nextOwnerAction: `No attempt was open in this state root, so there was nothing to end — but the stop was applied to the world: ${clause}. Check that this is the state root you meant.`,
+        };
       }
-      if (fold.attemptEnded !== null) {
-        return { kind: "ended", seq: fold.attemptEnded.seq, reason: `attempt ${attempt.id} was already ended at seq ${String(fold.attemptEnded.seq)}; ${teardownClauseOrSilence(applied)}` };
-      }
-      if (!invocation.dryRun) await append(session, ownerAbortDraft(invocation.operator ?? "", attempt.id, attempt.anchorDay, stamp, applied));
-      return { kind: "aborted", step: null, reason: "OWNER_ABORT", teardown: applied, nextOwnerAction: "The attempt is ended. Open a new one when the run is to continue." };
-    },
-  );
 
-  if (result.kind === "contended") {
-    return { outcome: { kind: "work-failed", reason: "another invocation holds the lease, so the terminal entry was not written. Retry the abort.", teardown: applied }, applied, fold, schedule: null };
+      if (fold.attemptEnded !== null) {
+        // SC-5. This branch used to return `ended` with exit 0, no page and no entry at
+        // all — after applying four real actions and pinging three checks — and the line
+        // the owner read finished with "Nothing was done" (R3-08). The attempt is not
+        // ended a second time; what this invocation did to the world is.
+        if (!invocation.dryRun) await append(session, ownerAbortRepeatDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming, fold.attemptEnded.seq));
+        return {
+          kind: "aborted",
+          step: null,
+          reason: `OWNER_ABORT_REPEAT: attempt ${attempt.id} was already ended at seq ${String(fold.attemptEnded.seq)}`,
+          teardown: all,
+          nextOwnerAction: `The attempt was already ended; this stop was applied again and changed nothing about that: ${clause}. Open a new attempt when the run is to continue.`,
+        };
+      }
+
+      if (!invocation.dryRun) await append(session, ownerAbortDraft(operator, attempt.id, attempt.anchorDay, stamp, immediate, confirming));
+      return {
+        kind: "aborted",
+        step: null,
+        reason: "OWNER_ABORT",
+        teardown: all,
+        nextOwnerAction: `The attempt is ended: ${clause}. Open a new one when the run is to continue.`,
+      };
+    },
+    );
+  } catch (error) {
+    const all = [...immediate, ...confirming];
+    return { outcome: storeFailure(error, all), applied: all, fold, schedule: null };
   }
-  return { outcome: result.value, applied, fold, schedule: null };
+
+  const all = [...immediate, ...confirming];
+  if (result.kind === "contended") {
+    // SC-4: the stop disarmed, but nothing confirmed it and nothing recorded it. That is
+    // not a confirmed stop and it does not get a confirmed stop's exit code.
+    return {
+      outcome: {
+        kind: "work-failed",
+        reason: "another invocation holds the lease, so this stop was neither confirmed under the lease nor recorded. Retry the abort.",
+        teardown: all,
+      },
+      applied: all,
+      fold,
+      schedule: null,
+    };
+  }
+
+  // SC-4 again, at the other end: the record landed, but something the stop attempted
+  // failed, or its mark was never written. The outcome says so instead of reporting the
+  // abort that the branches above built.
+  const verdict = stopVerdict(all, markFailure);
+  if (verdict === "unconfirmed") {
+    return {
+      outcome: {
+        kind: "work-failed",
+        reason: `the stop is NOT confirmed: ${stopVerdictClause(verdict, markFailure)}. ${teardownClauseOrSilence(all)}`,
+        teardown: all,
+      },
+      applied: all,
+      fold,
+      schedule: null,
+    };
+  }
+  return { outcome: result.value, applied: all, fold, schedule: null };
 }
 
 /**
@@ -463,7 +641,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, an
           }
           return { kind: "recorded", step: "10-gate", outcome: "already_in_target_state" };
         }
-        const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
+        const reports = await applyTeardown(fullTeardown(), applyOptionsFor(invocation, deps, context, false));
         if (!invocation.dryRun) {
           await append(session, { at: stamp.at, atUtcMs: stamp.atUtcMs, attempt: id, anchorDay: day, step: null, kind: "note", outcome: null, evidence: { disarm: "NO_GREEN_GATE", actions: reports.map(report => ({ kind: report.kind, applied: report.applied, reason: report.reason })) }, nextOwnerAction: null });
         }
@@ -473,7 +651,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, an
     if (result.kind === "contended") {
       // A live invocation may be mid-gate. The one-shot still owes the world its
       // disable: the gate either wrote its result before 15:05 or it did not.
-      const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
+      const reports = await applyTeardown(fullTeardown(), applyOptionsFor(invocation, deps, context, false));
       return { outcome: { kind: "aborted", step: null, reason: "DISARMED_UNDER_CONTENTION", teardown: reports, nextOwnerAction: `The disarm ran while another invocation held the lease: ${teardownClauseOrSilence(reports)}. Read the ledger.` }, applied: reports, fold, schedule: null };
     }
     // What the disarm applied travels in `applied` like every other command's does; it
@@ -483,7 +661,7 @@ async function disarm(invocation: ActivationInvocation, deps: InvocationDeps, an
   } catch (error) {
     // Fail safe, not closed: a ledger that cannot be read is exactly the case the
     // disarm exists for (spec §6; residual G1, an unparseable `ledger.lock`).
-    const reports = await applyTeardown(fullTeardown(), deps.actions, context, invocation.dryRun, deps.print);
+    const reports = await applyTeardown(fullTeardown(), applyOptionsFor(invocation, deps, context, false));
     const failure = storeFailure(error);
     const detail = failure.kind === "ledger-defect" ? `${failure.stage}:${failure.reason}` : failure.kind;
     return {
@@ -521,16 +699,35 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       if (snapshot.state === "corrupt") {
         return { kind: "ledger-defect", stage: "read-ledger", reason: "LEDGER_CORRUPT" };
       }
-      if (fold.currentAttempt !== null && fold.attemptEnded === null) {
+      // The refusal exists so that one anchor day never has two open attempts, and it
+      // stands — except over the owner's own stop, which is the one fact that says this
+      // attempt is over whatever the ledger's last entry looks like (SC-8).
+      //
+      // Two states reach this line with a mark standing and nothing ended. A stop against
+      // a state root with no attempt writes a note, and the fold reads the last entry's
+      // attempt id as the current one, so an ordinary note looks like an open attempt —
+      // found by the cross-process probe of 2026-09-19, and without this clause the stop
+      // would have left the owner no way back in at all. And a stop that could not take
+      // the lease disarmed and marked without ending anything. In both, `open` is
+      // precisely the command the contract points him at.
+      const standing = await (deps.readStopMark ?? readStopMark)(invocation.stateRoot);
+      if (fold.currentAttempt !== null && fold.attemptEnded === null && standing.kind !== "present") {
         return { kind: "refused", reason: `attempt ${fold.currentAttempt.id} is still open for anchor day ${fold.currentAttempt.anchorDay}; end it before opening another` };
       }
       const tail = { lastSeq: snapshot.entries.at(-1)?.seq ?? 0, lastAtUtcMs: snapshot.entries.at(-1)?.atUtcMs ?? null };
       const stamp = monotonicStamp(deps.stampAt(deps.now()), tail, deps.stampAt);
       const attempt = nextAttemptId(snapshot.entries, anchorDay);
       const previous = fold.currentAttempt?.id ?? null;
+      // SC-8: this is the one command that lifts the owner's own stop, and it does so
+      // under the lease, in the same critical section that records the continuation. A
+      // tick never clears the mark — not even the one that opens a new anchor day — so a
+      // stop typed on Monday night is not undone by Tuesday's clock.
+      let stopLifted = false;
       if (!invocation.dryRun) {
-        await append(session, openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, { operator: invocation.operator ?? "", previousAttempt: previous }));
+        stopLifted = await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot);
+        await append(session, openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, { operator: invocation.operator ?? "", previousAttempt: previous, stopLifted }));
       }
+      if (stopLifted) deps.print("the owner's stop mark was lifted; arming actions are permitted again");
       return { kind: "opened", attempt, found: "OWNER_OPENED" };
     },
   );

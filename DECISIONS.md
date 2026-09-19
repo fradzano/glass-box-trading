@@ -1,5 +1,43 @@
 # DECISIONS
 
+- **2026-09-19 — the abort mechanism gets its coherent third change, and residual W is
+  refused as an operating state.** Two owner decisions, taken together because they have
+  one shape: a mechanism that has been patched twice is not patched a third time, it is
+  given a contract first. **What the owner ruled.** (1) The further, *connected* rebuild of
+  `abort-teardown-contract` is authorised — R3-08, R3-09, the abort-versus-run race R2-03
+  and the result losses that share their shape. No risk acceptance is granted for any of
+  them. (2) Residual W is **not** accepted as an operating state for the long run: the
+  wrapper-logging repair dated 2026-10-06 in the entry below is pulled forward to before
+  the certificate run. **What was built against it.**
+  [`docs/P12-STOP-AND-LOG-CONTRACTS.md`](docs/P12-STOP-AND-LOG-CONTRACTS.md), written
+  before the code, derives both contracts from scenarios rather than from the code: nine
+  clauses for the stop, nine for the wrapper log, each with the finding it closes and the
+  way it is measured. The stop is now a **fact on disk** rather than an ordering — a
+  `stop.json` written before the first teardown action, read fresh before every single
+  action in every process, refusing everything that arms the deployment and permitting
+  everything that disarms it, lifted only by `activation open`. The stop then re-applies
+  its disarming actions **under the lease**, which is the instant at which no other
+  invocation is inside an `act`, and only a stop whose second pass applied everything it
+  attempted is reported as confirmed. A stop against an already-ended attempt records what
+  it did instead of exiting 0 with "Nothing was done" (R3-08); a store failure carries the
+  teardown that ran on the way out whatever its stage (R3-09), tested against the shapes
+  the store really throws at `write-ledger`, `sync-ledger` and `close-ledger`. The wrappers
+  take their logging from one shared module, `tools/run-log.psm1`: a failed write is
+  retried, remembered, mirrored to a fallback sink and reported in the firing's one
+  heartbeat beside the child's own exit code — and it never ends the firing, so an
+  unwritable diagnostic file can no longer disable the dead man. **What it cost, said
+  plainly.** An unreadable `stop.json` refuses every arming action: a new single point of
+  failure, chosen deliberately, because "the answer could not be obtained" must not read as
+  "no stop stands". A retry on the next trading day after a typed stop needs one more typed
+  command than before, and the refusal names it. **How it is measured.** Mutation probes:
+  6 of 8 on the stop core, 9 of 10 on its shell, 7 of 9 on the log module, 5 of 6 on the
+  cycle wrapper, every control surviving. Whole-process probes for both wrappers against a
+  real locked log, a real read-only log and a real ping recorder; a cross-process probe in
+  which one process holds the activation lease while another types the stop. **The limit,
+  named:** with the action ports unbound until unit 13, the cross-process probe measures
+  the decision every port call passes through, not an action taking effect. **Decider:**
+  Felix Radzanowski, 2026-09-19.
+
 - **2026-09-18 — R2-23: the certificate guard's weak branch stays as it is, and the
   condition that bounds it is made machine-checked instead of assumed.** Owner decision,
   after a gate refused to countersign a plain deferral and a second gate refused the first

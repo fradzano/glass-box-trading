@@ -55,6 +55,7 @@
 - `ops/activation/core/ledger.ts` — The ledger codec (spec §4). The ledger is the activation's only memory, so
 - `ops/activation/core/preconditions.ts` — Preconditions the activation asserts before it dispatches a certificate
 - `ops/activation/core/steps.ts` — The step table (spec §5) as data: when each step may run, in which order, and
+- `ops/activation/core/stop.ts` — The owner's stop, as a decision rather than as an ordering (unit 10, revision of
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
 - `ops/activation/deployment.example.json`
 - `ops/activation/probes/mutants-action-env.json`
@@ -90,6 +91,8 @@
 - `ops/activation/probes/mutants-probe.json`
 - `ops/activation/probes/mutants-r4-cycle-wrapper.json`
 - `ops/activation/probes/mutants-r4-run-log-module.json`
+- `ops/activation/probes/mutants-r4-stop-core.json`
+- `ops/activation/probes/mutants-r4-stop-shell.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-session-window.json`
@@ -132,6 +135,7 @@
 - `ops/activation/readers/parse-host.ts` — Pure parsers for the host readers that complete unit 7 (build log, "Unit 7 — the I/O
 - `ops/activation/readers/parse.ts` — Pure parsers for the activation's readers (build log, unit 7). Each takes the text a
 - `ops/activation/store/ledger-store.ts` — Unit 9: the durable shell around the closed ledger codec.
+- `ops/activation/store/stop-mark.ts` — The durable half of the owner's stop (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-2).
 - `ops/activation/tests/actions.spec.ts` — Unit 8: every effect is exercised only through fakes. These tests never spawn a
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
 - `ops/activation/tests/cli-actions.spec.ts` — The two action contracts of unit 10, which are not the same and must not converge:
@@ -158,6 +162,8 @@
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
+- `ops/activation/tests/stop-cross-process.spec.ts` — The stop contract across process boundaries (`docs/P12-STOP-AND-LOG-CONTRACTS.md`,
+- `ops/activation/tests/stop.spec.ts` — The stop contract's pure half (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-3).
 - `ops/activation/tests/wrapper-run-log.spec.ts` — The wrapper log contract (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, part II), measured
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the

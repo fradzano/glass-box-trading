@@ -9,6 +9,8 @@
 // failure branch — so this file fakes the ports rather than the store.
 import { describe, expect, it } from "vitest";
 import { applyAll, applyTeardown } from "../cli/invoke.ts";
+import type { ApplyOptions } from "../cli/invoke.ts";
+import type { StopMarkState } from "../core/stop.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
 import type { WorldAction } from "../core/types.ts";
 
@@ -53,9 +55,23 @@ const DISABLE: WorldAction = { kind: "disable-tasks", tasks: ["cycle", "watchdog
 const CLEAR: WorldAction = { kind: "clear-checks" };
 const DELETE: WorldAction = { kind: "delete-disarm" };
 
+/** No owner stop stands over these cases; the ones that need one say so themselves. */
+const NO_STOP = (): Promise<StopMarkState> => Promise.resolve({ kind: "absent" });
+
+function options(input: { readonly ports?: ActionPorts | null; readonly dryRun?: boolean; readonly print?: (line: string) => void; readonly stopAtFirstFailure?: boolean; readonly readStop?: () => Promise<StopMarkState> }): ApplyOptions {
+  return {
+    ports: input.ports === undefined ? null : input.ports,
+    context: CONTEXT,
+    dryRun: input.dryRun ?? false,
+    print: input.print ?? ((): void => undefined),
+    stopAtFirstFailure: input.stopAtFirstFailure ?? false,
+    readStop: input.readStop ?? NO_STOP,
+  };
+}
+
 describe("applying what was decided", () => {
   it("stops at the first failure when the caller is closing a step", async () => {
-    const reports = await applyAll([DISABLE, DELETE, CLEAR], ports({ disableFails: true }), CONTEXT, false, () => undefined, true);
+    const reports = await applyAll([DISABLE, DELETE, CLEAR], options({ ports: ports({ disableFails: true }), stopAtFirstFailure: true }));
 
     expect(reports).toHaveLength(1);
     expect(reports[0]?.applied).toBe(false);
@@ -68,7 +84,7 @@ describe("applying what was decided", () => {
   // That is the same shape as the defect this fix exists for: the contract was right and
   // nothing held the caller to it.
   it("the teardown path itself asks for every part, not only up to the first failure", async () => {
-    const reports = await applyTeardown([DISABLE, DELETE, CLEAR], ports({ disableFails: true }), CONTEXT, false, () => undefined);
+    const reports = await applyTeardown([DISABLE, DELETE, CLEAR], options({ ports: ports({ disableFails: true }) }));
 
     expect(reports.map(report => ({ kind: report.kind, applied: report.applied }))).toEqual([
       { kind: "disable-tasks", applied: false },
@@ -78,7 +94,7 @@ describe("applying what was decided", () => {
   });
 
   it("does every part of a teardown, although the first one failed", async () => {
-    const reports = await applyAll([DISABLE, DELETE, CLEAR], ports({ disableFails: true }), CONTEXT, false, () => undefined, false);
+    const reports = await applyAll([DISABLE, DELETE, CLEAR], options({ ports: ports({ disableFails: true }), stopAtFirstFailure: false }));
 
     expect(reports.map(report => ({ kind: report.kind, applied: report.applied }))).toEqual([
       { kind: "disable-tasks", applied: false },
@@ -88,7 +104,7 @@ describe("applying what was decided", () => {
   });
 
   it("applies everything in order when nothing fails", async () => {
-    const reports = await applyAll([DISABLE, DELETE, CLEAR], ports(), CONTEXT, false, () => undefined, true);
+    const reports = await applyAll([DISABLE, DELETE, CLEAR], options({ ports: ports(), stopAtFirstFailure: true }));
 
     expect(reports.every(report => report.applied)).toBe(true);
     expect(reports.map(report => report.kind)).toEqual(["disable-tasks", "delete-disarm", "clear-checks"]);
@@ -97,7 +113,7 @@ describe("applying what was decided", () => {
   it("touches nothing in a dry run, whatever the ports would have done", async () => {
     const printed: string[] = [];
     const bound = ports();
-    const reports = await applyAll([DISABLE, DELETE, CLEAR], bound, CONTEXT, true, line => printed.push(line), true);
+    const reports = await applyAll([DISABLE, DELETE, CLEAR], options({ ports: bound, dryRun: true, print: (line: string) => printed.push(line), stopAtFirstFailure: true }));
 
     expect(reports.every(report => !report.applied && report.reason === "DRY_RUN")).toBe(true);
     expect(printed).toEqual(["would disable-tasks cycle, watchdog", "would delete-disarm", "would clear-checks"]);
@@ -105,7 +121,7 @@ describe("applying what was decided", () => {
   });
 
   it("refuses every action with one reason when no host bindings exist", async () => {
-    const reports = await applyAll([DISABLE, DELETE], null, CONTEXT, false, () => undefined, true);
+    const reports = await applyAll([DISABLE, DELETE], options({ ports: null, stopAtFirstFailure: true }));
 
     expect(reports.map(report => report.reason)).toEqual(["NO_HOST_BINDINGS", "NO_HOST_BINDINGS"]);
     expect(reports.every(report => !report.applied)).toBe(true);
