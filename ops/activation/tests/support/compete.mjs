@@ -63,6 +63,31 @@ if (role === "hold-and-arm") {
   process.exit(0);
 }
 
+if (role === "hold-and-hang") {
+  // A process that dies at a critical boundary: it holds the activation lease, has already
+  // applied one real effect, and then stops existing. Nothing about that is graceful --
+  // the test kills it -- which is the point: the lock file, the world and the ledger are
+  // left exactly as a power cut would leave them.
+  await withActivationLedger({
+    root: stateRoot,
+    owner: currentLedgerLockOwner(),
+    makeSystemDraft: () => { throw new Error("this competitor writes no system draft"); },
+  }, async () => {
+    await applyAll([{ kind: "disable-tasks", tasks: ["cycle"] }], {
+      ports,
+      context,
+      dryRun: false,
+      print: () => undefined,
+      stopAtFirstFailure: true,
+      readStop: () => readStopMark(stateRoot),
+    });
+    writeFileSync(fourth, "ready", "utf8");
+    await new Promise(() => { /* until killed */ });
+    return 1;
+  });
+  process.exit(0);
+}
+
 if (role === "stop") {
   const result = await invoke(
     { command: "abort", stateRoot, anchorDay: null, operator: fourth, confirm: true, dryRun: false },

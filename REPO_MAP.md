@@ -159,6 +159,7 @@
 - `ops/activation/tests/parse-host.spec.ts` — Unit 7, the parsers behind the host readers. Where this host could produce the input, the
 - `ops/activation/tests/parse.spec.ts` — Unit 7: the pure parsers behind the activation's readers. Wherever this host could
 - `ops/activation/tests/preconditions.spec.ts` — P12 unit 12, round 2: the precondition the activation asserts before it
+- `ops/activation/tests/process-death.spec.ts` — What survives a process that stops existing.
 - `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
