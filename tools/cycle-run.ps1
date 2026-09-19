@@ -101,9 +101,11 @@ function Get-NowUtc {
 $runLogModuleFailure = $null
 try {
     Import-Module (Join-Path $PSScriptRoot 'run-log.psm1') -Force -ErrorAction Stop
+    Set-RunLogIdentity -Name 'cycle-run.log'
 } catch {
     $script:runLogModuleFailureText = ($_.Exception.Message -replace "\s+", " ").Trim()
     $runLogModuleFailure = $script:runLogModuleFailureText
+    function Set-RunLogIdentity { param([string]$Name) }
     function Initialize-RunLog { param([string]$Path, [int]$MaxBytes = 0, [int]$RetryCount = 1, [int]$RetryDelayMilliseconds = 0) }
     function Write-RunLog { param([string]$Message) return $false }
     function Get-RunLogStatus { return @{ Initialized = $false; Failed = $true; Degraded = $true; FirstFailure = "the shared run-log module could not be loaded: $script:runLogModuleFailureText"; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null } }

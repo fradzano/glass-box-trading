@@ -172,6 +172,12 @@ async function runWrapper(
         STATE_DIR: "",
         HEALTHCHECK_WATCHDOG_URL: "",
         HEALTHCHECK_LIVENESS_URL: "",
+        // Each case gets its own temporary directory, so the pre-open fallback sink --
+        // which is a fixed name by design -- cannot be raced over by concurrent runs of
+        // this suite. Found by running four suites at once: the case below deleted the
+        // shared file another run was still reading.
+        TEMP: context.root,
+        TMP: context.root,
         ...options.env,
       },
       windowsHide: true,
@@ -672,8 +678,10 @@ describe("LC-2, above the point where the log has a name (D-2)", () => {
     expect(body).toContain(".fallback");
     const sink = /written to '([^']+)'/u.exec(body)?.[1];
     expect(sink).toBeDefined();
+    // And it is attributable: the sink carries this wrapper's own log name, so a cycle
+    // refusal and a watchdog refusal cannot interleave in one unmarked file.
+    expect(sink).toContain("watchdog-run.log");
     expect(await readFile(sink as string, "utf8")).toContain("watchdog-cli.js");
-    await rm(sink as string, { force: true });
   }, 30_000);
 });
 

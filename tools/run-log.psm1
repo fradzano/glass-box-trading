@@ -49,7 +49,21 @@ $script:RunLog = $null
   reads at 03:00, and the same generator as Part I's SC-6: a sentence asserted from what
   was owed rather than derived from what happened.
 #>
-$script:PreOpen = @{ LostLines = 0; FirstLostLine = $null; FallbackUsed = $null }
+$script:PreOpen = @{ LostLines = 0; FirstLostLine = $null; FallbackUsed = $null; Name = 'wrapper-run.log' }
+
+function Set-RunLogIdentity {
+    <#
+    .SYNOPSIS
+        Names the wrapper before its log has a path, so that a refusal above the log open
+        lands in a sink an operator can attribute (D-7).
+
+        Both wrappers used to share one fixed name in the temporary directory, so a cycle
+        refusal and a watchdog refusal interleaved in one file with nothing to tell them
+        apart -- and the lines carry no wrapper name of their own.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $script:PreOpen.Name = $Name
+}
 
 function Initialize-RunLog {
     <#
@@ -195,7 +209,7 @@ function Write-RunLogFallback {
     try {
         $temp = $env:TEMP
         if (-not [string]::IsNullOrWhiteSpace($temp)) {
-            $leaf = if ($null -ne $State) { [System.IO.Path]::GetFileName($State.Path) } else { 'wrapper-run.log' }
+            $leaf = if ($null -ne $State) { [System.IO.Path]::GetFileName($State.Path) } else { $script:PreOpen.Name }
             # The name carries the wrapper's own log name, so two wrappers writing into one
             # temporary directory stay attributable (D-7).
             $null = $candidates.Add([System.IO.Path]::Combine($temp, "glass-box-$leaf.fallback"))
@@ -292,4 +306,4 @@ function Get-RunLogFailureClause {
     return $clause
 }
 
-Export-ModuleMember -Function Initialize-RunLog, Write-RunLog, Get-RunLogStatus, Get-RunLogFailureClause
+Export-ModuleMember -Function Set-RunLogIdentity, Initialize-RunLog, Write-RunLog, Get-RunLogStatus, Get-RunLogFailureClause

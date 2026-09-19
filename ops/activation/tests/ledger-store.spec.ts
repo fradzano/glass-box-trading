@@ -555,7 +555,13 @@ describe("activation ledger store — lock ownership", () => {
       processState(owner) { return Promise.resolve(owner.pid === firstOwner.pid ? "alive" : "dead"); },
     };
     const first = withActivationLedger(
-      { root: stateRoot, owner: firstOwner, makeSystemDraft: systemDraft, io, contentionTimeoutMs: 2_000, pollIntervalMs: 2 },
+      // The budget is the test's own input, not production's: what this case is about is
+      // that the second invocation never runs the callback, and a 2 s named-pipe
+      // transition is a measurement of the machine rather than of that property. Under
+      // four concurrent suite runs and four CPU burners it timed out at 2 s and reported
+      // LOCK_TRANSITION_TIMEOUT -- a red that says nothing about the artefact, on the one
+      // instrument this code has (R4-15, 2026-09-20).
+      { root: stateRoot, owner: firstOwner, makeSystemDraft: systemDraft, io, contentionTimeoutMs: 20_000, pollIntervalMs: 2 },
       async session => {
         await session.append(draft(0, { attempt: "first" }));
         firstStarted();

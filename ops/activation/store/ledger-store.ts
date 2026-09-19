@@ -753,7 +753,14 @@ export async function withActivationLedger<T>(
   if (!acquisition.held) {
     if (acquisition.liveOwner === null) fail("acquire-lock", "LIVE_OWNER_MISSING");
     const claimId = `live-${String(input.owner.pid)}-${String(input.owner.startedAtUtcMs)}`;
-    const entries = await withLockTransition(paths, io, timeoutMs, pollMs, () => appendUnderLock(
+    // The contender's own budget says how long it may wait for the *lease*; it must not
+    // also decide whether the contender can record that it was here. A caller that may not
+    // wait at all — the 15:05 disarm, and any test that pins that semantics — passes 0, and
+    // under load the transition for this one note then times out and turns "somebody else
+    // holds the lease" into a store failure. The note gets a floor of its own (R4-15,
+    // measured 2026-09-20 as the last red of four concurrent suite runs under CPU load).
+    const noteTimeoutMs = Math.max(timeoutMs, 2_000);
+    const entries = await withLockTransition(paths, io, noteTimeoutMs, pollMs, () => appendUnderLock(
       paths,
       io,
       input.makeSystemDraft,
