@@ -1,5 +1,20 @@
 # DECISIONS
 
+- **2026-09-20 — the measurement period keeps its fixed end and is reported as measured.**
+  Owner decision, taken on the one question the certificate run made time-critical.
+  `FLATTEN_DATE` stays **2026-12-15**. From an anchor on 2026-09-22 the run is therefore
+  **85 calendar days and 59 trading days**, against 92 and 64 for three calendar months —
+  about 8% shorter, five trading days fewer. `config/policy.json` is not touched, so no
+  certificate is voided and the coverage date stays 2026-12-16. **What follows from it:**
+  every rate in the evaluation is computed over the actual number of trading days and
+  cycles and the report names that number beside each one, because a period with five
+  fewer trading days is not a smaller version of the same measurement — it has fewer
+  independent observations, and the reliability figures are weaker for it. The document
+  keeps the word "three-month" in its title as the intention it was, and says in its first
+  section what the period actually is. A further slip shortens the run again; from
+  2026-09-29 it would be 78 calendar days and 54 trading days. **Decider:** Felix
+  Radzanowski.
+
 - **2026-09-19 — the abort mechanism gets its coherent third change, and residual W is
   refused as an operating state.** Two owner decisions, taken together because they have
   one shape: a mechanism that has been patched twice is not patched a third time, it is
