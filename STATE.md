@@ -8,6 +8,69 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-20 CEST, early morning. **Update — the external review's six findings
+are repaired, three blind gates then found eight more (two of them class A, both introduced by
+the repair itself), and those are repaired too.** Branch `p7/dev-live-certificate`, HEAD
+`f2d9b25`. `npm run verify` exits 0: 709 root tests, 661 activation tests, no skips — and, for
+the first time, **four of four concurrent suite runs under CPU load are green**, where the same
+load produced four reds.
+
+### What the gates did, and why it changes how much the green is worth
+
+Three blind gates ran against `58ba236`, each executing rather than reading: one over part I of
+the contract, one over part II, one over the closure of R4-01 to R4-06. Their verdict on the
+six: **R4-01, R4-02, R4-04, R4-05 RESOLVED** — R4-01 confirmed independently by two of them —
+**R4-03 resolved for its named exit**, **R4-06 UNADDRESSED**. Then they found what nobody had
+booked, and two of those were class A:
+
+- **R4-07.** The lock the R4-01 repair introduced parsed the held lock's age unguarded, so a
+  zero-byte lock — what a process killed mid-write leaves — threw out of `writeStopMark` and
+  out of the owner's abort. Executed: the stop disarmed the world, **no mark was written**, and
+  every later tick was free to arm again. That is the harm R4-01 exists to prevent, through the
+  mechanism built to prevent it, and **the resource shipped without a single test.**
+- **R4-08.** The fallback sink's path construction stood outside its guard, and `Join-Path`
+  throws on a drive letter the session does not have. Measured: exit 1, zero pings, and **the
+  child never started** — the dead man did not assess, fence or halt.
+- **R4-20, and it is the one worth remembering.** The code and its tests enforced `SC-2a`,
+  `SC-3a` and `LC-10` — three clauses that **did not exist in the contract**. The yardstick had
+  moved inside the artefact it measures, in the document written to prevent exactly that. Two
+  gates found it independently. All three are written now, with the measurements that produced
+  them, and `LC-11` came with the per-firing retry bound that honours it.
+
+Nine of the fourteen new findings are repaired and pinned; five are open and booked, not
+carried quietly: **R4-14** (an unreadable `.env` silences the watchdog, because the endpoint
+lives in the file that could not be read — an owner decision about where that URL may live,
+not a repair), **R4-16** to **R4-19**.
+
+### The lesson this round paid for
+
+Every defect of this round came from the same place: a repair that introduces a new mechanism
+ships it with the confidence of the thing it replaced. The stop mark's lock had no test; the
+fallback's path had no guard; three clauses had no yardstick. The instrument found none of it —
+three blind gates did, in under an hour each, and two of them found the same A independently.
+**Mutation probes that only report are worth less than probes whose survivors are repaired**:
+three survivors from this round's earlier probes were closed by adding the measurements they
+proved were missing.
+
+### The owner's decision of this session
+
+`FLATTEN_DATE` stays **2026-12-15**. The run is therefore **85 calendar days and 59 trading
+days** from a 2026-09-22 anchor, not three calendar months, and the evaluation reports the
+measured length rather than the intended one (`docs/P12-EVALUATION.md`).
+
+### Where the work stands
+
+Done: both contracts, both repairs, the round-4 repair, the gate findings, the operating
+documents, the process-death proof, and the suite's determinism under load. Not started: unit
+13 and the operating proofs that need it — reboot without login, continuation with one writer
+on the real host, watchdog recovery against a real outage, external-service failure, and the
+automatic end of the run.
+
+**Unchanged and the owner's:** both scheduled tasks Disabled, `GlassBoxTrading-Activation` not
+registered, the activation has never run against the real host, and the 22.09. is a
+**conditional** target — a missing proof moves the start.
+
+
 **Last updated:** 2026-09-20 CEST, early. **Update — the external review of `318e15a` found six
 defects, two of them class A; all six were reproduced, booked as R4-01 to R4-06 and repaired,
 and three independent gates are running against the repair as this is written.** Branch
