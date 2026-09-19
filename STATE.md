@@ -8,6 +8,65 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-19 CEST, late. **Update — the owner ruled on both parked
+decisions, and the two behavioural contracts and the repair they authorise are built,
+calibrated and pushed.** Branch `p7/dev-live-certificate`, commits `6cfbf47` (wrapper log)
+and `2f65818` (owner's stop). `npm run verify` exits 0 at HEAD: 709 root tests, 619
+activation tests, architecture gate, sandbox, phase check.
+
+### What the owner decided, and what was built against it
+
+Both decisions are in [`DECISIONS.md`](DECISIONS.md), 2026-09-19, and the contracts they
+produced are in
+[`docs/P12-STOP-AND-LOG-CONTRACTS.md`](docs/P12-STOP-AND-LOG-CONTRACTS.md) — written before
+the code, derived from scenarios, nine clauses each with the finding it closes and the way
+it is measured.
+
+- **The stop is a fact on disk, not an ordering.** `abort --confirm` writes `stop.json`
+  before its first teardown action; every action in every process reads it fresh and
+  refuses everything that arms the deployment while everything that disarms it stays
+  permitted; the stop then re-applies its disarming actions under the lease and only a
+  stop whose second pass applied what it attempted is reported as confirmed. Closes R2-03
+  without giving up the ordering ACT-27 requires. R3-08: a repeat against an ended attempt
+  records what it did instead of exiting 0 with "Nothing was done". R3-09: the teardown
+  travels with every store failure, tested against the shapes the store really throws at
+  `write-ledger`, `sync-ledger` and `close-ledger`.
+- **The wrapper run log stops being a precondition for the safety work.** One shared
+  module for both wrappers, retry, fallback sink, failure memory, rotation for the
+  watchdog log; a log failure travels in the firing's one heartbeat beside the child's own
+  exit code and never ends the firing.
+- **Found while building, not by reading:** a stop against a state root with no attempt
+  wrote a note that the fold reads as an open attempt, so `open` refused the owner his own
+  way back in. `open` now stands down for the owner's own stop.
+- **Calibration:** mutation probes 6/8 (stop core), 9/10 (stop shell), 7/9 (log module),
+  5/6 (cycle wrapper), every control surviving. Whole-process probes for both wrappers
+  against a real locked log, a real read-only log and a real ping recorder; a cross-process
+  probe holding the activation lease in one process while the stop is typed in another.
+
+### The one host finding of this session, and it is on the critical path
+
+`DisableAutomaticRestartSignOn` reads **`absent`** on this host while
+`ops/activation/deployment.json` expects **`1`** — measured 2026-09-19 with the
+activation's own reader. Eight of the nine expected preconditions match; this one does
+not. Consequences, in order: step 0 compares them name by name and would **red and abort
+the activation** on the certificate day; and the reader's own rationale is that ARSO must
+be off or step 9's signed-out restart proof is worthless, which is the owner's first
+required start condition. It needs an elevated registry write by the owner.
+
+### What is not started
+
+Block 3 of the owner's mandate — the remaining open A/B and unclassified findings, the
+load-bearing audit discrepancies, the November watchdog calendar repair (R1-14, owed
+before 2026-11-26) and the unproven recovery and shutdown paths — and block 4, unit 13's
+host bindings including the real activation alarm. The counter-verification of what was
+built tonight has not run: it is green, probed and mutation-calibrated, and none of that
+is the blind second opinion.
+
+**Unchanged and the owner's:** certificate run 2026-09-21, anchor 2026-09-22, both
+scheduled tasks Disabled, the activation has still never run against the real host, and
+`GlassBoxTrading-Activation` is not registered at all.
+
+
 **Last updated:** 2026-09-18 CEST, late. **Update — round 3 is through, and the run is
 PRESENTED, not terminated. It is a halt with an open discrepancy, and it needs two decisions
 from the owner before it can go on.** Run `p12-units-1-11`, round counter at **3** of 8, lease
