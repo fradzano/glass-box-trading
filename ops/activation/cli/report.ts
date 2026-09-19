@@ -87,8 +87,15 @@ export function outcomeLines(outcome: InvocationOutcome): readonly string[] {
       return [`recorded ${outcome.step}: ${outcome.outcome}`];
     case "waited":
       return [`waiting: ${outcome.reason}${outcome.noted ? " (noted in the ledger)" : ""}`];
-    case "opened":
-      return [`opened attempt ${outcome.attempt}; the ledger was ${outcome.found}`];
+    case "opened": {
+      const opened = `opened attempt ${outcome.attempt}; the ledger was ${outcome.found}`;
+      if (outcome.stopStanding === undefined || outcome.stopStanding === null) return [opened];
+      return [
+        opened,
+        `the owner's stop was NOT lifted (${outcome.stopStanding}), so nothing will be armed`,
+        "next owner action: read `activation status`, then run `open` again once the stop that stands there is the one you mean to lift",
+      ];
+    }
     case "aborted":
       return [
         `ABORTED${outcome.step === null ? "" : ` at ${outcome.step}`}: ${outcome.reason}`,

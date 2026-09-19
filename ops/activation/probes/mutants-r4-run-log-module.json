@@ -70,5 +70,23 @@
     "note": "the fallback sink loses its own bound, so the file nobody watches grows without end",
     "from": "                if ($existingFallback.Length -gt $bound) { Move-Item -LiteralPath $candidate -Destination \"$candidate.1\" -Force -ErrorAction Stop }",
     "to": "                if ($false) { Move-Item -LiteralPath $candidate -Destination \"$candidate.1\" -Force -ErrorAction Stop }"
+  },
+  {
+    "id": "RL13",
+    "note": "D-1 restored: an unguarded path construction throws out of Write-RunLog, and the dead man never runs",
+    "from": "    $candidates = New-Object System.Collections.ArrayList",
+    "to": "    $candidates = New-Object System.Collections.ArrayList; $null = Join-Path $env:TEMP 'probe'"
+  },
+  {
+    "id": "RL14",
+    "note": "D-2 restored: the pre-open branch forgets what it lost, so the alert says nothing was lost",
+    "from": "        $script:PreOpen.LostLines++",
+    "to": "        $script:PreOpen.LostLines = 0"
+  },
+  {
+    "id": "RL15",
+    "note": "D-2, the other half: the pre-open sink is not remembered, so the alert claims no sink took the line",
+    "from": "            if ($null -eq $State) { $script:PreOpen.FallbackUsed = $candidate }",
+    "to": ""
   }
 ]

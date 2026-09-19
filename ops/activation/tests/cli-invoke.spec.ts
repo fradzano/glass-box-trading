@@ -492,7 +492,7 @@ describe("opening the next attempt", () => {
 
     const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
 
-    expect(result.outcome).toEqual({ kind: "opened", attempt: "2026-09-22.2", found: "OWNER_OPENED" });
+    expect(result.outcome).toEqual({ kind: "opened", attempt: "2026-09-22.2", found: "OWNER_OPENED", stopStanding: null });
     const last = (await entries(stateRoot)).at(-1);
     expect(last?.attempt).toBe("2026-09-22.2");
     expect(last?.evidence["operator"]).toBe("felix");
@@ -1068,5 +1068,107 @@ describe("every exit after effects carries what those effects were", () => {
     expect(result.outcome.teardown?.map(report => report.kind)).toEqual(["disable-tasks", "remove-certificate-line"]);
     expect(result.applied.map(report => report.kind)).toContain("disable-tasks");
     expect(outcomeLines(result.outcome).join(" | ")).toContain("disable-tasks");
+  });
+});
+
+// Two mechanisms an independent gate could remove on 2026-09-20 while the whole suite
+// stayed green. A mechanism no test can kill is a mechanism nobody is holding.
+describe("the stop's own failure reporting, where the suite was silent", () => {
+  it("carries the teardown out of a store failure on the stop's own path", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+
+    // The shapes the store really throws, at each stage it can fail at. The `run` path had
+    // this covered; the command the contract is actually about did not.
+    for (const stage of ["write-ledger", "sync-ledger", "close-ledger", "release-lock"] as const) {
+      const failing: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => {
+        await work({ read: () => session.read(), append: () => { throw new LedgerStoreError(stage, "IO_ERROR"); } });
+        throw new LedgerStoreError(stage, "IO_ERROR");
+      });
+      const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), { withLedger: failing });
+
+      const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+
+      expect(["ledger-defect", "work-failed"]).toContain(result.outcome.kind);
+      const carried = result.outcome.kind === "ledger-defect" || result.outcome.kind === "work-failed" ? result.outcome.teardown ?? [] : [];
+      expect(carried.map(report => report.kind)).toContain("disable-tasks");
+      expect(outcomeLines(result.outcome).join(" | ")).toContain("disable-tasks");
+      expect(exitCodeFor(result.outcome)).not.toBe(0);
+    }
+  }, 30_000);
+
+  it("does not swallow a mark it could not write, even where the read-back would notice", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+
+    // The write fails and the mark is absent afterwards — but the point of this case is
+    // the *first* mechanism, not the read-back: the failure must reach the verdict from
+    // the catch that saw it. A mutation that set `markFailure = null` there used to leave
+    // the whole suite green, because the read-back happened to catch the same state.
+    const printed: string[] = [];
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0), {
+      writeStopMark: () => Promise.reject(new Error("EROFS: read-only file system")),
+      // The read-back says a mark stands, so only the write failure can decide.
+      readStopMark: () => Promise.resolve({ kind: "present" as const, mark: { id: "stop-elsewhere", operator: "felix", at: "x", atUtcMs: 1, reason: "OWNER_ABORT" } }),
+      print: line => printed.push(line),
+    });
+
+    const result = await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("work-failed");
+    if (result.outcome.kind !== "work-failed") throw new Error("the outcome carries the reason");
+    expect(result.outcome.reason).toContain("could NOT be written");
+    expect(printed.join(" ")).toContain("read-only file system");
+  }, 30_000);
+
+  it("does not report success when it opened an attempt and could not lift the stop", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    const { deps: stopDeps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 0));
+    await invoke(command(["abort", "--confirm", "--state-root", stateRoot, "--operator", "felix"]), stopDeps);
+
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), {
+      clearStopMark: () => Promise.resolve({ kind: "locked" as const, reason: "another invocation holds the stop mark's lock" }),
+    });
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    // The attempt is open and nothing will arm. A task history that shows only the exit
+    // code may not read that as success.
+    expect(result.outcome.kind).toBe("opened");
+    expect(exitCodeFor(result.outcome)).toBe(4);
+    expect(pages(result.outcome)).toBe(true);
+    expect(outcomeLines(result.outcome).join(" | ")).toContain("NOT lifted");
+  }, 30_000);
+});
+
+// SC-8a's gap, measured by a gate on 2026-09-20: an unreadable mark made the one command
+// that lifts a stop refuse outright, while every arming action refused because the mark
+// stood. The deployment could neither arm nor be released, and no output named the way
+// out. This is also the upgrade path: a `stop.json` written before the mark had an id
+// reads as unreadable to this code.
+describe("a mark nobody can read is not a deployment nobody can release", () => {
+  it("sets it aside, opens the attempt, and says where the bytes went", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    // The exact shape the previous version wrote: no id at all.
+    await writeFile(path.join(stateRoot, "stop.json"), JSON.stringify({ operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" }), "utf8");
+    expect((await readStopMark(stateRoot)).kind).toBe("unreadable");
+
+    const { deps, printed } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30));
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("opened");
+    expect(exitCodeFor(result.outcome)).toBe(0);
+    expect((await readStopMark(stateRoot)).kind).toBe("absent");
+    expect(printed.join(" ")).toContain("set aside");
+    const opening = (await entries(stateRoot)).at(-1);
+    expect(String(opening?.evidence["quarantinedUnreadableMark"])).toContain("unreadable-");
+    // The bytes survive, because they are the only evidence of whatever wrote them.
+    const aside = String(opening?.evidence["quarantinedUnreadableMark"]);
+    expect(await readFile(aside, "utf8")).toContain("OWNER_ABORT");
   });
 });

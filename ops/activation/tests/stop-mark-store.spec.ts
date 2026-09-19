@@ -3,11 +3,11 @@
 // The compare-and-delete is the whole repair, so it is measured here directly rather than
 // only through the CLI: what a continuation is allowed to remove, and what it must leave
 // exactly where it found it.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { clearStopMark, readStopMark, stopMarkPath, writeStopMark } from "../store/stop-mark.ts";
+import { clearStopMark, quarantineStopMark, readStopMark, stopMarkPath, writeStopMark } from "../store/stop-mark.ts";
 
 const roots: string[] = [];
 
@@ -75,4 +75,75 @@ describe("what a continuation may lift", () => {
     // And the older id no longer lifts anything.
     expect((await clearStopMark(stateRoot, "stop-1")).kind).toBe("superseded");
   });
+});
+
+// The lock the compare-and-delete rests on was shipped with no test at all, and an
+// independent gate found the consequence within the hour: an unparseable lock made
+// `writeStopMark` throw, so the owner's stop left no mark and the deployment was free to
+// arm again — the exact harm the mark exists to prevent, through the resource introduced
+// to protect it. These are the cases that were missing.
+describe("the mark's own lock, which may never become the reason a stop fails", () => {
+  const lockOf = (stateRoot: string): string => `${stopMarkPath(stateRoot)}.lock`;
+
+  for (const [name, content] of [["zero bytes", ""], ["garbage", "not json at all"], ["no timestamp", "{\"pid\":1}"]] as const) {
+    it(`writes the mark anyway when the lock holds ${name}`, async () => {
+      const stateRoot = await root();
+      await writeFile(lockOf(stateRoot), content, "utf8");
+
+      await expect(writeStopMark(stateRoot, MARK)).resolves.toBeUndefined();
+
+      const state = await readStopMark(stateRoot);
+      expect(state.kind).toBe("present");
+    }, 20_000);
+
+    it(`lifts the mark anyway when the lock holds ${name}`, async () => {
+      const stateRoot = await root();
+      await writeStopMark(stateRoot, MARK);
+      await writeFile(lockOf(stateRoot), content, "utf8");
+
+      const result = await clearStopMark(stateRoot, "stop-1");
+
+      // Either it took the lock over — a lock it cannot read is an expired lock — or it
+      // reported that it is held. What it may never do is throw, and it may never leave
+      // the owner without a way through.
+      expect(["cleared", "locked"]).toContain(result.kind);
+      if (result.kind === "cleared") expect((await readStopMark(stateRoot)).kind).toBe("absent");
+    }, 20_000);
+  }
+
+  it("does not release a lock that another invocation took over", async () => {
+    const stateRoot = await root();
+    // A lock whose token is not ours and whose age is fresh: releasing it would be the
+    // classic double free, and the second holder would lose its serialisation.
+    await writeFile(lockOf(stateRoot), JSON.stringify({ token: "somebody-else", pid: 4242, atUtcMs: Date.now() }), "utf8");
+
+    await writeStopMark(stateRoot, MARK);
+
+    expect(await readFile(lockOf(stateRoot), "utf8")).toContain("somebody-else");
+  }, 20_000);
+
+  it("leaves no half-written mark behind when the rename fails", async () => {
+    const stateRoot = await root();
+    // A directory where the mark must go: the temporary file is written, the rename
+    // cannot land, and what used to stay behind was `stop.json.writing-<pid>`.
+    await mkdir(stopMarkPath(stateRoot), { recursive: true });
+
+    await expect(writeStopMark(stateRoot, MARK)).rejects.toThrow();
+
+    const leftovers = (await readdir(stateRoot)).filter(name => name.includes(".writing-"));
+    expect(leftovers).toEqual([]);
+  }, 20_000);
+
+  it("sets an unreadable mark aside instead of leaving the deployment unable to arm for ever", async () => {
+    const stateRoot = await root();
+    await writeFile(stopMarkPath(stateRoot), "{ not json", "utf8");
+
+    const quarantined = await quarantineStopMark(stateRoot);
+
+    expect(quarantined).not.toBeNull();
+    expect((await readStopMark(stateRoot)).kind).toBe("absent");
+    // Renamed, never deleted: a stop nobody can read is exactly the case where the bytes
+    // are the only evidence of whatever wrote them.
+    expect(await readFile(quarantined as string, "utf8")).toBe("{ not json");
+  }, 20_000);
 });

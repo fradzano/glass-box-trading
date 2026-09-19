@@ -142,7 +142,7 @@ interface Run {
 async function runWrapper(
   wrapper: "watchdog-run.ps1" | "cycle-run.ps1",
   context: Tree,
-  options: { readonly childExit?: number; readonly extra?: readonly string[]; readonly forceInSession?: boolean } = {},
+  options: { readonly childExit?: number; readonly extra?: readonly string[]; readonly forceInSession?: boolean; readonly env?: Readonly<Record<string, string>> } = {},
 ): Promise<Run> {
   const marker = path.join(context.root, `${wrapper}.marker`);
   const script = path.join(context.repoRoot, "tools", wrapper);
@@ -172,6 +172,7 @@ async function runWrapper(
         STATE_DIR: "",
         HEALTHCHECK_WATCHDOG_URL: "",
         HEALTHCHECK_LIVENESS_URL: "",
+        ...options.env,
       },
       windowsHide: true,
     });
@@ -618,4 +619,93 @@ describe("the closure gate, on any day of the week (R4-05's other half)", () => 
     const marker = await readFile(path.join(context.root, "watchdog-run.ps1.marker"), "utf8");
     expect(marker).toContain(context.stateDir);
   }, 30_000);
+});
+
+// The two defects an independent gate found in this contract on 2026-09-20, as tests
+// rather than as prose. Both were measured against the code as it stood; neither was
+// reachable through any case that existed here, which is the more useful half of what
+// the gate reported.
+describe("LC-1, at the one place it could still be broken (D-1)", () => {
+  it("runs the child even when no sink of any kind can be built", async () => {
+    const context = await tree();
+    // Every candidate destroyed: the primary log and the fallback beside it are
+    // directories, so `Add-Content` cannot write either, and TEMP names a drive letter
+    // this session does not have, which is what used to make `Join-Path` throw out of a
+    // function whose own header promises it never throws.
+    await mkdir(path.join(context.stateDir, "watchdog-run.log"), { recursive: true });
+    await mkdir(path.join(context.stateDir, "watchdog-run.log.fallback"), { recursive: true });
+
+    const run = await runWrapper("watchdog-run.ps1", context, {
+      extra: ["-TestClockUtc", TRADING_MONDAY],
+      env: { TEMP: "Z:\\no-such-temp-dir", TMP: "Z:\\no-such-temp-dir" },
+    });
+
+    // The dead man ran. That is the whole clause: a diagnostic file may not decide
+    // whether the watchdog assesses, fences and halts.
+    const marker = await readFile(path.join(context.root, "watchdog-run.ps1.marker"), "utf8");
+    expect(marker).toContain(context.stateDir);
+    // And it was not silent about it.
+    expect(pings).toHaveLength(1);
+    expect(pings[0]?.url).toBe("/hc/fail");
+    expect(pings[0]?.body).toContain("no fallback sink took it either");
+    expect(run.exitCode).toBe(9);
+  }, 30_000);
+});
+
+describe("LC-2, above the point where the log has a name (D-2)", () => {
+  it("tells the truth about where a refusal's line went", async () => {
+    const context = await tree();
+    // A refusal that happens before `Initialize-RunLog`: the entry point is missing, which
+    // is one of the two most ordinary ones on this deployment — the other is an unbuilt
+    // dist, which is the same branch.
+    await rm(path.join(context.repoRoot, "dist", "shell", "watchdog-cli.js"));
+
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
+
+    expect(run.exitCode).not.toBe(0);
+    expect(pings).toHaveLength(1);
+    const body = pings[0]?.body ?? "";
+    expect(body).toContain("watchdog-cli.js");
+    // The three statements that used to be false, each measured against the sink itself.
+    expect(body).not.toContain("lines lost: 0");
+    expect(body).toContain("refusing:");
+    expect(body).toContain(".fallback");
+    const sink = /written to '([^']+)'/u.exec(body)?.[1];
+    expect(sink).toBeDefined();
+    expect(await readFile(sink as string, "utf8")).toContain("watchdog-cli.js");
+    await rm(sink as string, { force: true });
+  }, 30_000);
+});
+
+describe("LC-11 — the firing has a bound, not only the line (D-6)", () => {
+  it("stops retrying once the firing has spent its budget, instead of being killed by the scheduler", async () => {
+    const context = await tree();
+    const log = path.join(context.stateDir, "probe.log");
+    await mkdir(log, { recursive: true });
+
+    // A hundred and twenty lines against a log that can never be written. Measured on this
+    // host: an unbounded firing costs about 475 ms per lost line, so this is roughly a
+    // minute of pure retrying for a watchdog whose task is killed at six minutes -- and the
+    // fence and the halt have already happened by then, so what the kill takes is the
+    // verdict ping. The bound is what keeps a bad log from eating the firing that owns it.
+    const output = await runPowerShell([
+      `Import-Module '${path.join(REPO, "tools", "run-log.psm1")}' -Force`,
+      `Initialize-RunLog -Path '${log}'`,
+      "$w = [System.Diagnostics.Stopwatch]::StartNew()",
+      "1..120 | ForEach-Object { $null = Write-RunLog \"line $_\" }",
+      "$w.Stop()",
+      "Write-Output \"elapsed=$($w.ElapsedMilliseconds)\"",
+      "Write-Output \"lost=$((Get-RunLogStatus).LostLines)\"",
+      "Write-Output \"exhausted=$((Get-RunLogStatus).BudgetExhausted)\"",
+      "Write-Output \"clause=$(Get-RunLogFailureClause)\"",
+    ].join("; "));
+
+    expect(output).toContain("lost=120");
+    expect(output).toContain("exhausted=True");
+    expect(output).toContain("stopped retrying");
+    const elapsed = Number(/elapsed=(\d+)/u.exec(output)?.[1] ?? "0");
+    // The budget is 30 s; without it these sixty lines would cost far more, and with it
+    // the tail of the firing runs at one attempt per line.
+    expect(elapsed).toBeLessThan(45_000);
+  }, 120_000);
 });

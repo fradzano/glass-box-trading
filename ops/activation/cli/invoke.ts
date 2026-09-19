@@ -19,7 +19,7 @@ import { applyAction } from "../actions/apply.ts";
 import type { ActionContext, ActionPorts } from "../actions/apply.ts";
 import { compensationFor, stopMarkLine, stopRefusal } from "../core/stop.ts";
 import type { StopMark, StopMarkState } from "../core/stop.ts";
-import { clearStopMark, readStopMark, writeStopLiftFailure, writeStopMark } from "../store/stop-mark.ts";
+import { clearStopMark, quarantineStopMark, readStopMark, writeStopLiftFailure, writeStopMark } from "../store/stop-mark.ts";
 import type { StopClearResult } from "../store/stop-mark.ts";
 import { abortTeardown, decide, fullTeardown } from "../core/decide.ts";
 import { foldLedgerSnapshot, stepDone } from "../core/fold.ts";
@@ -38,6 +38,7 @@ import {
   intentDraft,
   monotonicStamp,
   nextAttemptId,
+  NOT_ATTEMPTED,
   observationPlanFor,
   openingDraft,
   ownerAbortDraft,
@@ -103,6 +104,8 @@ export interface InvocationDeps {
   readonly writeStopMark?: (root: string, mark: StopMark) => Promise<void>;
   /** Compare-and-delete: it lifts the stop whose id was read, and no other (R4-01). */
   readonly clearStopMark?: (root: string, expectedId: string) => Promise<StopClearResult>;
+  /** Sets an unreadable mark aside, so that the owner's continuation is never a dead end. */
+  readonly quarantineStopMark?: (root: string) => Promise<string | null>;
   /**
    * What makes one stop distinguishable from the next. It is a port because randomness is
    * not the core's and not this module's: the shell supplies it, a test pins it.
@@ -135,9 +138,6 @@ const STOP_CONFIRMATION: readonly WorldAction[] = [
 function armsDeploymentAction(action: WorldAction): boolean {
   return stopRefusal(action.kind, { kind: "present", mark: { id: "", operator: "", at: "", atUtcMs: 0, reason: "" } }) !== null;
 }
-
-/** Reasons that mean "nothing was attempted", as opposed to "something was attempted and failed". */
-const NOT_ATTEMPTED: readonly string[] = ["NO_HOST_BINDINGS", "DRY_RUN"];
 
 /**
  * How much of a stop stands, from the reports and the mark alone (SC-4, SC-6).
@@ -808,7 +808,22 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       // the lease disarmed and marked without ending anything. In both, `open` is
       // precisely the command the contract points him at.
       const standing = await (deps.readStopMark ?? readStopMark)(invocation.stateRoot);
-      if (fold.currentAttempt !== null && fold.attemptEnded === null && standing.kind !== "present") {
+      // An **unreadable** mark is the stickiest state this deployment has: every arming
+      // action refuses while it stands, and it has no id, so the compare-and-delete can
+      // never match it. Before this branch, `open` — the command the refusal itself points
+      // the owner at — refused outright, and the only way out was a sequence no command and
+      // no runbook named. Measured by a gate on 2026-09-20, including the upgrade case: a
+      // `stop.json` written by the version before the mark had an id reads as unreadable.
+      //
+      // The bytes are set aside rather than deleted, and the continuation records that it
+      // did so, because a stop nobody can read is exactly the situation where evidence
+      // matters.
+      let quarantined: string | null = null;
+      if (standing.kind === "unreadable" && !invocation.dryRun) {
+        quarantined = await (deps.quarantineStopMark ?? quarantineStopMark)(invocation.stateRoot);
+        deps.print(`the stop mark could not be read (${standing.reason}); it was set aside${quarantined === null ? " — and could not be moved, so it still stands" : ` as ${quarantined}`}`);
+      }
+      if (fold.currentAttempt !== null && fold.attemptEnded === null && standing.kind === "absent") {
         return { kind: "refused", reason: `attempt ${fold.currentAttempt.id} is still open for anchor day ${fold.currentAttempt.anchorDay}; end it before opening another` };
       }
       const tail = { lastSeq: snapshot.entries.at(-1)?.seq ?? 0, lastAtUtcMs: snapshot.entries.at(-1)?.atUtcMs ?? null };
@@ -835,6 +850,7 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
           operator: invocation.operator ?? "",
           previousAttempt: previous,
           liftsStop: standing.kind === "present" ? standing.mark.id : null,
+          quarantinedUnreadableMark: quarantined,
         }));
         lift = standing.kind === "present"
           ? await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot, standing.mark.id)
@@ -856,7 +872,14 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       }
       if (lift.kind === "cleared") deps.print("the owner's stop mark was lifted; arming actions are permitted again");
       else if (lift.kind !== "absent") deps.print(`the attempt is open, but the stop was NOT lifted (${lift.kind}); nothing will be armed until it is`);
-      return { kind: "opened", attempt, found: "OWNER_OPENED" };
+      // An unreadable mark that could not even be moved is a stop that still stands.
+      const unmovable = standing.kind === "unreadable" && quarantined === null && !invocation.dryRun;
+      return {
+        kind: "opened",
+        attempt,
+        found: "OWNER_OPENED",
+        stopStanding: unmovable ? "unreadable" : (lift.kind === "cleared" || lift.kind === "absent" ? null : lift.kind),
+      };
     },
   );
 

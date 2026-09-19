@@ -13,8 +13,10 @@
           cannot be made is remembered and reported; it never ends the firing. The
           watchdog is the one component that only acts when something else has already
           gone wrong, and a locked diagnostic file must not be able to disable it.
-    LC-5  A transient lock is tolerated: up to four attempts, ~450 ms in total, which
-          is below one second and far below the five-minute firing interval.
+    LC-5  A transient lock is tolerated: up to four attempts. Measured end to end,
+          including the failing writes themselves, that is 550-650 ms per lost line --
+          not the ~450 ms the sleeps alone suggest, and the difference is the four
+          `Add-Content` attempts. Bounded per line; the per-firing bound is LC-11's.
     LC-6  Every write asks for `-ErrorAction Stop` itself, so the failure branch does not
           depend on the script-wide $ErrorActionPreference at the call site.
     LC-7  What the primary log cannot take goes to a fallback sink beside it, and to the
@@ -35,6 +37,19 @@
 Set-StrictMode -Version 2.0
 
 $script:RunLog = $null
+
+<#
+  What happened **before** the log had a name (D-2, 2026-09-20).
+
+  Six refusals in the watchdog and five in the cycle wrapper stand above
+  `Initialize-RunLog` — an unbuilt `dist`, an unreadable `policy.json`, a missing
+  STATE_DIR. Their lines go to the temporary sink, and the status used to report
+  `lines lost: 0`, `no fallback sink took it either` and no file name at all, while the
+  sink had in fact taken the line. Three false statements in the one alert an operator
+  reads at 03:00, and the same generator as Part I's SC-6: a sentence asserted from what
+  was owed rather than derived from what happened.
+#>
+$script:PreOpen = @{ LostLines = 0; FirstLostLine = $null; FallbackUsed = $null }
 
 function Initialize-RunLog {
     <#
@@ -63,6 +78,16 @@ function Initialize-RunLog {
         FallbackUsed           = $null
         Rotated                = $false
         RotationFailure        = $null
+        # LC-11: the retry budget is per line, and a firing that loses many lines pays it
+        # for every one of them. Measured: 200 lost lines cost 98 seconds against a
+        # five-minute interval, and the watchdog task is killed at six minutes -- after the
+        # fence and the halt, before the verdict ping, which is the silence this contract
+        # exists to prevent. Once the firing has spent this much on retries it stops
+        # retrying and keeps logging single-attempt, so the lines still go somewhere and the
+        # firing still ends on its own terms.
+        RetryBudgetMs          = 30000
+        RetrySpentMs           = 0
+        RetryBudgetExhausted   = $false
     }
 
     # One generation is kept. Losing an older diagnostic line is acceptable; losing the
@@ -108,13 +133,17 @@ function Write-RunLog {
     # no log path yet, and the line would have been lost entirely. It goes to the
     # temporary sink so that even that refusal leaves a trace.
     if ($null -eq $script:RunLog) {
+        $script:PreOpen.LostLines++
+        if ($null -eq $script:PreOpen.FirstLostLine) { $script:PreOpen.FirstLostLine = (Flatten-RunLogText $Message) }
         $null = Write-RunLogFallback -Line $line -State $null
         return $false
     }
 
     $attempt = 0
     $lastError = $null
-    while ($attempt -lt $script:RunLog.RetryCount) {
+    $startedAt = [System.Diagnostics.Stopwatch]::StartNew()
+    $allowed = if ($script:RunLog.RetrySpentMs -ge $script:RunLog.RetryBudgetMs) { 1 } else { $script:RunLog.RetryCount }
+    while ($attempt -lt $allowed) {
         $attempt++
         try {
             Add-Content -LiteralPath $script:RunLog.Path -Value $line -Encoding utf8 -ErrorAction Stop
@@ -122,12 +151,15 @@ function Write-RunLog {
             return $true
         } catch {
             $lastError = $_
-            if ($attempt -lt $script:RunLog.RetryCount -and $script:RunLog.RetryDelayMilliseconds -gt 0) {
+            if ($attempt -lt $allowed -and $script:RunLog.RetryDelayMilliseconds -gt 0) {
                 Start-Sleep -Milliseconds $script:RunLog.RetryDelayMilliseconds
             }
         }
     }
 
+    $startedAt.Stop()
+    $script:RunLog.RetrySpentMs += $startedAt.ElapsedMilliseconds
+    if ($script:RunLog.RetrySpentMs -ge $script:RunLog.RetryBudgetMs) { $script:RunLog.RetryBudgetExhausted = $true }
     $detail = Flatten-RunLogText $lastError.Exception.Message
     $script:RunLog.LostLines++
     if (-not $script:RunLog.Failed) {
@@ -140,16 +172,35 @@ function Write-RunLog {
 }
 
 function Write-RunLogFallback {
-    <# LC-7. Best effort by definition: it is the sink for the case where the sink failed. #>
+    <#
+      LC-7. Best effort by definition: it is the sink for the case where the sink failed.
+
+      **Nothing in here may throw** (LC-1, D-1, measured 2026-09-20). `Join-Path` consults
+      the PowerShell provider and raises `DriveNotFoundException` when `$env:TEMP` names a
+      drive letter that does not exist in the session — an S4U logon with a mapped or
+      substituted TEMP is the realistic shape. That call used to sit outside the per-
+      candidate `try`, and under the script-wide `Stop` preference the error was terminating:
+      it escaped `Write-RunLog`, whose own header promises it never throws, and the watchdog
+      exited 1 having never started its child. Measured: zero pings, no log line, the dead
+      man did not assess, fence or halt. The path is built with
+      `[System.IO.Path]::Combine`, which touches no provider, and every candidate is
+      produced inside its own guard.
+    #>
     param([string]$Line, $State)
 
-    $candidates = @()
-    if ($null -ne $State) { $candidates += $State.Fallback }
-    $temp = $env:TEMP
-    if (-not [string]::IsNullOrWhiteSpace($temp)) {
-        $leaf = if ($null -ne $State) { [System.IO.Path]::GetFileName($State.Path) } else { 'wrapper-run.log' }
-        $candidates += (Join-Path $temp "glass-box-$leaf.fallback")
-    }
+    $candidates = New-Object System.Collections.ArrayList
+    try {
+        if ($null -ne $State) { $null = $candidates.Add($State.Fallback) }
+    } catch { }
+    try {
+        $temp = $env:TEMP
+        if (-not [string]::IsNullOrWhiteSpace($temp)) {
+            $leaf = if ($null -ne $State) { [System.IO.Path]::GetFileName($State.Path) } else { 'wrapper-run.log' }
+            # The name carries the wrapper's own log name, so two wrappers writing into one
+            # temporary directory stay attributable (D-7).
+            $null = $candidates.Add([System.IO.Path]::Combine($temp, "glass-box-$leaf.fallback"))
+        }
+    } catch { }
 
     foreach ($candidate in $candidates) {
         try {
@@ -164,6 +215,7 @@ function Write-RunLogFallback {
             }
             Add-Content -LiteralPath $candidate -Value $Line -Encoding utf8 -ErrorAction Stop
             if ($null -ne $State -and $null -eq $State.FallbackUsed) { $State.FallbackUsed = $candidate }
+            if ($null -eq $State) { $script:PreOpen.FallbackUsed = $candidate }
             return $true
         } catch {
             continue
@@ -179,7 +231,18 @@ function Get-RunLogStatus {
         what went wrong if it did not.
     #>
     if ($null -eq $script:RunLog) {
-        return @{ Initialized = $false; Failed = $true; Degraded = $true; FirstFailure = 'the run log was never opened'; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null }
+        return @{
+            Initialized     = $false
+            Failed          = $true
+            Degraded        = $true
+            FirstFailure    = 'the run log was never opened -- this refusal happened above the point where its name is known'
+            FirstLostLine   = $script:PreOpen.FirstLostLine
+            LostLines       = $script:PreOpen.LostLines
+            FallbackUsed    = $script:PreOpen.FallbackUsed
+            Path            = $null
+            Rotated         = $false
+            RotationFailure = $null
+        }
     }
     return @{
         Initialized     = $true
@@ -195,6 +258,8 @@ function Get-RunLogStatus {
         Path            = $script:RunLog.Path
         Rotated         = $script:RunLog.Rotated
         RotationFailure = $script:RunLog.RotationFailure
+        RetrySpentMs    = $script:RunLog.RetrySpentMs
+        BudgetExhausted = $script:RunLog.RetryBudgetExhausted
     }
 }
 
@@ -217,6 +282,9 @@ function Get-RunLogFailureClause {
         $where = if ($null -ne $status.FallbackUsed) { "; written to '$($status.FallbackUsed)' instead" } else { '; no fallback sink took it either' }
         $lost = if ($null -ne $status.FirstLostLine) { "; first lost line: $($status.FirstLostLine)" } else { '' }
         $clause += "; the run log could not be written ($($status.FirstFailure)); lines lost: $($status.LostLines)$lost$where"
+    }
+    if ($status.ContainsKey('BudgetExhausted') -and $status.BudgetExhausted) {
+        $clause += "; this firing spent its whole retry budget on a log it could not write ($($status.RetrySpentMs) ms) and stopped retrying"
     }
     if ($null -ne $status.RotationFailure) {
         $clause += "; the run log could not be rotated ($($status.RotationFailure)), so '$($status.Path)' is growing past its bound"

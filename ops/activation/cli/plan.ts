@@ -52,8 +52,26 @@ export function teardownClause(reports: readonly ActionReport[]): string | null 
   if (reports.length === 0) return null;
   const failed = reports.filter(report => !report.applied);
   if (failed.length === 0) return `the teardown ran: ${reports.map(report => report.kind).join(", ")}`;
-  return `the teardown did NOT complete — ${failed.map(report => `${report.kind} (${report.reason ?? "no reason given"})`).join("; ")}. Check the world by hand before anything else.`;
+  // "Nothing was attempted" and "something was attempted and failed" are different facts,
+  // and one sentence used to give both at once: a stop on a deployment without host
+  // bindings said "the world is as it was" and, two clauses later, "the teardown did NOT
+  // complete — check the world by hand". Measured by a gate on 2026-09-20 in a live
+  // `next_owner_action`, which is append-only and can never be withdrawn. The list of
+  // reasons that mean "not attempted" is the one `stopVerdict` uses, so the two cannot
+  // drift apart again.
+  const attempted = failed.filter(report => !NOT_ATTEMPTED.includes(report.reason ?? ""));
+  if (attempted.length === 0) {
+    return `nothing was applied: ${failed.map(report => `${report.kind} (${report.reason ?? "no reason given"})`).join("; ")}. The world is as it was`;
+  }
+  return `the teardown did NOT complete — ${attempted.map(report => `${report.kind} (${report.reason ?? "no reason given"})`).join("; ")}. Check the world by hand before anything else`;
 }
+
+/**
+ * Reasons that mean "nothing was attempted", as opposed to "something was attempted and
+ * failed". It lives here because two callers decide on it — the sentence above and the
+ * stop's verdict — and the defect it closes was the two of them disagreeing.
+ */
+export const NOT_ATTEMPTED: readonly string[] = ["NO_HOST_BINDINGS", "DRY_RUN"];
 
 /** The same clause where a sentence needs one whatever happened, including "nothing was attempted". */
 export function teardownClauseOrSilence(reports: readonly ActionReport[]): string {
@@ -69,7 +87,13 @@ export type InvocationOutcome =
   | { readonly kind: "acted"; readonly step: StepId; readonly outcome: Outcome; readonly deferred: boolean }
   | { readonly kind: "recorded"; readonly step: StepId; readonly outcome: Outcome }
   | { readonly kind: "waited"; readonly reason: string; readonly noted: boolean }
-  | { readonly kind: "opened"; readonly attempt: string; readonly found: string }
+  /**
+   * `stopStanding` names the stop this continuation could **not** lift. The attempt is
+   * open, and nothing will arm while that mark stands, so the invocation may not report
+   * success: the scheduled task's history shows nothing but the exit code for months, and
+   * a deployment that cannot arm reported 0 indefinitely (measured by a gate, 2026-09-20).
+   */
+  | { readonly kind: "opened"; readonly attempt: string; readonly found: string; readonly stopStanding?: string | null }
   /**
    * `teardown` is what the teardown **did**, one report per action, not what it owed.
    * It used to be the core's boolean, and `report.ts` turned that boolean into the
@@ -118,11 +142,12 @@ export function exitCodeFor(outcome: InvocationOutcome): number {
       return 3;
     case "work-failed":
       return 4;
+    case "opened":
+      return outcome.stopStanding === undefined || outcome.stopStanding === null ? 0 : 4;
     case "acted":
       return outcome.outcome === "ok" || outcome.outcome === "already_in_target_state" ? 0 : 1;
     case "recorded":
     case "waited":
-    case "opened":
     case "ended":
     case "done":
     case "yielded":
@@ -133,6 +158,7 @@ export function exitCodeFor(outcome: InvocationOutcome): number {
 
 /** Every abort pages, and so does a defect in the record (spec §4, §5; catalogue invariant 4). */
 export function pages(outcome: InvocationOutcome): boolean {
+  if (outcome.kind === "opened") return outcome.stopStanding !== undefined && outcome.stopStanding !== null;
   return outcome.kind === "aborted" || outcome.kind === "ledger-defect" || outcome.kind === "work-failed";
 }
 
@@ -313,7 +339,10 @@ export function ownerAbortRepeatDraft(
     kind: "note",
     outcome: null,
     evidence: { actions: teardownEvidence(applied), confirming: teardownEvidence(confirming), ownerAbort: "ATTEMPT_ALREADY_ENDED", endedAtSeq, operator },
-    nextOwnerAction: null,
+    // The CLI's page says "the reason is above and in the ledger's next_owner_action", so
+    // this field may not be null on a branch that pages. Measured by a gate on 2026-09-20:
+    // an operator following the page's own instruction found nothing here.
+    nextOwnerAction: `This attempt was already ended at seq ${String(endedAtSeq)}; the stop was applied to the world again and changed nothing about that. ${teardownClauseOrSilence([...applied, ...confirming])} Open a new attempt when the run is to continue.`,
   });
 }
 
@@ -346,7 +375,7 @@ export function ownerAbortWithoutAttemptDraft(operator: string, attempt: string,
     kind: "note",
     outcome: null,
     evidence: { actions: teardownEvidence(applied), confirming: teardownEvidence(confirming), ownerAbort: "NO_ATTEMPT_OPEN", operator },
-    nextOwnerAction: null,
+    nextOwnerAction: `No attempt was open in this state root, so nothing was ended — but the stop was applied to the world. ${teardownClauseOrSilence([...applied, ...confirming])} Check that this is the state root you meant.`,
   });
 }
 

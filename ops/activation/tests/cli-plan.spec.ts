@@ -228,7 +228,11 @@ describe("the other decisions", () => {
       { kind: "disable-tasks", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null },
       { kind: "remove-certificate-line", applied: false, detail: null, reason: "NO_HOST_BINDINGS", completion: null },
     ]));
-    expect(nothing.nextOwnerAction).toContain("the teardown did NOT complete");
+    // "Nothing was attempted" and "something failed" are different facts, and one
+    // append-only sentence used to give both at once (gate finding, 2026-09-20).
+    expect(nothing.nextOwnerAction).toContain("nothing was applied");
+    expect(nothing.nextOwnerAction).toContain("The world is as it was");
+    expect(nothing.nextOwnerAction).not.toContain("Check the world by hand");
     expect(nothing.nextOwnerAction).toContain("disable-tasks (NO_HOST_BINDINGS)");
     expect(nothing.nextOwnerAction).not.toContain("are disabled");
     expect(nothing.evidence["actions"]).toEqual([

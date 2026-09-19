@@ -46,45 +46,72 @@ const LOCK_POLL_MS = 15;
  */
 const LOCK_STALE_MS = 30_000;
 
-async function takeLock(root: string, nowUtcMs: number): Promise<boolean> {
+async function takeLock(root: string, nowUtcMs: number): Promise<string | null> {
   const file = stopLockPath(root);
+  const token = `${String(process.pid)}-${String(Date.now())}-${Math.random().toString(16).slice(2, 10)}`;
   const deadline = nowUtcMs + LOCK_WAIT_MS;
   for (;;) {
     try {
       const handle = await openFile(file, "wx");
       try {
-        await handle.write(Buffer.from(`${JSON.stringify({ pid: process.pid, atUtcMs: Date.now() })}\n`, "utf8"));
+        await handle.write(Buffer.from(`${JSON.stringify({ token, pid: process.pid, atUtcMs: Date.now() })}\n`, "utf8"));
+        // Without this the file can be length 0 after an unclean shutdown, and a
+        // zero-byte lock used to be a lock nobody could take over — see below.
+        await handle.sync();
       } finally {
         await handle.close();
       }
-      return true;
+      return token;
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") return false;
-      // A lock left behind by a process that died mid-write must not stop the owner's
-      // stop for ever. It is taken over by age, and the age is read from the lock itself.
-      const held = await readFile(file, "utf8").catch(() => null);
-      const heldAt = held === null ? null : (JSON.parse(held) as { readonly atUtcMs?: unknown }).atUtcMs;
-      if (typeof heldAt === "number" && Date.now() - heldAt > LOCK_STALE_MS) {
+      if (errorCode(error) !== "EEXIST") return null;
+      // **A lock that cannot be read is an expired lock, not an eternal one** (N1,
+      // 2026-09-20). This block used to parse the lock's JSON unguarded, so a zero-byte
+      // file — exactly what a process killed between `openFile(…, "wx")` and its first
+      // write leaves behind — made `JSON.parse` throw out of `takeLock`, out of
+      // `writeStopMark`, and out of the owner's abort. Measured consequence: the stop
+      // disarmed the world, no mark was written, and the next tick was free to arm again.
+      // That is the harm R4-01 exists to prevent, reintroduced by the lock that was meant
+      // to close it. The rule now: anything this function cannot understand is stale.
+      let heldAt: number | null;
+      try {
+        const held = await readFile(file, "utf8");
+        const parsed = JSON.parse(held) as { readonly atUtcMs?: unknown };
+        heldAt = typeof parsed.atUtcMs === "number" ? parsed.atUtcMs : null;
+      } catch {
+        heldAt = null;
+      }
+      if (heldAt === null || Date.now() - heldAt > LOCK_STALE_MS) {
         await unlink(file).catch(() => undefined);
         continue;
       }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) return null;
       await new Promise(resolve => { setTimeout(resolve, LOCK_POLL_MS); });
     }
   }
 }
 
-async function releaseLock(root: string): Promise<void> {
+async function releaseLock(root: string, token: string): Promise<void> {
+  // Release only what is still ours (N6). If a second invocation took this lock over
+  // because it had gone stale, unlinking unconditionally would free *its* lock — the
+  // classic double free, and it needs the two lines it costs to avoid.
+  try {
+    const held = await readFile(stopLockPath(root), "utf8");
+    const parsed = JSON.parse(held) as { readonly token?: unknown };
+    if (parsed.token !== token) return;
+  } catch {
+    // Unreadable or already gone: it is not ours to remove, or there is nothing to remove.
+    return;
+  }
   await unlink(stopLockPath(root)).catch(() => undefined);
 }
 
 async function withStopLock<T>(root: string, work: () => Promise<T>, whenUnavailable: () => T): Promise<T> {
-  const taken = await takeLock(root, Date.now());
-  if (!taken) return whenUnavailable();
+  const token = await takeLock(root, Date.now());
+  if (token === null) return whenUnavailable();
   try {
     return await work();
   } finally {
-    await releaseLock(root);
+    await releaseLock(root, token);
   }
 }
 
@@ -142,7 +169,14 @@ async function writeMarkFile(root: string, mark: StopMark): Promise<void> {
   } finally {
     await handle.close();
   }
-  await rename(temporary, target);
+  try {
+    await rename(temporary, target);
+  } catch (error) {
+    // The half-written file is not evidence of anything and it litters the one directory
+    // an operator inspects by hand (N5). It goes; the failure travels to the caller.
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -157,11 +191,21 @@ export async function writeStopMark(root: string, mark: StopMark): Promise<void>
   // The lock is a serialiser, not a gate: a stop that cannot take it writes anyway,
   // because failing to record the owner's stop is the worse of the two failures. What is
   // lost without it is only the atomicity against a simultaneous compare-and-delete.
-  const taken = await takeLock(root, Date.now());
+  //
+  // `takeLock` is also not allowed to decide whether this function runs at all — it
+  // swallows its own failures and answers `null`, and this `catch` is the second line of
+  // that defence (N1). The mark is the one thing that stands between a typed stop and a
+  // deployment that arms itself again.
+  let token: string | null;
+  try {
+    token = await takeLock(root, Date.now());
+  } catch {
+    token = null;
+  }
   try {
     await writeMarkFile(root, mark);
   } finally {
-    if (taken) await releaseLock(root);
+    if (token !== null) await releaseLock(root, token).catch(() => undefined);
   }
 }
 
@@ -197,10 +241,52 @@ export async function clearStopMark(root: string, expectedId: string): Promise<S
 }
 
 /**
- * The recovery record a continuation leaves when it recorded its opening and then could
+ * Sets an unreadable mark aside so that the owner's continuation is never a dead end (N2,
+ * 2026-09-20).
+ *
+ * A mark whose bytes cannot be parsed has no id, so the compare-and-delete of
+ * `clearStopMark` can never match it. Before this existed, `open` simply left it — and a
+ * state root with an unparseable `stop.json` was a deployment that would refuse every
+ * arming action for ever, while `open` reported success and exit 0. The same applied to a
+ * mark written by the version of this code that had no `id` field at all, which makes this
+ * the upgrade path as well as the recovery path.
+ *
+ * The bytes are **renamed, never deleted**: they are the only evidence of whatever wrote
+ * them, and a stop nobody can read is exactly the situation where evidence matters.
+ */
+export async function quarantineStopMark(root: string): Promise<string | null> {
+  const target = `${stopMarkPath(root)}.unreadable-${String(Date.now())}`;
+  try {
+    await rename(stopMarkPath(root), target);
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+/** Whatever `stop.json.lock` says, for a reader that reports rather than decides (N4). */
+export async function readStopLock(root: string): Promise<{ readonly held: boolean; readonly detail: string }> {
+  try {
+    const held = await readFile(stopLockPath(root), "utf8");
+    const parsed = JSON.parse(held) as { readonly atUtcMs?: unknown; readonly pid?: unknown };
+    const at = typeof parsed.atUtcMs === "number" ? new Date(parsed.atUtcMs).toISOString() : "an unreadable time";
+    const pid = typeof parsed.pid === "number" ? String(parsed.pid) : "an unknown process";
+    return { held: true, detail: `held since ${at} by pid ${pid}` };
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return { held: false, detail: "" };
+    return { held: true, detail: "and its own contents cannot be read, so it counts as expired" };
+  }
+}
+
+/** The recovery record a continuation leaves when it recorded its opening and then could
  * not lift the stop. It is written beside the mark, never over it, so that neither fact
- * can erase the other, and `status` reads both.
+ * can erase the other. `status` reads it — see `statusLines`.
  */
 export async function writeStopLiftFailure(root: string, detail: Readonly<Record<string, unknown>>): Promise<void> {
   await writeFile(`${stopMarkPath(root)}.lift-failed`, `${JSON.stringify(detail, null, 2)}\n`, "utf8").catch(() => undefined);
+}
+
+/** What a previous continuation left behind, for `status` to report (N4). */
+export async function readStopLiftFailure(root: string): Promise<string | null> {
+  return await readFile(`${stopMarkPath(root)}.lift-failed`, "utf8").catch(() => null);
 }

@@ -74,6 +74,14 @@ non-zero: it disarmed, but it is not a durable stop and must not be read as one.
 *From S-STOP-1: the mark, not the ordering, is what makes a stop survive a concurrent
 invocation.*
 
+**SC-2a — A stop is durable only if its own mark is the one standing when it ends.**
+Before it reports, the stop reads the mark back. If it is gone, unreadable, or a different
+stop's, the stop is **not** confirmed and says which of the three it found.
+*Added 2026-09-20 after a gate executed the case: a continuation running concurrently
+erased the mark and the stop still reported "the stop is confirmed". The mark is the only
+thing that keeps a later tick from arming, so a report that outlives it is the most
+expensive sentence this CLI can print.*
+
 **SC-3 — While the mark stands, nothing arms.** Every invocation in every process refuses
 to apply an **arming** action while the mark exists: `enable-tasks`,
 `write-certificate-line`, `install-tasks`, `register-disarm`, `restart`. **Disarming**
@@ -84,6 +92,17 @@ action, so an invocation that decided before the stop cannot arm after it. A ref
 this ground is recorded and named `STOPPED_BY_OWNER`; it is never silent.
 *Closes R2-03. This is the clause the race needs: serialising the two commands is
 impossible without making SC-1 false.*
+
+**SC-3a — An arming effect that lands after a stop is undone by the invocation that
+applied it.** The guard of SC-3 closes the window *between* two actions; it cannot close
+the window *inside* one. A real `Enable-ScheduledTask` takes time, and a stop typed while
+it runs arrives too late to prevent it — and the stop may be unable to take the lease to
+undo it, because the invocation that is applying the effect is holding that lease. So
+after every arming action that applied, the invocation reads the mark again, and applies
+the inverse action itself when a stop now stands, reporting both. An action with no
+inverse — a restart — is reported as exactly that.
+*Added 2026-09-20. Measured as two operating-system processes over one world: without it,
+the deployment ended armed after a typed stop.*
 
 **SC-4 — A stop is confirmed under the lease.** After the immediate pass the stop acquires
 the lease — the instant at which no other invocation is inside an `act` — and re-applies
@@ -229,6 +248,28 @@ activation's step-0 wrapper hashes, so a change to it is as visible as a change 
 wrapper.
 *Closes R3-07 and R3-C05, and removes the hand-synchronisation that produced five
 findings from one cause.*
+
+**LC-10 — A log that cannot be rotated is not a log that is fine.** The diagnostic storage
+of an unattended quarter is bounded, and a failure to hold that bound reaches the same
+verdict as a failure to write: the firing's one heartbeat carries it, the exit code carries
+it, and the fallback sink is bounded on the same rule. The bound itself is **not** enforced
+by refusing to log — the log keeps growing, which is the lesser of the two failures — so
+what this clause requires is that nobody can be unaware of it.
+*Added 2026-09-20. It was enforced by the code and by its tests for a day before it was
+written here, which is the yardstick collapsing into the artefact it measures; a gate
+found the omission. The behaviour itself came from the owner's ruling to bound the
+diagnostic storage, including the fallback sinks, for the unattended period.*
+
+**LC-11 — The retry budget is per line, and the firing has its own bound.** A write is
+retried at most four times, which costs 550–650 ms per lost line end to end — measured,
+including the failing writes themselves, not the sleeps alone. A firing that loses many
+lines pays that for each of them, and the scheduled task's `ExecutionTimeLimit` is six
+minutes for the watchdog and ten for the cycle. So the wrapper bounds the **total** time it
+will spend retrying within one firing, and stops retrying — while still logging what it
+can — once that bound is reached, because a firing killed by the scheduler after the fence
+and before its verdict ping is the silence this contract exists to prevent.
+*Added 2026-09-20 after a gate measured 200 lost lines costing 98 seconds against a
+five-minute interval.*
 
 **LC-9 — The journal's contract is untouched.** This contract governs the wrappers'
 diagnostic run logs. An append failure in the append-only journal remains an abort
