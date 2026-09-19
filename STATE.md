@@ -8,6 +8,65 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-20 CEST, early. **Update — the external review of `318e15a` found six
+defects, two of them class A; all six were reproduced, booked as R4-01 to R4-06 and repaired,
+and three independent gates are running against the repair as this is written.** Branch
+`p7/dev-live-certificate`, commits `58ba236` (the repair) and `cbadb86` (the operating
+documents). `npm run verify` exits 0: 709 root tests, 639 activation tests, and **no test
+skips any more** — the watchdog's safety paths no longer wait for a weekday.
+
+### What the review found, and what it cost to repair
+
+The two A findings were one cause in two guises: **the stop mark was treated as a switch
+rather than as a resource with an identity.** `open` unlinked whatever occupied the path, so
+an older continuation erased a newer stop and the concurrent abort still reported "the stop
+is confirmed"; and the mark was cleared before the opening was recorded, so a failed append
+left it gone with nothing on the record. The repair gives each stop an id, makes lifting one
+a compare-and-delete under a lock of that file alone, reverses the order so the record comes
+first, and has every stop read its own mark back before it calls itself confirmed.
+
+Two things were found by **building**, not by reading, and neither was in the review:
+
+- An arming effect that is **already in flight** when the stop lands cannot be prevented by a
+  guard between actions, and the stop may be unable to take the lease to undo it — because
+  the arming invocation is holding it. The invocation that applied the effect now undoes it
+  itself, and the stop comes back for the lease a bounded number of times so that it still
+  records itself. Measured as two operating-system processes over one file-backed world.
+- The ledger codec refused the first identifier the stop mark carried, because a UUID is
+  secret-shaped and the codec checks by shape rather than by field name. The id is a
+  different shape now. The rule fired exactly as it was designed to.
+
+### What is measured, and what that is worth
+
+Mutation probes: 15 of 16 on the stop shell, 4 of 5 on the stop store, 9 of 12 on the log
+module, controls surviving in each. Three survivors were closed during the session by adding
+the measurements they showed were missing — a probe that only reports is worth less than one
+whose survivors are repaired. Competing **effects** are now driven with isolated file-backed
+action doubles across two real processes, which is what the review asked for and what the
+first cross-process test could not do with unbound ports.
+
+### The open question for the owner, and it is time-critical
+
+`FLATTEN_DATE` is fixed at 2026-12-15. From an anchor on 2026-09-22 the measurement period is
+**85 calendar days and 59 trading days**, against 92 and 64 for three calendar months. If the
+run is to be three real months, `FLATTEN_DATE` must move — and it is policy-digest material,
+so the change is free before the certificate run and voids the certificate afterwards. The
+question is in the closing report and in `docs/P12-EVALUATION.md`.
+
+### Where the work stands
+
+Done and pushed: both behavioural contracts, both repairs, the round-4 repair, the operating
+documents (runbook, calendar prompts, evaluation, incident paths) brought into line with the
+flow that exists. Running: three blind gates over the stop contract, the log contract and the
+closure of R4-01 to R4-06. Not started: unit 13 and every operating proof — reboot without
+login, continuation with one writer, process death at critical boundaries, watchdog recovery
+against a real outage, external-service failure, and the automatic end of the run.
+
+**Unchanged and the owner's:** both scheduled tasks Disabled, `GlassBoxTrading-Activation`
+not registered, the activation has still never run against the real host, and the 22.09. is a
+**conditional** target — a missing proof moves the start.
+
+
 **Last updated:** 2026-09-19 CEST, late. **Update — the owner ruled on both parked
 decisions, and the two behavioural contracts and the repair they authorise are built,
 calibrated and pushed.** Branch `p7/dev-live-certificate`, commits `6cfbf47` (wrapper log)
