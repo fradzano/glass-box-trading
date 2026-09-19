@@ -529,6 +529,19 @@ describe("decide — task definitions by value", () => {
   const cycle = (argumentLine: string): readonly string[] => definitionFindings("cycle", task("Disabled", argumentLine));
   const watchdog = (argumentLine: string): readonly string[] => definitionFindings("watchdog", task("Disabled", argumentLine));
 
+  // The wrappers carry one test seam, `-TestClockUtc`, which supplies the instant their
+  // trading-day and session rules already read so that the safety paths can be exercised
+  // on any weekday. What makes a seam acceptable is that its absence in production is
+  // checked rather than promised: a registered task carrying it is red here, and the
+  // scheduler verifier does not know the parameter either.
+  it("reds the wrappers' test clock when it appears in a registered task", () => {
+    expect(cycle(`${CYCLE_ARGS} -TestClockUtc 2026-09-21T17:00:00Z`)).toContain("cycle.parameter.test-seam-registered:-testclockutc");
+    expect(watchdog(`${WATCHDOG_ARGS} -TestClockUtc 2026-09-21T17:00:00Z`)).toContain("watchdog.parameter.test-seam-registered:-testclockutc");
+    // And the line without it stays clean, so the finding is about the seam and not about
+    // the way the line is parsed.
+    expect(cycle(CYCLE_ARGS).filter(finding => finding.includes("test-seam"))).toEqual([]);
+  });
+
   it("rejects a relative PowerShell host instead of trusting PATH", () => {
     expect(definitionFindings("cycle", task("Disabled", CYCLE_ARGS, "powershell.exe"))).toContain("cycle.execute-untrusted");
   });

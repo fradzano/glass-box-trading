@@ -95,6 +95,36 @@ describe("scheduled-task executable trust boundary", () => {
     });
   }
 
+  // The second half of the same guard. The activation's own parameter check reds the test
+  // seam in a registered task (see decide.spec.ts); the scheduler verifier reaches the
+  // same conclusion by a different route — it resolves a task's parameters against a fixed
+  // list of the ones the wrappers declare for production, and reports anything it cannot
+  // resolve. Two independent checks, because a seam whose absence rests on one check is a
+  // seam that rests on that check not being edited.
+  it("the scheduler verifier does not know the wrappers' test clock", async () => {
+    const text = await script("verify-scheduled-tasks.ps1");
+    const declared = /\$WRAPPER_PARAMETERS = @\(([^)]*)\)/u.exec(text)?.[1] ?? "";
+    expect(declared).not.toContain("TestClockUtc");
+    // An unresolvable parameter is reported rather than ignored, which is what makes the
+    // omission above load-bearing.
+    expect(text).toContain("UNKNOWN:$Token");
+    expect(text).toContain("$_.Name -like 'UNKNOWN:*'");
+  });
+
+  for (const wrapper of ["cycle-run.ps1", "watchdog-run.ps1"]) {
+    it(`declares the test clock as a parameter and routes every clock read through it in ${wrapper}`, async () => {
+      const text = await script(wrapper);
+      expect(text).toContain("[string]$TestClockUtc = ''");
+      expect(text).toContain("function Get-NowUtc");
+      // The point of the seam is that it is the *only* clock: a rule that still reads
+      // `[System.DateTime]::UtcNow` directly would be a rule the probe cannot reach, and
+      // the three watchdog cases that used to skip on a weekend are exactly those rules.
+      const reads = text.split("\n").filter(line => line.includes("[System.DateTime]::UtcNow") && !line.trim().startsWith("#"));
+      expect(reads).toHaveLength(1);
+      expect(reads[0]).toContain("return [System.DateTime]::UtcNow");
+    });
+  }
+
   it("the task inventory resolves each scheduled principal to a canonical Windows SID", async () => {
     const text = await readFile(path.join(ROOT, "ops", "activation", "readers", "host", "read-tasks.ps1"), "utf8");
     expect(text).toContain("UserSid            = $userSid");
