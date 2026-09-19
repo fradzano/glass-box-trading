@@ -191,14 +191,15 @@ async function sampleSessions(ports: ObservationPorts, config: ObservationConfig
 
 async function hashWrappers(ports: ObservationPorts, config: ObservationConfig): Promise<Reading<Readonly<Record<WrapperName, string>>>> {
   const hashes: Partial<Record<WrapperName, string>> = {};
-  for (const name of ["cycle-run.ps1", "watchdog-run.ps1"] as const) {
+  const names: readonly WrapperName[] = ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1"];
+  for (const name of names) {
     const read = await ports.readText(path.join(config.repoRoot, "tools", name));
     if (read.kind !== "text") return unknown(`${name}: ${read.kind === "error" ? read.reason : "does not exist"}`);
     hashes[name] = read.sha256;
   }
-  const cycle = hashes["cycle-run.ps1"];
-  const watchdog = hashes["watchdog-run.ps1"];
-  return cycle === undefined || watchdog === undefined ? unknown("a wrapper was not hashed") : known({ "cycle-run.ps1": cycle, "watchdog-run.ps1": watchdog });
+  const missing = names.filter(name => hashes[name] === undefined);
+  if (missing.length > 0) return unknown(`a wrapper was not hashed: ${missing.join(", ")}`);
+  return known(Object.fromEntries(names.map(name => [name, hashes[name] as string])) as Record<WrapperName, string>);
 }
 
 async function readConfirmation(ports: ObservationPorts, config: ObservationConfig): Promise<Reading<AlertConfirmation | null>> {

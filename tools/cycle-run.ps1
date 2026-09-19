@@ -60,6 +60,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# The run log comes from tools/run-log.psm1 -- one implementation for both wrappers
+# (docs/P12-STOP-AND-LOG-CONTRACTS.md, LC-8), instead of the hand-synchronised copy that
+# used to stand further down. If the module cannot be loaded the firing still happens:
+# the log is a diagnostic record, not a precondition for the cycle (LC-1), and the stubs
+# below make the missing module travel in the ping body instead.
+$runLogModuleFailure = $null
+try {
+    Import-Module (Join-Path $PSScriptRoot 'run-log.psm1') -Force -ErrorAction Stop
+} catch {
+    $script:runLogModuleFailureText = ($_.Exception.Message -replace "\s+", " ").Trim()
+    $runLogModuleFailure = $script:runLogModuleFailureText
+    function Initialize-RunLog { param([string]$Path, [int]$MaxBytes = 0, [int]$RetryCount = 1, [int]$RetryDelayMilliseconds = 0) }
+    function Write-RunLog { param([string]$Message) return $false }
+    function Get-RunLogStatus { return @{ Initialized = $false; Failed = $true; FirstFailure = "the shared run-log module could not be loaded: $script:runLogModuleFailureText"; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null } }
+    function Get-RunLogFailureClause { return "; the shared run-log module could not be loaded ($script:runLogModuleFailureText), so this firing wrote no run log at all" }
+}
+
 # R44-B8: every precondition below used to `throw` before Send-Liveness was
 # even defined, so a missing STATE_DIR, a missing node or an unbuilt dist
 # produced a non-zero exit and NO ping at all -- the one class of failure
@@ -165,10 +182,17 @@ if ([string]::IsNullOrWhiteSpace($livenessUrl)) {
 }
 
 function Stop-WithLiveness {
-    # A refusal is still an invocation that happened. Report it as a
-    # liveness failure with the reason, then stop.
+    # A refusal is still an invocation that happened. It is written down first and
+    # reported as a liveness failure with the reason, then it stops.
+    #
+    # Writing first is safe since 2026-09-19: `Write-RunLog` never throws (LC-1), so the
+    # logged line cannot become the thing that swallows the refusal, and before the log
+    # has a name the line goes to the fallback sink. That is what gives a refusal above
+    # the log open a trace at all, and it is why there is no longer a second, "logged"
+    # variant of this function.
     param([string]$Message)
-    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "wrapper refused: $Message"
+    $null = Write-RunLog "refusing: $Message"
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "wrapper refused: $Message$(Get-RunLogFailureClause)"
     throw "$Message (liveness $delivery)"
 }
 
@@ -211,41 +235,11 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithLiveness "STATE_DIR is n
 # rather than a network that failed, so a silently refusing wrapper forges
 # exactly that signature. Every refusal below therefore logs its reason first.
 $logPath = Join-Path $stateDir 'cycle-run.log'
-if ($MaxLogBytes -gt 0 -and (Test-Path -LiteralPath $logPath)) {
-    $existing = Get-Item -LiteralPath $logPath
-    if ($existing.Length -gt $MaxLogBytes) {
-        # One generation is kept. Losing an older report is acceptable; losing
-        # the disk is not, and the journal carries what matters either way.
-        try { Move-Item -LiteralPath $logPath -Destination "$logPath.1" -Force } catch { }
-    }
-}
 
-function Write-RunLog {
-    # A write that fails is not a line that is missing: `docs/P12-ACTIVATION-SPEC.md`
-    # step 6 reads "no line in the two wrapper logs" as a task that was disabled, so a
-    # firing whose log is locked or read-only used to exit 0 having written nothing and
-    # forge exactly that signature -- with a green ping beside it, which no refusal can
-    # do. The blanket `catch { }` swallowed it. A log that cannot be written ends the
-    # firing loudly instead, through the sender that is still reachable.
-    #
-    # It calls Stop-WithLiveness and NOT Stop-WithLoggedLiveness: the logged variant
-    # writes a line first, which is the call that just failed.
-    param([string]$Message)
-    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
-    try {
-        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
-    } catch {
-        $detail = ($_.Exception.Message -replace "\s+", " ").Trim()
-        Stop-WithLiveness "the run log '$logPath' could not be written ($detail); the line was: $Message"
-    }
-    Write-Verbose $line
-}
-
-function Stop-WithLoggedLiveness {
-    param([string]$Reason)
-    Write-RunLog "refusing: $Reason"
-    Stop-WithLiveness $Reason
-}
+# From here the log has a name, so every line goes to it; before this point
+# `Write-RunLog` writes to the temporary fallback sink instead (LC-7, S-LOG-7).
+# Rotation is the module's now, on the same bound as the watchdog's (LC-8).
+Initialize-RunLog -Path $logPath -MaxBytes $MaxLogBytes
 
 # The long run's state directory must be a drive-rooted local path that exists,
 # and the directory this deployment *declares* must be the one this wrapper is
@@ -279,21 +273,21 @@ $deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
 try {
     $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
 } catch {
-    Stop-WithLoggedLiveness "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
+    Stop-WithLiveness "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
 }
 if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
-    Stop-WithLoggedLiveness "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+    Stop-WithLiveness "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
 }
 foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
     if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
-        Stop-WithLoggedLiveness "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+        Stop-WithLiveness "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
     }
     if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
-        Stop-WithLoggedLiveness "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+        Stop-WithLiveness "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
     }
 }
 if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
-    Stop-WithLoggedLiveness "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun). The wrappers write where STATE_DIR points and the activation reads where the declaration points; when the two disagree, both are quietly right about different directories and the activation's contamination check passes over one the long run never touches."
+    Stop-WithLiveness "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun). The wrappers write where STATE_DIR points and the activation reads where the declaration points; when the two disagree, both are quietly right about different directories and the activation's contamination check passes over one the long run never touches."
 }
 
 function Get-EasternTimeZoneInfo {
@@ -345,19 +339,27 @@ if ($SkipOutsideSession -and -not (Test-InsideSession -LeadInMinutes $SessionLea
             $ErrorActionPreference = $previousPreference
         }
     }
-    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 0 -Note "skip: outside the exchange session"
-    Write-RunLog "skip: outside the exchange session (weekend, or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in, computed from the zone tables -- holidays and early closes are NOT known here); liveness $delivery; $readiness"
+    # The line first, then the one ping (LC-2, LC-4): a skipped firing that cannot write
+    # its log is exactly the shape step 6 of the activation reads as a disabled task, so
+    # the ping body has to carry the log failure, and it can only carry what already
+    # happened.
+    $null = Write-RunLog "skip: outside the exchange session (weekend, or beyond 09:30-16:00 America/New_York minus $SessionLeadInMinutes min lead-in, computed from the zone tables -- holidays and early closes are NOT known here); $readiness"
+    $logClause = Get-RunLogFailureClause
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode $(if ($logClause -ne '') { 1 } else { 0 }) -Note "skip: outside the exchange session$logClause"
+    $null = Write-RunLog "liveness: $delivery"
+    if ((Get-RunLogStatus).Failed) { exit 9 }
     exit 0
 }
 
 $nodeRuns = Test-NodeRuns -Path $NodePath
 if (-not $nodeRuns.ok) {
-    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)"
-    Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail); liveness $delivery"
+    $null = Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail)"
+    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)$(Get-RunLogFailureClause)"
+    $null = Write-RunLog "liveness: $delivery"
     exit 1
 }
 
-Write-RunLog "run: pid=$PID stateDir=$stateDir entry=$agentEntry"
+$null = Write-RunLog "run: pid=$PID stateDir=$stateDir entry=$agentEntry"
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -367,7 +369,22 @@ try {
 } finally {
     $ErrorActionPreference = $previousErrorActionPreference
 }
-$output | ForEach-Object { Write-RunLog "output: $_" }
-$delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode $exitCode -Note "cycle exit $exitCode"
-Write-RunLog "exit: $exitCode; liveness $delivery"
-exit $exitCode
+$output | ForEach-Object { $null = Write-RunLog "output: $_" }
+$null = Write-RunLog "exit: $exitCode"
+
+# ONE ping per firing, sent after everything is known (LC-4). It used to go out before
+# the last log line, so a firing whose final write failed emitted a green ping and then
+# a red one for the same event. The verdict is failure when the cycle failed OR when
+# this firing could not write its log; the cycle's own exit code stays in the body
+# either way, so the two facts travel together (LC-2, LC-3).
+$logClause = Get-RunLogFailureClause
+$verdict = if ($exitCode -ne 0) { $exitCode } elseif ($logClause -ne '') { 1 } else { 0 }
+$delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode $verdict -Note "cycle exit $exitCode$logClause"
+# Written after the ping by necessity: a line about the ping cannot precede it. Its own
+# failure is the one that cannot reach the body it describes; it travels in the exit
+# code and in the fallback sink instead.
+$null = Write-RunLog "liveness: $delivery"
+
+if ($exitCode -ne 0) { exit $exitCode }
+if ((Get-RunLogStatus).Failed) { exit 9 }
+exit 0

@@ -71,7 +71,7 @@ describe("activation fold — attempts and their steps", () => {
   it("keeps the latest earlier preflight as the baseline a new attempt's step 0 is compared against", () => {
     const text = ledger([
       { attempt: "a1", anchorDay: MON, kind: "intent", step: "0-preflight" },
-      { attempt: "a1", anchorDay: MON, kind: "result", step: "0-preflight", outcome: "ok", evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" } } },
+      { attempt: "a1", anchorDay: MON, kind: "result", step: "0-preflight", outcome: "ok", evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" } } },
       { attempt: "a1", anchorDay: MON, kind: "abort", step: "2-certificate", nextOwnerAction: "Retry." },
       { attempt: "a2", anchorDay: NEXT, kind: "intent", step: "0-preflight" },
       { attempt: "a2", anchorDay: NEXT, kind: "result", step: "0-preflight", outcome: "failed" },

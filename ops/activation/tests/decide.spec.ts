@@ -160,7 +160,7 @@ function foldOf(lines: readonly Line[]): LedgerFold {
 /** When each step of the happy path ran, and what its result recorded. */
 function happy(step: StepId): { readonly at: Clock; readonly evidence: Readonly<Record<string, unknown>> } {
   switch (step) {
-    case "0-preflight": return { at: [MON, 15, 30], evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }, hostPreconditions: HOST } };
+    case "0-preflight": return { at: [MON, 15, 30], evidence: { wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }, hostPreconditions: HOST } };
     case "1-install": return { at: [MON, 15, 31], evidence: { checkCount: 51 } };
     case "2-certificate": return { at: [MON, 16, 10], evidence: { certificatePath: CERT_PATH, runtimeDigest: "r1", policyDigest: "p1" } };
     case "3-flat": return { at: [MON, 16, 15], evidence: {} };
@@ -266,7 +266,7 @@ function worldFor(fold: LedgerFold, at: Clock, overrides: Partial<Observations> 
     watchdogLog: known([]),
     logFilesSearched: ["cycle-run.log", "cycle-run.log.1"],
     sessionSamples: [],
-    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }),
+    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }),
     hostPreconditions: known(HOST),
     alertConfirmation: known(confirmationAt(CONFIRMED_ALERT)),
     longRunArtefacts: known(["quarantine"]),
@@ -435,9 +435,9 @@ describe("decide — 0-resume judges the world against the phase", () => {
 
   it("aborts when either wrapper's hash changed since step 0, naming the wrapper (review 2026-09-14, point 6)", () => {
     const fold = before("4-enable");
-    const watchdogEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2-edited" }) }), SCHEDULE);
+    const watchdogEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2-edited", "run-log.psm1": "w3" }) }), SCHEDULE);
     expect(evidenceOf(watchdogEdited)["red"]).toEqual(["wrapper.watchdog-run.ps1.sha256-changed-since-step-0"]);
-    const cycleEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2" }) }), SCHEDULE);
+    const cycleEdited = decide(fold, worldFor(fold, [MON, 22, 6], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }) }), SCHEDULE);
     expect(evidenceOf(cycleEdited)["red"]).toEqual(["wrapper.cycle-run.ps1.sha256-changed-since-step-0"]);
   });
 
@@ -608,7 +608,7 @@ describe("decide — step 0, preflight", () => {
   it("removes the stale certificate line and records the wrapper hash and host preconditions", () => {
     const decision = decide(fold, worldFor(fold, at, { env: known({ certificatePath: "C:\\old\\hackathon.json", profile: "competition", stateDir: LONG_RUN, hash: "e0", duplicateKeys: [], shadowedKeys: [] }) }), SCHEDULE);
     expect(decision).toMatchObject({ kind: "act", step: "0-preflight", actions: [{ kind: "remove-certificate-line" }] });
-    expect(evidenceOf(decision)).toMatchObject({ wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2" }, hostPreconditions: HOST, envHashBefore: "e0", fingerprints: FINGERPRINTS, tokenProbe: "ok" });
+    expect(evidenceOf(decision)).toMatchObject({ wrapperHashes: { "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }, hostPreconditions: HOST, envHashBefore: "e0", fingerprints: FINGERPRINTS, tokenProbe: "ok" });
     expect(evidenceOf(decision)["alertConfirmation"]).toMatchObject({ operator: "felix", bundledAlert: true, downFlipUtcMs: { liveness: CONFIRMED_DOWN, readiness: CONFIRMED_DOWN, watchdog: CONFIRMED_DOWN }, oldestReceiptUtcMs: CONFIRMED_ALERT });
   });
 
@@ -868,7 +868,7 @@ describe("decide — a new attempt inherits no confirmation age and no flat chec
 
   it("keeps the wrapper baseline across attempts: a wrapper changed since the previous attempt's step 0 is red at the new step 0", () => {
     const fold = foldOf([...firstAttempt, opened([NEXT_MON, 15, 0], "a2", NEXT_TUE)]);
-    const decision = decide(fold, worldFor(fold, [NEXT_MON, 15, 30], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2" }) }), scheduleFor(NEXT_MON, NEXT_TUE));
+    const decision = decide(fold, worldFor(fold, [NEXT_MON, 15, 30], { wrapperHashes: known({ "cycle-run.ps1": "w1-edited", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }) }), scheduleFor(NEXT_MON, NEXT_TUE));
     expect(decision).toMatchObject({ kind: "abort", step: "0-preflight", reason: "PREFLIGHT_RED" });
     expect(evidenceOf(decision)["red"]).toEqual(["wrapper.cycle-run.ps1.sha256-changed-since-previous-attempt"]);
   });

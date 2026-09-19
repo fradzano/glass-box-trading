@@ -1,0 +1,11 @@
+[
+  { "id": "RL1", "note": "LC-1 revoked: a failed write throws again, which is the state the owner refused", "from": "    $null = Write-RunLogFallback -Line $line -State $script:RunLog\n    return $false", "to": "    throw $lastError" },
+  { "id": "RL2", "note": "LC-2 revoked: the failure is not remembered, so no ping body can carry it", "from": "        $script:RunLog.Failed = $true", "to": "        $script:RunLog.Failed = $false" },
+  { "id": "RL3", "note": "LC-7 revoked: nothing catches what the primary log refused", "from": "    $null = Write-RunLogFallback -Line $line -State $script:RunLog\n", "to": "" },
+  { "id": "RL4", "note": "LC-5 revoked: no retry, so a 200 ms foreign lock costs the line", "from": "    while ($attempt -lt $script:RunLog.RetryCount) {", "to": "    while ($attempt -lt 1) {" },
+  { "id": "RL5", "note": "LC-8 revoked: the watchdog log stops rotating again", "from": "                    Move-Item -LiteralPath $Path -Destination \"$Path.1\" -Force -ErrorAction Stop", "to": "                    $null = $Path" },
+  { "id": "RL6", "note": "LC-6 revoked: the write depends on the ambient preference again", "from": "            Add-Content -LiteralPath $script:RunLog.Path -Value $line -Encoding utf8 -ErrorAction Stop", "to": "            Add-Content -LiteralPath $script:RunLog.Path -Value $line -Encoding utf8" },
+  { "id": "RL7", "note": "the clause loses the file it is about, so an operator cannot tell which log failed", "from": "    return \"; the run log could not be written ($($status.FirstFailure));", "to": "    return \"; a log could not be written (reason withheld);" },
+  { "id": "RL8", "note": "CONTROL, expected to survive: a comment word, no behaviour", "from": "    <# LC-7. Best effort by definition", "to": "    <# LC-7. Best-effort by definition" },
+  { "id": "RL9", "note": "CONTROL, expected to survive: verbose echo removed, which nothing observes", "from": "            Write-Verbose $line\n", "to": "" }
+]

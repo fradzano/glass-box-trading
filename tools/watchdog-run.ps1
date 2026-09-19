@@ -51,6 +51,13 @@
 .PARAMETER WatchdogIntervalMinutes
     Informational only (echoed into the log line); the installer is the one
     that turns this into the task's repetition interval.
+
+.PARAMETER MaxLogBytes
+    Rotation bound for watchdog-run.log, one generation kept, 0 disables it.
+    The registered task does not pass it: the default is the same 16 MiB the
+    cycle wrapper uses, and until 2026-09-19 this log had no rotation at all
+    while its sibling did -- the kind of asymmetry two hand-kept copies of one
+    mechanism produce. Rotation now lives in tools/run-log.psm1 for both.
 #>
 [CmdletBinding()]
 param(
@@ -60,10 +67,32 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$NodePath,
 
-    [int]$WatchdogIntervalMinutes = 0
+    [int]$WatchdogIntervalMinutes = 0,
+
+    [int]$MaxLogBytes = 16777216
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The run log comes from tools/run-log.psm1 -- one implementation for both wrappers
+# (docs/P12-STOP-AND-LOG-CONTRACTS.md, LC-8). Until 2026-09-19 each wrapper carried its
+# own hand-synchronised copy, and five findings of one evening came out of that.
+#
+# If the module cannot be loaded the firing still happens: the log is a diagnostic
+# record, not a precondition for the dead man (LC-1). The stubs below keep every call
+# site working and make the missing module travel in the heartbeat body, which is the
+# channel that is still reachable.
+$runLogModuleFailure = $null
+try {
+    Import-Module (Join-Path $PSScriptRoot 'run-log.psm1') -Force -ErrorAction Stop
+} catch {
+    $script:runLogModuleFailureText = ($_.Exception.Message -replace "\s+", " ").Trim()
+    $runLogModuleFailure = $script:runLogModuleFailureText
+    function Initialize-RunLog { param([string]$Path, [int]$MaxBytes = 0, [int]$RetryCount = 1, [int]$RetryDelayMilliseconds = 0) }
+    function Write-RunLog { param([string]$Message) return $false }
+    function Get-RunLogStatus { return @{ Initialized = $false; Failed = $true; FirstFailure = "the shared run-log module could not be loaded: $script:runLogModuleFailureText"; FirstLostLine = $null; LostLines = 0; FallbackUsed = $null; Path = $null; Rotated = $false; RotationFailure = $null } }
+    function Get-RunLogFailureClause { return "; the shared run-log module could not be loaded ($script:runLogModuleFailureText), so this firing wrote no run log at all" }
+}
 
 # ---------------------------------------------------------------------------
 # Exchange closures -- a STOP-GAP, and declared as one (DECISIONS, 2026-09-18).
@@ -265,10 +294,18 @@ if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
 }
 
 function Stop-WithHeartbeat {
-    # A refusal is still an invocation that happened. Report it as a heartbeat
-    # failure with its reason, then stop.
+    # A refusal is still an invocation that happened. It is written down first and
+    # reported as a heartbeat failure with its reason, then it stops.
+    #
+    # Writing first is safe since 2026-09-19: `Write-RunLog` never throws (LC-1), so the
+    # logged line cannot become the thing that swallows the refusal. Before the log has a
+    # name the line goes to the fallback sink, which is what gives a refusal above the
+    # log open a trace at all. This is why the wrapper no longer needs a second,
+    # "logged" variant of this function -- the two used to differ only in whether they
+    # dared to touch the log first.
     param([string]$Message)
-    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "watchdog wrapper refused: $Message"
+    $null = Write-RunLog "refusing: $Message"
+    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "watchdog wrapper refused: $Message$(Get-RunLogFailureClause)"
     throw "$Message (heartbeat $delivery)"
 }
 
@@ -310,32 +347,14 @@ if ([string]::IsNullOrWhiteSpace($stateDir)) { Stop-WithHeartbeat "STATE_DIR is 
 # exactly that signature. Every refusal below therefore logs its reason first.
 $logPath = Join-Path $stateDir 'watchdog-run.log'
 
-function Write-RunLog {
-    # A write that fails is not a line that is missing: `docs/P12-ACTIVATION-SPEC.md`
-    # step 6 reads "no line in the two wrapper logs" as a task that was disabled, so a
-    # firing whose log is locked or read-only used to exit 0 having written nothing and
-    # forge exactly that signature -- with a green ping beside it, which no refusal can
-    # do. The blanket `catch { }` swallowed it. A log that cannot be written ends the
-    # firing loudly instead, through the sender that is still reachable.
-    #
-    # It calls Stop-WithHeartbeat and NOT Stop-WithLoggedHeartbeat: the logged variant
-    # writes a line first, which is the call that just failed.
-    param([string]$Message)
-    $line = "$([System.DateTime]::UtcNow.ToString('o')) $Message"
-    try {
-        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
-    } catch {
-        $detail = ($_.Exception.Message -replace "\s+", " ").Trim()
-        Stop-WithHeartbeat "the run log '$logPath' could not be written ($detail); the line was: $Message"
-    }
-    Write-Verbose $line
-}
-
-function Stop-WithLoggedHeartbeat {
-    param([string]$Reason)
-    Write-RunLog "refusing: $Reason"
-    Stop-WithHeartbeat $Reason
-}
+# From here the log has a name, so every line goes to it. Before this point
+# `Write-RunLog` writes to the temporary fallback sink instead, which is how a refusal
+# above the log open still leaves a trace (LC-7, S-LOG-7).
+#
+# Rotation is the module's (LC-8). This log never had any: it grew without bound while
+# the cycle log rotated at 16 MiB, which is the kind of asymmetry two hand-kept copies
+# produce.
+Initialize-RunLog -Path $logPath -MaxBytes $MaxLogBytes
 
 # The same three assertions the cycle wrapper makes, deliberately duplicated the
 # way this file already duplicates the session-window helper -- see the header.
@@ -357,21 +376,21 @@ $deploymentStateFile = Join-Path $RepoRoot 'config\deployment.json'
 try {
     $declaredLongRun = (Get-Content -LiteralPath $deploymentStateFile -Raw -ErrorAction Stop | ConvertFrom-Json).longRunStateDir
 } catch {
-    Stop-WithLoggedHeartbeat "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
+    Stop-WithHeartbeat "config/deployment.json could not be read from $RepoRoot ($($_.Exception.Message)); it is the one place that says which directory this deployment defends."
 }
 if ([string]::IsNullOrWhiteSpace($declaredLongRun)) {
-    Stop-WithLoggedHeartbeat "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
+    Stop-WithHeartbeat "config/deployment.json names no longRunStateDir; the deployment declares no directory to defend."
 }
 foreach ($subject in @(@{ Name = 'STATE_DIR'; Path = $stateDir }, @{ Name = 'config/deployment.json longRunStateDir'; Path = $declaredLongRun })) {
     if ($subject.Path -notmatch '^[A-Za-z]:[\\/]') {
-        Stop-WithLoggedHeartbeat "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
+        Stop-WithHeartbeat "$($subject.Name) is not a drive-rooted local path ($($subject.Path)); the certificate guard cannot establish the physical identity of such a path, so the long run must not use one."
     }
     if (-not (Test-Path -LiteralPath $subject.Path -PathType Container)) {
-        Stop-WithLoggedHeartbeat "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
+        Stop-WithHeartbeat "$($subject.Name) does not exist ($($subject.Path)). This wrapper does not create it: a directory that vanished is a host problem to look at, not one to paper over by making a fresh empty one."
     }
 }
 if ([System.IO.Path]::GetFullPath($stateDir).TrimEnd('\','/') -ne [System.IO.Path]::GetFullPath($declaredLongRun).TrimEnd('\','/')) {
-    Stop-WithLoggedHeartbeat "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun)."
+    Stop-WithHeartbeat "STATE_DIR ($stateDir) is not the long-run directory this deployment declares ($declaredLongRun)."
 }
 
 $todayEastern = Get-TodayEasternDate
@@ -384,24 +403,37 @@ $nowIsWeekday = $todayEastern.DayOfWeek -ne [System.DayOfWeek]::Saturday -and $t
 # The run log is opened further up, above the state-directory assertions, so
 # that a refusal from them is on the record. See the comment there.
 
+# A skip sends no heartbeat -- that is deliberate and unchanged: this task's trigger is
+# Mon-Fri, and a closure day is a day the check is expected to be silent. But a skip
+# whose line could not be written is not a silent day, it is an unrecorded firing, and
+# that is the one signature step 6 of the activation reads as a disabled task. So the
+# skip stays quiet only while its log took the line (LC-2).
+function Exit-Skip {
+    param([string]$Line)
+    $null = Write-RunLog $Line
+    $logClause = Get-RunLogFailureClause
+    if ($logClause -eq '') { exit 0 }
+    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "watchdog skipped this firing$logClause"
+    $null = Write-RunLog "heartbeat: $delivery"
+    exit 9
+}
+
 if (-not $nowIsWeekday) {
-    Write-RunLog "skip: weekend (watchdog-cli.ts always treats its input as a trading day, so this wrapper is the only Mon-Fri gate)"
-    exit 0
+    Exit-Skip "skip: weekend (watchdog-cli.ts always treats its input as a trading day, so this wrapper is the only Mon-Fri gate)"
 }
 
 if (Test-MarketFullDayClosure -EasternDate $todayEastern) {
     # The same reason as the weekend, for the days a Mon-Fri test cannot see.
     # Without this the watchdog fences the epoch store and raises a standing
     # WATCHDOG_TAKEOVER halt on a market that never opened.
-    Write-RunLog "skip: exchange closed on $todayEasternKey (stop-gap table in this wrapper; watchdog-cli.ts asserts isTradingDay unconditionally)"
-    exit 0
+    Exit-Skip "skip: exchange closed on $todayEasternKey (stop-gap table in this wrapper; watchdog-cli.ts asserts isTradingDay unconditionally)"
 }
 
 if ($todayEasternKey -gt $MarketTableThroughDate) {
     # Loud rather than silent: past its coverage the table speaks for nothing, and
     # a wrapper that skipped here would remove the safety net instead of repairing
     # it. The run is meant to be over long before this line can be reached.
-    Write-RunLog "warn: $todayEasternKey is past the closure table's coverage ($MarketTableThroughDate); proceeding as if it were a normal trading day, which is what this wrapper did everywhere before the table existed"
+    $null = Write-RunLog "warn: $todayEasternKey is past the closure table's coverage ($MarketTableThroughDate); proceeding as if it were a normal trading day, which is what this wrapper did everywhere before the table existed"
 }
 
 
@@ -412,7 +444,7 @@ $closesAtMs = [System.DateTimeOffset]::new($session.ClosesAtUtc, [System.TimeSpa
 $instanceId = "watchdog-$($env:COMPUTERNAME)-$PID"
 
 $earlyCloseNote = if ($session.IsEarlyClose) { " earlyClose=13:00ET" } else { "" }
-Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir$earlyCloseNote"
+$null = Write-RunLog "run: instanceId=$instanceId nowMs=$nowMs opensAtMs=$opensAtMs closesAtMs=$closesAtMs deadManBoundMs=$deadManBoundMs stateDir=$stateDir$earlyCloseNote"
 
 $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "$closesAtMs", "$deadManBoundMs")
 # Windows PowerShell 5.1 wraps every stderr line of a native command in an
@@ -427,8 +459,9 @@ $arguments = @($watchdogEntry, $stateDir, $instanceId, "$nowMs", "$opensAtMs", "
 # the verdict, and its stderr lines are logged as output below.
 $nodeRuns = Test-NodeRuns -Path $NodePath
 if (-not $nodeRuns.ok) {
-    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)"
-    Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail); heartbeat $delivery"
+    $null = Write-RunLog "start refused: node at '$NodePath' is not runnable: $($nodeRuns.detail)"
+    $delivery = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode 1 -Note "node cannot be started: $($nodeRuns.detail)$(Get-RunLogFailureClause)"
+    $null = Write-RunLog "heartbeat: $delivery"
     exit 1
 }
 
@@ -440,7 +473,8 @@ try {
 } finally {
     $ErrorActionPreference = $previousErrorActionPreference
 }
-$output | ForEach-Object { Write-RunLog "output: $_" }
+$output | ForEach-Object { $null = Write-RunLog "output: $_" }
+$null = Write-RunLog "exit: $exitCode"
 
 # The watchdog's own heartbeat, on its own endpoint.
 #
@@ -448,8 +482,25 @@ $output | ForEach-Object { Write-RunLog "output: $_" }
 # disabled: liveness comes from the cycle wrapper, and readiness from the state
 # files, so a silent watchdog looks exactly like a healthy one. That is the
 # safety net whose failure is least visible, because it only ever acts when
-# something else has already gone wrong. Its absence is now detectable on its
-# own schedule; a non-zero exit is reported as a failure.
-$heartbeat = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode $exitCode -Note "watchdog exit $exitCode"
-Write-RunLog "exit: $exitCode; heartbeat $heartbeat"
-exit $exitCode
+# something else has already gone wrong.
+#
+# ONE ping per firing, sent after everything is known (LC-4). It used to be sent
+# before the last log line, so a firing whose final write failed emitted a green ping
+# and then a red one for the same event. The verdict is failure when the child failed
+# OR when this firing could not write its log: the child's own exit code stays in the
+# body either way, so the two facts travel together instead of displacing each other
+# (LC-2, LC-3).
+$logClause = Get-RunLogFailureClause
+$verdict = if ($exitCode -ne 0) { $exitCode } elseif ($logClause -ne '') { 1 } else { 0 }
+$heartbeat = Send-WatchdogHeartbeat -BaseUrl $watchdogUrl -ExitCode $verdict -Note "watchdog exit $exitCode$logClause"
+# Delivery evidence, written after the ping by necessity: a line about the ping cannot
+# precede it. Its own failure is the one log failure that cannot reach the body it
+# describes -- it travels in the exit code and in the fallback sink instead.
+$null = Write-RunLog "heartbeat: $heartbeat"
+
+# The child's verdict is the wrapper's when the child failed. When it did not, a
+# firing whose log could not be written still exits non-zero, so the task history
+# carries what the log does not: 9 means "the firing completed, its run log did not".
+if ($exitCode -ne 0) { exit $exitCode }
+if ((Get-RunLogStatus).Failed) { exit 9 }
+exit 0

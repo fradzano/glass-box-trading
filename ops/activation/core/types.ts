@@ -249,8 +249,14 @@ export interface JournalBootstrapObservation {
   readonly utcMs: number;
 }
 
-/** The two deployment wrappers, both outside the runtime digest and each carrying its own safety claims. */
-export type WrapperName = "cycle-run.ps1" | "watchdog-run.ps1";
+/**
+ * The deployment wrapper files, all outside the runtime digest and each carrying its own
+ * safety claims. `run-log.psm1` joined them on 2026-09-19: the logging both wrappers do is
+ * one shared module since then, so the code that used to sit inside the two hashed files
+ * would otherwise have moved out from under step 0's integrity check
+ * (docs/P12-STOP-AND-LOG-CONTRACTS.md, LC-8).
+ */
+export type WrapperName = "cycle-run.ps1" | "watchdog-run.ps1" | "run-log.psm1";
 
 /** Everything one invocation observed, taken before the core is asked anything. */
 export interface Observations {

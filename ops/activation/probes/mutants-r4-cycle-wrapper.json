@@ -1,0 +1,38 @@
+[
+  {
+    "id": "CW1",
+    "note": "LC-2/LC-3 revoked: a log failure no longer turns the verdict red, so a firing that wrote nothing pings green",
+    "from": "$verdict = if ($exitCode -ne 0) { $exitCode } elseif ($logClause -ne '') { 1 } else { 0 }\n$delivery = Send-Liveness",
+    "to": "$verdict = $exitCode\n$delivery = Send-Liveness"
+  },
+  {
+    "id": "CW2",
+    "note": "LC-3 revoked: the ping body drops the log clause, so the two facts no longer travel together",
+    "from": "-Note \"cycle exit $exitCode$logClause\"",
+    "to": "-Note \"cycle exit $exitCode\""
+  },
+  {
+    "id": "CW3",
+    "note": "the task history loses the log failure: a firing that wrote nothing exits 0",
+    "from": "if ((Get-RunLogStatus).Failed) { exit 9 }\nexit 0",
+    "to": "exit 0"
+  },
+  {
+    "id": "CW4",
+    "note": "LC-4 revoked on the skip path: the ping is sent before the line it describes, so a skip whose log failed pings green",
+    "from": "    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode $(if ($logClause -ne '') { 1 } else { 0 }) -Note \"skip: outside the exchange session$logClause\"",
+    "to": "    $delivery = Send-Liveness -BaseUrl $livenessUrl -ExitCode 0 -Note \"skip: outside the exchange session\""
+  },
+  {
+    "id": "CW5",
+    "note": "the writer's return value is printed into the task's own output stream again",
+    "from": "$output | ForEach-Object { $null = Write-RunLog \"output: $_\" }",
+    "to": "$output | ForEach-Object { Write-RunLog \"output: $_\" }"
+  },
+  {
+    "id": "CW6",
+    "note": "CONTROL, expected to survive: a comment word, no behaviour",
+    "from": "# ONE ping per firing, sent after everything is known (LC-4).",
+    "to": "# One ping per firing, sent after everything is known (LC-4)."
+  }
+]

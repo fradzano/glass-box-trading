@@ -29,6 +29,7 @@
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/P12-INCIDENT-PATHS.md` — P12 — how an incident actually reaches me
 - `docs/P12-RUNBOOK.md` — P12 runbook — the three-month paper run
+- `docs/P12-STOP-AND-LOG-CONTRACTS.md` — P12 — the stop contract and the wrapper log contract
 - `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
 - `docs/SCENARIOS.md` — Scenario Catalog — the external standard for the spec
 - `docs/SPEC.md` — Spec — cases per gate (the red-first test oracle)
@@ -87,6 +88,8 @@
 - `ops/activation/probes/mutants-physical-path.json`
 - `ops/activation/probes/mutants-preconditions.json`
 - `ops/activation/probes/mutants-probe.json`
+- `ops/activation/probes/mutants-r4-cycle-wrapper.json`
+- `ops/activation/probes/mutants-r4-run-log-module.json`
 - `ops/activation/probes/mutants-read-tasks.json`
 - `ops/activation/probes/mutants-record.json`
 - `ops/activation/probes/mutants-session-window.json`
@@ -155,6 +158,7 @@
 - `ops/activation/tests/sequences.spec.ts` — Unit 6: the activation core run against a simulated world, invocation by
 - `ops/activation/tests/simulator.ts` — A world the activation core can be run against end to end (build log, unit 6).
 - `ops/activation/tests/steps.spec.ts` — Spec §5, revision 6: the step table as data. Every window below is copied from the
+- `ops/activation/tests/wrapper-run-log.spec.ts` — The wrapper log contract (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, part II), measured
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the
 - `package-lock.json`
@@ -320,6 +324,7 @@
 - `tools/probe-provenance.mjs` — Read-only: does an account satisfy the S-CYC-09 provenance proof?
 - `tools/publish-dashboard.ps1`
 - `tools/run-core-sandboxed.mjs` — Runtime enforcement of core purity: execute the compiled core inside an
+- `tools/run-log.psm1`
 - `tools/scan-secrets.ps1`
 - `tools/show-run-log.ps1`
 - `tools/verify-scheduled-tasks.ps1`

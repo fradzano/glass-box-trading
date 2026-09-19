@@ -83,6 +83,7 @@ function host(overrides: Partial<ObservationPorts> & { readonly scripts?: Partia
     [`${REPO}\\.node-version`]: "24.9.0\n",
     [`${REPO}\\tools\\cycle-run.ps1`]: "# cycle wrapper\n",
     [`${REPO}\\tools\\watchdog-run.ps1`]: "# watchdog wrapper\n",
+    [`${REPO}\\tools\\run-log.psm1`]: "# shared run log\n",
     [`${REPO}\\evidence\\pre-arm\\2026-09-02T16-11-12-318Z.json`]: "{}",
     [`${REPO}\\evidence\\pre-arm\\2026-09-21T14-05-00-000Z.json`]: JSON.stringify(CERTIFICATE),
     ...overrides.files,
