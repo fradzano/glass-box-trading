@@ -25,7 +25,7 @@
 - `docs/P12-ACTIVATION-BUILD.md` — P12 activation — build log
 - `docs/P12-ACTIVATION-SCENARIOS.md` — Activation scenarios — independent yardstick
 - `docs/P12-ACTIVATION-SPEC.md` — P12 activation — specification
-- `docs/P12-CALENDAR-PROMPTS.md` — P12 — calendar prompts for Gemini
+- `docs/P12-CALENDAR-PROMPTS.md` — P12 — die Termine des Aktivierungsfensters
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/P12-INCIDENT-PATHS.md` — P12 — how an incident actually reaches me
 - `docs/P12-RUNBOOK.md` — P12 runbook — the three-month paper run

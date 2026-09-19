@@ -212,6 +212,81 @@ fenced, halted and flattened a stale deployment. The right response is therefore
 not urgency but promptness: re-enable the task, confirm the check turns green,
 and check whether a stale journal accumulated meanwhile.
 
+## Case 5 — I want this to stop, now
+
+Added 2026-09-20, when the stop stopped being an ordering and became a fact on disk.
+
+**Type this, from the repository root:**
+
+```powershell
+node ops\activation\cli.ts abort --confirm --state-root <activation root> --operator felix
+```
+
+**What it does, in this order:** it writes a *stop mark* — `stop.json` in the activation
+state root, carrying an id, your name and the moment — and only then disables both tasks,
+removes the certificate line, deletes the disarm one-shot and pings the three checks so the
+silence that follows is not read as an outage. It does not wait for a running invocation
+before it disarms; a stop that waits is a stop that did not happen when it was typed.
+
+**What the mark is for.** While it stands, **no** invocation in **any** process will apply
+an action that arms the deployment — enabling a task, writing the certificate line,
+re-registering anything, rebooting. Actions that disarm stay allowed, because a stop must
+never block another stop. An invocation that had already started an arming action when your
+stop landed undoes that action itself.
+
+**What you read afterwards:**
+
+```powershell
+node ops\activation\cli.ts status --state-root <activation root>
+```
+
+The first line is the stop: who set it and when. Three answers are possible and they mean
+different things.
+
+| First line says | It means | What to do |
+|---|---|---|
+| `STOPPED by felix at …` | The stop stands. Nothing will arm. | Nothing, until you want the run to continue. |
+| `stop none` | No stop stands. | If you typed one and this says none, treat it as an incident: something lifted it. |
+| `STOP UNKNOWN …` | The mark exists and cannot be read. | Nothing arms — that is deliberate. Look at `stop.json` by hand before anything else. |
+
+**Exit codes of the stop itself:** 1 means the attempt is over and the stop was recorded.
+4 means it disarmed but could **not** confirm or record itself — another invocation held
+the ledger lease, or its mark could not be written or did not survive. 4 is not a smaller
+version of 1: it says the world may not be what the stop intended, and it pages.
+
+**To continue the run afterwards**, and only then:
+
+```powershell
+node ops\activation\cli.ts open --state-root <activation root> --anchor-day <YYYY-MM-DD> --operator felix
+```
+
+That is the one command that lifts your own stop, and it lifts exactly the stop it read. If
+somebody typed a newer one in between, the newer one stands and the console says so; run
+`open` again. If you find `stop.json.lift-failed` in the state root, that is the same
+situation written down: the attempt was opened and the stop was not lifted, so nothing will
+arm until you do.
+
+## Case 6 — a task result of 9
+
+Added 2026-09-20. The two wrappers exit **9** when the firing itself completed but its run
+log did not: the file was locked, read-only, or could not be rotated within its bound.
+
+**It is not an outage.** The cycle ran, or the watchdog ran; what failed is the diagnostic
+record. The ping for that firing goes to `/fail` with a body that names the file, the
+reason and the first line that was lost, so the alert you receive tells you which of the two
+it was.
+
+**What to check, in order:** is the state directory writable at all (`Get-ChildItem`), is
+something holding the log open (an editor, a backup agent, a virus scanner), and did the
+lines land in the fallback sink beside it — `cycle-run.log.fallback` or
+`watchdog-run.log.fallback`. The fallback is bounded the same way the log is, so it cannot
+fill the disk while you sleep.
+
+**What it costs if you ignore it:** the drill discriminator of the activation's step 6 reads
+"no line in the two wrapper logs" as "the task was disabled". A firing that cannot write its
+log forges exactly that signature locally — which is why the ping body carries the reason,
+and why a silence during a drill is only believed when no ping body names a log failure.
+
 ## The summary I actually need at 23:00
 
 **Answer one question before reading the table: is the book exposed?** Run

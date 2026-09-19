@@ -8,7 +8,34 @@ one.
 
 ## The measurement period
 
-One period, from the first regular approved cycle (Wed 2026-09-09) to the `TERMINAL` entry after the Thu 2026-12-10 US close.
+One period, from the first regular approved cycle — **the anchor**, whichever day it
+turns out to be — to the `TERMINAL` entry after the US close of the trading day following
+`FLATTEN_DATE`.
+
+**Its length is reported as measured, never as intended.** The title of this document says
+"three-month" because that was the intention when the run was designed for a 2026-09-09
+anchor: 92 calendar days and 64 trading days to a flatten on 2026-12-09. `FLATTEN_DATE` has
+since been fixed at **2026-12-15** by the owner's ruling of 2026-09-11, which makes it an
+end date rather than a duration: a later anchor shortens the run instead of moving the end.
+From an anchor on **2026-09-22** the period is **85 calendar days and 59 trading days** —
+about 8% shorter than three calendar months, and 5 trading days fewer.
+
+Two consequences, both of which belong in the report rather than in a footnote:
+
+- Every rate this document defines is computed over the **actual** number of trading days
+  and cycles, and the report names that number beside every one of them. A period that is
+  five trading days shorter is not a smaller version of the same measurement; it has fewer
+  independent observations, and the reliability figures in particular are weaker for it.
+- If the run is to be a true three calendar months from its anchor, `FLATTEN_DATE` has to
+  move, and that is a decision with a mechanical consequence: it lives in
+  `config/policy.json`, which is runtime-digest material, so changing it changes the policy
+  digest and **voids any certificate issued before the change**. It is therefore free until
+  the certificate run and expensive afterwards.
+
+The original single-sentence definition, kept because it is what the first version of this
+document promised: *one period, from the first regular approved cycle (Wed 2026-09-09) to
+the `TERMINAL` entry after the Thu 2026-12-10 US close.* Neither of those dates is the
+plan any more, and the sentence stands here as the intention it was, not as a schedule.
 Strategy parameters and risk limits stay constant for its whole length: the
 sleeve budgets, the per-position and per-underlying caps, the structure
 whitelist, the expiry bounds, the cycle cadence, the analyst model. If any of

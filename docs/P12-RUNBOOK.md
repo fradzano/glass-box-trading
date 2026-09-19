@@ -24,38 +24,44 @@ not at all; `tools/install-scheduled-task.ps1` no longer enables anything unless
 
 ## The dates
 
-The rule, applied in this order: **fix the first regular cycle first, derive the
-flatten date from it, then certify.** Three calendar months from the first
-regular cycle.
+Rewritten 2026-09-20. The table below is the plan as it stands, not the plan as it
+was first written: the run was to start on 2026-09-09 and did not, and the entry that
+used to stand here described a sequence in which the owner typed most of the steps by
+hand. Since unit 10 the activation script executes them, and this runbook is the
+operator's copy of what it will do and of the few things that remain his.
 
-| Event | When | Note |
+**The start is conditional.** The owner's rule, and it is not a formality: a missing
+proof moves the start, it is not waived because a date is near.
+
+| Event | When | Who does it |
 |---|---|---|
-| Account, secrets, notification channel | by **Mon 2026-09-07, 22:00** | owner steps 1–3 |
-| Certificate run four (dev account, supervised) | **Tue 2026-09-08**, from 15:30 CEST | owner step 4 |
-| Install + verify | Tue 2026-09-08, after PASS | owner step 5 |
-| Activation gate (drills, cold start) | Tue 2026-09-08 22:10 → Wed 2026-09-09 **14:45** | owner step 6 — outside every session, so nothing trades |
-| **First regular cycle** | **Wed 2026-09-09**, the 15:15 CEST firing, supervised | owner step 7 — the anchor |
-| `FLATTEN_DATE` | **Wed 2026-12-09** | three calendar months |
-| Journaling-only day | Thu 2026-12-10 | |
-| `TERMINAL` and shutdown | after the Thu 2026-12-10 US close | |
+| Account, secrets, notification channel | done (owner steps 1–3) | owner |
+| Three alert confirmations on the owner's own device | done **2026-09-15 22:08**, valid 14 days from the oldest receipt, so through **2026-09-29** | owner |
+| Auto-restart sign-on switched off (`DisableAutomaticRestartSignOn = 1`) | done **2026-09-19**, read back and re-measured against all nine expected preconditions | owner |
+| Unit 13: host bindings, the activation task, the real activation alert | **open** | agent |
+| The operating proofs: reboot without login, continuation with one writer, process death at critical boundaries, watchdog recovery, external-service failure, terminal flatten with no reactivation | **open** | agent, with the owner for the reboot |
+| Certificate run (dev profile, dev state directory, supervised) | **not before** the proofs above | owner, from this runbook |
+| Install + verify (elevated) | after PASS | activation step `1-install`, owner elevates |
+| Activation gate: drills and cold start | the evening after the certificate and the following morning | activation steps 4–9, owner observes |
+| **First regular cycle — the anchor** | the 15:15 CEST firing of the anchor day | activation step `11-anchor` |
+| `FLATTEN_DATE` | **2026-12-15**, fixed by the owner's ruling of 2026-09-11 | policy |
+| Journaling-only day | the trading day after the flatten | |
+| `TERMINAL` and shutdown | after that day's US close | owner |
 
-The certificate and the first regular cycle are **different days on purpose**:
-the first cycle may only happen after PASS *and* after the activation gate, and
-squeezing both into one afternoon turns a gate into a formality.
+**What a slip costs, in numbers rather than in principle.** `FLATTEN_DATE` is a fixed
+end date, so a later start shortens the run and needs no new certificate. From an anchor
+on 2026-09-22 the measurement period is **85 calendar days and 59 trading days**; a full
+three calendar months would be 92 and 64. Every day the anchor slips costs roughly one
+trading day of evidence and nothing else. The evaluation states the actual length rather
+than the intended one — see [`P12-EVALUATION.md`](P12-EVALUATION.md).
 
-**If the start slips — superseded on 2026-09-11.** This section used to say that
-the flatten date moves with the start, always, and that a slip of even one day
-therefore means: change the date, *then* certify, *then* arm. The mechanism behind
-it is real and unchanged — changing `FLATTEN_DATE` edits `config/policy.json`,
-which changes the **policy digest**, which **voids the certificate**, because the
-arming gate compares the deployment's policy digest with the certificate's. What
-changed is the owner's ruling about the measurement period: **`FLATTEN_DATE` is a
-fixed end date** (2026-12-15). A start that slips shortens the run and the
-evaluation reports its actual length; the date, the digest and the certificate all
-stay as they are, and a retry the next trading day needs no new certificate. Only a
-certificate that itself failed requires a new run. See DECISIONS, 2026-09-11.
-
----
+**The certificate binds the code.** `enumerateRuntimeFiles` takes `src/**`,
+`tools/*.mjs`, `tools/*.py`, `package.json` and the two configuration files into the
+runtime digest, and the arming gate compares that digest with the certificate's. So any
+repair on that surface is free **before** the certificate run and costs a new certificate
+after it. The two wrapper scripts, `tools/run-log.psm1` and `ops/activation/**` are
+outside the digest; a repair there never voids a certificate, which is why the
+deployment's safety scripts can still be fixed between the certificate and the anchor.
 
 ## Reading the clock
 
@@ -553,10 +559,23 @@ open orders.
 **Abort if:** the verdict is anything but PASS, or the dev account is not flat.
 Either way the anchor moves — the procedure is at the end of owner step 6.
 
-Then put that path into `.env` as `PRE_ARM_CERTIFICATE=` — the absolute path
-exactly as printed, without quotes — and run the **second** check from step 2,
-the one that asks for the certificate and the three ping URLs. **Close this PowerShell window** before step 5,
-so no dev variable can survive in it.
+**Do not put that path into `.env`.** This instruction used to stand here and it was
+wrong twice over. The activation reads `evidence\pre-arm\` itself, validates the newest
+certificate against this deployment's two digests at step `2-certificate`, and writes the
+line into `.env` at step `10-gate` — **after** the drills, the reboot proof and the whole
+conjunction of spec §7, and never before. That is the latch of spec §6: between step 0 and
+step 10 `PRE_ARM_CERTIFICATE` must be **absent** from `.env`, so that a deployment which
+never reached its gate cannot arm itself. Step 0 removes the line if it finds one, so a
+line added by hand is at best undone and at worst the reason step 0 reds.
+
+Note the path the command printed for your own record and for the ledger, then **close
+this PowerShell window** before step 5, so no dev variable can survive in it.
+
+The profile and the state directory are the other half of this rule. The long run's `.env`
+says `ALPACA_PROFILE=competition` and `STATE_DIR=<the declared long-run directory>`, and it
+keeps saying so: the certificate run sets the dev profile, the dev state directory and the
+dev diagnostic sink **in its own process only**, for the duration of that one command. The
+block above does exactly that and restores them even when it fails.
 
 ### 5. Install the tasks — Tue 2026-09-08, after PASS
 
@@ -851,8 +870,9 @@ Then, in this order and no other:
    `"YYYY-MM-DD"`. Nothing else in that file changes.
 4. `npm.cmd run verify` — exit 0. The policy digest has now changed, which is
    what voids the old certificate.
-5. Re-run **owner step 4** on the new certificate day; put the new path into
-   `.env` as `PRE_ARM_CERTIFICATE=`.
+5. Re-run **owner step 4** on the new certificate day. The new certificate stays in
+   `evidence\pre-arm\` and goes into `.env` at the activation's step 10, not by hand:
+   see the note at the end of step 4.
 6. Re-run **owner step 5** with `-CoverageThroughDate <journaling-only day>`.
 7. **Re-check the three external checks, before any drill.**
    `install-scheduled-task.ps1` derives the cron expressions from the trigger
