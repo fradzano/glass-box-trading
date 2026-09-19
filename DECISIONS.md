@@ -1,5 +1,23 @@
 # DECISIONS
 
+- **2026-09-20 — R4-14: the watchdog may keep one independent bootstrap copy of its
+  healthchecks.io ping URL under `C:\ProgramData`.** Owner decision. The copy lives at
+  `C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url`; it is not a second
+  `.env`, and it contains no other setting or credential. The directory and file have
+  inheritance disabled: the scheduled-task identity (`felix`) can read, while `SYSTEM`
+  and `Administrators` can replace it during an elevated install or rotation. The URL
+  never enters the task command line, task definition, repository, state tree, log, or
+  output. The installer writes the copy atomically from `.env`, reads it back, and checks
+  its non-secret `hc:` fingerprint against the configured watchdog endpoint before either
+  task may be enabled. `tools/watchdog-run.ps1` reads this bootstrap copy before it touches
+  `.env`, so a locked or unreadable `.env` can produce an immediate `/fail` instead of
+  silence. A missing or unreadable bootstrap copy still fails closed; the external check's
+  grace period remains the final detector of that independent failure. The copy is plain
+  text by design: the tasks use S4U, for which Windows does not provide access to encrypted
+  files, while machine-scope DPAPI would let every local process decrypt the value. No host
+  path or secret file is created by hand; creation, ACL application, readback and rotation
+  are one measured installer operation. **Decider:** Felix Radzanowski.
+
 - **2026-09-20 — the measurement period keeps its fixed end and is reported as measured.**
   Owner decision, taken on the one question the certificate run made time-critical.
   `FLATTEN_DATE` stays **2026-12-15**. From an anchor on 2026-09-22 the run is therefore

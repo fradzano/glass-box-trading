@@ -8,6 +8,28 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-20 CEST, evening. **R4-14 now has its owner decision, but no
+implementation and no host mutation.** The watchdog may cache exactly its own ping URL in
+`C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url`, as one plain-text file
+with explicit ACLs; it is not a second `.env`. The full boundary and rationale are in
+[`DECISIONS.md`](DECISIONS.md). Felix must not create the directory or file by hand: the
+installer must create the directory, set and verify the ACL, write atomically, read back,
+compare the non-secret fingerprint, and only then make the deployment eligible to enable.
+
+The implementation remains in the existing verification run `p12-units-1-11`, finding
+R4-14. Its previously uncommitted round-4 review, reproductions and finding records were
+checked and committed to the local verification store as `e10adcf`. This Codex release
+cannot continue that run: the run is bound to the Claude archiver, counted Codex calls are
+disabled in the restricted release, and the run manager correctly refused both rebinding
+and degrading it to no archiver. Continue from an Opus session by re-arming the same run;
+do not start a new run and do not implement around its ledger. Runtime code is unchanged
+from repository commit `7a4bfeb`; this session changes decision and cursor documents only.
+
+**Next:** close R4-14 under the existing run, including the real exclusive-lock
+counterexample, ACL/readback tests, fingerprint mismatch and rotation cases, secret-output
+scans, and a signed-out S4U host proof. Unit 13 follows; neither scheduled task is enabled
+and `GlassBoxTrading-Activation` is still not registered.
+
 **Last updated:** 2026-09-20 CEST, early morning. **Update — the external review's six findings
 are repaired, three blind gates then found eight more (two of them class A, both introduced by
 the repair itself), and those are repaired too.** Branch `p7/dev-live-certificate`, HEAD
