@@ -34,9 +34,14 @@ on 2026-09-22?
 **Books and lease.** Everything is booked append-only in the run store: findings R4-21 to
 R4-41, the mechanism `watchdog-bootstrap-credential-source`, the generator stop, both
 injection bookings and the probe returns. A blind closing audit on the gate tier ran before
-this presentation and reported 16 discrepancies; each carries a correction annex with its
-seat, and one re-audit follows. The run stays `p12-units-1-11`; nothing was re-bound and no
-new run was started.
+this presentation and reported 16 discrepancies; each was given a seat and a correction annex,
+and the one re-audit then confirmed fourteen of them corrected — every correction an annex,
+with no original wording removed anywhere. **Two stay open and therefore travel with this
+presentation:** the first mutation run has no archived return although the protocol books its
+result, and the find-site markers an earlier cycle asked for are still missing. Per the
+rulebook a correction appended after the re-audit no longer lifts that, so this goes to you as
+a **presentation with an open discrepancy** rather than a clean one. The run stays
+`p12-units-1-11`; nothing was re-bound and no new run was started.
 
 **Next:** the owner's answer on the generator, then either the class fix or a countersigned
 residual. The host is unchanged and safe — `GlassBoxTrading-AgentCycle` and
