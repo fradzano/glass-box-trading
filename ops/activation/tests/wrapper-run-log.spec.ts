@@ -72,6 +72,7 @@ interface Tree {
   readonly root: string;
   readonly repoRoot: string;
   readonly stateDir: string;
+  readonly bootstrapPath: string;
 }
 
 /**
@@ -84,12 +85,15 @@ async function tree(): Promise<Tree> {
   trees.push(root);
   const repoRoot = path.join(root, "repo");
   const stateDir = path.join(root, "state");
+  const bootstrapPath = path.join(root, "program-data", "GlassBoxTrading", "secrets", "healthchecks-watchdog.url");
   await mkdir(path.join(repoRoot, "tools"), { recursive: true });
   await mkdir(path.join(repoRoot, "config"), { recursive: true });
   await mkdir(path.join(repoRoot, "dist", "shell"), { recursive: true });
   await mkdir(stateDir, { recursive: true });
+  await mkdir(path.dirname(bootstrapPath), { recursive: true });
+  await writeFile(bootstrapPath, baseUrl, "utf8");
 
-  for (const file of ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1"]) {
+  for (const file of ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1", "watchdog-bootstrap.psm1"]) {
     await copyFile(path.join(REPO, "tools", file), path.join(repoRoot, "tools", file));
   }
   await writeFile(path.join(repoRoot, "config", "policy.json"), JSON.stringify({ DEAD_MAN_BOUND_MS: 3_000_000 }), "utf8");
@@ -119,7 +123,7 @@ async function tree(): Promise<Tree> {
     await writeFile(path.join(repoRoot, "dist", "shell", entry), stub, "utf8");
   }
   await writeFile(path.join(repoRoot, "dist", "shell", "readiness-cli.js"), "process.stdout.write('readiness: stub\\n');", "utf8");
-  return { root, repoRoot, stateDir };
+  return { root, repoRoot, stateDir, bootstrapPath };
 }
 
 interface Run {
@@ -158,6 +162,7 @@ async function runWrapper(
       "-File", script,
       "-RepoRoot", context.repoRoot,
       "-NodePath", process.execPath,
+      ...(wrapper === "watchdog-run.ps1" ? ["-TestBootstrapPath", context.bootstrapPath] : []),
       ...(options.extra ?? []),
     ];
   return await new Promise<Run>((resolve, reject) => {
@@ -189,6 +194,31 @@ async function runWrapper(
     child.on("error", reject);
     child.on("close", code => { resolve({ exitCode: code ?? -1, stdout, stderr }); });
   });
+}
+
+async function holdExclusiveReady(file: string, milliseconds: number): Promise<{ readonly completion: Promise<void>; readonly release: () => void }> {
+  const marker = `${file}.exclusive-lock`;
+  const script = [
+    `$f=[System.IO.File]::Open('${file.replace(/'/gu, "''")}','Open','ReadWrite','None')`,
+    `Set-Content -LiteralPath '${marker.replace(/'/gu, "''")}' -Value 'locked'`,
+    `Start-Sleep -Milliseconds ${String(milliseconds)}`,
+    "$f.Close()",
+  ].join("; ");
+  const child = spawn(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { windowsHide: true });
+  const completion = new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", () => { resolve(); });
+  });
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      await stat(marker);
+      return { completion, release: () => { child.kill(); } };
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("exclusive lock holder did not announce itself");
 }
 
 async function logText(context: Tree, name: string): Promise<string> {
@@ -236,6 +266,72 @@ const tradingWeekday = easternNow.getDay() !== 0 && easternNow.getDay() !== 6;
  * scheduler verifier.
  */
 const TRADING_MONDAY = "2026-09-21T17:00:00Z";
+
+describe("R4-14 — the watchdog heartbeat has an independent bootstrap", () => {
+  it("fail-pings immediately through the bootstrap while .env is held by a real exclusive lock", async () => {
+    const context = await tree();
+    const lock = await holdExclusiveReady(path.join(context.repoRoot, ".env"), 15_000);
+
+    const started = Date.now();
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
+    const elapsed = Date.now() - started;
+    lock.release();
+    await lock.completion;
+
+    expect(pings).toHaveLength(1);
+    expect(pings[0]?.url).toBe("/hc/fail");
+    expect(pings[0]?.body).toContain(".env could not be read");
+    expect(run.exitCode).not.toBe(0);
+    expect(elapsed).toBeLessThan(3_000);
+    expect(`${run.stdout}\n${run.stderr}\n${await logText(context, "watchdog-run.log")}`).not.toContain(baseUrl);
+  }, 30_000);
+
+  it("does not fall back to .env when the bootstrap file is missing", async () => {
+    const context = await tree();
+    await rm(context.bootstrapPath);
+
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
+
+    expect(run.exitCode).not.toBe(0);
+    expect(pings).toHaveLength(0);
+    expect(`${run.stdout}\n${run.stderr}`).toContain("watchdog bootstrap unusable: missing");
+    expect(`${run.stdout}\n${run.stderr}`).not.toContain(baseUrl);
+  }, 30_000);
+
+  it("fails immediately and secret-free when the bootstrap file is unreadable", async () => {
+    const context = await tree();
+    const lock = await holdExclusiveReady(context.bootstrapPath, 15_000);
+
+    const started = Date.now();
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
+    const elapsed = Date.now() - started;
+    lock.release();
+    await lock.completion;
+
+    expect(run.exitCode).not.toBe(0);
+    expect(pings).toHaveLength(0);
+    expect(elapsed).toBeLessThan(3_000);
+    const observable = `${run.stdout}\n${run.stderr}\n${await logText(context, "watchdog-run.log")}`;
+    expect(observable).toContain("watchdog bootstrap unusable: unreadable");
+    expect(observable).not.toContain(baseUrl);
+  }, 30_000);
+
+  it("reports a fingerprint mismatch through the bootstrap endpoint without printing either URL", async () => {
+    const context = await tree();
+    const decoy = `${baseUrl}/different-secret`;
+    await writeFile(path.join(context.repoRoot, ".env"), `STATE_DIR=${context.stateDir}\nHEALTHCHECK_WATCHDOG_URL=${decoy}\n`, "utf8");
+
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", TRADING_MONDAY] });
+
+    expect(run.exitCode).not.toBe(0);
+    expect(pings).toHaveLength(1);
+    expect(pings[0]?.url).toBe("/hc/fail");
+    expect(pings[0]?.body).toContain("fingerprint mismatch");
+    const observable = `${run.stdout}\n${run.stderr}\n${await logText(context, "watchdog-run.log")}`;
+    expect(observable).not.toContain(baseUrl);
+    expect(observable).not.toContain(decoy);
+  }, 30_000);
+});
 
 
 async function runPowerShell(script: string): Promise<string> {

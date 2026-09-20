@@ -122,6 +122,8 @@
 - `ops/activation/probes/mutants-unit12-r3-teardown-record.json`
 - `ops/activation/probes/mutants-verify-scheduled-tasks.json`
 - `ops/activation/probes/mutate-activation.mjs` — Mutation probe for the activation core: break one thing at a time, run the
+- `ops/activation/probes/prove-watchdog-bootstrap-s4u.ps1`
+- `ops/activation/probes/prove-watchdog-bootstrap.ps1`
 - `ops/activation/readers/analyst-probe.ts` — The live-token probe (owner ruling 2026-09-14; the owner's review the same day,
 - `ops/activation/readers/deployment-state.ts` — The activation's reader for `config/deployment.json`, the one place that says
 - `ops/activation/readers/healthchecks-io.ts` — The healthchecks.io management API, read (build log, unit 7). This is the one place the
@@ -339,6 +341,7 @@
 - `tools/scan-secrets.ps1`
 - `tools/show-run-log.ps1`
 - `tools/verify-scheduled-tasks.ps1`
+- `tools/watchdog-bootstrap.psm1`
 - `tools/watchdog-run.ps1`
 - `tsconfig.build.json`
 - `tsconfig.json`

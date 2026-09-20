@@ -59,7 +59,9 @@ than the intended one — see [`P12-EVALUATION.md`](P12-EVALUATION.md).
 `tools/*.mjs`, `tools/*.py`, `package.json` and the two configuration files into the
 runtime digest, and the arming gate compares that digest with the certificate's. So any
 repair on that surface is free **before** the certificate run and costs a new certificate
-after it. The two wrapper scripts, `tools/run-log.psm1` and `ops/activation/**` are
+after it. The two wrapper scripts, their shared `tools/run-log.psm1` and
+`tools/watchdog-bootstrap.psm1`, the disposable bootstrap probes, and
+`ops/activation/**` are
 outside the digest; a repair there never voids a certificate, which is why the
 deployment's safety scripts can still be fixed between the certificate and the anchor.
 
@@ -581,13 +583,22 @@ block above does exactly that and restores them even when it fails.
 
 *Elevated PowerShell ("Run as administrator").* Registration needs it.
 
+Do **not** create `C:\ProgramData\GlassBoxTrading\secrets` or
+`healthchecks-watchdog.url` yourself. The installer is the only writer: it reads exactly
+one `HEALTHCHECK_WATCHDOG_URL` from `.env`, creates the directory, applies protected ACLs
+(the task identity reads; `SYSTEM` and `Administrators` replace), writes or rotates the
+file atomically, reads it back, and compares only its non-secret `hc:` fingerprint. If
+any of those steps fails, task replacement does not begin. The URL must never be copied
+into a command, task definition, log, state directory, or operator transcript.
+
 ```powershell
 cd C:\Users\felix\source\repos\glass-box-trading
 npm.cmd run build   # npm.cmd, not npm: npm.ps1 is blocked by this host's execution policy (R44-B16)
 .\tools\install-scheduled-task.ps1 -CoverageThroughDate 2026-12-10
 ```
 
-**Expect:** `SCHEDULE COVERAGE OK`, then both tasks registered **and
+**Expect:** `Watchdog bootstrap verified` with an `hc:` fingerprint,
+`SCHEDULE COVERAGE OK`, then both tasks registered **and
 immediately disabled** — the output says so. It refuses to register at all if
 the trigger window does not provably contain every exchange session through the
 given date. The date is **2026-12-10**, the journaling-only day, not the flatten
@@ -607,13 +618,16 @@ Then, still elevated:
 
 ```powershell
 .\tools\verify-scheduled-tasks.ps1
-# expect: SCHEDULER CHECK PASSED, and a check count at the end of the line.
+# expect: the watchdog-bootstrap ACL/fingerprint check passes, then
+# SCHEDULER CHECK PASSED, and a check count at the end of the line.
 # Write that number down: it must be the same every later time you run this
 # without -ExpectEnabled. A number that changes means the verifier changed,
 # and a verifier that changed has not verified the same thing twice.
 ```
 
-**Abort if:** any check fails. Do not enable anything yet.
+**Abort if:** any check fails, including a missing/unreadable bootstrap, an ACL
+deviation or a fingerprint mismatch. Do not enable anything yet. Repair by rerunning
+the elevated installer; never repair this file or its ACL by hand.
 
 ### 6. The activation gate — Tue 2026-09-08 22:10 to Wed 2026-09-09 14:45 local
 

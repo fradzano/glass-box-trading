@@ -132,6 +132,7 @@ param(
     [string]$CoverageThroughDate,
     [string]$TaskFolder = '\GlassBoxTrading\',
     [switch]$Activate,
+    [switch]$BootstrapOnly,
     [switch]$Uninstall
 )
 
@@ -299,6 +300,33 @@ foreach ($runner in @($cycleRunner, $watchdogRunner)) {
     if (-not (Test-Path -LiteralPath $runner)) {
         throw "'$runner' is missing; it ships alongside this installer and must not be removed."
     }
+}
+
+# R4-14: the watchdog must be able to fail-ping before it can read `.env`.
+# The installer is the only writer of this copy; neither the URL nor a path
+# override enters either task definition.
+$bootstrapModule = Join-Path $RepoRoot 'tools\watchdog-bootstrap.psm1'
+if (-not (Test-Path -LiteralPath $bootstrapModule -PathType Leaf)) { throw "'$bootstrapModule' is missing; it ships alongside this installer." }
+Import-Module $bootstrapModule -Force -ErrorAction Stop
+$watchdogBootstrapPath = Get-WatchdogBootstrapPath
+$configuredWatchdogUrl = Read-SingleDotEnvValue -Path (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
+$configuredWatchdogFingerprint = Get-WatchdogEndpointFingerprint -Url $configuredWatchdogUrl
+$bootstrapWritten = $false
+if ($PSCmdlet.ShouldProcess($watchdogBootstrapPath, "Create or atomically rotate the watchdog bootstrap, apply its protected ACL, read it back and compare fingerprint $configuredWatchdogFingerprint")) {
+    $windowsPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+    if (-not $windowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'The watchdog bootstrap ACL and owner require an elevated PowerShell. No task was changed.'
+    }
+    $bootstrapResult = Install-WatchdogBootstrap -Url $configuredWatchdogUrl -TaskUserSid $expectedUserSid -Path $watchdogBootstrapPath
+    if (-not $bootstrapResult.Ok -or $bootstrapResult.Fingerprint -ne $configuredWatchdogFingerprint) { throw 'The watchdog bootstrap did not verify. No task was changed.' }
+    $bootstrapWritten = $true
+    Write-Host "Watchdog bootstrap verified at $watchdogBootstrapPath ($configuredWatchdogFingerprint)."
+} else {
+    Write-Host "Watchdog bootstrap preview at $watchdogBootstrapPath ($configuredWatchdogFingerprint); no file was written."
+}
+if ($BootstrapOnly) {
+    if (-not $WhatIfPreference -and -not $bootstrapWritten) { throw 'The watchdog bootstrap was not written.' }
+    return
 }
 
 $policyPath = Join-Path $RepoRoot 'config\policy.json'

@@ -271,6 +271,19 @@ and before its verdict ping is the silence this contract exists to prevent.
 *Added 2026-09-20 after a gate measured 200 lost lines costing 98 seconds against a
 five-minute interval.*
 
+**LC-12 — The watchdog's refusal channel is independent of `.env`.** The installer owns
+one URL-only bootstrap at
+`C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url`. The watchdog reads it
+before opening `.env`, then opens `.env` and compares the configured endpoint by a
+non-secret `hc:` fingerprint. A locked or unreadable `.env` therefore produces an
+immediate `/fail` through the bootstrap endpoint; a mismatch also fail-pings and neither
+URL enters output or a log. A missing, locked or malformed bootstrap never falls back to
+`.env`: it fails closed, and the external watchdog grace is the detector when no endpoint
+can be read. Creation, protected ACLs, exact readback and atomic rotation belong to the
+elevated installer; the verifier treats any ACL deviation as red before either task is
+eligible to enable.
+*Closes R4-14. The independent channel is deliberately one URL, not a second `.env`.*
+
 **LC-9 — The journal's contract is untouched.** This contract governs the wrappers'
 diagnostic run logs. An append failure in the append-only journal remains an abort
 (axiom A4). Nothing here is permission to swallow a journal error.

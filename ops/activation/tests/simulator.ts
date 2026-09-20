@@ -308,7 +308,7 @@ export function observe(world: SimWorld): Observations {
     watchdogLog: known([...world.watchdogLog]),
     logFilesSearched: ["cycle-run.log", "cycle-run.log.1"],
     sessionSamples: [...world.sessionSamples],
-    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3" }),
+    wrapperHashes: known({ "cycle-run.ps1": "w1", "watchdog-run.ps1": "w2", "run-log.psm1": "w3", "watchdog-bootstrap.psm1": "w4" }),
     hostPreconditions: known(HOST),
     alertConfirmation: known({
       operator: "felix",

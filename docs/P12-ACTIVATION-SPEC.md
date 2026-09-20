@@ -66,7 +66,7 @@ carry the design:
   unvalidated.
 - **A3 — Observe, don't assume.** The cycle and watchdog task *definitions* (not
   just states), and the disarm task from step 4 through the gate; check states,
-  `.env`, the profile, both digests and both wrapper hashes are read before every
+  `.env`, the profile, both digests and the complete wrapper-set hashes are read before every
   decision that uses them. The activation task is the invocation mechanism in §5,
   not a unit-7 observation. Its registration is deferred to unit 13 and is not
   claimed as measured here. Cycle and watchdog are observed throughout; the disarm
@@ -147,6 +147,10 @@ indefinitely and records no pid.
 account id — checks by name and `hc:` fingerprint, accounts by masked id.
 
 ## 5. Steps
+
+In this table, the older shorthand “both wrapper hashes” or “wrapper hash” means the
+complete four-file execution-support set defined in §6; step 0 records all four by name,
+and every resume/rearm/gate comparison checks all four.
 
 Each step is a pure decision (`ledger + observations → action | abort | wait`) in
 its own invocation, idempotent, with a **`not valid after`**. An invocation that
@@ -284,10 +288,11 @@ new certificate; only a failed certificate needs a new run.
   if that is the pinned `.node-version`, never the node the registration names. A
   trigger at 15:05 that runs anything else, or runs it without those settings, is red in
   every phase from step 4 to the gate.
-- **Both wrappers are hashed**, `cycle-run.ps1` and `watchdog-run.ps1`, by name, at
-  step 0, and re-checked on every later invocation and at the gate: `tools/*.ps1` is
-  outside the runtime digest, outside the architecture gate and untouched by the
-  test suite, and the two wrappers carry different safety claims.
+- **The complete wrapper execution set is hashed** by name at step 0 and re-checked
+  on every later invocation and at the gate: `cycle-run.ps1`, `watchdog-run.ps1`,
+  their shared `run-log.psm1`, and the watchdog's `watchdog-bootstrap.psm1`.
+  These deployment scripts/modules sit outside the runtime digest and carry safety
+  claims that must not move underneath an activation attempt.
 
 ## 7. The gate, stated as a conjunction
 
@@ -302,7 +307,7 @@ both digests re-printed at gate time still equal the certificate's; the three ch
 `up` in a stable observation with bounded backoff, where a 429, a 5xx or an
 unreachable API is `unknown` and unknown is red; step 8 closed `ok` with
 `LastBootUpTime` later than **today's** intent line, not an earlier attempt's;
-step 9 satisfied; both wrapper hashes unchanged, by name; and the analyst's token
+step 9 satisfied; all wrapper-set hashes unchanged, by name; and the analyst's token
 proven live by the probe at gate time, where a probe that fails or cannot run is red
 (owner ruling 2026-09-14).
 

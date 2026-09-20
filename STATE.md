@@ -8,6 +8,82 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-20 CEST, night. **R4-14 is formally closed, and the run that closed
+it is halted at a lever rather than terminated.** Branch `p7/dev-live-certificate`. Three
+counted blind Opus gates, each of which executed its counterproof instead of reading it,
+returned `RESOLVED` for R4-14 (the watchdog's independent refusal channel), for R4-21 (the
+S4U probe's unchecked fingerprint input) and for R4-35 (the test that guarded R4-21). The
+lock counterproof is measured: under a genuine `FileShare.None` lock on `.env` the repaired
+wrapper sends `/hc/fail` in 347 ms, while the same probe against a copy with the defect
+reintroduced sends nothing at all. `npm.cmd run verify` exits 0 with 709 root and **670**
+activation tests — the count rose by the four behavioural cases added for R4-35, and the
+first run of that gate was red on a lint error in one of them, which is repaired.
+
+**Why the run is halted.** The gate that closed R4-35 found three class-B defects that share
+one cause: the PowerShell surface of this deployment — `install-scheduled-task.ps1`,
+`verify-scheduled-tasks.ps1` and the ACL-setting half of `watchdog-bootstrap.psm1` — is held
+by assertions over its own source text and is executed by no test at all. Measured, not
+argued: a semantic weakening that leaves the asserted string standing is invisible to the
+suite. That is a generator, so single fixes are locked, including the two-line one this
+session's own repair earned. The class fix needs an administrator token and touches the
+installer and verifier of a deployment whose tasks are deliberately disabled — a decision
+about scope and elevation that belongs to the owner. **The open question for Felix:** is a
+deployment whose installer, verifier and ACL module are executed by no test fit to be enabled
+on 2026-09-22?
+
+**Books and lease.** Everything is booked append-only in the run store: findings R4-21 to
+R4-41, the mechanism `watchdog-bootstrap-credential-source`, the generator stop, both
+injection bookings and the probe returns. A blind closing audit on the gate tier ran before
+this presentation and reported 16 discrepancies; each carries a correction annex with its
+seat, and one re-audit follows. The run stays `p12-units-1-11`; nothing was re-bound and no
+new run was started.
+
+**Next:** the owner's answer on the generator, then either the class fix or a countersigned
+residual. The host is unchanged and safe — `GlassBoxTrading-AgentCycle` and
+`GlassBoxTrading-Watchdog` remain disabled with stale definitions, so the read-only verifier
+still fails 4 of 58 checks, and `GlassBoxTrading-Activation` is not registered. Still owed
+before anything is enabled: the elevated replacement of both task definitions, the literal
+signed-out S4U proof — the one fact no gate could establish, since an S4U token that cannot
+read the bootstrap would make every firing refuse silently — and Unit 13. No task and no
+activation is enabled on a failed or incomplete proof.
+
+
+**Last updated:** 2026-09-20 CEST, late evening. **R4-14 is implemented and
+technically counterverified, but not yet formally closed in its bound verification
+run.** Branch `p7/dev-live-certificate` is still at `192809a`; the complete R4-14
+change is an uncommitted working tree. `npm.cmd run verify` is green with 709 root
+tests and 666 activation tests. The installer-owned bootstrap now exists at the
+decision's fixed ProgramData path: elevated disposable creation/ACL/readback/rotation
+proof passed, the real installer created and rotated it, normal `felix` readback and
+ACL/fingerprint verification passed, no temp/backup file remained, and all captured
+installer/verifier/S4U output passed the secret scan. A triggerless S4U proof ran as
+`felix`, non-interactive in session 0, and removed itself; the literal proof after an
+actual desktop sign-out still remains.
+
+The existing run `p12-units-1-11` is ARMED under Claude lease
+`8e84efc241674d71bdaa704530866133`. Its first archived Opus fix gate could only award
+`PATCHED`, because that subagent's command permissions blocked every executable
+counterprobe; it reported one new B finding, the unchecked S4U-probe fingerprint
+argument. That input is now strictly limited to `^hc:[0-9a-f]{8}$`, with a red/green
+test and a direct non-elevated refusal before elevation or any ScheduledTasks API.
+A later native Sol/high subagent executed all four R4-14 wrapper probes and that B
+counterprobe and returned `RESOLVED` for both, but the repaired hook labelled the call
+`UNCOUNTED`; its result is useful technical evidence and must not be booked as the
+run's fix-gate verdict. Two later Claude prompts have no terminal return (one
+interrupted, one capacity failure) and are not verdicts.
+
+The host stays safe: `GlassBoxTrading-AgentCycle` and `GlassBoxTrading-Watchdog` both
+remain disabled, but their definitions are stale and the read-only verifier therefore
+fails 4 of 58 checks; `GlassBoxTrading-Activation` is not registered. **Next:** resume
+this same run through its Claude archiver; reconcile every finding from the archived
+Opus return into the append-only books; obtain an executable counted fix-gate verdict
+for R4-14 and its B1 follow-up; then update the books and disarm only with no pending
+claims. After formal closure: update this cursor, run the full gate once more, commit
+and push the R4-14 change, let the proven elevated installer replace both deployment
+tasks while leaving them disabled, require the host verifier fully green, complete the
+literal signed-out S4U proof, then continue Unit 13. No task or activation is enabled
+on a failed or incomplete proof.
+
 **Last updated:** 2026-09-20 CEST, evening. **R4-14 now has its owner decision, but no
 implementation and no host mutation.** The watchdog may cache exactly its own ping URL in
 `C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url`, as one plain-text file

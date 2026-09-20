@@ -1,5 +1,23 @@
 # DECISIONS
 
+- **2026-09-20 — single fixes on the PowerShell surface are locked until the owner rules on
+  the generator.** Coordinator ruling inside verification run `p12-units-1-11`, recorded here
+  because it binds later sessions. Three counted blind gates closed R4-14, R4-21 and R4-35 by
+  executed counterproof, and the last of them established that `tools/install-scheduled-task.ps1`,
+  `tools/verify-scheduled-tasks.ps1` and the writing half of `tools/watchdog-bootstrap.psm1` are
+  executed by **no test at all**: their trust boundary rests on about thirty `toContain`
+  assertions over the scripts' own source, which a semantic weakening leaves untouched. That is
+  one cause with several instances, so the rulebook locks individual repairs until it is either
+  class-fixed or declared as a residual. **What this forbids concretely:** do not patch R4-37
+  (the test case whose disjunction cannot fail), do not tighten the fingerprint guard for R4-33
+  or R4-34, and do not close R4-38 or R4-39 by strengthening the strings they rest on — each
+  would be the move the rule exists to prevent, and this round already paid for that lesson once.
+  **What the class fix is:** drive the scripts as real processes against a disposable tree with a
+  barrier ahead of the first host-mutating call, the way `wrapper-run-log.spec.ts` already drives
+  both wrappers. It needs an administrator token and it touches the installer and verifier of a
+  deployment whose tasks are deliberately disabled, which makes it a scope and elevation decision
+  rather than a repair. **Decider:** Felix Radzanowski. **Open until then:** R4-37, R4-38, R4-39.
+
 - **2026-09-20 — R4-14: the watchdog may keep one independent bootstrap copy of its
   healthchecks.io ping URL under `C:\ProgramData`.** Owner decision. The copy lives at
   `C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url`; it is not a second

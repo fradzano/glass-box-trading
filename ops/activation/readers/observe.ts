@@ -191,7 +191,7 @@ async function sampleSessions(ports: ObservationPorts, config: ObservationConfig
 
 async function hashWrappers(ports: ObservationPorts, config: ObservationConfig): Promise<Reading<Readonly<Record<WrapperName, string>>>> {
   const hashes: Partial<Record<WrapperName, string>> = {};
-  const names: readonly WrapperName[] = ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1"];
+  const names: readonly WrapperName[] = ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1", "watchdog-bootstrap.psm1"];
   for (const name of names) {
     const read = await ports.readText(path.join(config.repoRoot, "tools", name));
     if (read.kind !== "text") return unknown(`${name}: ${read.kind === "error" ? read.reason : "does not exist"}`);

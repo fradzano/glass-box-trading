@@ -37,10 +37,12 @@
     watchdog at a foreign deployment; a STATE_DIR that disagrees with the
     configured one degrades rather than recovers a foreign book.
 
-    STATE_DIR resolution mirrors `src/shell/runtime-config.ts`
-    (`loadEnvironment`): a real process environment variable named STATE_DIR
-    wins; otherwise the value is read from `<RepoRoot>\.env`. Nothing else is
-    read out of `.env` here, and this script never prints `.env` content.
+    The watchdog heartbeat URL is read first from the installer-owned bootstrap
+    file under C:\ProgramData. Only then is `.env` touched: its configured URL is
+    compared by non-secret `hc:` fingerprint, and STATE_DIR resolution mirrors
+    `src/shell/runtime-config.ts` (`loadEnvironment`). A real process environment
+    variable named STATE_DIR wins. This script never prints `.env` content or a
+    heartbeat URL.
 
 .PARAMETER RepoRoot
     Absolute path to the glass-box-trading checkout. Required.
@@ -60,7 +62,7 @@
     mechanism produce. Rotation now lives in tools/run-log.psm1 for both.
 
 .PARAMETER TestClockUtc
-    A test seam, and the only one in this file: an ISO-8601 UTC instant that
+    A test seam: an ISO-8601 UTC instant that
     replaces "now" for the trading-day, session-window and timestamp decisions,
     so that the safety paths of this wrapper can be exercised on any day of the
     week without touching the host clock. It changes no decision rule -- it only
@@ -72,6 +74,11 @@
     registered task carrying this flag fails step 1 and every later resume. That
     is why a seam is acceptable here at all: the thing that must never happen is
     detected by the check that runs before the deployment is armed.
+
+.PARAMETER TestBootstrapPath
+    Test-only override for the fixed ProgramData bootstrap path. Like TestClockUtc,
+    it is excluded from every registered task by both activation parameter checks;
+    its sole purpose is driving whole wrapper processes against disposable trees.
 #>
 [CmdletBinding()]
 param(
@@ -85,10 +92,19 @@ param(
 
     [int]$MaxLogBytes = 16777216,
 
-    [string]$TestClockUtc = ''
+    [string]$TestClockUtc = '',
+
+    [string]$TestBootstrapPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+$bootstrapModuleFailure = $null
+try {
+    Import-Module (Join-Path $PSScriptRoot 'watchdog-bootstrap.psm1') -Force -ErrorAction Stop
+} catch {
+    $bootstrapModuleFailure = 'module-unavailable'
+}
 
 # The instant every date and window decision in this file reads. It is the host's
 # clock unless -TestClockUtc was passed; see the parameter's documentation for why
@@ -240,19 +256,35 @@ function Get-DotEnvValue {
     # (# comments, optional surrounding quotes). Only ever asked for STATE_DIR
     # here, which is a path, not a secret.
     param([string]$EnvFilePath, [string]$Key)
-    if (-not (Test-Path -LiteralPath $EnvFilePath)) { return $null }
-    foreach ($rawLine in Get-Content -LiteralPath $EnvFilePath) {
-        $line = $rawLine.Trim()
-        if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
-        $separator = $line.IndexOf('=')
-        if ($separator -le 0) { continue }
-        $lineKey = $line.Substring(0, $separator).Trim()
-        if ($lineKey -ne $Key) { continue }
-        $value = $line.Substring($separator + 1).Trim()
-        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
-            $value = $value.Substring(1, $value.Length - 2)
+    # An explicit FileStream open fails synchronously on a sharing violation.
+    # Get-Content retries a FileShare.None lock on this host until it is released,
+    # which turned "immediate /fail" into a late green heartbeat. FileStream also
+    # avoids Add-Type: compiling a native shim depends on TEMP, while LC-1 requires
+    # this wrapper to keep running even when no fallback/temp sink can be built.
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    try {
+        $stream = New-Object System.IO.FileStream($EnvFilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    } catch {
+        throw 'dotenv-open-failed'
+    }
+    $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+    try {
+        while (-not $reader.EndOfStream) {
+            $line = $reader.ReadLine().Trim()
+            if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
+            $separator = $line.IndexOf('=')
+            if ($separator -le 0) { continue }
+            $lineKey = $line.Substring(0, $separator).Trim()
+            if ($lineKey -ne $Key) { continue }
+            $value = $line.Substring($separator + 1).Trim()
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value
         }
-        return $value
+    } finally {
+        $reader.Dispose()
+        $stream.Dispose()
     }
     return $null
 }
@@ -278,7 +310,10 @@ function Send-WatchdogHeartbeat {
         }
         return 'sent'
     } catch {
-        return "undelivered: $($_.Exception.Message)"
+        # Exception messages are not trustworthy redaction boundaries: some HTTP
+        # stacks include the request URI, which is the credential this wrapper is
+        # required never to print or log.
+        return 'undelivered'
     }
 }
 
@@ -311,22 +346,9 @@ function Test-NodeRuns {
     }
 }
 
-$watchdogUrl = $env:HEALTHCHECK_WATCHDOG_URL
-if ([string]::IsNullOrWhiteSpace($watchdogUrl)) {
-    # Guarded, because this read runs *before* the sender exists. Under the
-    # script-wide $ErrorActionPreference = 'Stop', a locked or unreadable .env
-    # terminated the wrapper right here: no log, no ping, no exit line -- the
-    # same failure class R46-B5 closed twenty lines further down at the sibling
-    # STATE_DIR read, which this call was left out of. An unreadable .env must
-    # not be quieter than a missing one, so the URL simply stays unset and the
-    # refusal below travels as far as it can.
-    try {
-        $watchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
-    } catch {
-        $watchdogUrl = $null
-        $watchdogUrlReadFailure = ($_.Exception.Message -replace "\s+", " ").Trim()
-    }
-}
+$bootstrapPath = if ([string]::IsNullOrWhiteSpace($TestBootstrapPath)) { 'C:\ProgramData\GlassBoxTrading\secrets\healthchecks-watchdog.url' } else { $TestBootstrapPath }
+$bootstrapRead = if ($null -eq $bootstrapModuleFailure) { Read-WatchdogBootstrap -Path $bootstrapPath } else { [pscustomobject]@{ Ok = $false; Code = $bootstrapModuleFailure; Url = $null; Fingerprint = $null } }
+$watchdogUrl = if ($bootstrapRead.Ok) { $bootstrapRead.Url } else { $null }
 
 function Stop-WithHeartbeat {
     # A refusal is still an invocation that happened. It is written down first and
@@ -344,10 +366,24 @@ function Stop-WithHeartbeat {
     throw "$Message (heartbeat $delivery)"
 }
 
-# Said out loud rather than left to the STATE_DIR read below to rediscover: with
-# STATE_DIR set in the process environment that read never happens, and an
-# unreadable .env would pass unnoticed on the one firing that should say so.
-if ($watchdogUrlReadFailure) { Stop-WithHeartbeat "$RepoRoot\.env could not be read: $watchdogUrlReadFailure" }
+# The bootstrap is deliberately checked before the first `.env` access. Missing
+# or unreadable bootstrap state never falls back to `.env`, because that would
+# recreate R4-14's dependency and make a broken independent channel look green.
+if (-not $bootstrapRead.Ok) { Stop-WithHeartbeat "watchdog bootstrap unusable: $($bootstrapRead.Code)" }
+
+try {
+    # The installer copied this exact key from this exact file. Always bind back
+    # to that source; an ambient process variable must not turn an unreadable
+    # `.env` into a green firing.
+    $configuredWatchdogUrl = Get-DotEnvValue -EnvFilePath (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
+} catch {
+    Stop-WithHeartbeat "$RepoRoot\.env could not be read"
+}
+if ([string]::IsNullOrWhiteSpace($configuredWatchdogUrl)) { Stop-WithHeartbeat 'HEALTHCHECK_WATCHDOG_URL is not configured' }
+$configuredFingerprint = Get-WatchdogEndpointFingerprint -Url $configuredWatchdogUrl
+if ($configuredFingerprint -ne $bootstrapRead.Fingerprint) {
+    Stop-WithHeartbeat "watchdog endpoint fingerprint mismatch: bootstrap $($bootstrapRead.Fingerprint), configured $configuredFingerprint"
+}
 
 if (-not (Test-Path -LiteralPath $RepoRoot)) { Stop-WithHeartbeat "RepoRoot '$RepoRoot' does not exist." }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path

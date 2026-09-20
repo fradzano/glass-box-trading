@@ -7,7 +7,8 @@
     nothing about whether that definition invokes the right script, covers the
     session, repeats at the policy's cadence, or can run while nobody is logged
     on. This reads the registered definitions back and asserts each of those
-    against config\policy.json and the files on disk.
+    against config\policy.json, `.env`, the installer-owned ProgramData
+    watchdog bootstrap, and the files on disk.
 
     It is a read-only check: it registers nothing, enables nothing and starts
     nothing. Run it after installing, after any policy change, and before
@@ -60,6 +61,17 @@ function Add-Check {
     param([string]$Name, [bool]$Ok, [string]$Detail)
     $checks.Add([pscustomobject]@{ check = $Name; ok = $Ok; detail = $Detail })
     Write-Host "[$(if ($Ok) { 'PASS' } else { 'FAIL' })] $Name -- $Detail"
+}
+
+$bootstrapModule = Join-Path $RepoRoot 'tools\watchdog-bootstrap.psm1'
+try {
+    Import-Module $bootstrapModule -Force -ErrorAction Stop
+    $configuredWatchdogUrl = Read-SingleDotEnvValue -Path (Join-Path $RepoRoot '.env') -Key 'HEALTHCHECK_WATCHDOG_URL'
+    $configuredWatchdogFingerprint = Get-WatchdogEndpointFingerprint -Url $configuredWatchdogUrl
+    $bootstrapVerification = Test-WatchdogBootstrap -Path (Get-WatchdogBootstrapPath) -TaskUserSid $expectedUserSid -ExpectedFingerprint $configuredWatchdogFingerprint
+    Add-Check -Name 'watchdog bootstrap is readable, ACL-tight and bound to the configured endpoint' -Ok $bootstrapVerification.Ok -Detail "$(if ($bootstrapVerification.Ok) { "fingerprint $($bootstrapVerification.Fingerprint); protected directory and file ACLs" } else { $bootstrapVerification.Findings -join ', ' })"
+} catch {
+    Add-Check -Name 'watchdog bootstrap is readable, ACL-tight and bound to the configured endpoint' -Ok $false -Detail 'bootstrap verification could not complete'
 }
 
 $policy = Get-Content -LiteralPath (Join-Path $RepoRoot 'config\policy.json') -Raw | ConvertFrom-Json

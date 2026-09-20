@@ -78,7 +78,7 @@ function checkNames(): readonly CheckName[] {
 }
 
 function wrapperNames(): readonly WrapperName[] {
-  return ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1"];
+  return ["cycle-run.ps1", "watchdog-run.ps1", "run-log.psm1", "watchdog-bootstrap.psm1"];
 }
 
 /** Spec §5, step 2: what `--preflight` would have left in the long-run state directory had it used the wrong one. */
