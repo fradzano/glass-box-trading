@@ -182,20 +182,29 @@ describe("R4-35 the S4U probe refuses a malformed fingerprint as a process, not 
   // Obviously fake, and shaped like the thing that must never reach a task definition.
   const URL_SHAPED = "https://hc.example.invalid/ping/00000000-0000-0000-0000-000000000000";
 
+  const ELEVATION = "if (-not $principalNow.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'the S4U proof parent must run elevated' }";
+
   let tempRoot = "";
   let original = "";
   let mutant = "";
+  // The same copy with the elevation test neutralised, so that a case about *order* cannot be
+  // satisfied by the run stopping at a privilege this session happens not to have. The barrier
+  // still stands ahead of every ScheduledTasks call, so nothing can be registered.
+  let elevated = "";
 
   beforeAll(async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "gbt-r435-"));
     const source = await readFile(PROBE, "utf8");
     expect(source).toContain(GUARD);
     expect(source).toContain("$action = New-ScheduledTaskAction");
+    expect(source).toContain(ELEVATION);
     const barriered = source.replace("$action = New-ScheduledTaskAction", BARRIER);
     original = path.join(tempRoot, "original.ps1");
     mutant = path.join(tempRoot, "mutant.ps1");
+    elevated = path.join(tempRoot, "elevated.ps1");
     await writeFile(original, barriered, "utf8");
     await writeFile(mutant, barriered.replace(GUARD, "if ($false) { throw"), "utf8");
+    await writeFile(elevated, barriered.replace(ELEVATION, "# elevation test neutralised by the suite"), "utf8");
   });
 
   afterAll(async () => {
@@ -236,24 +245,35 @@ describe("R4-35 the S4U probe refuses a malformed fingerprint as a process, not 
     expect(run.output).not.toContain("hc.example.invalid");
   }, 30_000);
 
-  // The half of R4-35 that the position assertion missed: a guard that sat *below* the
-  // elevation test would leave the defect open for the elevated operator the finding is
-  // about. A well-formed value must get further than a malformed one, and the only thing
-  // that may stop it here is the elevation test.
-  it("puts the shape guard ahead of the elevation test, where the elevated operator meets it too", async () => {
-    const wellFormed = await runProbe(original, "hc:deadbeef");
+  // R4-37. This case used to assert `toMatch(/must run elevated|REACHED-SCHEDULEDTASKS/)`,
+  // a disjunction satisfied in every possible arrangement — the left branch on a non-elevated
+  // host, the barrier on an elevated one — so it stayed green in all five variants a gate drove,
+  // including the two where the guard had been moved. What it claimed to hold, it did not hold.
+  //
+  // The same gate settled what the boundary actually is, by measuring rather than reading:
+  // moving the guard *below the elevation test* does not reopen the defect, because the guard
+  // still stands ahead of the argument interpolation and no URL reaches a task definition;
+  // moving it below `New-ScheduledTaskAction` does reopen it. So the claim worth pinning is that
+  // a well-formed value reaches the ScheduledTasks barrier and a malformed one never does, and
+  // it is pinned against a copy in which elevation cannot be the thing that stops the run.
+  it("lets a well-formed fingerprint reach the ScheduledTasks barrier, where a malformed one never arrives", async () => {
+    const wellFormed = await runProbe(elevated, "hc:deadbeef");
+    const malformed = await runProbe(elevated, URL_SHAPED);
 
+    expect(wellFormed.output).toContain("REACHED-SCHEDULEDTASKS");
     expect(wellFormed.output).not.toContain(REFUSAL);
-    expect(wellFormed.output).toMatch(/must run elevated|REACHED-SCHEDULEDTASKS/);
-  }, 30_000);
+    expect(malformed.output).toContain(REFUSAL);
+    expect(malformed.output).not.toContain("REACHED-SCHEDULEDTASKS");
+  }, 60_000);
 
-  // The calibration, executed rather than argued: with the guard disabled, the URL-shaped
-  // value must get past the refusal. If this case ever stops distinguishing the two copies,
-  // the cases above have stopped measuring anything and this one says so.
-  it("goes red on a copy whose guard is disabled", async () => {
-    const run = await runProbe(mutant, URL_SHAPED);
+  // R4-40. The calibration used to assert only that the mutant admits the value, and promised in
+  // its own comment to say so if the two copies ever stopped differing — which it could not,
+  // because it never looked at the original. It is a difference now.
+  it("distinguishes the original from a copy whose guard is disabled, in one run", async () => {
+    const againstOriginal = await runProbe(original, URL_SHAPED);
+    const againstMutant = await runProbe(mutant, URL_SHAPED);
 
-    expect(run.output).not.toContain(REFUSAL);
-    expect(run.output).toMatch(/must run elevated|REACHED-SCHEDULEDTASKS/);
-  }, 30_000);
+    expect(againstOriginal.output).toContain(REFUSAL);
+    expect(againstMutant.output).not.toContain(REFUSAL);
+  }, 60_000);
 });

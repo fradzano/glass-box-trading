@@ -23,6 +23,7 @@
 - `ops/activation/tests/parse.spec.ts`
 - `ops/activation/tests/preconditions.spec.ts`
 - `ops/activation/tests/process-death.spec.ts`
+- `ops/activation/tests/scheduled-task-process.spec.ts`
 - `ops/activation/tests/scheduled-task-scripts.spec.ts`
 - `ops/activation/tests/sequences.spec.ts`
 - `ops/activation/tests/steps.spec.ts`

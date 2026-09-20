@@ -1,5 +1,31 @@
 # DECISIONS
 
+- **2026-09-20 — the PowerShell class fix is built and gated; instance A is closed, and what is
+  left is one ACL call and three owner questions.** Coordinator record of the owner's ruling of
+  the same day and of what followed it. The owner refused a blanket residual for installer and
+  verifier and required the class fix before any activation. It was built as
+  `ops/activation/tests/scheduled-task-process.spec.ts`, which drives
+  `tools/install-scheduled-task.ps1`, `tools/verify-scheduled-tasks.ps1` and
+  `tools/watchdog-bootstrap.psm1` as real processes against a disposable tree, and it was judged
+  by four counted blind Opus gates. **Instance A — installer and read-only verifier — is
+  `RESOLVED`**: every check the verifier emits now has a violation case against a well-formed
+  control, and the two properties that had been invisible longest are measured — the trigger the
+  installer registers, and the disable-after-install step that carries "installing is not
+  activating". **Instance B — the module's write half — is `PATCHED`**, and the remainder is one
+  call: `SetOwner(Administrators)`, reached from four sites. The activation suite went from 670
+  tests to 728. **What stays forbidden:** no patch to the production scripts to make a test pass —
+  every fix in this window changed `ops/activation/tests/**` only, and the mechanism
+  `watchdog-bootstrap-credential-source` stays at its second seam. **Three questions are the
+  owner's and are open:** (1) the test copies are *barriered*, not confined — a gate wrote a file
+  outside the sandbox and reached the real Task Scheduler through COM from inside a barriered
+  copy; (2) a residual for the remaining ACL call was declared three times and **refused by a
+  blind gate all three times**, each refusal correct and each producing work, so it is withdrawn
+  rather than countersigned; (3) `C:\ProgramData\GlassBoxTrading` is unprotected and grants
+  `BUILTIN\Users` create-file and create-subdirectory, so before the first elevated install a
+  standard user could pre-create `secrets` and seed it — on this machine the window is closed,
+  because `secrets` exists, is protected and holds only the one file. **Decider:** Felix
+  Radzanowski.
+
 - **2026-09-20 — single fixes on the PowerShell surface are locked until the owner rules on
   the generator.** Coordinator ruling inside verification run `p12-units-1-11`, recorded here
   because it binds later sessions. Three counted blind gates closed R4-14, R4-21 and R4-35 by

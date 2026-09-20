@@ -8,6 +8,53 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-20 CEST, midday. **The PowerShell class fix is built, gated four times,
+and half closed; the residual for the other half was refused three times and withdrawn.** Branch
+`p7/dev-live-certificate`, run `p12-units-1-11` re-armed under lease `949fe30…` with the same
+Claude archiver — no new run, no rebinding. `npm.cmd run verify` exits 0 with 709 root and **728**
+activation tests, up from 670 before this window.
+
+**What closed.** Instance A of the generator — `install-scheduled-task.ps1` and
+`verify-scheduled-tasks.ps1` executed by no test — is **`RESOLVED`** by a counted blind Opus gate.
+Every check the verifier emits now has a violation case against a well-formed control, and two
+properties that had been invisible longest are measured: the trigger the installer actually
+registers, and the disable-after-install step carrying "installing is not activating". That
+second one had no test of any kind until a gate forced `$Activate` and the suite stayed green.
+
+**What did not.** Instance B — the write half of `watchdog-bootstrap.psm1` — is **`PATCHED`**. The
+remainder is one call, `SetOwner(Administrators)`, measured three ways. A residual for it was
+declared, refused, redrawn, refused, redrawn again and refused a third time. Every refusal was
+right and each produced work: three of the six items in the first draft ran fine unprivileged and
+are now tests; the second showed the consequence named one stray-file class where the writer
+produces two; the third read, in one command, the ACL the declaration had carried as an unread
+suspicion. **No countersignature is claimed anywhere in the books.**
+
+**Three things are yours to decide, and they are in `DECISIONS.md` and the run's ledger.**
+(1) The test copies are *barriered*, not confined — a gate wrote a file outside the sandbox and
+reached the real Task Scheduler through COM from inside a barriered copy, read-only only because
+the session has no token. (2) Whether the remaining ACL call is accepted as a residual at all,
+given three refusals. (3) **`C:\ProgramData\GlassBoxTrading` is unprotected** and inherits
+`BUILTIN\Users` create-file and create-subdirectory from `C:\ProgramData`; before the first
+elevated install a standard user could pre-create `secrets` and seed files that the installer
+would leave in place and no detector would ever see. Verified independently: on this machine the
+window is closed — `secrets` is protected, carries only SYSTEM, Administrators and the task
+identity, and holds exactly the one bootstrap file.
+
+**No "bis 0" is claimed and none is near.** Criterion 1 stays open with seven class-A findings;
+three older status lines were corrected against their archived returns, and the rest stay open
+with named reasons, two of them because their `RESOLVED` exists only as a coordinator
+transcription from gates that ran while the run was disarmed. Criterion 2 is open on R4-77 and on
+the confinement question.
+
+**The host is untouched and safe.** Both deployment tasks remain `Disabled`; their registered
+definitions still diverge from what this installer builds (`AgentCycle` runs `node.exe` directly,
+`Watchdog` carries a bare `powershell.exe`), which is why the read-only verifier fails against the
+live host. `GlassBoxTrading-Activation` is not registered, the ProgramData bootstrap is unchanged
+since 00:56 UTC with fingerprint `hc:40a81113`, and nothing was activated. Still owed before the
+anchor: the elevated re-installation with a fully green verifier, the literal signed-out S4U
+proof, and Unit 13.
+
+
 **Last updated:** 2026-09-20 CEST, night. **R4-14 is formally closed, and the run that closed
 it is halted at a lever rather than terminated.** Branch `p7/dev-live-certificate`. Three
 counted blind Opus gates, each of which executed its counterproof instead of reading it,
