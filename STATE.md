@@ -8,6 +8,34 @@
 
 ## Current cursor
 
+**Last updated:** 2026-09-21 CEST, evening. **Independent review complete; handoff to a
+fresh Claude session, with the existing verification run preserved.** Reviewed code commit
+`c762d2c` on `p7/dev-live-certificate`. Start at
+[`docs/P12-RESUME-2026-09-21.md`](docs/P12-RESUME-2026-09-21.md) for the remaining work,
+the certificate boundary and the existing authority. The entries below are historical
+snapshots, not new requests for decisions already recorded in `DECISIONS.md`.
+
+`npm.cmd run verify` was independently rerun on the reviewed commit and exited 0:
+709 root tests; 726 activation tests passed and two weekday-dependent cases skipped
+(728 collected). Two process tests initially failed inside the Codex sandbox; all 58
+new process tests and then the complete check passed outside it with the ordinary,
+non-administrator user token. This review is not a counted gate or a formal closure.
+
+Both deployment tasks are still disabled, the host verifier fails 4 of 58 checks,
+and the activation task is absent. The bootstrap directory and file have protected,
+narrow ACLs; the directory holds only the bootstrap file. No installation, activation,
+certificate run or broker action was performed by this review. Unit 13 still has real
+implementation work (`actions: null` and a stderr-only page port). The run remains
+`p12-units-1-11`, round 4 of 8, DISARMED, bound to the Claude archiver.
+
+**Next:** the fresh Claude session reconciles the open findings against their archived
+returns and the existing owner decisions, then establishes which remaining fixes touch
+the certificate digest before proposing a final certificate run. A preliminary dev
+certificate was discussed, not authorised or executed; the runbook ordering remains
+unchanged. No residual or activation permission is granted by this handoff.
+
+### Previous cursor snapshots
+
 **Last updated:** 2026-09-20 CEST, midday. **The PowerShell class fix is built, gated four times,
 and half closed; the residual for the other half was refused three times and withdrawn.** Branch
 `p7/dev-live-certificate`, run `p12-units-1-11` re-armed under lease `949fe30…` with the same

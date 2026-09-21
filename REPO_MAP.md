@@ -28,6 +28,7 @@
 - `docs/P12-CALENDAR-PROMPTS.md` — P12 — die Termine des Aktivierungsfensters
 - `docs/P12-EVALUATION.md` — P12 — what the three-month paper run will be judged by
 - `docs/P12-INCIDENT-PATHS.md` — P12 — how an incident actually reaches me
+- `docs/P12-RESUME-2026-09-21.md` — P12 — resume after the Monday review
 - `docs/P12-RUNBOOK.md` — P12 runbook — the three-month paper run
 - `docs/P12-STOP-AND-LOG-CONTRACTS.md` — P12 — the stop contract and the wrapper log contract
 - `docs/PUBLISH-RUNBOOK.md` — Publish runbook — the judge-facing dashboard on Vercel
