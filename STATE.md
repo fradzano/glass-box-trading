@@ -10,8 +10,8 @@
 
 **Last updated:** 2026-09-22 CEST. **Unit 13 and the open runtime fixes are built;
 implementation counterverification is GO, activation remains NO-GO.** Branch
-`p7/dev-live-certificate`; this release batch is based on `fba06ca` and carries this
-cursor in the same repository change.
+`p7/dev-live-certificate`; implementation commit `6b5f5eb` is pushed to origin, based
+on `fba06ca`. This cursor follow-up records the post-push state.
 The existing verification run `p12-units-1-11` remains ARMED in round 4 of 8 under the
 Claude archiver and lease `823e21da3ab64d53a2516b8b24cca648`; no new run or rebinding
 was used.
