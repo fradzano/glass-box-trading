@@ -35,8 +35,8 @@ calls found and technically closed the lease, alert-direction, timeout,
 reason-redaction, PID-reuse and weekday-test findings. Their delivered reports ended at
 zero A/B; the last two test-instrument C gaps were then covered by rollback-budget and
 port-quiescence regressions. **Formal closure is still open:** those three committed
-return records contain only their `SubagentHandback` pointers, and two direct-return
-retries ended as archived HTTP 529 capacity failures. No `RESOLVED` is booked from the
+return records contain only their `SubagentHandback` pointers, and repeated direct-return
+attempts ended as HTTP 529 capacity failures. No `RESOLVED` is booked from the
 missing report text.
 
 **The host is deliberately unchanged.** Both deployment tasks remain Disabled with the
