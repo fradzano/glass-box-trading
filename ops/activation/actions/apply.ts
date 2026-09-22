@@ -2,7 +2,7 @@
 // variants; all effects sit behind ports so tests cannot touch the host.
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { authorizeCertificateWrite } from "../core/decide.ts";
+import { authorizeCertificateWrite, refreshCertificateWriteLease } from "../core/decide.ts";
 import type { CertificateWriteAction, CertificateWriteAuthorization } from "../core/decide.ts";
 import type { CheckName, CheckObservation, DigestPair, LocalInstant, Reading, TaskName, WorldAction } from "../core/types.ts";
 import { inspectCertificateEnv, rewriteCertificateEnv } from "./env.ts";
@@ -121,6 +121,12 @@ export interface AppliedAction {
   readonly detail: Readonly<Record<string, unknown>>;
 }
 
+const POWERSHELL_ACTION_TIMEOUT_MS = 130_000;
+// compareAndSwapEnv may need one 30 s process-identity probe plus four 30 s
+// owner probes before it reaches the atomic rename. Keep the shell outside that
+// complete child budget, including filesystem overhead.
+const ENV_REPLACE_TIMEOUT_MS = 180_000;
+
 function failed(reason: string): EffectResult<AppliedAction> {
   return { ok: false, reason };
 }
@@ -150,7 +156,24 @@ async function safe<T>(operation: (signal: AbortSignal) => Promise<EffectResult<
         return { ok: false, reason: `${label}_TIMEOUT`, effect: "unknown" };
       }
     }
-    return result.ok ? result : { ok: false, reason: "PORT_REFUSED", effect: result.effect ?? "unknown" };
+    // Only the concrete host adapter's explicitly reduced diagnostic classes may
+    // cross the credential boundary. Arbitrary/fake port reasons stay opaque.
+    const rawReason = result.ok ? "" : result.reason;
+    const exactSafeReasons = new Set([
+      "ACTION_CLOCK_INVALID", "ACTION_CONTRACT_INVALID", "SCHEDULE_DEADLINE_EXPIRED",
+      "CHECK_LEASE_EXPIRED", "CHECKS_UNKNOWN", "CHECK_CHANGED",
+      "ENV_ABORTED", "ENV_CHANGED", "ENV_LOCKED", "ENV_LOCK_CORRUPT", "ENV_LOCK_CONTENDED",
+    ]);
+    const reducedReason = /^(?:HOST_COMMAND_FAILED|INSTALL_COMMAND_FAILED|PREFLIGHT_FAILED):/.test(rawReason)
+      ? rawReason
+      : exactSafeReasons.has(rawReason)
+        ? rawReason
+        : rawReason.startsWith("ENV_LOCK_RECOVERY_") || rawReason.startsWith("ENV_LOCK_")
+          ? "ENV_LOCK_FAILED"
+          : rawReason.startsWith("ENV_CAS_")
+            ? "ENV_CAS_FAILED"
+            : "PORT_REFUSED";
+    return result.ok ? result : { ok: false, reason: reducedReason, effect: result.effect ?? "unknown" };
   } catch {
     return { ok: false, reason: `${label}_THREW` };
   } finally {
@@ -181,12 +204,12 @@ async function compensateUnverifiedCertificateWrite(ports: ActionPorts, context:
     if (!cleaned.ok) {
       failures.push(`env:${cleaned.reason}`);
     } else {
-      const rollback = await safe(signal => ports.replaceEnv(context.envFile, current.value.sha256, cleaned.text, null, signal), "ROLLBACK_ENV");
+      const rollback = await safe(signal => ports.replaceEnv(context.envFile, current.value.sha256, cleaned.text, null, signal), "ROLLBACK_ENV", ENV_REPLACE_TIMEOUT_MS);
       if (!rollback.ok || rollback.value !== sha256(cleaned.text)) failures.push(`env:${rollback.ok ? "DIGEST_MISMATCH" : rollback.reason}`);
     }
   }
   for (const task of ["cycle", "watchdog"] as const) {
-    const disabled = await safe(signal => ports.setTaskEnabled(task, false, signal), `SAFETY_DISABLE_${task.toUpperCase()}`);
+    const disabled = await safe(signal => ports.setTaskEnabled(task, false, signal), `SAFETY_DISABLE_${task.toUpperCase()}`, POWERSHELL_ACTION_TIMEOUT_MS);
     if (!disabled.ok) failures.push(`${task}:${disabled.reason}`);
   }
   return failures.length === 0 ? "COMPENSATED" : `COMPENSATION_INCOMPLETE:${failures.join(",")}`;
@@ -200,7 +223,9 @@ async function validateWriteInputs(action: CertificateWriteAction, ports: Action
   const certificate = await safe(signal => ports.validateCertificate(action.path, signal), "VALIDATE_CERTIFICATE");
   if (!certificate.ok) return certificate;
   if (!sameDigests(certificate.value, action.expectedDigests)) return { ok: false, reason: "CERTIFICATE_DIGEST_CHANGED" };
-  const deployment = await safe(signal => ports.readDeploymentDigests(signal), "READ_DEPLOYMENT_DIGESTS");
+  // This is the real dev --preflight, including the verified analyst child. Its own
+  // deadline is three minutes; the shell must not kill it at safe()'s generic 30 s.
+  const deployment = await safe(signal => ports.readDeploymentDigests(signal), "READ_DEPLOYMENT_DIGESTS", 330_000);
   if (!deployment.ok) return deployment;
   return sameDigests(deployment.value, action.expectedDigests) ? { ok: true, value: undefined } : { ok: false, reason: "DEPLOYMENT_DIGEST_CHANGED" };
 }
@@ -217,16 +242,18 @@ async function replaceCertificate(action: Extract<WorldAction, { readonly kind: 
   if (action.kind === "write-certificate-line") {
     const inputs = await validateWriteInputs(action, ports);
     if (!inputs.ok) return failed(inputs.reason);
-    const freshChecks = await safe(async signal => ({ ok: true as const, value: await ports.readChecks(signal) }), "READ_CHECKS");
+    // The management API reads the list, three flip histories and an independent
+    // channel endpoint with bounded retries. Keep this outside the generic 30 s too.
+    const freshChecks = await safe(async signal => ({ ok: true as const, value: await ports.readChecks(signal) }), "READ_CHECKS", 210_000);
     if (!freshChecks.ok) return failed(`READ_CHECKS:${freshChecks.reason}`);
     const clock = readClock(ports);
     if (!clock.ok) return failed(clock.reason);
-    const authorization = authorizeCertificateWrite(action, clock.value, freshChecks.value);
-    if (!authorization.ok) return failed(authorization.reason);
-    guard = { action, freshChecks: freshChecks.value };
+    const refreshed = refreshCertificateWriteLease(action, clock.value, freshChecks.value);
+    if (!refreshed.ok) return failed(refreshed.reason);
+    guard = { action: refreshed.value, freshChecks: freshChecks.value };
   }
 
-  const replaced = await safe(signal => ports.replaceEnv(context.envFile, before.value.sha256, rewritten.text, guard, signal), "REPLACE_ENV");
+  const replaced = await safe(signal => ports.replaceEnv(context.envFile, before.value.sha256, rewritten.text, guard, signal), "REPLACE_ENV", ENV_REPLACE_TIMEOUT_MS);
   const expectedHash = sha256(rewritten.text);
   if (!replaced.ok) {
     const compensation = action.kind === "write-certificate-line" && replaced.effect !== "not-applied" ? await compensateUnverifiedCertificateWrite(ports, context) : "NOT_REQUIRED";
@@ -262,12 +289,12 @@ async function setTasks(action: Extract<WorldAction, { readonly kind: "enable-ta
   const enabled = action.kind === "enable-tasks";
   const failures: string[] = [];
   for (const task of action.tasks) {
-    const result = await safe(signal => ports.setTaskEnabled(task, enabled, signal), `${enabled ? "ENABLE" : "DISABLE"}_${task.toUpperCase()}`);
+    const result = await safe(signal => ports.setTaskEnabled(task, enabled, signal), `${enabled ? "ENABLE" : "DISABLE"}_${task.toUpperCase()}`, POWERSHELL_ACTION_TIMEOUT_MS);
     if (!result.ok) failures.push(`${task}:${result.reason}`);
   }
   if (failures.length > 0 && enabled) {
     for (const task of action.tasks) {
-      const rollback = await safe(signal => ports.setTaskEnabled(task, false, signal), `ROLLBACK_${task.toUpperCase()}`);
+      const rollback = await safe(signal => ports.setTaskEnabled(task, false, signal), `ROLLBACK_${task.toUpperCase()}`, POWERSHELL_ACTION_TIMEOUT_MS);
       if (!rollback.ok) failures.push(`rollback-${task}:${rollback.reason}`);
     }
   }
@@ -299,18 +326,22 @@ export async function applyAction(action: WorldAction, ports: ActionPorts, conte
     case "disable-tasks":
       return setTasks(action, ports);
     case "install-tasks": {
-      const installed = await safe(signal => ports.installTasks(action.coverageThroughDate, signal), "INSTALL_TASKS");
+      // Installation verifies the protected watchdog bootstrap and schedule coverage
+      // before registering two disabled tasks. It has a five-minute child deadline.
+      const installed = await safe(signal => ports.installTasks(action.coverageThroughDate, signal), "INSTALL_TASKS", 330_000);
       if (!installed.ok) return failed(`INSTALL_TASKS:${installed.reason}`);
-      const verified = await safe(signal => ports.verifyInstalledTasks(signal), "VERIFY_TASKS");
+      // The concrete verifier has a 180 s verifier child followed by a 120 s
+      // task-definition read; the outer deadline must not pre-empt either.
+      const verified = await safe(signal => ports.verifyInstalledTasks(signal), "VERIFY_TASKS", 330_000);
       return verified.ok ? applied(action.kind, { coverageThroughDate: action.coverageThroughDate, checkCount: verified.value.checkCount, actionLines: verified.value.actionLines }) : failed(`VERIFY_TASKS:${verified.reason}`);
     }
     case "register-disarm": {
       if (action.at.date !== context.anchorDay) return failed("REGISTER_DISARM:ANCHOR_DAY_MISMATCH");
-      const registered = await safe(signal => ports.registerDisarm(disarmRegistration(action, context), signal), "REGISTER_DISARM");
+      const registered = await safe(signal => ports.registerDisarm(disarmRegistration(action, context), signal), "REGISTER_DISARM", POWERSHELL_ACTION_TIMEOUT_MS);
       return registered.ok ? applied(action.kind, { fires: action.at }) : failed(`REGISTER_DISARM:${registered.reason}`);
     }
     case "delete-disarm": {
-      const deleted = await safe(signal => ports.deleteDisarm(signal), "DELETE_DISARM");
+      const deleted = await safe(signal => ports.deleteDisarm(signal), "DELETE_DISARM", POWERSHELL_ACTION_TIMEOUT_MS);
       return deleted.ok ? applied(action.kind) : failed(`DELETE_DISARM:${deleted.reason}`);
     }
     case "restart": {

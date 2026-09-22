@@ -10,6 +10,10 @@ than from judgement.
 Its yardstick is [`P12-ACTIVATION-SCENARIOS.md`](P12-ACTIVATION-SCENARIOS.md),
 derived by an agent that was not allowed to read this repository.
 
+**Revision 11** (2026-09-22) binds the five-second certificate-write lease to
+completion of unit 8's second Healthchecks read. That second triplet must exactly
+match the triplet accepted by the gate; the refresh changes only the observation
+time and short lease. The absolute 14:55 deadline remains independent and unchanged.
 **Revision 10** (2026-09-14) restores the absolute step-10 deadline as a second,
 independent certificate-write boundary and implements the unit-8 effect shell. The
 write is authorized before dispatch and atomically at the port's linearisation point;
@@ -172,7 +176,7 @@ arrives late does not act; it aborts and records why.
 | `10-gate` | anchor day, 14:35 | 14:55 | the conjunction in §7 | write **the certificate path validated in step 2** into `.env` (replace in place, never append; re-read, re-check duplicates, re-hash, and re-validate the file's two digests after the write), then delete the disarm one-shot |
 | `11-anchor` | anchor day, 15:20 | 16:00 | — | record the firing whose stamp converts to **15:15–15:19** local — a later catch-up is not the anchor — and the `BOOTSTRAP` entry; the measurement period started |
 
-**Revision-10 task and time boundary.** The step-1 and `0-resume` task reading carries
+**Revision-11 task and time boundary.** The step-1 and `0-resume` task reading carries
 UserId, RunLevel, LogonType, StartWhenAvailable, WorkingDirectory, every action and
 the expected executables. Cycle and watchdog must use the absolute trusted Windows
 PowerShell path; their `-NodePath` must equal the running pinned runtime's
@@ -183,16 +187,17 @@ gate. The activation task is not claimed as an observation in unit 7.
 Session samples are timestamped after their session probe completes. The
 healthchecks read is the last external I/O before the gate decision; its completion
 time and the later decision time are distinct. The decision does not grant an
-unconditional write: it carries both the absolute 14:55 schedule deadline and a
-five-second lease containing the observed check triplet. Immediately before changing
-`.env`, unit 8 reads the three checks and the clock again and passes both through
-`authorizeCertificateWrite`. The atomic compare-and-swap primitive invokes that same
-authorization callback inside its commit operation against its linearisation-time
-clock. Equality at either deadline is
-valid; after either deadline, with an unknown or changed check, or with a clock before
-the observation, no write occurs. The supplied UTC deadline must denote 14:55 on the
-anchor day as derived from the same local/UTC observation. Unit 7 proves this
-conjunction and unit 8 consumes it.
+unconditional write: it carries the accepted check triplet and the absolute 14:55
+schedule deadline. After certificate and deployment validation, unit 8 reads the
+three checks again. The second triplet must exactly match the gate triplet. The clock
+sample taken at completion of that read starts a new five-second write lease; it does
+not move the absolute schedule deadline. The atomic compare-and-swap primitive invokes
+`authorizeCertificateWrite` inside its commit operation with that same second reading
+and the refreshed action. Equality at either deadline is valid; after either deadline,
+with an unknown or changed check, or with a clock before the refreshed observation, no
+write occurs. The supplied UTC schedule deadline must denote 14:55 on the anchor day
+as derived from the same local/UTC observation. Unit 7 proves the gate conjunction and
+unit 8 consumes it without letting its own preflight work exhaust the short lease.
 
 **Abort, precisely.** Every abort **up to and including step 10** disables both
 tasks, leaves `PRE_ARM_CERTIFICATE` unset and pages. **An `abort` entry ends the
@@ -312,13 +317,16 @@ proven live by the probe at gate time, where a probe that fails or cannot run is
 (owner ruling 2026-09-14).
 
 The healthcheck observation is the last external read before the decision. It carries
-its completion time, and the certificate-write decision carries that observation plus
-an absolute 14:55 schedule deadline and a five-second expiry. Unit 8 reads all three
-checks and the clock immediately before applying the action, and the atomic write port
-repeats the same authorization at linearisation. Unknown or changed identity/status/
-last-ping data, a clock before the observation, or the first instant after either
-deadline refuses the write; equality at each deadline remains valid. Unit 7 proves
-this authorization contract and unit 8 implements it.
+its completion time, and the certificate-write decision carries that observation,
+the accepted triplet and an absolute 14:55 schedule deadline. Unit 8 completes its
+preflight work, then reads all three checks again. Only an exact identity/status/
+last-ping match may refresh the action: the completion clock of that second read starts
+the five-second lease, while the absolute deadline is copied unchanged. The atomic
+write port repeats authorization with that same reading at linearisation. Unknown or
+changed data, a clock before the refreshed observation, or the first instant after
+either deadline refuses the write; equality at each deadline remains valid. Unit 7
+proves the gate contract and unit 8 implements the comparison, refresh and atomic
+consumption.
 
 Healthchecks management requests use manual redirects. `X-Api-Key` is sent only to
 the HTTPS `healthchecks.io` origin on `/api/v3/checks/`, `/api/v3/channels/`, or an

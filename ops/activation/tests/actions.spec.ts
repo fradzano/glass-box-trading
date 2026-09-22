@@ -50,6 +50,7 @@ const CONTEXT: ActionContext = {
 
 interface FakeOptions {
   readonly now?: number;
+  readonly clockNow?: () => number;
   readonly checks?: Reading<Readonly<Record<CheckName, CheckObservation>>>;
   readonly env?: string;
   readonly failTask?: TaskName;
@@ -60,11 +61,16 @@ interface FakeOptions {
   readonly commitNow?: number;
   readonly certificateDigests?: DigestPair;
   readonly deploymentDigests?: DigestPair;
+  readonly slowDeployment?: boolean;
   readonly postWriteCertificateDigests?: DigestPair;
   readonly postWriteDeploymentDigests?: DigestPair;
   readonly throwClock?: boolean;
   readonly failReplaceAfterWrite?: boolean;
   readonly lateReplaceAck?: boolean;
+  readonly lateAckReleaseMs?: number;
+  readonly replaceDelayMs?: number;
+  readonly rollbackDelayMs?: number;
+  readonly taskDelayMs?: number;
   readonly conflictEnv?: string;
   readonly clearFailures?: readonly string[];
 }
@@ -75,27 +81,41 @@ function fake(options: FakeOptions = {}): { readonly ports: ActionPorts; readonl
   const registrations: DisarmRegistration[] = [];
   const taskState: Record<TaskName, boolean> = { cycle: false, watchdog: false };
   let replaced = false;
+  let replaceInFlight = false;
   const replaceEnv = createAuthorizedEnvReplacePort({
-    nowAtLinearisation: () => options.commitNow ?? options.now ?? OBSERVED + 1_000,
+    nowAtLinearisation: () => options.commitNow ?? options.clockNow?.() ?? options.now ?? OBSERVED + 1_000,
     compareAndSwap: (file, expectedSha256, text, authorizeAtLinearisation, signal) => {
-      calls.push(`replace-env:${file}`);
-      if (options.failReplace === true && !replaced) return Promise.resolve({ ok: false as const, reason: "CAS_REFUSED", effect: "not-applied" as const });
-      if (options.conflictEnv !== undefined && !replaced) state.env = options.conflictEnv;
-      if (hash(state.env) !== expectedSha256) return Promise.resolve({ ok: false as const, reason: "CAS_CHANGED", effect: "not-applied" as const });
-      const authorization = authorizeAtLinearisation();
-      if (!authorization.ok) return Promise.resolve({ ok: false as const, reason: authorization.reason, effect: "not-applied" as const });
-      state.env = text;
-      const wasFirstReplace = !replaced;
-      replaced = true;
-      if (options.lateReplaceAck === true && wasFirstReplace) return new Promise(resolve => {
-        signal.addEventListener("abort", () => { setTimeout(() => { resolve(ok(hash(text))); }, 1); }, { once: true });
+      const commit = () => {
+        calls.push(`replace-env:${file}`);
+        if (replaceInFlight && replaced) return Promise.resolve({ ok: false as const, reason: "ENV_LOCKED", effect: "not-applied" as const });
+        if (options.failReplace === true && !replaced) return Promise.resolve({ ok: false as const, reason: "CAS_REFUSED", effect: "not-applied" as const });
+        if (options.conflictEnv !== undefined && !replaced) state.env = options.conflictEnv;
+        if (hash(state.env) !== expectedSha256) return Promise.resolve({ ok: false as const, reason: "CAS_CHANGED", effect: "not-applied" as const });
+        const authorization = authorizeAtLinearisation();
+        if (!authorization.ok) return Promise.resolve({ ok: false as const, reason: authorization.reason, effect: "not-applied" as const });
+        state.env = text;
+        const wasFirstReplace = !replaced;
+        replaced = true;
+        if (options.lateReplaceAck === true && wasFirstReplace) return new Promise<EffectResult<string>>(resolve => {
+          replaceInFlight = true;
+          signal.addEventListener("abort", () => { setTimeout(() => { replaceInFlight = false; resolve(ok(hash(text))); }, options.lateAckReleaseMs ?? 1); }, { once: true });
+        });
+        if (options.failReplaceAfterWrite === true && wasFirstReplace) return Promise.resolve({ ok: false as const, reason: "FSYNC_FAILED", effect: "unknown" as const });
+        return Promise.resolve(ok(hash(text)));
+      };
+      if (options.replaceDelayMs !== undefined && !replaced) return new Promise(resolve => {
+        const timer = setTimeout(() => { void commit().then(resolve); }, options.replaceDelayMs);
+        signal.addEventListener("abort", () => { clearTimeout(timer); resolve({ ok: false, reason: "ABORTED", effect: "not-applied" }); }, { once: true });
       });
-      if (options.failReplaceAfterWrite === true && wasFirstReplace) return Promise.resolve({ ok: false as const, reason: "FSYNC_FAILED", effect: "unknown" as const });
-      return Promise.resolve(ok(hash(text)));
+      if (options.rollbackDelayMs !== undefined && replaced) return new Promise(resolve => {
+        const timer = setTimeout(() => { void commit().then(resolve); }, options.rollbackDelayMs);
+        signal.addEventListener("abort", () => { clearTimeout(timer); resolve({ ok: false, reason: "ABORTED", effect: "not-applied" }); }, { once: true });
+      });
+      return commit();
     },
   });
   const ports: ActionPorts = {
-    now: () => { calls.push("now"); if (options.throwClock === true) throw new Error("clock secret"); return options.now ?? OBSERVED + 1_000; },
+    now: () => { calls.push("now"); if (options.throwClock === true) throw new Error("clock secret"); return options.clockNow?.() ?? options.now ?? OBSERVED + 1_000; },
     readChecks: () => { calls.push("read-checks"); return Promise.resolve(options.checks ?? { known: true, value: CHECKS }); },
     readEnv: file => {
       calls.push(`read-env:${file}`);
@@ -103,12 +123,20 @@ function fake(options: FakeOptions = {}): { readonly ports: ActionPorts; readonl
       return Promise.resolve(ok<EnvFile>({ text, sha256: hash(text) }));
     },
     validateCertificate: () => { calls.push("validate-certificate"); return Promise.resolve(ok(replaced ? options.postWriteCertificateDigests ?? DIGESTS : options.certificateDigests ?? DIGESTS)); },
-    readDeploymentDigests: () => { calls.push("read-deployment-digests"); return Promise.resolve(ok(replaced ? options.postWriteDeploymentDigests ?? DIGESTS : options.deploymentDigests ?? DIGESTS)); },
+    readDeploymentDigests: signal => {
+      calls.push("read-deployment-digests");
+      const result = ok(replaced ? options.postWriteDeploymentDigests ?? DIGESTS : options.deploymentDigests ?? DIGESTS);
+      if (options.slowDeployment === true && !replaced) return new Promise(resolve => {
+        const timer = setTimeout(() => { resolve(result); }, 30_001);
+        signal.addEventListener("abort", () => { clearTimeout(timer); resolve({ ok: false, reason: "PREFLIGHT_ABORTED", effect: "unknown" }); }, { once: true });
+      });
+      return Promise.resolve(result);
+    },
     replaceEnv,
     setTaskEnabled: (task, enabled, signal) => {
       calls.push(`${enabled ? "enable" : "disable"}:${task}`);
       if (options.hangTask === task) return new Promise(resolve => {
-        const late = setTimeout(() => { taskState[task] = enabled; resolve(ok()); }, 30_001);
+        const late = setTimeout(() => { taskState[task] = enabled; resolve(ok()); }, options.taskDelayMs ?? 30_001);
         signal.addEventListener("abort", () => { clearTimeout(late); setTimeout(() => { resolve({ ok: false, reason: "ABORTED", effect: "not-applied" }); }, 1); }, { once: true });
       });
       taskState[task] = enabled;
@@ -152,7 +180,6 @@ describe("unit 8 — certificate action", () => {
 
   it.each([
     ["absolute schedule deadline", SCHEDULE_DEADLINE + 1, { known: true, value: CHECKS } as const, {}, "SCHEDULE_DEADLINE_EXPIRED"],
-    ["healthchecks lease", OBSERVED + 5_001, { known: true, value: CHECKS } as const, { scheduleNotAfterUtcMs: SCHEDULE_DEADLINE + 60_000 }, "CHECK_LEASE_EXPIRED"],
     ["unknown fresh check read", OBSERVED + 1, { known: false, reason: "API_UNREACHABLE" } as const, { scheduleNotAfterUtcMs: SCHEDULE_DEADLINE + 60_000 }, "CHECKS_UNKNOWN"],
   ])("does not write after %s", async (_name, now, checks, actionOverrides, reason) => {
     const host = fake({ now, checks });
@@ -164,8 +191,10 @@ describe("unit 8 — certificate action", () => {
   it("allows equality at each upper boundary and refuses the millisecond after it", async () => {
     const scheduleEqual = fake({ now: SCHEDULE_DEADLINE });
     expect((await applyAction(writeAction(), scheduleEqual.ports, CONTEXT)).ok).toBe(true);
-    const leaseEqual = fake({ now: OBSERVED + 5_000 });
+    const leaseEqual = fake({ now: OBSERVED + 6_000, commitNow: OBSERVED + 11_000 });
     expect((await applyAction(writeAction({ scheduleNotAfterUtcMs: SCHEDULE_DEADLINE + 60_000 }), leaseEqual.ports, CONTEXT)).ok).toBe(true);
+    const leaseExpired = fake({ now: OBSERVED + 6_000, commitNow: OBSERVED + 11_001 });
+    expect(await applyAction(writeAction({ scheduleNotAfterUtcMs: SCHEDULE_DEADLINE + 60_000 }), leaseExpired.ports, CONTEXT)).toEqual({ ok: false, reason: "REPLACE_ENV:CHECK_LEASE_EXPIRED:NOT_REQUIRED" });
   });
 
   it("does not write when a fresh check changed", async () => {
@@ -177,7 +206,7 @@ describe("unit 8 — certificate action", () => {
 
   it("binds authorization to write linearisation and validates both digests before and after it", async () => {
     const late = fake({ now: SCHEDULE_DEADLINE, commitNow: SCHEDULE_DEADLINE + 1 });
-    expect((await applyAction(writeAction(), late.ports, CONTEXT)).ok).toBe(false);
+    expect(await applyAction(writeAction(), late.ports, CONTEXT)).toEqual({ ok: false, reason: "REPLACE_ENV:SCHEDULE_DEADLINE_EXPIRED:NOT_REQUIRED" });
     expect(inspectCertificateEnv(late.env, "win32").occurrences).toBe(0);
     const changed = fake({ postWriteCertificateDigests: { ...DIGESTS, runtimeDigest: "changed" } });
     expect((await applyAction(writeAction(), changed.ports, CONTEXT)).ok).toBe(false);
@@ -197,13 +226,46 @@ describe("unit 8 — certificate action", () => {
   it("compensates a write that committed before its acknowledgement timed out", async () => {
     vi.useFakeTimers();
     try {
-      const host = fake({ lateReplaceAck: true });
+      const host = fake({ lateReplaceAck: true, lateAckReleaseMs: 1_000 });
       const pending = applyAction(writeAction(), host.ports, CONTEXT);
-      await vi.advanceTimersByTimeAsync(30_001);
+      await vi.advanceTimersByTimeAsync(181_000);
       expect((await pending).ok).toBe(false);
       expect(inspectCertificateEnv(host.env, "win32").occurrences).toBe(0);
       expect(host.calls).toContain("disable:cycle");
       expect(host.calls).toContain("disable:watchdog");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not pre-empt compare-and-swap or safety compensation at the generic 30 second budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const slowCas = fake({ env: `A=1\nPRE_ARM_CERTIFICATE="${CERTIFICATE}"\n`, replaceDelayMs: 30_001 });
+      const removal = applyAction({ kind: "remove-certificate-line" }, slowCas.ports, CONTEXT);
+      let removalSettled = false;
+      void removal.finally(() => { removalSettled = true; });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(removalSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await removal).ok).toBe(true);
+
+      const compensation = fake({ failReplaceAfterWrite: true, rollbackDelayMs: 30_001, hangTask: "cycle", taskDelayMs: 119_000 });
+      const compensated = applyAction(writeAction(), compensation.ports, CONTEXT);
+      let compensationSettled = false;
+      void compensated.finally(() => { compensationSettled = true; });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(compensationSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(compensationSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(119_000);
+      const result = await compensated;
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected compensated failure");
+      expect(result.reason).toContain("COMPENSATED");
+      expect(result.reason).not.toContain("SAFETY_DISABLE_CYCLE_TIMEOUT");
+      expect(compensation.taskState.cycle).toBe(false);
+      expect(compensation.taskState.watchdog).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -243,7 +305,7 @@ describe("unit 8 — task, disarm, reboot, install and check actions", () => {
     expect(disable.calls).toEqual(["disable:cycle", "disable:watchdog"]);
   });
 
-  it("bounds a hanging port and never exposes an arbitrary port reason", async () => {
+  it("does not let the outer task timeout pre-empt the concrete PowerShell child budget", async () => {
     vi.useFakeTimers();
     try {
       const hanging = fake({ hangTask: "cycle" });
@@ -253,11 +315,31 @@ describe("unit 8 — task, disarm, reboot, install and check actions", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      expect(await pending).toEqual({ ok: false, reason: "DISABLE_TASKS:cycle:DISABLE_CYCLE_TIMEOUT" });
+      expect((await pending).ok).toBe(true);
       expect(hanging.taskState.cycle).toBe(false);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not pre-empt a deployment preflight after the generic 30 second budget", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(OBSERVED);
+      const host = fake({ slowDeployment: true, clockNow: () => Date.now() });
+      const pending = applyAction(writeAction({ scheduleNotAfterUtcMs: SCHEDULE_DEADLINE + 60_000 }), host.ports, CONTEXT);
+      let settled = false;
+      void pending.finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await pending).ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never exposes an arbitrary port reason", async () => {
     const secret = fake({ failTask: "cycle", failureReason: "https://hc.example/SECRET" });
     expect(await applyAction({ kind: "disable-tasks", tasks: ["cycle"] }, secret.ports, CONTEXT)).toEqual({ ok: false, reason: "DISABLE_TASKS:cycle:PORT_REFUSED" });
     const token = fake({ failTask: "cycle", failureReason: "SUPERSECRETAPIKEY123" });

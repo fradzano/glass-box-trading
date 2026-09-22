@@ -123,7 +123,7 @@ export type InvocationOutcome =
    * So the invocation that had just disabled both tasks and removed the certificate line
    * told the owner only that the record was unreliable (R3-09).
    */
-  | { readonly kind: "ledger-defect"; readonly stage: string; readonly reason: string; readonly teardown?: readonly ActionReport[] };
+  | { readonly kind: "ledger-defect"; readonly stage: string; readonly reason: string; readonly teardown?: readonly ActionReport[]; readonly effects?: readonly string[] };
 
 /**
  * 0 is "nothing is wrong", 1 is "the attempt is over", 2 is "I did not start", 3 is
@@ -143,7 +143,7 @@ export function exitCodeFor(outcome: InvocationOutcome): number {
     case "work-failed":
       return 4;
     case "opened":
-      return outcome.stopStanding === undefined || outcome.stopStanding === null ? 0 : 4;
+      return (outcome.found === "LEDGER_ABSENT" || outcome.found === "LEDGER_EMPTY" || (outcome.stopStanding !== undefined && outcome.stopStanding !== null)) ? 4 : 0;
     case "acted":
       return outcome.outcome === "ok" || outcome.outcome === "already_in_target_state" ? 0 : 1;
     case "recorded":
@@ -158,8 +158,16 @@ export function exitCodeFor(outcome: InvocationOutcome): number {
 
 /** Every abort pages, and so does a defect in the record (spec §4, §5; catalogue invariant 4). */
 export function pages(outcome: InvocationOutcome): boolean {
-  if (outcome.kind === "opened") return outcome.stopStanding !== undefined && outcome.stopStanding !== null;
+  if (outcome.kind === "opened") return outcome.found === "LEDGER_ABSENT" || outcome.found === "LEDGER_EMPTY" || (outcome.stopStanding !== undefined && outcome.stopStanding !== null);
   return outcome.kind === "aborted" || outcome.kind === "ledger-defect" || outcome.kind === "work-failed";
+}
+
+export function activationPageReason(outcome: InvocationOutcome): string {
+  if (outcome.kind === "opened") {
+    if (outcome.found === "LEDGER_ABSENT" || outcome.found === "LEDGER_EMPTY") return `ACTIVATION_${outcome.found}`;
+    return "ACTIVATION_STOP_STANDING";
+  }
+  return `ACTIVATION_${outcome.kind.toUpperCase().replace(/-/gu, "_")}`;
 }
 
 /**

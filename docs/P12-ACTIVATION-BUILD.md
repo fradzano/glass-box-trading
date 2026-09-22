@@ -820,7 +820,59 @@ Not yet exercised against the host, and rehearsed in unit 13: the healthchecks.i
 competition identity read, the dev account read, the preflight and the probe ports. The
 local readers were run read-only on 2026-09-14 (see unit 7).
 
-**Unit 11 is done (2026-09-17, see below).** Remaining: units 12 (adversarial review against the catalogue) and 13 (elevated registration, the host bindings of `ActionPorts`, and the `--dry-run` rehearsal). **D-10.1 is decided** (2026-09-17): a fourth healthchecks.io check, `gbt-activation`, already created (`hc:32b59017`) with its URL in `.env` as `HEALTHCHECK_ACTIVATION_URL`; the page port that sends its `/fail` and one proving page belong to unit 13. **D-10.2** is unit 13's too: binding the action ports. **Unit 12 is the one "bis 0" loop** over units 1 to 11, by owner ruling of the same day.
+**Units 11 and 13 are implemented.** Unit 12's bound adversarial run remains open for its
+formal books and operating evidence; implementation counterverification for the current
+batch is green. No host activation follows from that distinction.
+
+## Unit 13 — host bindings and activation entry point — 2026-09-22
+
+Unit 13 replaces the CLI's placeholder bindings with concrete, fixed host adapters:
+
+- `ops/activation/actions/host.ts` binds PowerShell actions, validated certificate and
+  deployment preflight reads, the three check clears, the activation pager and an atomic
+  `.env` compare-and-swap. The lock records PID, process start time and an ownership token;
+  PID reuse is stale, an exact live identity refuses, an unavailable identity fails closed,
+  and release cannot delete a successor's lock.
+- `tools/activation-task.ps1` registers the activation task disabled, reads the definition
+  back by value, and enables only under its explicit activation switch. Its process harness
+  shadows the reviewed ScheduledTasks cmdlets and detects module autoload. This is an
+  instrumentation barrier, not OS isolation.
+- `ops/activation/cli.ts` composes the host bindings and pager. Paging outcomes use `/fail`;
+  only completion or a clean `OWNER_OPENED` clears the alert. Missing and empty ledgers stay
+  distinguishable, and dry-run states that no alert was sent.
+- The action shell preserves known gate, lock and CAS refusal classes while flattening
+  arbitrary port text. Outer timeouts exceed the concrete child budgets, including the
+  guarded and rollback CAS and safety compensation paths.
+
+The watchdog repair belongs to the same release batch but changes the runtime digest:
+calendar data that omits today proves a closure only when returned sessions bracket today;
+future-only, past-only, empty and failed reads degrade loudly. Numeric watchdog arguments
+now have a pure validator, and credential-bearing diagnostics remain redacted.
+
+At step 10, certificate and deployment validation run before the second Healthchecks read.
+That second triplet must match the gate triplet exactly on the fields used by the gate; its
+completion clock starts a fresh five-second lease, while the absolute 14:55 boundary is
+unchanged. CAS re-authorizes at linearisation. This is Revision 11 and the owner's recorded
+2026-09-22 decision.
+
+Evidence after the last behavioural fix:
+
+- two consecutive `npm.cmd run verify` executions: exit 0, 722 root tests and 756
+  activation tests, no skips; architecture, build, fixture, dashboard, sandbox and phase
+  checks green;
+- counted Claude Opus post-fix and closure calls in the same bound run, with isolated
+  mutations killing the lease, alert, timeout, redaction, lock-identity and retry
+  protections; their delivered technical verdict was GO with zero A/B, but their committed
+  returns contain only `SubagentHandback` pointers, so formal closure awaits one
+  self-contained archived Gate-tier return;
+- regressions for the final two C-class instrument gaps: rollback CAS may outlive 30 s,
+  and timeout compensation waits for port quiescence before reusing its lock.
+
+No real task, alert, certificate or broker endpoint was touched. Both deployment tasks
+remain Disabled with stale host definitions, the last host verifier result is 4/58 red,
+and the activation task is absent. Elevated disabled-first replacement, a fully green host
+verifier, literal signed-out S4U and the admitted operating drills remain prerequisites;
+implementation GO is not activation GO.
 
 ## Unit 12 — round 2 of the loop — 2026-09-18
 

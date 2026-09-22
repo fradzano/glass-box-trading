@@ -41,6 +41,7 @@
 - `LICENSE`
 - `ops/activation/actions/apply.ts` — Unit 8: the activation effect shell. Decisions arrive as closed WorldAction
 - `ops/activation/actions/env.ts` — Pure `.env` rewriting for activation actions. The shell replaces the whole file;
+- `ops/activation/actions/host.ts` — Unit 13: concrete host bindings for the action shell. Every outward operation
 - `ops/activation/cli/args.ts` — The command line of `ops/activation/cli.ts` (unit 10 brief, docs/P12-ACTIVATION-BUILD.md).
 - `ops/activation/cli/deployment.ts` — The deployment facts an attempt does not derive (unit 10).
 - `ops/activation/cli/invoke.ts` — One invocation of the activation CLI, from the command line to the exit code (unit 10).
@@ -59,6 +60,7 @@
 - `ops/activation/core/stop.ts` — The owner's stop, as a decision rather than as an ordering (unit 10, revision of
 - `ops/activation/core/types.ts` — The vocabulary of the activation core (docs/P12-ACTIVATION-SPEC.md, rev 9).
 - `ops/activation/deployment.example.json`
+- `ops/activation/page-test.ts` — Deliberate unit-13 proof of the fourth alert path. This command never prints
 - `ops/activation/probes/mutants-action-env.json`
 - `ops/activation/probes/mutants-actions.json`
 - `ops/activation/probes/mutants-analyst-claude.json`
@@ -131,6 +133,7 @@
 - `ops/activation/readers/host/read-boot.ps1`
 - `ops/activation/readers/host/read-environment.ps1`
 - `ops/activation/readers/host/read-preconditions.ps1`
+- `ops/activation/readers/host/read-process-start.ps1`
 - `ops/activation/readers/host/read-sessions.ps1`
 - `ops/activation/readers/host/read-tasks.ps1`
 - `ops/activation/readers/host-ports.ts` — The observation ports, bound to this host (build log, unit 7). Thin on purpose: each one
@@ -141,10 +144,13 @@
 - `ops/activation/store/ledger-store.ts` — Unit 9: the durable shell around the closed ledger codec.
 - `ops/activation/store/stop-mark.ts` — The durable half of the owner's stop (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-2).
 - `ops/activation/tests/actions.spec.ts` — Unit 8: every effect is exercised only through fakes. These tests never spawn a
+- `ops/activation/tests/activation-task-process.spec.ts`
+- `ops/activation/tests/activation-task-script.spec.ts`
 - `ops/activation/tests/analyst-probe.spec.ts` — The live-token probe (owner ruling and review, 2026-09-14, point 4). The SDK's
 - `ops/activation/tests/cli-actions.spec.ts` — The two action contracts of unit 10, which are not the same and must not converge:
 - `ops/activation/tests/cli-args.spec.ts` — The activation CLI's command line (unit 10). The interesting cases are not the happy
 - `ops/activation/tests/cli-deployment.spec.ts` — The deployment file (unit 10). It carries measurements — the host preconditions of
+- `ops/activation/tests/cli-entry.spec.ts`
 - `ops/activation/tests/cli-invoke.spec.ts` — One invocation end to end (unit 10), against the real ledger store on real files and
 - `ops/activation/tests/cli-plan.spec.ts` — What one invocation writes, and how it ends (unit 10). Three properties carry the
 - `ops/activation/tests/cli-report.spec.ts` — What the owner reads (unit 10). This is the only part of the activation that talks to
@@ -155,6 +161,7 @@
 - `ops/activation/tests/deployment-state.spec.ts` — P12 unit 12: the activation's reader for the one place that says where this
 - `ops/activation/tests/fold.spec.ts` — Spec §4/§5 and review round 5: how the ledger folds into what the current
 - `ops/activation/tests/healthchecks-io.spec.ts` — Unit 7, the healthchecks.io read. The fake API below answers the way the management API does,
+- `ops/activation/tests/host-actions.spec.ts`
 - `ops/activation/tests/ledger-store.spec.ts` — Unit 9, red first: the activation record is useful only if the store makes
 - `ops/activation/tests/ledger.spec.ts` — Spec §4: what counts as a line of the activation ledger. Every refusal here is
 - `ops/activation/tests/observe.spec.ts` — Unit 7: the whole observation, composed from the readers. The ports below replay this host's
@@ -173,6 +180,8 @@
 - `ops/activation/tests/stop.spec.ts` — The stop contract's pure half (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, SC-3).
 - `ops/activation/tests/support/compete.mjs` — One competitor in the two-process race over one world.
 - `ops/activation/tests/support/file-action-ports.ts` — Isolated action doubles, backed by a file, so that **competing effects** can be
+- `ops/activation/tests/support/isolated-cli.ts` — Process-level CLI entry for tests that exercise the real ledger/store but must
+- `ops/activation/tests/support/task-scheduler-harness.ps1`
 - `ops/activation/tests/wrapper-run-log.spec.ts` — The wrapper log contract (`docs/P12-STOP-AND-LOG-CONTRACTS.md`, part II), measured
 - `ops/tsconfig.json`
 - `ops/vitest.config.ts` — The activation's own test run. It lives beside the code rather than in the
@@ -245,6 +254,7 @@
 - `src/shell/startup.ts` — Fail-closed startup (S-CYC-11): validate the whole §0 configuration before
 - `src/shell/state-dir.ts` — STATE_DIR resolution (§0, S-G12-07, S-CYC-11): an absolute, existing,
 - `src/shell/unhalt-cli.ts` — The human release, as a command: `node dist/shell/unhalt-cli.js`.
+- `src/shell/watchdog-cli-args.ts`
 - `src/shell/watchdog-cli.ts` — Process-level entry point for the S-G14 tests and for the scheduled
 - `src/shell/watchdog-runtime.ts` — The composition root for one scheduled watchdog invocation (P8). It builds
 - `src/shell/watchdog.ts` — The dead-man watchdog (S-G14-01..03): a SEPARATE process entry point that
@@ -323,6 +333,7 @@
 - `tests/x5-x6-close-ladder.spec.ts` — S-X-05 (close-escalation ladder) and S-X-06 (discriminated recovery policy
 - `tests/x7-close-outcomes-resolve.spec.ts` — Live finding six (2026-09-02): the entry-lifecycle terminality resolver
 - `tests/x7-x8-window-and-refusals.spec.ts` — S-X-07 the cycle's market observation covers the book, and S-X-08 a
+- `tools/activation-task.ps1`
 - `tools/check-alert-path.ps1`
 - `tools/check-core-architecture.mjs` — Architecture gate for the declared core roots (CORE_ROOTS below: src/core/**
 - `tools/check-implementation-phases.mjs` — Verify that implementation phases partition the runtime SPEC cases. Kept in

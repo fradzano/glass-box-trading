@@ -21,6 +21,7 @@ import { foldLedgerSnapshot } from "../core/fold.ts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..", "..");
 const COMPETE = path.join(REPO, "ops", "activation", "tests", "support", "compete.mjs");
+const ISOLATED_CLI = path.join(REPO, "ops", "activation", "tests", "support", "isolated-cli.ts");
 
 const roots: string[] = [];
 
@@ -115,8 +116,8 @@ describe("a process that dies holding the lease, half way through changing the w
 
     // Two invocations in a row, because the first one's takeover must not leave a state
     // the second one trips over — which is the failure mode a takeover usually has.
-    const first = await finish([path.join(REPO, "ops", "activation", "cli.ts"), "status", "--state-root", stateRoot]);
-    const second = await finish([path.join(REPO, "ops", "activation", "cli.ts"), "status", "--state-root", stateRoot]);
+    const first = await finish([ISOLATED_CLI, "status", "--state-root", stateRoot]);
+    const second = await finish([ISOLATED_CLI, "status", "--state-root", stateRoot]);
 
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);

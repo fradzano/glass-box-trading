@@ -148,20 +148,18 @@ try {
 # ---------------------------------------------------------------------------
 # Exchange closures -- a STOP-GAP, and declared as one (DECISIONS, 2026-09-18).
 #
-# `src/shell/watchdog-cli.ts` asserts `isTradingDay: true` unconditionally and
-# this wrapper's only other gate was Monday-to-Friday, so on a weekday the
-# exchange is shut the watchdog turned an agent outage on a closed market into a
+# Before the runtime calendar repair, `src/shell/watchdog-cli.ts` asserted
+# `isTradingDay: true` and this wrapper's only other gate was Monday-to-Friday.
+# On a weekday the exchange is shut, an agent outage therefore turned into a
 # fenced epoch store, a standing WATCHDOG_TAKEOVER halt that only a human can
 # clear, and a fail ping on every firing -- roughly every fifteen minutes for the
 # rest of the day. Measured on Thanksgiving with the real CLI; the same pure
 # function fed the exchange calendar answers OUTSIDE_SESSION.
 #
-# The repair this deserves is the watchdog path reading the exchange calendar it
-# already fetches, at `watchdog-cli.ts` and at `watchdog-runtime.ts`'s degraded
-# composition. That is `src/`, which is runtime-digest material and frozen until
-# after the anchor run. This file is not digest material (`enumerateRuntimeFiles`
-# takes only `tools/*.mjs` and `tools/*.py`), so the gate can be closed here
-# without voiding a certificate.
+# The runtime now reads and validates the exchange calendar itself. This table
+# remains an earlier wrapper-level skip: it avoids constructing the runtime on
+# known closures, while the runtime independently refuses incomplete calendar
+# evidence and derives the actual session for every invocation.
 #
 # THE LIMIT, said plainly: this is a hand-written table, which is the same
 # species of asserted fact as the one it repairs. It cannot know about an
@@ -490,14 +488,14 @@ function Exit-Skip {
 }
 
 if (-not $nowIsWeekday) {
-    Exit-Skip "skip: weekend (watchdog-cli.ts always treats its input as a trading day, so this wrapper is the only Mon-Fri gate)"
+    Exit-Skip "skip: weekend (wrapper pre-filter; the runtime independently derives exchange-session status)"
 }
 
 if (Test-MarketFullDayClosure -EasternDate $todayEastern) {
     # The same reason as the weekend, for the days a Mon-Fri test cannot see.
     # Without this the watchdog fences the epoch store and raises a standing
     # WATCHDOG_TAKEOVER halt on a market that never opened.
-    Exit-Skip "skip: exchange closed on $todayEasternKey (stop-gap table in this wrapper; watchdog-cli.ts asserts isTradingDay unconditionally)"
+    Exit-Skip "skip: exchange closed on $todayEasternKey (wrapper stop-gap; runtime calendar validation is authoritative once invoked)"
 }
 
 if ($todayEasternKey -gt $MarketTableThroughDate) {

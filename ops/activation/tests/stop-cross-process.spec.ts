@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readStopMark } from "../store/stop-mark.ts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..", "..");
-const CLI = path.join(REPO, "ops", "activation", "cli.ts");
+const CLI = path.join(REPO, "ops", "activation", "tests", "support", "isolated-cli.ts");
 const ANCHOR = "2026-09-22";
 
 const roots: string[] = [];

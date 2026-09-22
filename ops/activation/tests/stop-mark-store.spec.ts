@@ -140,10 +140,11 @@ describe("the mark's own lock, which may never become the reason a stop fails", 
 
     const quarantined = await quarantineStopMark(stateRoot);
 
-    expect(quarantined).not.toBeNull();
+    expect(quarantined.kind).toBe("quarantined");
+    if (quarantined.kind !== "quarantined") throw new Error("the unreadable mark was not quarantined");
     expect((await readStopMark(stateRoot)).kind).toBe("absent");
     // Renamed, never deleted: a stop nobody can read is exactly the case where the bytes
     // are the only evidence of whatever wrote them.
-    expect(await readFile(quarantined as string, "utf8")).toBe("{ not json");
+    expect(await readFile(quarantined.path, "utf8")).toBe("{ not json");
   }, 20_000);
 });

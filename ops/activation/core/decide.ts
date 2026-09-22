@@ -38,6 +38,35 @@ export const GATE_CHECK_MAX_AGE_MS = 5_000;
 
 export type CertificateWriteAction = Extract<WorldAction, { readonly kind: "write-certificate-line" }>;
 export type CertificateWriteAuthorization = { readonly ok: true } | { readonly ok: false; readonly reason: "ACTION_CLOCK_INVALID" | "ACTION_CONTRACT_INVALID" | "SCHEDULE_DEADLINE_EXPIRED" | "CHECK_LEASE_EXPIRED" | "CHECKS_UNKNOWN" | "CHECK_CHANGED" };
+export type CertificateWriteLeaseRefresh = { readonly ok: true; readonly value: CertificateWriteAction } | { readonly ok: false; readonly reason: "ACTION_CLOCK_INVALID" | "ACTION_CONTRACT_INVALID" | "SCHEDULE_DEADLINE_EXPIRED" | "CHECKS_UNKNOWN" | "CHECK_CHANGED" };
+
+function checksMatch(action: CertificateWriteAction, checks: Reading<Readonly<Record<CheckName, CheckObservation>>>): "CHECKS_UNKNOWN" | "CHECK_CHANGED" | null {
+  if (!checks.known) return "CHECKS_UNKNOWN";
+  for (const name of ["liveness", "readiness", "watchdog"] as const) {
+    const expected = action.expectedChecks[name];
+    const actual = checks.value[name];
+    if (actual.status !== "up" || actual.fingerprint !== expected.fingerprint || actual.status !== expected.status || actual.lastPingUtcMs !== expected.lastPingUtcMs) return "CHECK_CHANGED";
+  }
+  return null;
+}
+
+/**
+ * Bind the short write lease to completion of unit 8's second check read. The
+ * second triplet must still equal the gate triplet carried by the original
+ * decision; only its observation time and five-second lease are refreshed.
+ */
+export function refreshCertificateWriteLease(action: CertificateWriteAction, checksObservedAtUtcMs: number, freshChecks: Reading<Readonly<Record<CheckName, CheckObservation>>>): CertificateWriteLeaseRefresh {
+  if (!Number.isSafeInteger(checksObservedAtUtcMs)) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
+  const originalLease = action.observedAtUtcMs + GATE_CHECK_MAX_AGE_MS;
+  if (![action.observedAtUtcMs, action.leaseNotAfterUtcMs, action.scheduleNotAfterUtcMs, originalLease].every(Number.isSafeInteger) || action.leaseNotAfterUtcMs !== originalLease || action.scheduleNotAfterUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CONTRACT_INVALID" };
+  if (checksObservedAtUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
+  if (checksObservedAtUtcMs > action.scheduleNotAfterUtcMs) return { ok: false, reason: "SCHEDULE_DEADLINE_EXPIRED" };
+  const mismatch = checksMatch(action, freshChecks);
+  if (mismatch !== null) return { ok: false, reason: mismatch };
+  const leaseNotAfterUtcMs = checksObservedAtUtcMs + GATE_CHECK_MAX_AGE_MS;
+  if (!Number.isSafeInteger(leaseNotAfterUtcMs)) return { ok: false, reason: "ACTION_CONTRACT_INVALID" };
+  return { ok: true, value: { ...action, observedAtUtcMs: checksObservedAtUtcMs, leaseNotAfterUtcMs } };
+}
 
 /** The fresh re-read lease which unit 8 must consume immediately before writing `.env`. */
 export function authorizeCertificateWrite(action: CertificateWriteAction, actionUtcMs: number, freshChecks: Reading<Readonly<Record<CheckName, CheckObservation>>>): CertificateWriteAuthorization {
@@ -46,12 +75,8 @@ export function authorizeCertificateWrite(action: CertificateWriteAction, action
   if (actionUtcMs < action.observedAtUtcMs) return { ok: false, reason: "ACTION_CLOCK_INVALID" };
   if (actionUtcMs > action.scheduleNotAfterUtcMs) return { ok: false, reason: "SCHEDULE_DEADLINE_EXPIRED" };
   if (actionUtcMs > action.leaseNotAfterUtcMs) return { ok: false, reason: "CHECK_LEASE_EXPIRED" };
-  if (!freshChecks.known) return { ok: false, reason: "CHECKS_UNKNOWN" };
-  for (const name of ["liveness", "readiness", "watchdog"] as const) {
-    const expected = action.expectedChecks[name];
-    const actual = freshChecks.value[name];
-    if (actual.status !== "up" || actual.fingerprint !== expected.fingerprint || actual.status !== expected.status || actual.lastPingUtcMs !== expected.lastPingUtcMs) return { ok: false, reason: "CHECK_CHANGED" };
-  }
+  const mismatch = checksMatch(action, freshChecks);
+  if (mismatch !== null) return { ok: false, reason: mismatch };
   return { ok: true };
 }
 

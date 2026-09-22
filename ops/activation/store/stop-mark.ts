@@ -254,14 +254,33 @@ export async function clearStopMark(root: string, expectedId: string): Promise<S
  * The bytes are **renamed, never deleted**: they are the only evidence of whatever wrote
  * them, and a stop nobody can read is exactly the situation where evidence matters.
  */
-export async function quarantineStopMark(root: string): Promise<string | null> {
+export type StopQuarantineResult =
+  | { readonly kind: "quarantined"; readonly path: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "readable"; readonly standing: StopMark }
+  | { readonly kind: "failed"; readonly reason: string }
+  | { readonly kind: "locked"; readonly reason: string };
+
+export async function quarantineStopMark(root: string): Promise<StopQuarantineResult> {
   const target = `${stopMarkPath(root)}.unreadable-${String(Date.now())}`;
-  try {
-    await rename(stopMarkPath(root), target);
-    return target;
-  } catch {
-    return null;
-  }
+  return await withStopLock<StopQuarantineResult>(
+    root,
+    async () => {
+      // Re-read under the mark lock. A readable mark here is a newer owner stop written
+      // after the continuation first observed the unreadable bytes; it must survive just
+      // like a superseding id survives clearStopMark.
+      const standing = await readStopMark(root);
+      if (standing.kind === "absent") return { kind: "absent" };
+      if (standing.kind === "present") return { kind: "readable", standing: standing.mark };
+      try {
+        await rename(stopMarkPath(root), target);
+        return { kind: "quarantined", path: target };
+      } catch (error) {
+        return { kind: "failed", reason: errorCode(error) ?? "UNKNOWN" };
+      }
+    },
+    () => ({ kind: "locked", reason: "another invocation holds the stop mark's lock; nothing was quarantined" }),
+  );
 }
 
 /** Whatever `stop.json.lock` says, for a reader that reports rather than decides (N4). */

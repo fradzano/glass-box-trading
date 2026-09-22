@@ -8,31 +8,49 @@
 
 ## Current cursor
 
-**Last updated:** 2026-09-21 CEST, evening. **Independent review complete; handoff to a
-fresh Claude session, with the existing verification run preserved.** Reviewed code commit
-`c762d2c` on `p7/dev-live-certificate`. Start at
-[`docs/P12-RESUME-2026-09-21.md`](docs/P12-RESUME-2026-09-21.md) for the remaining work,
-the certificate boundary and the existing authority. The entries below are historical
-snapshots, not new requests for decisions already recorded in `DECISIONS.md`.
+**Last updated:** 2026-09-22 CEST. **Unit 13 and the open runtime fixes are built;
+implementation counterverification is GO, activation remains NO-GO.** Branch
+`p7/dev-live-certificate`; this release batch is based on `fba06ca` and carries this
+cursor in the same repository change.
+The existing verification run `p12-units-1-11` remains ARMED in round 4 of 8 under the
+Claude archiver and lease `823e21da3ab64d53a2516b8b24cca648`; no new run or rebinding
+was used.
 
-`npm.cmd run verify` was independently rerun on the reviewed commit and exited 0:
-709 root tests; 726 activation tests passed and two weekday-dependent cases skipped
-(728 collected). Two process tests initially failed inside the Codex sandbox; all 58
-new process tests and then the complete check passed outside it with the ordinary,
-non-administrator user token. This review is not a counted gate or a formal closure.
+The digest-affecting part is now explicit: the exchange-calendar repair changes
+`src/shell/watchdog.ts`, `watchdog-runtime.ts`, `watchdog-cli.ts`, the new
+`watchdog-cli-args.ts`, and their compiled `dist` output. Unit 13 itself remains under
+`ops/` and PowerShell. No root npm script, dependency, config file or digest boundary was
+changed to preserve a certificate. No certificate has been created.
 
-Both deployment tasks are still disabled, the host verifier fails 4 of 58 checks,
-and the activation task is absent. The bootstrap directory and file have protected,
-narrow ACLs; the directory holds only the bootstrap file. No installation, activation,
-certificate run or broker action was performed by this review. Unit 13 still has real
-implementation work (`actions: null` and a stderr-only page port). The run remains
-`p12-units-1-11`, round 4 of 8, DISARMED, bound to the Claude archiver.
+Unit 13 now binds the action ports, guarded `.env` compare-and-swap, PID-plus-start-time
+lock identity, activation pager and disabled-first activation-task installer. Process
+tests use barriers and shadows, not OS confinement. The step-10 lease follows the owner's
+2026-09-22 decision: after preflight, a second unchanged check triplet starts the short
+lease; the absolute 14:55 deadline remains fixed and is checked again inside CAS.
 
-**Next:** the fresh Claude session reconciles the open findings against their archived
-returns and the existing owner decisions, then establishes which remaining fixes touch
-the certificate digest before proposing a final certificate run. A preliminary dev
-certificate was discussed, not authorised or executed; the runbook ordering remains
-unchanged. No residual or activation permission is granted by this handoff.
+Two consecutive `npm.cmd run verify` executions after the last behavioural fixes exited
+0 with 722 root tests and **756 activation tests, no skips**, followed by green
+architecture, build, fixture, dashboard, sandbox and phase gates. Counted Claude Opus
+calls found and technically closed the lease, alert-direction, timeout,
+reason-redaction, PID-reuse and weekday-test findings. Their delivered reports ended at
+zero A/B; the last two test-instrument C gaps were then covered by rollback-budget and
+port-quiescence regressions. **Formal closure is still open:** those three committed
+return records contain only their `SubagentHandback` pointers, and two direct-return
+retries ended as archived HTTP 529 capacity failures. No `RESOLVED` is booked from the
+missing report text.
+
+**The host is deliberately unchanged.** Both deployment tasks remain Disabled with the
+previous definitions, the last read-only host verifier result remains 4/58 red, and
+`GlassBoxTrading-Activation` is not registered. No real page, task mutation, elevated
+adversarial suite, certificate, activation or broker operation ran. The withdrawn ACL
+residual and bootstrap change boundary remain binding; literal signed-out S4U, elevated
+disabled-first replacement, fully green host verification and the remaining operating
+drills are still required. A missing proof moves the anchor and keeps activation off.
+
+**Next:** obtain one self-contained Gate-tier Opus return at the pushed commit and reconcile
+it into the append-only books, then coordinate only the separately authorised real-host proofs.
+Do not enable either task or register/run activation until every required host proof is
+green.
 
 ### Previous cursor snapshots
 

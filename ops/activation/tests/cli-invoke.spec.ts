@@ -22,7 +22,7 @@ import { foldLedger } from "../core/fold.ts";
 import { nextStep } from "../core/steps.ts";
 import { outcomeLines } from "../cli/report.ts";
 import { exitCodeFor, pages } from "../cli/plan.ts";
-import { clearStopMark, readStopMark, writeStopMark } from "../store/stop-mark.ts";
+import { clearStopMark, quarantineStopMark, readStopMark, writeStopMark } from "../store/stop-mark.ts";
 import type { StopMark } from "../core/stop.ts";
 import type { LedgerEntry } from "../core/types.ts";
 import { LedgerStoreError, currentLedgerLockOwner, withActivationLedger } from "../store/ledger-store.ts";
@@ -1150,6 +1150,63 @@ describe("the stop's own failure reporting, where the suite was silent", () => {
 // out. This is also the upgrade path: a `stop.json` written before the mark had an id
 // reads as unreadable to this code.
 describe("a mark nobody can read is not a deployment nobody can release", () => {
+  it("leaves the unreadable stop standing when the opening cannot be recorded", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    await writeFile(path.join(stateRoot, "stop.json"), JSON.stringify({ operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" }), "utf8");
+
+    let quarantineCalls = 0;
+    const failingOpen: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+      read: () => session.read(),
+      append: async draft => {
+        if (draft.evidence["opened"] === "OWNER_OPENED") throw new LedgerStoreError("write-ledger", "NO_SPACE");
+        return await session.append(draft);
+      },
+    }));
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), {
+      withLedger: failingOpen,
+      quarantineStopMark: async targetRoot => {
+        quarantineCalls += 1;
+        return await quarantineStopMark(targetRoot);
+      },
+    });
+
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("ledger-defect");
+    expect(quarantineCalls).toBe(0);
+    expect((await readStopMark(stateRoot)).kind).toBe("unreadable");
+  });
+
+  it("does not quarantine a newer readable stop written while OWNER_OPENED becomes durable", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    await writeFile(path.join(stateRoot, "stop.json"), JSON.stringify({ operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" }), "utf8");
+
+    const replacement: StopMark = { id: "stop-typed-during-open", operator: "felix", at: "2026-09-21T16:29:00+02:00", atUtcMs: utcOf(CERTIFICATE_DAY, 16, 29), reason: "OWNER_ABORT" };
+    const interleavedOpen: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+      read: () => session.read(),
+      append: async draft => {
+        const appended = await session.append(draft);
+        if (draft.evidence["opened"] === "OWNER_OPENED") await writeStopMark(stateRoot, replacement);
+        return appended;
+      },
+    }));
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), { withLedger: interleavedOpen });
+
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    const standing = await readStopMark(stateRoot);
+    expect(standing.kind).toBe("present");
+    if (standing.kind !== "present") throw new Error("the newer stop was quarantined");
+    expect(standing.mark.id).toBe(replacement.id);
+    expect(result.outcome.kind).toBe("opened");
+    if (result.outcome.kind !== "opened") throw new Error("the opening outcome carries the stop state");
+    expect(result.outcome.stopStanding).toBe("present");
+  });
+
   it("sets it aside, opens the attempt, and says where the bytes went", async () => {
     const stateRoot = await root();
     const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
@@ -1164,11 +1221,38 @@ describe("a mark nobody can read is not a deployment nobody can release", () => 
     expect(result.outcome.kind).toBe("opened");
     expect(exitCodeFor(result.outcome)).toBe(0);
     expect((await readStopMark(stateRoot)).kind).toBe("absent");
-    expect(printed.join(" ")).toContain("set aside");
-    const opening = (await entries(stateRoot)).at(-1);
-    expect(String(opening?.evidence["quarantinedUnreadableMark"])).toContain("unreadable-");
+    expect(printed.join(" ")).toContain("preserved as");
+    const recorded = await entries(stateRoot);
+    const opening = recorded.find(entry => entry.evidence["opened"] === "OWNER_OPENED");
+    expect(opening?.evidence["unreadableStopMark"]).toBeTruthy();
+    const quarantine = recorded.find(entry => typeof entry.evidence["quarantinedUnreadableMark"] === "string");
+    expect(String(quarantine?.evidence["quarantinedUnreadableMark"])).toContain("unreadable-");
     // The bytes survive, because they are the only evidence of whatever wrote them.
-    const aside = String(opening?.evidence["quarantinedUnreadableMark"]);
+    const aside = String(quarantine?.evidence["quarantinedUnreadableMark"]);
     expect(await readFile(aside, "utf8")).toContain("OWNER_ABORT");
+  });
+
+  it("reports the quarantine effect when its follow-up ledger note cannot be written", async () => {
+    const stateRoot = await root();
+    const first = harness(stateRoot, utcOf(CERTIFICATE_DAY, 15, 35));
+    await invoke(command(["run", "--state-root", stateRoot, "--anchor-day", ANCHOR]), first.deps);
+    await writeFile(path.join(stateRoot, "stop.json"), JSON.stringify({ operator: "felix", at: "2026-09-21T22:31:00+02:00", atUtcMs: 1, reason: "OWNER_ABORT" }), "utf8");
+
+    const failingNote: typeof withActivationLedger = (options, work) => withActivationLedger(options, async session => await work({
+      read: () => session.read(),
+      append: async draft => {
+        if (draft.evidence["quarantine"] === "quarantined") throw new LedgerStoreError("write-ledger", "NO_SPACE");
+        return await session.append(draft);
+      },
+    }));
+    const { deps } = harness(stateRoot, utcOf(CERTIFICATE_DAY, 16, 30), { withLedger: failingNote });
+
+    const result = await invoke(command(["open", "--state-root", stateRoot, "--anchor-day", ANCHOR, "--operator", "felix"]), deps);
+
+    expect(result.outcome.kind).toBe("ledger-defect");
+    if (result.outcome.kind !== "ledger-defect") throw new Error("the failed note was not classified as a ledger defect");
+    expect(result.outcome.effects?.join(" | ")).toContain("unreadable stop preserved at");
+    expect(outcomeLines(result.outcome).join(" | ")).toContain("effect before the ledger failed");
+    expect((await readStopMark(stateRoot)).kind).toBe("absent");
   });
 });

@@ -1,5 +1,18 @@
 # DECISIONS
 
+- **2026-09-22 — Unit 13 refreshes the short certificate-write lease after its
+  second Healthchecks read; the absolute gate deadline does not move.** Owner
+  decision. Certificate and deployment validation may take minutes, so the gate's
+  original five-second check lease cannot also be the write lease. Unit 8 therefore
+  completes that work, reads all three checks again, and requires the second
+  identity/status/last-ping triplet to equal the triplet accepted by the gate. The
+  completion clock of that second read starts a fresh five-second lease. Only
+  `observedAtUtcMs` and `leaseNotAfterUtcMs` change; `scheduleNotAfterUtcMs` remains
+  the absolute 14:55 boundary. The compare-and-swap repeats authorization at its
+  linearisation point. Unknown or changed checks, a malformed original action, a
+  clock before the refreshed observation, or either expired boundary refuses before
+  mutation. **Decider:** Felix Radzanowski.
+
 - **2026-09-20 — the PowerShell class fix is built and gated; instance A is closed, and what is
   left is one ACL call and three owner questions.** Coordinator record of the owner's ruling of
   the same day and of what followed it. The owner refused a blanket residual for installer and

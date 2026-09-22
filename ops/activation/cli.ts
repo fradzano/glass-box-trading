@@ -18,13 +18,15 @@
 // 3 the ledger itself is unreliable; 4 the invocation failed part way through.
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { parseInvocation } from "./cli/args.ts";
 import { parseDeploymentFacts } from "./cli/deployment.ts";
 import { stampFactory } from "./cli/schedule.ts";
 import type { DeploymentFacts } from "./cli/schedule.ts";
 import { invoke } from "./cli/invoke.ts";
 import type { InvocationDeps } from "./cli/invoke.ts";
-import { exitCodeFor, pages } from "./cli/plan.ts";
+import { activationPageReason, exitCodeFor, pages } from "./cli/plan.ts";
+import type { InvocationOutcome } from "./cli/plan.ts";
 import { outcomeLines, statusLines } from "./cli/report.ts";
 import { createHostPorts } from "./readers/host-ports.ts";
 import { readObservations } from "./readers/observe.ts";
@@ -32,6 +34,9 @@ import type { ObservationPlan } from "./readers/observe.ts";
 import { berlinLocal } from "./readers/parse.ts";
 import { currentLedgerLockOwner, readActivationLedger } from "./store/ledger-store.ts";
 import { readDeploymentState } from "./readers/deployment-state.ts";
+import { createActivationPager, createHostActionPorts } from "./actions/host.ts";
+import type { ActivationPager } from "./actions/host.ts";
+import type { ActionPorts } from "./actions/apply.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const DEPLOYMENT_FILE = path.join(REPO_ROOT, "ops", "activation", "deployment.json");
@@ -53,8 +58,28 @@ function needsMeasuredFacts(command: string): boolean {
   return command === "run" || command === "open";
 }
 
-async function main(): Promise<number> {
-  const parsed = parseInvocation(process.argv.slice(2));
+export interface CliBindings {
+  readonly argv?: readonly string[];
+  readonly actions?: ActionPorts | null;
+  readonly pager?: ActivationPager | null;
+}
+
+export interface CliEntryBindings {
+  readonly argv?: readonly string[];
+  readonly runMain?: () => Promise<number>;
+  readonly pager?: ActivationPager | null;
+}
+
+export async function deliverActivationAlert(outcome: InvocationOutcome, pager: ActivationPager, signal: AbortSignal) {
+  if (pages(outcome)) return pager.fail(activationPageReason(outcome), signal);
+  if (outcome.kind === "done" || (outcome.kind === "opened" && outcome.found === "OWNER_OPENED" && (outcome.stopStanding === undefined || outcome.stopStanding === null))) {
+    return pager.success(signal);
+  }
+  return null;
+}
+
+export async function main(bindings: CliBindings = {}): Promise<number> {
+  const parsed = parseInvocation(bindings.argv ?? process.argv.slice(2));
   if (!parsed.ok) {
     process.stderr.write(`refusing: ${parsed.reason}\n`);
     return 2;
@@ -143,7 +168,15 @@ async function main(): Promise<number> {
     // Unit 8 left the concrete host bindings to unit 13 (DECISIONS, 2026-09-14). Until
     // they exist the CLI reads, decides and records, and refuses to claim any action it
     // cannot perform — it never reports an unbound action as applied.
-    actions: null,
+    actions: bindings.actions === undefined
+      ? createHostActionPorts({
+        repoRoot: REPO_ROOT,
+        activationRoot,
+        devStateDir: DEPLOYMENT_STATE.devStateDir,
+        devDiagnosticSink: DEPLOYMENT_STATE.devDiagnosticSink,
+        canonicalTradingOrigin: CANONICAL_TRADING_ORIGIN,
+      })
+      : bindings.actions,
     print: line => process.stdout.write(`${line}\n`),
     readLedger: root => readActivationLedger(root),
   };
@@ -155,13 +188,68 @@ async function main(): Promise<number> {
   const lines = outcomeLines(result.outcome);
   const sink = pages(result.outcome) || result.outcome.kind === "refused" ? process.stderr : process.stdout;
   for (const line of lines) sink.write(`${line}\n`);
-  if (pages(result.outcome)) {
-    // D-10.1 is open: the spec says "page" and does not say through what. Until the
-    // owner decides on a channel, the page is this line and the ledger's
-    // `next_owner_action` — loud, credential-free, and never silently swallowed.
-    process.stderr.write("PAGE: the activation needs the owner. The reason is above and in the ledger's next_owner_action.\n");
+  if (pages(result.outcome)) process.stderr.write(invocation.dryRun
+    ? "DRY RUN: a production invocation would page the owner; no alert was sent.\n"
+    : "PAGE: the activation needs the owner. The reason is above and in the ledger's next_owner_action.\n");
+  let exitCode = exitCodeFor(result.outcome);
+  if (!invocation.dryRun) {
+    const pager = bindings.pager === undefined
+      ? createActivationPager({
+        repoRoot: REPO_ROOT,
+        activationRoot,
+        devStateDir: DEPLOYMENT_STATE.devStateDir,
+        devDiagnosticSink: DEPLOYMENT_STATE.devDiagnosticSink,
+        canonicalTradingOrigin: CANONICAL_TRADING_ORIGIN,
+      })
+      : bindings.pager;
+    if (pager === null) return exitCode;
+    const controller = new AbortController();
+    const timer = setTimeout(() => { controller.abort(); }, 10_000);
+    try {
+      const delivery = await deliverActivationAlert(result.outcome, pager, controller.signal);
+      if (delivery !== null && !delivery.ok) {
+        process.stderr.write(`activation alert delivery failed: ${delivery.reason}\n`);
+        if (exitCode === 0) exitCode = 4;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  return exitCodeFor(result.outcome);
+  return exitCode;
 }
 
-process.exitCode = await main();
+export async function runCliEntry(bindings: CliEntryBindings = {}): Promise<number> {
+  try {
+    return await (bindings.runMain ?? (() => main()))();
+  } catch {
+    process.stderr.write("activation invocation failed unexpectedly; no result was claimed\n");
+    if (!(bindings.argv ?? process.argv.slice(2)).includes("--dry-run")) {
+      const state = readDeploymentState(REPO_ROOT);
+      const pager = bindings.pager === undefined
+        ? createActivationPager({
+          repoRoot: REPO_ROOT,
+          activationRoot: REPO_ROOT,
+          devStateDir: state.ok ? state.dirs.devStateDir : "",
+          devDiagnosticSink: state.ok ? state.dirs.devDiagnosticSink : "",
+          canonicalTradingOrigin: CANONICAL_TRADING_ORIGIN,
+        })
+        : bindings.pager;
+      if (pager !== null) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => { controller.abort(); }, 10_000);
+        try {
+          const delivery = await pager.fail("ACTIVATION_UNEXPECTED_FAILURE", controller.signal);
+          if (!delivery.ok) process.stderr.write(`activation alert delivery failed: ${delivery.reason}\n`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    }
+    return 4;
+  }
+}
+
+const entry = process.argv[1];
+if (entry !== undefined && pathToFileURL(path.resolve(entry)).href === import.meta.url) {
+  process.exitCode = await runCliEntry();
+}

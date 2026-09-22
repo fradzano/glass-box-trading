@@ -20,7 +20,7 @@ import type { ActionContext, ActionPorts } from "../actions/apply.ts";
 import { compensationFor, stopMarkLine, stopRefusal } from "../core/stop.ts";
 import type { StopMark, StopMarkState } from "../core/stop.ts";
 import { clearStopMark, quarantineStopMark, readStopMark, writeStopLiftFailure, writeStopMark } from "../store/stop-mark.ts";
-import type { StopClearResult } from "../store/stop-mark.ts";
+import type { StopClearResult, StopQuarantineResult } from "../store/stop-mark.ts";
 import { abortTeardown, decide, fullTeardown } from "../core/decide.ts";
 import { foldLedgerSnapshot, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
@@ -105,7 +105,7 @@ export interface InvocationDeps {
   /** Compare-and-delete: it lifts the stop whose id was read, and no other (R4-01). */
   readonly clearStopMark?: (root: string, expectedId: string) => Promise<StopClearResult>;
   /** Sets an unreadable mark aside, so that the owner's continuation is never a dead end. */
-  readonly quarantineStopMark?: (root: string) => Promise<string | null>;
+  readonly quarantineStopMark?: (root: string) => Promise<StopQuarantineResult>;
   /**
    * What makes one stop distinguishable from the next. It is a port because randomness is
    * not the core's and not this module's: the shell supplies it, a test pins it.
@@ -818,11 +818,7 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       // The bytes are set aside rather than deleted, and the continuation records that it
       // did so, because a stop nobody can read is exactly the situation where evidence
       // matters.
-      let quarantined: string | null = null;
-      if (standing.kind === "unreadable" && !invocation.dryRun) {
-        quarantined = await (deps.quarantineStopMark ?? quarantineStopMark)(invocation.stateRoot);
-        deps.print(`the stop mark could not be read (${standing.reason}); it was set aside${quarantined === null ? " — and could not be moved, so it still stands" : ` as ${quarantined}`}`);
-      }
+      let quarantine: StopQuarantineResult | null = null;
       if (fold.currentAttempt !== null && fold.attemptEnded === null && standing.kind === "absent") {
         return { kind: "refused", reason: `attempt ${fold.currentAttempt.id} is still open for anchor day ${fold.currentAttempt.anchorDay}; end it before opening another` };
       }
@@ -846,12 +842,51 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       // and typing `open` again lifts the newer stop.
       let lift: StopClearResult = { kind: "absent" };
       if (!invocation.dryRun) {
-        await append(session, openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, {
+        const openedEntries = await session.append(openingDraft("OWNER_OPENED", attempt, anchorDay, stamp, {
           operator: invocation.operator ?? "",
           previousAttempt: previous,
           liftsStop: standing.kind === "present" ? standing.mark.id : null,
-          quarantinedUnreadableMark: quarantined,
+          unreadableStopMark: standing.kind === "unreadable" ? standing.reason : null,
         }));
+        // An unreadable mark has no id and therefore cannot use compare-and-delete. Move
+        // it only after OWNER_OPENED is durable: otherwise a failed ledger append would
+        // silently remove the last stop while leaving no continuation on the record.
+        if (standing.kind === "unreadable") {
+          quarantine = await (deps.quarantineStopMark ?? quarantineStopMark)(invocation.stateRoot);
+          const quarantineSummary = quarantine.kind === "quarantined"
+            ? `the unreadable bytes were preserved as ${quarantine.path}`
+            : quarantine.kind === "readable"
+              ? `a newer readable stop by ${quarantine.standing.operator} stands and was not moved`
+              : quarantine.kind === "absent"
+                ? "the mark was already absent when quarantine took the lock"
+                : `the unreadable stop was not moved (${quarantine.reason})`;
+          deps.print(`the stop mark could not be read (${standing.reason}); ${quarantineSummary}`);
+          const quarantineStamp = monotonicStamp(
+            deps.stampAt(deps.now()),
+            { lastSeq: openedEntries.at(-1)?.seq ?? tail.lastSeq, lastAtUtcMs: openedEntries.at(-1)?.atUtcMs ?? stamp.atUtcMs },
+            deps.stampAt,
+          );
+          const effect = quarantine.kind === "quarantined" ? `unreadable stop preserved at ${quarantine.path}` : quarantineSummary;
+          try {
+            await append(session, {
+              at: quarantineStamp.at,
+              atUtcMs: quarantineStamp.atUtcMs,
+              attempt,
+              anchorDay,
+              step: null,
+              kind: "note",
+              outcome: null,
+              evidence: { quarantine: quarantine.kind, quarantinedUnreadableMark: quarantine.kind === "quarantined" ? quarantine.path : null, unreadableStopMark: standing.reason },
+              nextOwnerAction: quarantine.kind === "quarantined" || quarantine.kind === "absent"
+                ? "The unreadable stop no longer stands; continue from this opened attempt."
+                : "A stop still stands. Inspect `activation status` and run `open` again only when the owner intends to continue.",
+            });
+          } catch (error) {
+            const failure = storeFailure(error);
+            if (failure.kind === "ledger-defect") return { ...failure, effects: [effect] };
+            return failure;
+          }
+        }
         lift = standing.kind === "present"
           ? await (deps.clearStopMark ?? clearStopMark)(invocation.stateRoot, standing.mark.id)
           : { kind: "absent" };
@@ -873,12 +908,12 @@ async function open(invocation: ActivationInvocation, deps: InvocationDeps, sche
       if (lift.kind === "cleared") deps.print("the owner's stop mark was lifted; arming actions are permitted again");
       else if (lift.kind !== "absent") deps.print(`the attempt is open, but the stop was NOT lifted (${lift.kind}); nothing will be armed until it is`);
       // An unreadable mark that could not even be moved is a stop that still stands.
-      const unmovable = standing.kind === "unreadable" && quarantined === null && !invocation.dryRun;
+      const unmovable = standing.kind === "unreadable" && quarantine !== null && (quarantine.kind === "readable" || quarantine.kind === "failed" || quarantine.kind === "locked") && !invocation.dryRun;
       return {
         kind: "opened",
         attempt,
         found: "OWNER_OPENED",
-        stopStanding: unmovable ? "unreadable" : (lift.kind === "cleared" || lift.kind === "absent" ? null : lift.kind),
+        stopStanding: unmovable ? (quarantine?.kind === "readable" ? "present" : "unreadable") : (lift.kind === "cleared" || lift.kind === "absent" ? null : lift.kind),
       };
     },
   );

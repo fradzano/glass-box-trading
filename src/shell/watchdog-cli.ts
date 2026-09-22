@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWatchdog } from "./watchdog.js";
 import { composeWatchdog } from "./watchdog-runtime.js";
+import { parseWatchdogCliNumbers } from "./watchdog-cli-args.js";
 import { resolveStateDir } from "./state-dir.js";
 
 const [stateDirArgument, instanceId, nowArgument, opensArgument, closesArgument, boundArgument] = process.argv.slice(2);
@@ -26,7 +27,12 @@ if (!paths.ok) {
   process.stderr.write(`${paths.reason}: ${paths.detail}\n`);
   process.exit(2);
 }
-const now = Number(nowArgument);
+const numeric = parseWatchdogCliNumbers(nowArgument, opensArgument, closesArgument, boundArgument);
+if (!numeric.ok) {
+  process.stderr.write(`${numeric.reason}: numeric times must be safe integers, opensAtMs must precede closesAtMs, and deadManBoundMs must be positive\n`);
+  process.exit(2);
+}
+const { now, opensAt, closesAt, deadManBoundMs } = numeric.value;
 // The checkout this entry point was launched from, not the process working
 // directory: a scheduled task's working directory is not a promise.
 // dist/shell/watchdog-cli.js -> dist -> the repository root.
@@ -37,13 +43,19 @@ const composition = await composeWatchdog({
   processEnv: process.env,
   clock: () => now,
   instanceId,
-  session: { isTradingDay: true, opensAt: Number(opensArgument), closesAt: Number(closesArgument) },
-  deadManBoundMs: Number(boundArgument),
+  // The wrapper-supplied window is a fallback for a composition that cannot reach the
+  // exchange. A live composition replaces it with Alpaca's actual calendar session.
+  session: { isTradingDay: true, opensAt, closesAt },
+  deadManBoundMs,
   log: line => process.stderr.write(`${line}\n`),
 });
 try {
   const report = await runWatchdog(composition.deps);
   process.stdout.write(`${JSON.stringify(report)}\n`);
+  if (composition.preRunFailure !== null) {
+    process.stderr.write(`watchdog composition failed (${composition.preRunFailure}); the durable credential fence and takeover halt stand\n`);
+    process.exit(1);
+  }
   process.exit(0);
 } catch (error) {
   // The takeover halt is already durable when the recovery branch throws; the

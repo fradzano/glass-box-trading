@@ -101,14 +101,21 @@ function barrierPreamble(mode: "throw" | "record"): string {
     "function Invoke-PrincipalBarrier { param($UserId, $LogonType, $RunLevel)",
     "  Write-Barrier -Name 'Principal' -Detail \"UserId=$UserId|LogonType=$LogonType|RunLevel=$RunLevel\"",
     "  return [pscustomobject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel } }",
+    "function Invoke-ActionBarrier { param($Execute, $Argument, $WorkingDirectory)",
+    "  return [pscustomobject]@{ Execute = $Execute; Arguments = $Argument; WorkingDirectory = $WorkingDirectory } }",
+    "function Invoke-TriggerBarrier { param([switch]$Once, [switch]$Weekly, $DaysOfWeek, $At, $RepetitionInterval, $RepetitionDuration)",
+    "  $days = if ($Weekly) { 62 } else { 0 }",
+    "  return [pscustomobject]@{ DaysOfWeek = $days; Repetition = [pscustomobject]@{ Interval = if ($null -eq $RepetitionInterval) { '' } else { [System.Xml.XmlConvert]::ToString([timespan]$RepetitionInterval) }; Duration = if ($null -eq $RepetitionDuration) { '' } else { [System.Xml.XmlConvert]::ToString([timespan]$RepetitionDuration) } } } }",
+    "function Invoke-SettingsBarrier { param([switch]$StartWhenAvailable, [switch]$DontStopOnIdleEnd, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries, $MultipleInstances, $ExecutionTimeLimit)",
+    "  return [pscustomobject]@{ StartWhenAvailable = [bool]$StartWhenAvailable; MultipleInstances = $MultipleInstances; ExecutionTimeLimit = [System.Xml.XmlConvert]::ToString([timespan]$ExecutionTimeLimit); DisallowStartIfOnBatteries = -not [bool]$AllowStartIfOnBatteries; StopIfGoingOnBatteries = -not [bool]$DontStopIfGoingOnBatteries; IdleSettings = [pscustomobject]@{ StopOnIdleEnd = -not [bool]$DontStopOnIdleEnd } } }",
     "",
   ].join("\n");
 }
 
 /** Every call in the installer that could touch this machine, and what replaces it. */
 function barrierCallSites(): ReadonlyArray<readonly [string, string]> {
-  const barrier = (name: string, detail: string, result: string): string =>
-    `$(Write-Barrier -Name '${name}' -Detail ${detail}; Stop-AtBarrier -Name '${name}'; ${result})`;
+  const barrier = (name: string, detail: string): string =>
+    `Write-Barrier -Name '${name}' -Detail ${detail}; Stop-AtBarrier -Name '${name}'`;
   return [
     [
       "$existing = Get-ScheduledTask -TaskName $Name -TaskPath $TaskFolder -ErrorAction SilentlyContinue",
@@ -126,16 +133,48 @@ function barrierCallSites(): ReadonlyArray<readonly [string, string]> {
       "$principal = Invoke-PrincipalBarrier",
     ],
     [
+      "$cycleAction = New-ScheduledTaskAction -Execute $PowerShellPath -Argument $cycleArgs -WorkingDirectory $RepoRoot",
+      "$cycleAction = Invoke-ActionBarrier -Execute $PowerShellPath -Argument $cycleArgs -WorkingDirectory $RepoRoot",
+    ],
+    [
+      "$cycleOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $cycleDuration",
+      "$cycleOnceTrigger = Invoke-TriggerBarrier -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $cycleIntervalMinutes) -RepetitionDuration $cycleDuration",
+    ],
+    [
+      "$cycleTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal",
+      "$cycleTrigger = Invoke-TriggerBarrier -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal",
+    ],
+    [
+      "$cycleSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)",
+      "$cycleSettings = Invoke-SettingsBarrier @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 10)",
+    ],
+    [
       "Register-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder -Action $cycleAction -Trigger $cycleTrigger -Principal $principal -Settings $cycleSettings -Description 'Glass Box Trading: one agent-cli.js cycle through tools/cycle-run.ps1, which keeps the printed report in STATE_DIR/cycle-run.log. Reads .env in RepoRoot; no secrets on the command line. Installed by tools/install-scheduled-task.ps1.' | Out-Null",
-      barrier("Register", "\"TaskName=$CycleTaskName|TaskPath=$TaskFolder|Execute=$($cycleAction.Execute)|Arguments=$($cycleAction.Arguments)|WorkingDirectory=$($cycleAction.WorkingDirectory)|UserId=$($principal.UserId)|LogonType=$($principal.LogonType)|RunLevel=$($principal.RunLevel)|DaysOfWeek=$($cycleTrigger.DaysOfWeek)|Interval=$($cycleTrigger.Repetition.Interval)|Duration=$($cycleTrigger.Repetition.Duration)|Limit=$($cycleSettings.ExecutionTimeLimit)|StartWhenAvailable=$($cycleSettings.StartWhenAvailable)|MultipleInstances=$($cycleSettings.MultipleInstances)|DisallowBatteries=$($cycleSettings.DisallowStartIfOnBatteries)|StopOnBatteries=$($cycleSettings.StopIfGoingOnBatteries)|StopOnIdleEnd=$($cycleSettings.IdleSettings.StopOnIdleEnd)\"", "$null") + " | Out-Null",
+      barrier("Register", "\"TaskName=$CycleTaskName|TaskPath=$TaskFolder|Execute=$($cycleAction.Execute)|Arguments=$($cycleAction.Arguments)|WorkingDirectory=$($cycleAction.WorkingDirectory)|UserId=$($principal.UserId)|LogonType=$($principal.LogonType)|RunLevel=$($principal.RunLevel)|DaysOfWeek=$($cycleTrigger.DaysOfWeek)|Interval=$($cycleTrigger.Repetition.Interval)|Duration=$($cycleTrigger.Repetition.Duration)|Limit=$($cycleSettings.ExecutionTimeLimit)|StartWhenAvailable=$($cycleSettings.StartWhenAvailable)|MultipleInstances=$($cycleSettings.MultipleInstances)|DisallowBatteries=$($cycleSettings.DisallowStartIfOnBatteries)|StopOnBatteries=$($cycleSettings.StopIfGoingOnBatteries)|StopOnIdleEnd=$($cycleSettings.IdleSettings.StopOnIdleEnd)\""),
     ],
     [
       "if (-not $Activate) { Disable-ScheduledTask -TaskName $CycleTaskName -TaskPath $TaskFolder | Out-Null }",
       "if (-not $Activate) { Write-Barrier -Name 'Disable' -Detail \"TaskName=$CycleTaskName\"; Stop-AtBarrier -Name 'Disable-ScheduledTask' }",
     ],
     [
+      "$watchdogAction = New-ScheduledTaskAction -Execute $PowerShellPath -Argument $watchdogArgs -WorkingDirectory $RepoRoot",
+      "$watchdogAction = Invoke-ActionBarrier -Execute $PowerShellPath -Argument $watchdogArgs -WorkingDirectory $RepoRoot",
+    ],
+    [
+      "$watchdogOnceTrigger = New-ScheduledTaskTrigger -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $watchdogDuration",
+      "$watchdogOnceTrigger = Invoke-TriggerBarrier -Once -At $session.OpenLocal -RepetitionInterval (New-TimeSpan -Minutes $WatchdogIntervalMinutes) -RepetitionDuration $watchdogDuration",
+    ],
+    [
+      "$watchdogTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal",
+      "$watchdogTrigger = Invoke-TriggerBarrier -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $session.OpenLocal",
+    ],
+    [
+      "$watchdogSettings = New-ScheduledTaskSettingsSet @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 6)",
+      "$watchdogSettings = Invoke-SettingsBarrier @commonSettings -ExecutionTimeLimit (New-TimeSpan -Minutes 6)",
+    ],
+    [
       "Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $watchdogSettings -Description 'Glass Box Trading: dead-man watchdog (S-G14). Fences, halts and flattens the open book on staleness; degrades to fence-and-halt-only when the configuration does not compose -- see tools/watchdog-run.ps1. Installed by tools/install-scheduled-task.ps1.' | Out-Null",
-      barrier("Register", "\"TaskName=$WatchdogTaskName|TaskPath=$TaskFolder|Execute=$($watchdogAction.Execute)|Arguments=$($watchdogAction.Arguments)|WorkingDirectory=$($watchdogAction.WorkingDirectory)|UserId=$($principal.UserId)|LogonType=$($principal.LogonType)|RunLevel=$($principal.RunLevel)|DaysOfWeek=$($watchdogTrigger.DaysOfWeek)|Interval=$($watchdogTrigger.Repetition.Interval)|Duration=$($watchdogTrigger.Repetition.Duration)|Limit=$($watchdogSettings.ExecutionTimeLimit)|StartWhenAvailable=$($watchdogSettings.StartWhenAvailable)|MultipleInstances=$($watchdogSettings.MultipleInstances)|DisallowBatteries=$($watchdogSettings.DisallowStartIfOnBatteries)|StopOnBatteries=$($watchdogSettings.StopIfGoingOnBatteries)|StopOnIdleEnd=$($watchdogSettings.IdleSettings.StopOnIdleEnd)\"", "$null") + " | Out-Null",
+      barrier("Register", "\"TaskName=$WatchdogTaskName|TaskPath=$TaskFolder|Execute=$($watchdogAction.Execute)|Arguments=$($watchdogAction.Arguments)|WorkingDirectory=$($watchdogAction.WorkingDirectory)|UserId=$($principal.UserId)|LogonType=$($principal.LogonType)|RunLevel=$($principal.RunLevel)|DaysOfWeek=$($watchdogTrigger.DaysOfWeek)|Interval=$($watchdogTrigger.Repetition.Interval)|Duration=$($watchdogTrigger.Repetition.Duration)|Limit=$($watchdogSettings.ExecutionTimeLimit)|StartWhenAvailable=$($watchdogSettings.StartWhenAvailable)|MultipleInstances=$($watchdogSettings.MultipleInstances)|DisallowBatteries=$($watchdogSettings.DisallowStartIfOnBatteries)|StopOnBatteries=$($watchdogSettings.StopIfGoingOnBatteries)|StopOnIdleEnd=$($watchdogSettings.IdleSettings.StopOnIdleEnd)\""),
     ],
     [
       "if (-not $Activate) { Disable-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $TaskFolder | Out-Null }",
@@ -317,6 +356,8 @@ describe("R4-39 the installer is measured as a process, and cannot reach this ho
 
     const result = await run(script, []);
 
+    expect(result.code, result.output).toBe(0);
+
     // The bootstrap writer was reached, and the barrier sent it at the disposable tree.
     expect(result.output).toContain("BARRIER::Bootstrap::");
     expect(result.output).toContain(path.join(tempRoot, "sandbox-programdata"));
@@ -389,6 +430,9 @@ describe("R4-39 the installer is measured as a process, and cannot reach this ho
 
     const installed = await run(script, []);
     const activated = await run(script, ["-Activate"]);
+
+    expect(installed.code, installed.output).toBe(0);
+    expect(activated.code, activated.output).toBe(0);
 
     const disables = (result: Run): readonly string[] =>
       result.output.split("\n").filter(line => line.includes("BARRIER::Disable::")).map(line => line.trim());

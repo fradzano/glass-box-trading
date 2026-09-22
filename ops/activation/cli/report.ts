@@ -125,8 +125,9 @@ export function outcomeLines(outcome: InvocationOutcome): readonly string[] {
       // teardown ran on the way out — which is exactly what axiom A4 asks for at the gate
       // — the owner is told about it here, in the same three lines he reads at 14:36.
       const clause = teardownClause(outcome.teardown ?? []);
-      const lines = [`LEDGER DEFECT ${outcome.stage}:${outcome.reason}`, "the record itself cannot be trusted; do not start another attempt before reading it"];
-      return clause === null ? lines : [lines[0] as string, clause, lines[1] as string];
+      const effects = outcome.effects?.map(effect => `effect before the ledger failed: ${effect}`) ?? [];
+      const lines = [`LEDGER DEFECT ${outcome.stage}:${outcome.reason}`, ...effects, "the record itself cannot be trusted; do not start another attempt before reading it"];
+      return clause === null ? lines : [lines[0] as string, clause, ...lines.slice(1)];
     }
   }
 }

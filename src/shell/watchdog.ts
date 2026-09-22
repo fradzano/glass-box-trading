@@ -70,6 +70,8 @@ export interface WatchdogDependencies {
   readonly calendar: { readonly isTradingDay: boolean; readonly opensAt: Quantity | number; readonly closesAt: Quantity | number };
   readonly tradingDay: string;
   readonly ping: PingPort | null;
+  /** Why book recovery was not composed, carried into the active takeover alarm. */
+  readonly recoveryUnavailableReason?: string | null;
 }
 
 export interface WatchdogReport {
@@ -276,6 +278,8 @@ export async function runWatchdog(deps: WatchdogDependencies): Promise<WatchdogR
     } else if (!assembled.ok) {
       alarmConditions.push(`WATCHDOG_RECOVERY_SKIPPED:${redactSecrets(assembled.reason, deps.secrets)}`);
     }
+  } else if (deps.recoveryUnavailableReason !== undefined && deps.recoveryUnavailableReason !== null) {
+    alarmConditions.push(`WATCHDOG_RECOVERY_SKIPPED:${deps.recoveryUnavailableReason}`);
   }
 
   // R43-C2: the takeover condition alone left the operator without the reason

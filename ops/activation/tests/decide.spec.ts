@@ -5,7 +5,7 @@
 // unknown, a drill counted whose cause is ambiguous, a proof taken from yesterday
 // or from a catch-up firing — so most tests below pin a refusal.
 import { describe, expect, it } from "vitest";
-import { GATE_CHECK_MAX_AGE_MS, authorizeCertificateWrite, decide, definitionFindings, tokenizeArguments, worldFindings } from "../core/decide.ts";
+import { GATE_CHECK_MAX_AGE_MS, authorizeCertificateWrite, decide, definitionFindings, refreshCertificateWriteLease, tokenizeArguments, worldFindings } from "../core/decide.ts";
 import { foldLedger, stepDone } from "../core/fold.ts";
 import type { LedgerFold } from "../core/fold.ts";
 import { parseLedgerText, planLedgerAppend } from "../core/ledger.ts";
@@ -1197,6 +1197,22 @@ describe("decide — step 10, the gate", () => {
     expect(authorizeCertificateWrite(write, utc(at) + 1, unknown("management API failed"))).toEqual({ ok: false, reason: "CHECKS_UNKNOWN" });
     expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check(FINGERPRINTS.readiness, "paused", null) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
     expect(authorizeCertificateWrite(write, utc(at) + 1, checksWith(utc(at), { readiness: check("hc:changed", "up", utc(at) - 60_000) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
+  });
+
+  it("starts a new five-second lease only after the second unchanged check read", () => {
+    const decision = decide(fold, worldFor(fold, at), SCHEDULE);
+    if (decision.kind !== "act") throw new Error("expected gate action");
+    const write = decision.actions.find(action => action.kind === "write-certificate-line");
+    if (write === undefined) throw new Error("expected certificate write");
+    const refreshedAt = write.observedAtUtcMs + GATE_CHECK_MAX_AGE_MS + 1;
+    const extended = { ...write, scheduleNotAfterUtcMs: write.scheduleNotAfterUtcMs + 60_000 };
+    const refreshed = refreshCertificateWriteLease(extended, refreshedAt, worldFor(fold, at).checks);
+    expect(refreshed).toEqual({ ok: true, value: { ...write, observedAtUtcMs: refreshedAt, leaseNotAfterUtcMs: refreshedAt + GATE_CHECK_MAX_AGE_MS, scheduleNotAfterUtcMs: write.scheduleNotAfterUtcMs + 60_000 } });
+    if (!refreshed.ok) throw new Error(refreshed.reason);
+    expect(authorizeCertificateWrite(refreshed.value, refreshed.value.leaseNotAfterUtcMs, worldFor(fold, at).checks)).toEqual({ ok: true });
+    expect(authorizeCertificateWrite(refreshed.value, refreshed.value.leaseNotAfterUtcMs + 1, worldFor(fold, at).checks)).toEqual({ ok: false, reason: "CHECK_LEASE_EXPIRED" });
+    expect(refreshCertificateWriteLease(extended, refreshedAt, unknown("management API failed"))).toEqual({ ok: false, reason: "CHECKS_UNKNOWN" });
+    expect(refreshCertificateWriteLease(extended, refreshedAt, checksWith(utc(at), { readiness: check("hc:changed", "up", utc(at) - 60_000) }))).toEqual({ ok: false, reason: "CHECK_CHANGED" });
   });
 
   it("refuses the real step-10 action at 14:55:01 even while its five-second check lease still runs", () => {

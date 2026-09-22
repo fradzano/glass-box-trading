@@ -242,20 +242,6 @@ function holdLock(file: string, milliseconds: number): Promise<void> {
 }
 
 /**
- * The watchdog wrapper decides for itself whether today is a trading day — that gate is
- * the R1-14 stop-gap and it takes no parameter, deliberately: a switch that turns the
- * closure table off would be a switch that re-arms the defect it repairs. So the branch
- * this suite measures depends on the day it runs, and the two branches are split here
- * rather than blurred into assertions that hold for both.
- *
- * THE LIMIT, said rather than hidden: on a weekend the full run path of the watchdog is
- * not measured by this file. It is measured on every weekday run, including the
- * certificate day itself.
- */
-const easternNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-const tradingWeekday = easternNow.getDay() !== 0 && easternNow.getDay() !== 6;
-
-/**
  * A Monday inside the American session, as an instant.
  *
  * Until 2026-09-19 the three cases below only ran on a weekday, so the watchdog's whole
@@ -266,6 +252,7 @@ const tradingWeekday = easternNow.getDay() !== 0 && easternNow.getDay() !== 6;
  * scheduler verifier.
  */
 const TRADING_MONDAY = "2026-09-21T17:00:00Z";
+const CLOSED_SUNDAY = "2026-09-20T17:00:00Z";
 
 describe("R4-14 — the watchdog heartbeat has an independent bootstrap", () => {
   it("fail-pings immediately through the bootstrap while .env is held by a real exclusive lock", async () => {
@@ -389,11 +376,11 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
   // on a day the exchange is shut. A skip whose line could not be written is not a
   // silent day but an unrecorded firing, which is the signature step 6 reads as a
   // disabled task, so it must speak.
-  it.runIf(!tradingWeekday)("makes even a skipped watchdog firing report a log it could not write", async () => {
+  it("makes even a skipped watchdog firing report a log it could not write", async () => {
     const context = await tree();
     await makeUnwritable(path.join(context.stateDir, "watchdog-run.log"));
 
-    const run = await runWrapper("watchdog-run.ps1", context);
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", CLOSED_SUNDAY] });
 
     expect(run.exitCode).toBe(9);
     expect(pings).toHaveLength(1);
@@ -403,10 +390,10 @@ describe("LC-1 and LC-3 — an unwritable log never stops the firing, and both f
     expect(pings[0]?.body).toContain("watchdog-run.log");
   }, 30_000);
 
-  it.runIf(!tradingWeekday)("and stays silent on a skip whose line landed, which is what a closed day owes", async () => {
+  it("and stays silent on a skip whose line landed, which is what a closed day owes", async () => {
     const context = await tree();
 
-    const run = await runWrapper("watchdog-run.ps1", context);
+    const run = await runWrapper("watchdog-run.ps1", context, { extra: ["-TestClockUtc", CLOSED_SUNDAY] });
 
     expect(run.exitCode).toBe(0);
     expect(pings).toHaveLength(0);
@@ -539,7 +526,10 @@ describe("LC-5 — a transient lock costs a retry, not a firing", () => {
 
   it("writes the line anyway when a foreign process holds the log briefly", async () => {
     const context = await tree();
-    const output = await lockingProbe(context, 300, [
+    // The contract's measured transient is 200 ms. Keeping it below the third
+    // 150 ms retry leaves scheduling margin under the full verify workload while
+    // still guaranteeing that the first append encounters the held handle.
+    const output = await lockingProbe(context, 200, [
       "$landed = Write-RunLog 'a line written while the file was held'",
       "$holder.WaitForExit()",
       "Write-Output \"landed=$landed\"",

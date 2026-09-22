@@ -493,6 +493,26 @@ export function childRefusal(stderr: string, limit = 300): string | null {
   return `${text}${tail}`;
 }
 
+/**
+ * PowerShell's `-File` host prefixes ordinary terminating errors instead of
+ * emitting the structured `refusing:` vocabulary used by Node children. Keep
+ * one useful line, redact credential-shaped material, and reduce the remainder
+ * to a count so stack traces and command echoes cannot cross the boundary.
+ */
+export function powerShellRefusal(stderr: string, limit = 300): string | null {
+  const lines = withoutBom(stderr).split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length === 0) return null;
+  const structured = childRefusal(stderr, limit);
+  if (structured !== null && !/^\(\d+ further stderr lines? suppressed\)$/u.test(structured)) return structured;
+  const withoutHostPrefix = lines[0]?.replace(/^[A-Za-z]:\\.*?\.ps1\s*:\s*/u, "") ?? "";
+  const redacted = redactCredentialShaped(withoutHostPrefix)
+    .replace(/https?:\/\/[^\s'"]+/giu, "<redacted-url>")
+    .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)\s*[:=]\s*\S+/giu, "$1=<redacted>");
+  const text = redacted.length > limit ? `${redacted.slice(0, limit)}…` : redacted;
+  const tail = lines.length > 1 ? ` (${String(lines.length - 1)} further stderr line${lines.length === 2 ? "" : "s"} suppressed)` : "";
+  return `${text}${tail}`;
+}
+
 /** Runs of word characters that mix letters and digits and are long enough to be a secret. */
 function redactCredentialShaped(text: string): string {
   return text.replace(/[A-Za-z0-9_-]{20,}/gu, match => (/\d/u.test(match) && /[A-Za-z]/u.test(match) ? "<redacted>" : match));

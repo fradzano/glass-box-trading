@@ -19,14 +19,35 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { MarketObservation } from "../src/core/execution.js";
 import type { MarketWindow } from "../src/shell/alpaca-broker.js";
+import { BrokerHttpError } from "../src/shell/broker-errors.js";
 import { composeWatchdog } from "../src/shell/watchdog-runtime.js";
 import type { WatchdogBrokerAdapter } from "../src/shell/watchdog-runtime.js";
+import { parseWatchdogCliNumbers } from "../src/shell/watchdog-cli-args.js";
 import { runWatchdog } from "../src/shell/watchdog.js";
 import type { CalendarDay } from "../src/shell/market-calendar.js";
 import type { EnvRecord } from "../src/shell/runtime-config.js";
 import type { StatePaths } from "../src/shell/state-dir.js";
 import { TEST_ONLY_ACCOUNT_ID, TEST_ONLY_ORIGIN } from "./journal-fixtures.js";
 import { cleanupLifecycleDirs, lifecycleHarness, lifecycleMarket, P5_NOW } from "./lifecycle-fixtures.js";
+
+describe("P8 watchdog CLI arguments", () => {
+  it("accepts one ordered, finite integer window and a positive bound", () => {
+    expect(parseWatchdogCliNumbers("100", "10", "20", "5")).toEqual({
+      ok: true,
+      value: { now: 100, opensAt: 10, closesAt: 20, deadManBoundMs: 5 },
+    });
+  });
+
+  it.each([
+    ["NaN", "10", "20", "5"],
+    ["100", "20", "20", "5"],
+    ["100", "21", "20", "5"],
+    ["100", "10", "20", "0"],
+    ["100.5", "10", "20", "5"],
+  ])("refuses an invalid numeric invocation", (now, opens, closes, bound) => {
+    expect(parseWatchdogCliNumbers(now, opens, closes, bound)).toEqual({ ok: false, reason: "WATCHDOG_ARGUMENT_INVALID" });
+  });
+});
 import type { LifecycleHarness } from "./lifecycle-fixtures.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -71,10 +92,10 @@ interface AdapterRecord {
 }
 
 /** The fake broker dressed as the adapter the composition binds; it records what the composed market asks for. */
-function recordingAdapter(harness: LifecycleHarness): AdapterRecord {
+function recordingAdapter(harness: LifecycleHarness, calendarDays?: readonly CalendarDay[], calendarFailure?: Error): AdapterRecord {
   const windows: MarketWindow[] = [];
   const calendarCalls: string[][] = [];
-  const days: readonly CalendarDay[] = [
+  const days: readonly CalendarDay[] = calendarDays ?? [
     { date: "2026-08-31", open: "09:30", close: "16:00" },
     { date: "2026-09-01", open: "09:30", close: "16:00" },
     { date: "2026-09-02", open: "09:30", close: "16:00" },
@@ -93,6 +114,7 @@ function recordingAdapter(harness: LifecycleHarness): AdapterRecord {
       },
       calendar: (startDate: string, endDate: string): Promise<readonly CalendarDay[]> => {
         calendarCalls.push([startDate, endDate]);
+        if (calendarFailure !== undefined) return Promise.reject(calendarFailure);
         return Promise.resolve(days);
       },
     }),
@@ -105,9 +127,9 @@ interface Composed {
   readonly adapter: AdapterRecord;
 }
 
-async function compose(harness: LifecycleHarness, options: { readonly repoRoot: string; readonly env?: Readonly<Record<string, string | undefined>> }): Promise<Composed> {
+async function compose(harness: LifecycleHarness, options: { readonly repoRoot: string; readonly env?: Readonly<Record<string, string | undefined>>; readonly calendarDays?: readonly CalendarDay[]; readonly calendarFailure?: Error }): Promise<Composed> {
   const logs: string[] = [];
-  const adapter = recordingAdapter(harness);
+  const adapter = recordingAdapter(harness, options.calendarDays, options.calendarFailure);
   const composition = await composeWatchdog({
     paths: harness.paths,
     repoRoot: options.repoRoot,
@@ -129,6 +151,125 @@ function pingRecord(paths: StatePaths): string {
 }
 
 describe("P8 — a valid configuration composes the book-recovery ports", () => {
+  it("takes the watchdog session from the exchange calendar, not the caller's weekday window", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition, adapter } = await compose(harness, {
+      repoRoot: fixtureRepoRoot(),
+      // 2026-08-31 is a weekday and the caller below asserts an open window, but its
+      // absence between sessions on both sides establishes a closed market day.
+      calendarDays: [
+        { date: "2026-08-28", open: "09:30", close: "16:00" },
+        { date: "2026-09-01", open: "09:30", close: "16:00" },
+        { date: "2026-09-02", open: "09:30", close: "16:00" },
+      ],
+    });
+    expect(adapter.calendarCalls).toHaveLength(1);
+    expect(harness.fake.mutations).toHaveLength(0);
+
+    const report = await runWatchdog(composition.deps);
+
+    expect(report.assessment).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
+    expect(report.epoch).toBeNull();
+    expect(report.halted).toBe(false);
+    expect(adapter.windows).toHaveLength(0);
+  });
+
+  it("uses the exchange's early close instead of the caller's fixed afternoon window", async () => {
+    const harness = await lifecycleHarness();
+    // 14:00 New York on the 2026 Thanksgiving Friday, one hour after its 13:00 close.
+    harness.clock.now = Date.UTC(2026, 10, 27, 19, 0, 0);
+    const { composition } = await compose(harness, {
+      repoRoot: fixtureRepoRoot(),
+      calendarDays: [{ date: "2026-11-27", open: "09:30", close: "13:00" }],
+    });
+
+    const report = await runWatchdog(composition.deps);
+
+    expect(report.assessment).toEqual({ kind: "quiet", reason: "OUTSIDE_SESSION" });
+    expect(report.epoch).toBeNull();
+    expect(report.halted).toBe(false);
+  });
+
+  it("degrades loudly instead of treating an empty calendar response as a closed market", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot(), calendarDays: [] });
+
+    expect(composition.degraded).toContain("calendar returned no sessions");
+    const report = await runWatchdog(composition.deps);
+
+    expect(report.assessment.kind).toBe("stale");
+    expect(report.halted).toBe(true);
+    expect(report.alarmConditions.join(" | ")).toContain("WATCHDOG_RECOVERY_SKIPPED");
+    expect(pingRecord(harness.paths)).toContain("WATCHDOG_RECOVERY_SKIPPED");
+  });
+
+  it("degrades loudly when a partial nonempty calendar cannot establish today's closure", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition } = await compose(harness, {
+      repoRoot: fixtureRepoRoot(),
+      calendarDays: [
+        { date: "2026-09-01", open: "09:30", close: "16:00" },
+        { date: "2026-09-02", open: "09:30", close: "16:00" },
+      ],
+    });
+
+    expect(composition.degraded).toContain("does not establish whether today is a closed market day");
+    const report = await runWatchdog(composition.deps);
+    expect(report.assessment.kind).toBe("stale");
+    expect(report.halted).toBe(true);
+    expect(report.alarmConditions.join(" | ")).toContain("WATCHDOG_RECOVERY_SKIPPED");
+  });
+
+  it("puts a pre-fence calendar failure into the takeover alarm, not only the host log", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition } = await compose(harness, { repoRoot: fixtureRepoRoot(), calendarFailure: new Error("ECONNRESET") });
+
+    expect(composition.degraded).toContain("ECONNRESET");
+    const report = await runWatchdog(composition.deps);
+
+    expect(report.halted).toBe(true);
+    expect(report.alarmConditions.join(" | ")).toContain("WATCHDOG_RECOVERY_SKIPPED");
+    expect(report.alarmConditions.join(" | ")).toContain("ECONNRESET");
+  });
+
+  it("redacts deployment secrets from a pre-fence failure before it reaches logs or the active alarm", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition, logs } = await compose(harness, {
+      repoRoot: fixtureRepoRoot(),
+      calendarFailure: new Error("calendar failed for TEST_ONLY_SECRET_KEY"),
+    });
+
+    expect(composition.degraded).not.toContain("TEST_ONLY_SECRET_KEY");
+    expect(logs.join(" | ")).not.toContain("TEST_ONLY_SECRET_KEY");
+    expect(composition.deps.secrets).toContain("TEST_ONLY_SECRET_KEY");
+    const report = await runWatchdog(composition.deps);
+    expect(report.alarmConditions.join(" | ")).not.toContain("TEST_ONLY_SECRET_KEY");
+    expect(pingRecord(harness.paths)).not.toContain("TEST_ONLY_SECRET_KEY");
+    expect(report.alarmConditions.join(" | ")).toContain("[REDACTED]");
+  });
+
+  it("classifies a 401 on the pre-fence calendar call as a durable credential failure", async () => {
+    const harness = await lifecycleHarness();
+    harness.clock.now = STALE_NOW;
+    const { composition } = await compose(harness, {
+      repoRoot: fixtureRepoRoot(),
+      calendarFailure: new BrokerHttpError(401, "calendar credentials rejected"),
+    });
+
+    expect(composition.preRunFailure).toBe("AUTH_FAILURE");
+    expect(harness.entries().some(item => item.type === "HALT" && item["reason"] === "AUTH_FAILURE")).toBe(true);
+    expect(pingRecord(harness.paths)).toContain("AUTH_FAILURE");
+    // The newly written credential halt is itself a fresh journal entry, so the
+    // following watchdog assessment need not take over again. preRunFailure is
+    // what makes the process exit non-zero after printing that report.
+    await runWatchdog(composition.deps);
+  });
+
   it("composes broker, market and binding, and the takeover closes the intact MATCHED structure whole", async () => {
     const harness = await lifecycleHarness();
     const entry = await harness.cycle(); // the 500/505 credit vertical fills and is journaled
@@ -146,6 +287,7 @@ describe("P8 — a valid configuration composes the book-recovery ports", () => 
     expect(composition.deps.binding).toEqual({ profile: "dev", tradingOrigin: TEST_ONLY_ORIGIN, accountId: TEST_ONLY_ACCOUNT_ID });
     // The validated policy, not the fence-only literals, parameterizes the composed run.
     expect(composition.deps.closeEscalationStepCents).toBe(2);
+    expect(composition.deps.calendar).toEqual(composition.deps.session);
     expect(composition.deps.tradingDay).toBe("2026-08-31");
     expect(composition.deps.secrets).toContain("TEST_ONLY_SECRET_KEY");
 

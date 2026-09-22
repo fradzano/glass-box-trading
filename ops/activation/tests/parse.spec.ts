@@ -10,7 +10,7 @@ import { mergeEnvironment, parseDotEnv } from "../../../src/shell/runtime-config
 import { inputs, ORIGIN } from "../../../tests/arm01-fixtures.ts";
 import { definitionFindings } from "../core/decide.ts";
 import { inspectCertificateEnv, rewriteCertificateEnv } from "../actions/env.ts";
-import { berlinLocal, childRefusal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs } from "../readers/parse.ts";
+import { berlinLocal, childRefusal, parseAlertConfirmations, parseBootInstant, parseCertificateFile, parseDisarm, parseDotEnvAsRuntime, parseEnv, parseIsoInstant, parsePreflightOutput, parseSessionProbe, parseTasks, parseVerifierOutput, parseWrapperLogs, powerShellRefusal } from "../readers/parse.ts";
 
 const NAMES = { cycle: "GlassBoxTrading-AgentCycle", watchdog: "GlassBoxTrading-Watchdog", disarm: "GlassBoxTrading-Disarm" };
 
@@ -429,6 +429,17 @@ describe("parse — a child's stderr", () => {
     expect(childRefusal("   \r\n\n")).toBeNull();
     const long = childRefusal(`refusing: ${"x".repeat(500)}\n`, 40);
     expect(long).toBe(`refusing: ${"x".repeat(30)}…`);
+  });
+
+  it("keeps one useful PowerShell error line while redacting credentials and suppressing its trace", () => {
+    expect(powerShellRefusal("C:\\repo\\tools\\activation-task.ps1 : Registered task principal differs from the requested identity.\r\nAt line:1 char:1\r\nCategoryInfo: failure\r\n")).toBe(
+      "Registered task principal differs from the requested identity. (2 further stderr lines suppressed)",
+    );
+    const reduced = powerShellRefusal("failed at https://hc.example/ping/SECRET12345678901234567890 with API_TOKEN=TOKEN12345678901234567890\nstack secret\n");
+    expect(reduced).toContain("<redacted-url>");
+    expect(reduced).toContain("API_TOKEN=<redacted>");
+    expect(reduced).not.toContain("SECRET12345678901234567890");
+    expect(reduced).not.toContain("TOKEN12345678901234567890");
   });
 });
 

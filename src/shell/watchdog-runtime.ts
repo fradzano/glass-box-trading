@@ -7,10 +7,10 @@
 //
 // Two invariants shape this module. It decides nothing: every value is read,
 // validated by the pure core, or handed to a shell module that carries its own
-// tests. And it calls nothing: the ports are constructed unused, so the first
-// broker read still happens inside `runWatchdog`, after the atomic epoch
-// increment — the fence-first rule of S-G14-02 is not weakened by composing
-// broker access. Any configuration, credential or binding problem degrades to
+// tests. The sole pre-fence call is the exchange-calendar observation needed
+// to decide whether a fence is permitted at all; every account/book/market read
+// and every mutation stays behind `runWatchdog`'s atomic epoch increment. Any
+// configuration, credential or binding problem degrades to
 // exactly the fence-and-halt ports the CLI passed before this module existed
 // (broker null, market null): the watchdog still fences the writer, sets the
 // takeover halt and fail-pings. The fail-ping is why the ping port is composed
@@ -20,6 +20,7 @@
 import path from "node:path";
 import type { MarketObservation } from "../core/execution.js";
 import type { SessionWindow } from "../core/lifecycle.js";
+import { redactSecrets } from "../core/journal.js";
 import type { AccountBinding } from "../core/journal.js";
 import { classifyBrokerFailure, redactedViolationSummary, validateStartupConfig } from "../core/startup.js";
 import type { ValidatedStartup } from "../core/startup.js";
@@ -29,7 +30,7 @@ import type { AlpacaCredentials, MarketWindow } from "./alpaca-broker.js";
 import { httpStatusOf } from "./broker-errors.js";
 import type { PingPort } from "./cycle-runner.js";
 import type { BrokerReadPort } from "./fake-broker.js";
-import { newYorkDate } from "./market-calendar.js";
+import { newYorkDate, sessionFor } from "./market-calendar.js";
 import { closingWindow } from "./market-window.js";
 import type { CalendarDay } from "./market-calendar.js";
 import type { BrokerMutationPort } from "./mutation-gateway.js";
@@ -88,7 +89,7 @@ export interface WatchdogRuntimeOptions {
   readonly processEnv: EnvRecord;
   readonly clock: () => number;
   readonly instanceId: string;
-  /** The session window the caller computed; the watchdog takes it as an argument, it does not resolve it. */
+  /** Fallback session for a composition that cannot reach the exchange calendar. */
   readonly session: SessionWindow;
   readonly deadManBoundMs: number;
   readonly log: (line: string) => void;
@@ -100,6 +101,8 @@ export interface WatchdogComposition {
   readonly deps: WatchdogDependencies;
   /** Why the book-recovery ports are absent, or null when broker, market and binding are live. */
   readonly degraded: string | null;
+  /** A credential rejection already classified during pre-fence composition. */
+  readonly preRunFailure: "AUTH_FAILURE" | null;
   /**
    * The runner's credential fence (S-G12-06) for a failure that escaped the
    * watchdog run: an HTTP 401/403 becomes a durable `AUTH_FAILURE` halt plus a
@@ -142,16 +145,16 @@ interface FenceParameters {
 }
 
 /** Exactly the dependency record the CLI passed before this module existed — minus the ping, which every path keeps: fence, halt, fail-ping, no book recovery. */
-function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort): WatchdogDependencies {
+function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort, recoveryUnavailableReason: string, fence: FenceParameters): WatchdogDependencies {
   return {
     paths: options.paths,
-    secrets: [],
+    secrets: fence.secrets,
     // Fence-only: no book is read and no window is built, so the universe is
     // empty rather than guessed from a configuration that did not validate.
     underlyingUniverse: [],
     clock: options.clock,
     instanceId: options.instanceId,
-    lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS,
+    lockTakeoverBoundMs: fence.lockTakeoverBoundMs,
     deadManBoundMs: options.deadManBoundMs,
     closeEscalationStepCents: FENCE_ONLY_CLOSE_ESCALATION_STEP_CENTS,
     session: options.session,
@@ -159,9 +162,10 @@ function fenceOnlyDeps(options: WatchdogRuntimeOptions, ping: PingPort): Watchdo
     broker: null,
     market: null,
     profile: "dev",
-    calendar: { isTradingDay: true, opensAt: options.session.opensAt, closesAt: options.session.closesAt },
+    calendar: { isTradingDay: options.session.isTradingDay, opensAt: options.session.opensAt, closesAt: options.session.closesAt },
     tradingDay: "cli",
     ping,
+    recoveryUnavailableReason,
   };
 }
 
@@ -196,13 +200,15 @@ function credentialFence(options: WatchdogRuntimeOptions, fence: FenceParameters
  * the INVOKED `STATE_DIR`, which this invocation was handed as an argument, so
  * it survives the very failure that lost the URL.
  */
-function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort | null, fence?: FenceParameters): WatchdogComposition {
-  options.log(`watchdog book recovery unavailable, fencing and halting only: ${reason}`);
+function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort | null, fence: FenceParameters = { secrets: [], lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS }): WatchdogComposition {
   const localOnlyPing: PingPort = ping ?? createPingPort({ url: null, recordFile: path.join(options.paths.root, "pings.log"), clock: options.clock });
+  const alarmReason = redactSecrets(reason, fence.secrets);
+  options.log(`watchdog book recovery unavailable, fencing and halting only: ${alarmReason}`);
   return {
-    deps: fenceOnlyDeps(options, localOnlyPing),
-    degraded: reason,
-    recordCredentialFence: credentialFence(options, fence ?? { secrets: [], lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS }, localOnlyPing),
+    deps: fenceOnlyDeps(options, localOnlyPing, alarmReason, fence),
+    degraded: alarmReason,
+    preRunFailure: null,
+    recordCredentialFence: credentialFence(options, fence, localOnlyPing),
   };
 }
 
@@ -217,11 +223,9 @@ function degrade(options: WatchdogRuntimeOptions, reason: string, ping: PingPort
  * uses the full configured strike distance. It is called from inside
  * `runWatchdog`, after the fence — never during composition.
  */
-function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStartup, clock: () => number): (heldContractIds: readonly string[]) => Promise<MarketObservation> {
+function marketObservation(adapter: WatchdogBrokerAdapter, config: ValidatedStartup, days: readonly CalendarDay[], tradingDay: string): (heldContractIds: readonly string[]) => Promise<MarketObservation> {
   return async (heldContractIds: readonly string[]): Promise<MarketObservation> => {
-    const now = clock();
-    const days = await adapter.calendar(isoDate(now, CALENDAR_LOOKBACK_DAYS), isoDate(now, CALENDAR_LOOKAHEAD_DAYS));
-    return adapter.market(closingWindow(days, newYorkDate(now), config.decision, heldContractIds));
+    return adapter.market(closingWindow(days, tradingDay, config.decision, heldContractIds));
   };
 }
 
@@ -249,19 +253,22 @@ export async function composeWatchdog(options: WatchdogRuntimeOptions): Promise<
     // 45–60 min missed-ping SLA remains (S-G14-03).
     return degrade(options, `environment could not be read, no remote alarm URL: ${messageOf(error)}`, null);
   }
+  const initialFence: FenceParameters = { secrets: secretValues(env), lockTakeoverBoundMs: FENCE_ONLY_LOCK_TAKEOVER_BOUND_MS };
   try {
-    return await Promise.resolve(compose(options, env, ping));
+    return await compose(options, env, ping, initialFence);
   } catch (error) {
-    return degrade(options, `composition failed exceptionally: ${messageOf(error)}`, ping);
+    const degraded = degrade(options, `composition failed exceptionally: ${messageOf(error)}`, ping, initialFence);
+    const classification = await degraded.recordCredentialFence(error);
+    return { ...degraded, preRunFailure: classification === "AUTH_FAILURE" ? "AUTH_FAILURE" : null };
   }
 }
 
-function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort): WatchdogComposition {
+async function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort, initialFence: FenceParameters): Promise<WatchdogComposition> {
   const raw = rawStartupConfig(loadPolicy(options.repoRoot), env);
   const secrets = secretValues(env);
 
   const validation = validateStartupConfig(raw, { canonicalTradingOrigin: CANONICAL_PAPER_TRADING_ORIGIN, alertSlaMs: ALERT_SLA_MS });
-  if (!validation.ok) return degrade(options, `configuration refused to arm: ${redactedViolationSummary(validation.violations)}`, ping);
+  if (!validation.ok) return degrade(options, `configuration refused to arm: ${redactedViolationSummary(validation.violations)}`, ping, initialFence);
   const config = validation.value;
   // From here the validated walltime budget is known, so the alarm port is
   // re-bound to it: an armed watchdog may not spend more of a cycle's budget on
@@ -273,9 +280,9 @@ function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort
   // invocation was pointed at. Recovering a book in one STATE_DIR while
   // fencing the writer of another would be worse than not recovering at all.
   const configured = resolveStateDir(config.stateDir);
-  if (!configured.ok) return degrade(options, `configured STATE_DIR is unusable: ${configured.detail}`, armedPing);
+  if (!configured.ok) return degrade(options, `configured STATE_DIR is unusable: ${configured.detail}`, armedPing, initialFence);
   if (configured.value.root !== options.paths.root) {
-    return degrade(options, "the invoked STATE_DIR is not the configured STATE_DIR; refusing to recover a book in a foreign deployment", armedPing);
+    return degrade(options, "the invoked STATE_DIR is not the configured STATE_DIR; refusing to recover a book in a foreign deployment", armedPing, initialFence);
   }
 
   const fence: FenceParameters = { secrets, lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs };
@@ -289,7 +296,8 @@ function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort
     return degrade(options, "validated startup omitted EXPECTED_ACCOUNT_ID", armedPing, fence);
   }
 
-  // Constructed, not called: no request leaves this process before the fence.
+  // Construct the adapter without touching account or book state. The calendar call below
+  // is the one deliberately permitted pre-fence observation.
   const adapterFactory: (input: WatchdogAdapterInput) => WatchdogBrokerAdapter = options.brokerAdapter ?? createAlpacaBroker;
   const adapter = adapterFactory({
     credentials: { keyId: credentials.keyId, secretKey: credentials.secretKey },
@@ -298,6 +306,20 @@ function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort
     clock: options.clock,
     requestTimeoutMs: Math.min(config.scheduling.cycleWalltimeBudgetMs, 30_000),
   });
+  // Session membership is the one broker observation that must precede the epoch fence:
+  // without it the watchdog cannot know whether S-G14 permits a takeover at all. Account,
+  // positions, orders, quotes, and every mutation remain behind runWatchdog's fence. Reuse
+  // these exact days for recovery so the staleness predicate and close window cannot diverge.
+  const now = options.clock();
+  const tradingDay = newYorkDate(now);
+  const days = await adapter.calendar(isoDate(now, CALENDAR_LOOKBACK_DAYS), isoDate(now, CALENDAR_LOOKAHEAD_DAYS));
+  if (days.length === 0) throw new Error("exchange calendar returned no sessions for the requested 68-day window");
+  const hasTradingDay = days.some(day => day.date === tradingDay);
+  const bracketsTradingDay = days.some(day => day.date < tradingDay) && days.some(day => day.date > tradingDay);
+  if (!hasTradingDay && !bracketsTradingDay) {
+    throw new Error("exchange calendar response does not establish whether today is a closed market day");
+  }
+  const session = sessionFor(days, tradingDay);
   const binding: AccountBinding = { profile: config.profile, tradingOrigin: config.binding.canonicalTradingOrigin, accountId: expectedAccountId };
   // S-J-06 at the mutation boundary: the identity the active credentials report
   // is re-observed before every close the watchdog submits, exactly as in the
@@ -324,16 +346,18 @@ function compose(options: WatchdogRuntimeOptions, env: EnvRecord, ping: PingPort
       lockTakeoverBoundMs: config.scheduling.lockTakeoverBoundMs,
       deadManBoundMs: options.deadManBoundMs,
       closeEscalationStepCents: config.closeEscalationStepCents,
-      session: options.session,
+      session,
       binding,
       broker: { read: adapter.read, port },
-      market: marketObservation(adapter, config, options.clock),
+      market: marketObservation(adapter, config, days, tradingDay),
       profile: config.profile,
-      calendar: { isTradingDay: options.session.isTradingDay, opensAt: options.session.opensAt, closesAt: options.session.closesAt },
-      tradingDay: newYorkDate(options.clock()),
+      calendar: session,
+      tradingDay,
       ping: armedPing,
+      recoveryUnavailableReason: null,
     },
     degraded: null,
+    preRunFailure: null,
     recordCredentialFence: credentialFence(options, fence, armedPing),
   };
 }

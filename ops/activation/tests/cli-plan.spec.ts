@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   abortDraft,
+  activationPageReason,
   classifyStoreFailure,
   exitCodeFor,
   intentDraft,
@@ -362,7 +363,7 @@ describe("how an invocation ends", () => {
     { outcome: { kind: "acted", step: "4-enable", outcome: "failed", deferred: false }, code: 1, pages: false },
     { outcome: { kind: "recorded", step: "9-proof", outcome: "ok" }, code: 0, pages: false },
     { outcome: { kind: "waited", reason: "NOT_DUE", noted: false }, code: 0, pages: false },
-    { outcome: { kind: "opened", attempt: ATTEMPT, found: "LEDGER_EMPTY" }, code: 0, pages: false },
+    { outcome: { kind: "opened", attempt: ATTEMPT, found: "LEDGER_EMPTY" }, code: 4, pages: true },
     { outcome: { kind: "ended", seq: 21, reason: "ended" }, code: 0, pages: false },
     { outcome: { kind: "done", reason: "complete" }, code: 0, pages: false },
     { outcome: { kind: "yielded", reason: "a live invocation holds the lease" }, code: 0, pages: false },
@@ -379,6 +380,11 @@ describe("how an invocation ends", () => {
 
   it("pages exactly on an abort, a ledger defect and its own failure", () => {
     for (const item of cases) expect({ kind: item.outcome.kind, pages: pages(item.outcome) }).toEqual({ kind: item.outcome.kind, pages: item.pages });
+  });
+
+  it("puts a missing or empty ledger cause in the activation alert body", () => {
+    expect(activationPageReason({ kind: "opened", attempt: "a", found: "LEDGER_ABSENT" })).toBe("ACTIVATION_LEDGER_ABSENT");
+    expect(activationPageReason({ kind: "opened", attempt: "a", found: "LEDGER_EMPTY" })).toBe("ACTIVATION_LEDGER_EMPTY");
   });
 });
 
